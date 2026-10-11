@@ -333,6 +333,18 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths. The 
 
 **Decided:** in the plan to retire Squadrons ([#412](https://github.com/Jacksondr5/j5code/issues/412)): a strict version gate for clients, narrowed on 2026-10-08 to J5 servers only. Recorded in FORK.md case 56.
 
+#### D31. A project's repository follows `gh repo set-default`
+
+**Upstream:** a project's repository is the remote named `upstream` when there is one, then `origin`. A fork with both is treated as its parent, so the `#` picker and the pull request view show the parent's pull requests.
+
+**J5:** the remote marked by `gh repo set-default` comes first. A checkout with no mark behaves as upstream's does.
+
+**Why:** J5 Code is itself a fork developed as its own product, so its pull requests live on the fork. Upstream's rule assumes a fork exists to contribute to its parent. `gh repo set-default` is where a person already records which repository their pull requests belong to, and upstream's own pull request creation and lookup read it, so this needs no setting.
+
+**Consequences:** a temporary patch to one upstream file, ported from upstream's open pull request pingdotgg/t3code#14291 (which fixes pingdotgg/t3code#15023). Each advance checks whether it merged, or whether upstream settled fork remotes another way (pingdotgg/t3code#17314). **J5 drops this patch** and follows upstream's rule when either happens, even if the rule differs. Other features still choose a remote by their own rules, as upstream's do.
+
+**Decided:** Jackson, 2026-10-11. Recorded in FORK.md's temporary patches.
+
 ### Awaiting a decision
 
 These already diverge on `j5/main`, but no human ruling is on record. Each landed as an implementer's call inside a merged PR. The person rules on each one; an approved entry moves up into its section, and a rejected one becomes a fix.
