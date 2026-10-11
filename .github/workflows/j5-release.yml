@@ -21,10 +21,12 @@ name: J5 Release
 # A version `<x.y.z>-nightly.<yyyymmdd>.<n>` publishes a nightly: also a
 # pre-release that never becomes "latest", but with `nightly-mac.yml`, the feed
 # desktop apps on the nightly update track follow. Nightlies come only from J5
-# Nightly, which calls this workflow with a commit and a version; a manual run
-# refuses a nightly version, and a call refuses any other. The version is
-# then stamped into the manifests at build time instead of being read from them,
-# and the desktop build is the one J5 Nightly made earlier in the same run.
+# Nightly, and stable releases only from J5 Stable, which promotes a nightly.
+# Both call this workflow with a commit and a date version
+# (scripts/j5/release-version.ts); the version is then stamped into the
+# manifests at build time instead of being read from them, and the desktop
+# build is the one the caller made earlier in the same run. A manual run
+# publishes only a preview, at the version its branch commits.
 #
 # No checkout here sets `persist-credentials: false`: it makes checkout fail on
 # the vendored gitlinks (FORK.md, "J5 CI and packaging"). The one job with a
@@ -129,15 +131,20 @@ jobs:
             if (channel === null) {
               throw new Error(`This workflow requires a stable (x.y.z), preview (x.y.z-preview.<date>.<n>) or nightly (x.y.z-nightly.<date>.<n>) version; found ${version}.`);
             }
-            // A nightly reaches every install on the nightly track, so it comes only from J5
-            // Nightly, which builds j5/main. A manual run never publishes one, whatever version
-            // the branch commits.
-            if (!stamp && channel === 'nightly') {
-              throw new Error(`Nightlies are published by J5 Nightly, not by a manual J5 Release; found ${version}.`);
+            // A nightly reaches every install on the nightly track and a stable release every
+            // install, so they come only from J5 Nightly, which builds j5/main, and J5 Stable,
+            // which promotes a nightly. A manual run never publishes one, whatever version the
+            // branch commits.
+            if (!stamp && channel !== 'preview') {
+              throw new Error(`A manual J5 Release publishes only a preview; nightlies come from J5 Nightly and stable releases from J5 Stable. Found ${version}.`);
             }
-            // Nothing calls this workflow with a stable or preview version until promotion exists.
-            if (stamp && channel !== 'nightly') {
-              throw new Error(`A calling workflow can publish only a nightly; found ${version}.`);
+            if (stamp && channel === 'preview') {
+              throw new Error(`A calling workflow publishes a nightly or a stable release; found ${version}.`);
+            }
+            // Nightly and stable versions are dates (scripts/j5/release-version.ts). Anything
+            // else would sort below every date version and never be offered as an update.
+            if (stamp && !/^\d{6}\.([1-9]|[12]\d|3[01])\.\d+(-|$)/.test(version)) {
+              throw new Error(`A nightly or stable version is <yyyymm>.<d>.<n>; found ${version}.`);
             }
             // Release archives replace the npm package from 0.0.44 on; an older
             // version number would be offered as a downgrade to every installed
@@ -149,8 +156,10 @@ jobs:
             // A published release that already carries SHA256SUMS is final:
             // rebuilding would change archive bytes under existing checksums.
             // An existing release for this version must come from the same
-            // commit; a mismatch means the version was not bumped, so fail
-            // rather than report "already published".
+            // commit. A mismatch means a preview's version was not bumped, or
+            // a nightly whose number another nightly already took as a stable
+            // release is being promoted, so fail rather than report "already
+            // published".
             const tag = `v${version}`;
             let published = false;
             let release = null;
@@ -169,7 +178,7 @@ jobs:
                 if (error.status !== 404 && error.status !== 422) throw error;
               }
               if (tagSha !== null && tagSha !== sha) {
-                throw new Error(`Release ${tag} already exists at ${tagSha}, but this build is ${sha}. Bump the version before releasing.`);
+                throw new Error(`Release ${tag} already exists at ${tagSha}, but this build is ${sha}. ${channel === 'stable' ? 'Promote a newer nightly.' : 'Bump the version before releasing.'}`);
               }
               published = tagSha === sha && !release.draft && release.assets.some(asset => asset.name === 'SHA256SUMS');
             }

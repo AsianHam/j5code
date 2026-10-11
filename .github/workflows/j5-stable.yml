@@ -1,0 +1,122 @@
+name: J5 Stable
+
+# Promotes a published nightly to a stable release: the nightly's commit, built
+# again as `<yyyymm>.<d>.<n>` (the nightly's version without its suffix) and
+# published as "latest". The stable build is of a commit nightly users already
+# ran. Nothing is committed: the version is stamped into the manifests during
+# each build.
+
+on:
+  workflow_dispatch:
+    inputs:
+      nightly:
+        description: Nightly to promote, such as v202610.15.0-nightly.20261015.12. Defaults to the newest.
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: j5-stable
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve the nightly and its stable version
+    if: github.repository == 'Jacksondr5/j5code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      ref: ${{ steps.version.outputs.ref }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Require the default branch
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/j5/main" ]]; then
+            echo "::error::Run J5 Stable on j5/main, whose workflows it uses; this run was started on $GITHUB_REF."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Resolve the nightly and its stable version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY: ${{ inputs.nightly }}
+        run: |
+          set -euo pipefail
+          tag="$NIGHTLY"
+          if [[ -z "$tag" ]]; then
+            tag="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '[.[] | select(.draft | not) | select(.tag_name | test("-nightly\\."))] | sort_by(.published_at) | last | .tag_name // empty')"
+            if [[ -z "$tag" ]]; then
+              echo "::error::No published nightly found. Run J5 Nightly first."
+              exit 1
+            fi
+          fi
+          tag="v${tag#v}"
+          # A nightly that was never published was never offered to anyone to run.
+          if [[ "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.draft')" != "false" ]]; then
+            echo "::error::$tag is not a published release."
+            exit 1
+          fi
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+          version="$(node scripts/j5/release-version.ts stable "$tag" --latest "$latest")"
+          ref="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq '.sha')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "::notice::Promoting $tag ($ref) to J5 Code $version."
+
+      # These gitlinks belong to vendored manifests, not this repository.
+      # Remove them only from the disposable index before checkout's cleanup.
+      - name: Exclude vendored gitlinks from checkout cleanup
+        if: always()
+        run: |
+          python3 - <<'PYTHON'
+          import subprocess
+          entries = subprocess.check_output(["git", "ls-files", "--stage", "-z", ".repos"])
+          paths = [entry.split(b"\t", 1)[1] for entry in entries.split(b"\0") if entry.startswith(b"160000 ")]
+          if paths:
+              subprocess.run(["git", "update-index", "--force-remove", "-z", "--stdin"], input=b"\0".join(paths) + b"\0", check=True)
+          PYTHON
+
+  build:
+    name: Desktop build
+    needs: resolve
+    permissions:
+      contents: read
+    uses: ./.github/workflows/j5-macos-build.yml
+    with:
+      ref: ${{ needs.resolve.outputs.ref }}
+      version: ${{ needs.resolve.outputs.version }}
+    secrets:
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+
+  # Builds the CLI archives and publishes them with the desktop build above.
+  release:
+    name: Release
+    needs: [resolve, build]
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/j5-release.yml
+    with:
+      ref: ${{ needs.resolve.outputs.ref }}
+      version: ${{ needs.resolve.outputs.version }}
+    secrets:
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}

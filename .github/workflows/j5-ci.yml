@@ -1,13 +1,12 @@
 name: J5 CI
 
 # Pull request branches are covered by `pull_request`, so `push` lists only the
-# branches that are tested without a PR: `j5/main`, and the release and preview
-# branches the packaging runbook publishes from before any PR exists.
+# branches that are tested without a PR: `j5/main`, and the preview branches
+# the packaging runbook publishes from before any PR exists.
 on:
   push:
     branches:
       - "j5/main"
-      - "j5/release-[0-9]*"
       - "j5/preview-[0-9]*"
   pull_request:
     branches:
