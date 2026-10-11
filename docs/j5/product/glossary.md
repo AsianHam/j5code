@@ -75,6 +75,11 @@ These entries are the distinctions the whole team must share; the glossary owns 
 | Term                       | Gloss                                                                                     | Owner                                                                |
 | -------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | person id                  | The durable local identity of one person; nothing may assume there is exactly one person  | [features/shared-server.md](features/shared-server.md)               |
+| member, guest              | The two kinds of person on a server: one it belongs to, and one invited to part of it     | [features/shared-server.md](features/shared-server.md)               |
+| grant                      | What gives a guest access: a person, a project or a thread, and a level                   | [features/shared-server.md](features/shared-server.md)               |
+| View, Collaborate          | The two levels a grant can carry                                                          | [features/shared-server.md](features/shared-server.md)               |
+| share link                 | The link a new person, or a person's new device, first connects with                      | [features/shared-server.md](features/shared-server.md)               |
+| shared conversation        | A thread more than one person can write to                                                | [features/shared-conversations.md](features/shared-conversations.md) |
 | inbox                      | The person's queue of open asks addressed to them                                         | [features/inbox.md](features/inbox.md)                               |
 | **Fleet page**             | The page that shows every agent with its measured status                                  | [features/fleet-page.md](features/fleet-page.md)                     |
 | **Memo**                   | A small self-addressed note an agent keeps through the platform, visible to the person    | [features/memos.md](features/memos.md)                               |
