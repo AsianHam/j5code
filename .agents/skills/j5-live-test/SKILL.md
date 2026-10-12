@@ -18,6 +18,9 @@ started from that commit, and keep working while it tests. Tell it:
 - which rows of "What to cover" apply;
 - to follow this skill.
 
+You may send it corrections while it runs, such as a fix to the test method.
+It records them in its report.
+
 Its report comes back as a short message naming an artifact. Put the verdict,
 what was not exercised live, and what the person must test by hand in the PR's
 "Live testing" section.
@@ -91,10 +94,17 @@ A worktree holds one setup at a time. Pass a flag to the first start, or to
   or hang.
 - After editing a Crew roster, check each seat's model again before approving:
   an edit can change it.
+- Write to a test agent the way a person would: say what you want done and
+  what you want to see. Do not stack guards such as "do nothing else" or "do
+  not message anyone". An agent that wanders is a finding, not something to
+  fence off.
+- Keep messaging words for messaging. "Reply" means responding to an A2A
+  message. To see something in an agent's own thread, ask it to "say X in your
+  thread". To prove a message was delivered, ask its receiver to write a file.
 - A test agent on Claude can still reach real Claude sessions on this machine
-  through its own harness tools (`ListAgents`, `SendMessage`). When a test has
-  agents message each other, tell the test agent to use J5's tools and the
-  participants `j5_list_participants` returns, and check which tool it called.
+  through its own harness tools (`ListAgents`, `SendMessage`). Tell a test
+  agent to use J5's tools when it messages other agents, and check which tool
+  it called.
 - An agent's own account of what it did is not evidence. Check the tool
   result, the stored row, or the screen.
 - To hold a turn open, ask the agent to run `./scripts/hold.sh` in the test
@@ -141,9 +151,10 @@ sent through the UI.
 
 ## PR screenshots
 
-Use `--base <ref>` so base and head show the same data. Open the second server
-in a tab with `profileId: "incognito"`, so the two do not share a login.
-Capture at 1280x800 as test-t3-app describes, then upload:
+Use `--base <ref>` so base and head show the same data. The ref is the PR's
+own base, which for a stacked PR is the layer beneath it, not `j5/main`. Open
+the second server in a tab with `profileId: "incognito"`, so the two do not
+share a login. Capture at 1280x800 as test-t3-app describes, then upload:
 
 ```bash
 node scripts/j5/pr-evidence.ts <pr> --pair "<caption>" <before.png> <after.png>
@@ -168,5 +179,6 @@ Say so in the report instead of implying coverage:
 - the desktop app: Electron, the packaged build, the updater, installers;
 - relay and tunnel connections, a second machine, an unreachable peer;
 - continuing one of the threads the script made;
+- threads without a project: a test home inside a checkout does not offer them;
 - behavior under the developer's real data volume;
 - providers other than Codex and Claude on this host.
