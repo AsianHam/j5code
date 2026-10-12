@@ -78,6 +78,7 @@ import {
   type SendMessageInput,
 } from "../contracts.ts";
 import { PlaybookStore } from "../../playbooks/PlaybookStore.ts";
+import { ManagedProjectFolders } from "../../../project/ManagedProjectFolders.ts";
 import { ProjectService } from "../../../project/ProjectService.ts";
 import { fakeSpawnWorkspaceLayer, noRepository } from "../test-support/spawnWorkspaceFakes.ts";
 import { J5ToolkitHandlersLive } from "./handlers.ts";
@@ -1222,6 +1223,9 @@ it.effect("preflights home before creation and records facts before the one stab
         ensureRegistered: () =>
           Effect.succeed({ projectId: ledgerProjectId, participantId: callerParticipantId }),
       }),
+      Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "/tmp/j5-mcp-named-projects" }),
+      Layer.mock(ProjectService)({}),
+      serverConfigLayer,
       NodeServices.layer,
     );
     const layer = J5ToolkitHandlersLive.pipe(
@@ -1379,6 +1383,9 @@ it.effect("refuses spawn before thread creation when the caller is a Subagent", 
 
       // Registration answers null for a thread that is never a participant.
       Layer.mock(ThreadRegistration)({ ensureRegistered: () => Effect.succeed(null) }),
+      Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "/tmp/j5-mcp-named-projects" }),
+      Layer.mock(ProjectService)({}),
+      serverConfigLayer,
       NodeServices.layer,
     );
     const layer = J5ToolkitHandlersLive.pipe(
@@ -1467,6 +1474,7 @@ const personaCapabilityProvider = (provider: ServerProvider) => ({
 it.effect("spawns a saved agent as a Peer Agent only within its declared routes", () =>
   Effect.gen(function* () {
     const ledgerProjectId = LedgerProjectId.make("project:j5:mcp-spawn-persona");
+    const personaCallerRuntimeMode = yield* Ref.make<RuntimeMode>("full-access");
     const callerParticipantId = ParticipantId.make("agent:j5:mcp-spawn-persona-caller");
     const childParticipantId = ParticipantId.make("agent:j5:mcp-spawn-persona-child");
     const commands = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
@@ -1523,6 +1531,12 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
       }),
       threadManagementMock({
         getThreadProjection: (threadId) => Effect.succeed(projection(threadId)),
+        getThreadShell: (threadId) =>
+          Ref.get(personaCallerRuntimeMode).pipe(
+            Effect.map((runtimeMode) =>
+              threadId === invocation.threadId ? liveThreadShell(threadId, { runtimeMode }) : null,
+            ),
+          ),
         dispatch: (command) =>
           Ref.update(commands, (items) => [...items, command]).pipe(
             Effect.as({ events: [], effects: [] } as never),
@@ -1561,6 +1575,8 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
           Effect.succeed({ projectId: ledgerProjectId, participantId: callerParticipantId }),
       }),
 
+      Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "/tmp/j5-mcp-named-projects" }),
+      Layer.mock(ProjectService)({}),
       ServerConfig.layerTest(process.cwd(), { prefix: "j5-mcp-spawn-persona-" }),
     ).pipe(Layer.provideMerge(NodeServices.layer));
     const layer = J5ToolkitHandlersLive.pipe(
@@ -1723,6 +1739,28 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
       assert.equal(operatorPolicy.runtimeMode, "full-access");
       assert.notProperty(operatorPolicy, "sandboxPolicy");
       assert.notProperty(operatorPolicy, "approvalPolicy");
+
+      // A persona's policy sets its permission mode, above the caller's own if it says so. The
+      // caller may still choose a narrower interaction mode, and may not choose the permissions.
+      yield* Ref.set(personaCallerRuntimeMode, "approval-required");
+      const planned = yield* call({
+        ...scout,
+        persona: "operator",
+        interaction_mode: "plan",
+        client_request_id: "spawn-persona-plan",
+      });
+      assert.isFalse(planned.isFailure, failureMessage(planned));
+      const plannedCreate = (yield* createdThreads()).at(-1)!;
+      assert.equal(plannedCreate.runtimeMode, "full-access");
+      assert.equal(plannedCreate.interactionMode, "plan");
+      const chosen = yield* call({
+        ...scout,
+        persona: "operator",
+        runtime_mode: "approval-required",
+        client_request_id: "spawn-persona-chosen",
+      });
+      assert.isTrue(chosen.isFailure);
+      assert.include(failureMessage(chosen), "sets its own permission mode");
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -2080,6 +2118,8 @@ it.effect("routes crew proposals through a captain that is not itself a crew mem
       Layer.mock(CrewStopService)({}),
       Layer.mock(PlaybookStore)({}),
       Layer.mock(ProjectService)({}),
+      Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "/tmp/j5-mcp-named-projects" }),
+      serverConfigLayer,
       NodeServices.layer,
     );
     const layer = J5ToolkitHandlersLive.pipe(

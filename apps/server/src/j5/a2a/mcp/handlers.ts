@@ -19,17 +19,21 @@ import {
   requireThreadScope,
 } from "../../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
+import { resolveAttachmentReferences } from "../../../mcp/toolkits/attachment/handlers.ts";
 import {
   assertTargetWithinLimits,
   type CallerLimits,
   loadCaller,
 } from "../../../mcp/threadAccess.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
+import { claimPendingAttachments } from "../../../orchestration-v2/AttachmentClaims.ts";
+import { exceededDispatchModeLimit } from "../../../orchestration-v2/DispatchModeLimit.ts";
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import {
   ThreadManagementService,
   latestActiveRun,
 } from "../../../orchestration-v2/ThreadManagementService.ts";
+import { ManagedProjectFolders } from "../../../project/ManagedProjectFolders.ts";
 import { ProjectService } from "../../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { makeAgentPersonaLibrary } from "../../agents/agentPersonaLibrary.ts";
@@ -81,7 +85,7 @@ import {
   spawnTitle,
   stablePart,
 } from "../spawnIds.ts";
-import { CommCommandId, type ParticipantDirectoryRow } from "../contracts.ts";
+import { CommCommandId, LedgerProjectId, type ParticipantDirectoryRow } from "../contracts.ts";
 import type { ParticipantProvenanceView } from "../placementContracts.ts";
 import {
   J5_LIST_PARTICIPANTS_DEFAULT_LIMIT,
@@ -882,29 +886,129 @@ const handlers = {
           ? undefined
           : yield* prepareSpawnPersona({ ...input, persona: personaId }, selected);
       const modelSelection = persona?.modelSelection ?? selected;
+      // A persona's policy sets its permissions. Without one the agent gets the caller's modes,
+      // or the ones the caller chose, which upstream's rule keeps within the caller's own.
+      if (persona !== undefined && input.runtime_mode !== undefined) {
+        return yield* stateError(
+          `Persona ${personaId} sets its own permission mode, so runtime_mode cannot be chosen for it.`,
+          "Retry j5_spawn_agent without runtime_mode, or without persona.",
+        );
+      }
+      const runtimeMode = input.runtime_mode ?? persona?.runtimeMode ?? parent.thread.runtimeMode;
+      const interactionMode = input.interaction_mode ?? parent.thread.interactionMode;
+      const { limits } = yield* loadCaller();
+      {
+        // Each mode is held to the caller's own only where the caller chose it, so choosing an
+        // interaction mode does not put a persona's permission mode under the ceiling.
+        const exceeded = exceededDispatchModeLimit(limits, {
+          runtimeMode: input.runtime_mode ?? limits.runtimeMode,
+          interactionMode: input.interaction_mode ?? limits.interactionMode,
+        });
+        if (exceeded !== undefined) {
+          return yield* stateError(
+            `The ${exceeded === "runtime" ? `permission mode ${runtimeMode}` : `interaction mode ${interactionMode}`} is broader than your own.`,
+            "Retry j5_spawn_agent with a mode no broader than yours, or omit it to give the agent your own.",
+          );
+        }
+      }
       const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
       const stableInput = {
         providerSessionId: scope.thread.providerSessionId,
         requestKey,
       };
       const threadId = spawnThreadId(stableInput);
+      const existing = yield* threadManagement
+        .getThreadShell(threadId)
+        .pipe(Effect.orElseSucceed(() => null));
+      const firstAttempt = existing === null;
+      // A retry finishes the agent its first attempt created, in the modes it was created with.
+      // A caller's modes can be narrowed within one provider session, so those are checked
+      // against what the caller may touch now. A persona's agent runs under its own policy.
+      if (existing !== null && persona === undefined) {
+        const exceeded = exceededDispatchModeLimit(limits, existing);
+        if (exceeded !== undefined) {
+          return yield* stateError(
+            `client_request_id ${requestKey} already created an agent whose ${exceeded === "runtime" ? "permission" : "interaction"} mode is broader than yours is now.`,
+            "Ask the user to start that agent, or spawn a new one with a fresh client_request_id.",
+          );
+        }
+      }
+
+      // The project the agent joins: the caller's, another one, or upstream's "No project".
+      if (input.scratch === true && input.project_id !== undefined) {
+        return yield* stateError(
+          "scratch spawns an agent without a project, so it cannot be combined with project_id.",
+          "Retry j5_spawn_agent with one of them.",
+        );
+      }
+      const target =
+        input.scratch === true
+          ? yield* (yield* ManagedProjectFolders).ensureScratchProject.pipe(
+              Effect.map(({ projectId }) => projectId),
+              Effect.mapError((error) =>
+                stateError(
+                  `An agent without a project cannot be spawned here: ${error.message}`,
+                  "Retry j5_spawn_agent with a project_id, or without scratch for your own project.",
+                ),
+              ),
+            )
+          : input.project_id === undefined
+            ? parent.thread.projectId
+            : ProjectId.make(input.project_id);
+      const elsewhere = target !== parent.thread.projectId;
+      const targetProject = !elsewhere
+        ? { id: caller.projectId, title: caller.project.name }
+        : yield* (yield* ProjectService).getById(target).pipe(
+            Effect.mapError((error) =>
+              stateError(
+                `Project ${target} cannot be read now: ${error.message}.`,
+                "Retry j5_spawn_agent.",
+              ),
+            ),
+            Effect.flatMap(
+              Option.match({
+                onNone: () =>
+                  Effect.fail(
+                    stateError(
+                      `This server has no project ${target}.`,
+                      "Call t3_project_list and retry j5_spawn_agent with one of its project ids.",
+                    ),
+                  ),
+                onSome: (project) =>
+                  Effect.succeed({ id: LedgerProjectId.make(project.id), title: project.title }),
+              }),
+            ),
+          );
+      if (input.scratch === true && input.workspace.type !== "root") {
+        return yield* stateError(
+          "An agent without a project works in a folder of its own, not in a checkout or a worktree.",
+          'Retry j5_spawn_agent with workspace {"type":"root"}.',
+        );
+      }
+      if (elsewhere && input.workspace.type === "shared") {
+        return yield* stateError(
+          `Your own checkout belongs to your project, and this agent joins project ${target}.`,
+          'Retry j5_spawn_agent with workspace {"type":"root"} for that project\'s main checkout, or a worktree of it.',
+        );
+      }
       const spawnWorkspace = yield* SpawnWorkspaceService;
-      const choice = spawnWorkspaceFromInput(input.workspace);
+      // The project's main checkout binds nothing, so it travels as the shared type with no
+      // checkout to share: one create command, and nothing asked of git.
+      const choice =
+        input.workspace.type === "root"
+          ? ({ type: "shared" } as const)
+          : spawnWorkspaceFromInput(input.workspace);
       // A replay must not refuse the branch its own first attempt created, so a named branch is
       // checked for only before the thread exists.
       const checkBranches =
-        choice.type === "worktree" &&
-        choice.branch !== undefined &&
-        (yield* threadManagement
-          .getThreadShell(threadId)
-          .pipe(Effect.orElseSucceed(() => null))) === null;
-      // Sharing the caller's checkout asks nothing of git.
+        choice.type === "worktree" && choice.branch !== undefined && firstAttempt;
+      // Sharing a checkout asks nothing of git.
       const checkout =
         choice.type === "shared"
           ? null
           : yield* spawnWorkspace.inspect({
-              projectId: parent.thread.projectId,
-              worktreePath: parent.thread.worktreePath,
+              projectId: target,
+              worktreePath: elsewhere ? null : parent.thread.worktreePath,
               checkBranches,
               baseRefs: namedBaseRefs([choice]),
               existingWorktreePaths: namedWorktreePaths([choice]),
@@ -922,6 +1026,37 @@ const handlers = {
         .withSpawnStart(
           { stableInput, threadId, workspace },
           Effect.gen(function* () {
+            // What a shared-type thread binds: the caller's checkout, or the project's main one.
+            // As upstream's launch does, a main-checkout thread asks for a folder of its own, and
+            // gets one only in the "No project" project. It is claimed here, inside the start
+            // that only one call at a time may run, and only before the thread exists; a replay
+            // replays its create. The thread is looked for again now that this call holds the
+            // start: an earlier attempt may have created it since the read above.
+            const created =
+              input.workspace.type === "root" &&
+              (yield* threadManagement
+                .getThreadShell(threadId)
+                .pipe(Effect.orElseSucceed(() => null))) !== null;
+            const sharedCheckout =
+              input.workspace.type !== "root"
+                ? parent.thread
+                : {
+                    branch: null,
+                    worktreePath: created
+                      ? null
+                      : Option.getOrNull(
+                          yield* (yield* ManagedProjectFolders)
+                            .folderForThread({ projectId: target, threadId, text: input.brief })
+                            .pipe(
+                              Effect.mapError((error) =>
+                                stateError(
+                                  `A folder for the agent could not be made: ${error.message}`,
+                                  "Retry j5_spawn_agent with the same client_request_id.",
+                                ),
+                              ),
+                            ),
+                        ),
+                  };
             yield* threadManagement
               .dispatch({
                 type: "thread.create",
@@ -929,13 +1064,13 @@ const handlers = {
                 creationSource: "mcp",
                 commandId: spawnCreateCommandId(stableInput, workspace.type),
                 threadId,
-                projectId: parent.thread.projectId,
+                projectId: target,
                 title: spawnTitle(input.brief, input.title),
                 modelSelection,
-                runtimeMode: persona?.runtimeMode ?? parent.thread.runtimeMode,
-                interactionMode: parent.thread.interactionMode,
+                runtimeMode,
+                interactionMode,
                 ...(persona === undefined ? {} : { agentPersonaAssignment: persona.assignment }),
-                ...spawnThreadCheckout(workspace, parent.thread),
+                ...spawnThreadCheckout(workspace, sharedCheckout),
               })
               .pipe(
                 Effect.mapError((error) =>
@@ -961,7 +1096,7 @@ const handlers = {
               .recordFacts({
                 homeCommandId: spawnHomeCommandId(stableInput),
                 placementCommandId: spawnPlacementCommandId(stableInput),
-                projectId: caller.projectId,
+                projectId: targetProject.id,
                 threadId,
                 provenance: {
                   kind: "spawned-by",
@@ -978,22 +1113,38 @@ const handlers = {
                   ),
                 ),
               );
+            // In the spawner's own project the agent sits under it; in another it is a root.
             if (
               facts.placement.provenance.kind !== "spawned-by" ||
               facts.placement.provenance.source !== "j5_spawn" ||
-              facts.placement.placementParentId === null
+              (facts.placement.placementParentId === null) !== elsewhere
             ) {
               return yield* stateError(
                 `Peer Agent ${facts.home.participantId} committed placement facts that do not satisfy the J5 spawn contract.`,
                 "Call j5_list_participants to inspect committed placement truth and ask the human operator to repair the inconsistent record.",
               );
             }
+            // The brief's files are claimed into the new thread, which now exists.
+            const attachments =
+              input.attachments === undefined
+                ? []
+                : (yield* resolveAttachmentReferences(input.attachments, []).pipe(
+                    Effect.flatMap((references) =>
+                      claimPendingAttachments({ threadId, attachments: references }),
+                    ),
+                    Effect.mapError((error) =>
+                      stateError(
+                        `Peer Agent ${facts.home.participantId} is registered and addressable, but its brief's attachments could not be claimed: ${error.message}`,
+                        "Retry j5_spawn_agent with the same client_request_id and attachments that are pending uploads.",
+                      ),
+                    ),
+                  )).attachments;
             yield* spawnWorkspace
               .startBrief({
                 workspace,
                 stableInput,
                 ledgerProjectId: facts.home.projectId,
-                projectId: parent.thread.projectId,
+                projectId: target,
                 threadId,
                 title: spawnTitle(input.brief, input.title),
                 messageId: spawnMessageId(stableInput),
@@ -1001,13 +1152,14 @@ const handlers = {
                   brief: input.brief,
                   participantId: facts.home.participantId,
                   projectId: facts.home.projectId,
-                  projectTitle: caller.project.name,
+                  projectTitle: targetProject.title,
                   spawnedByParticipantId: caller.participantId,
                   spawnerThreadId: scope.thread.threadId,
                 }),
                 modelSelection,
-                runtimeMode: persona?.runtimeMode ?? parent.thread.runtimeMode,
-                interactionMode: parent.thread.interactionMode,
+                runtimeMode,
+                interactionMode,
+                attachments,
               })
               .pipe(
                 Effect.mapError((error) =>
@@ -1021,7 +1173,7 @@ const handlers = {
               participant_id: facts.home.participantId,
               thread_id: threadId,
               project_id: facts.home.projectId,
-              project_title: caller.project.name,
+              project_title: targetProject.title,
               placement: {
                 placement_parent_id: facts.placement.placementParentId,
                 provenance: {

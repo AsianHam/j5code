@@ -182,11 +182,15 @@ export const makeSpawnedChildrenHttpRouteLayer = (path: HttpRouter.PathInput) =>
                         ON p.project_id = m.project_id AND p.participant_id = m.participant_id
                       WHERE m.participant_id IN ${sql.in(rosterIds)}
                     `;
-              // The sidebar's membership rule: a row an agent spawned leaves the top level.
+              // The sidebar's membership rule: a row an agent spawned leaves the top level, to
+              // sit under its spawner. One spawned into another project has no parent in its own
+              // project's tree, so it stays at the top level, where it can be found.
               const spawned = yield* sql<{ readonly participant_id: string }>`
                 SELECT participant_id
                 FROM j5_a2a_participant_placement
-                WHERE participant_id IN ${sql.in(parentIds)} AND provenance_kind = 'spawned-by'
+                WHERE participant_id IN ${sql.in(parentIds)}
+                  AND provenance_kind = 'spawned-by'
+                  AND placement_parent_id IS NOT NULL
               `;
               return projectSpawnedChildren(
                 threadIds,

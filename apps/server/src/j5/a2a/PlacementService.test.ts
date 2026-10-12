@@ -95,6 +95,49 @@ const record = (input: {
     });
   });
 
+it.effect("records a spawner from another project and makes its child a root there", () =>
+  Effect.gen(function* () {
+    const spawner = agent("cross-project-spawner");
+    const child = agent("cross-project-child");
+    const elsewhere = LedgerProjectId.make("project:placement-elsewhere");
+    yield* prepare([spawner]);
+    const ledger = yield* A2ALedger;
+    yield* ledger.ensureProject({ projectId: elsewhere, createdAt: timestamp });
+    yield* ledger.append({
+      commandId: CommCommandId.make("membership:cross-project-child"),
+      projectId: elsewhere,
+      acceptedAt: timestamp,
+      event: {
+        kind: "participant.joined",
+        sender: null,
+        receiver: null,
+        exchangeId: null,
+        correlationId: null,
+        payload: { participant: child },
+        createdAt: timestamp,
+      },
+    });
+    const placements = yield* ParticipantPlacementService;
+    const recorded = yield* placements.recordCreation({
+      commandId: PlacementCommandId.make("placement:cross-project-child"),
+      projectId: elsewhere,
+      participantId: child.id,
+      actor: "agent",
+      provenance: spawnedBy(spawner),
+      createdAt: timestamp,
+    });
+    assert.deepStrictEqual(recorded.placement.provenance, spawnedBy(spawner));
+    assert.isNull(recorded.placement.placementParentId);
+    assert.deepStrictEqual(
+      (yield* placements.listParticipants(elsewhere)).map((row) => [
+        row.participantId,
+        row.placementParentId,
+      ]),
+      [[child.id, null]],
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("places wrapper-created children under their current caller", () =>
   Effect.gen(function* () {
     const spawner = agent("spawner");

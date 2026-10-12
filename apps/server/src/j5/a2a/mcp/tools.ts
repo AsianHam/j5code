@@ -3,6 +3,7 @@ import { playbookTools } from "../../playbooks/mcp.ts";
 import * as Schema from "effect/Schema";
 import { PLAYBOOK_MAX_STEPS } from "@t3tools/contracts/j5";
 import { PlaybookStore } from "../../playbooks/PlaybookStore.ts";
+import { ManagedProjectFolders } from "../../../project/ManagedProjectFolders.ts";
 import { ProjectService } from "../../../project/ProjectService.ts";
 
 import {
@@ -10,6 +11,7 @@ import {
   ModelSelection,
   OrchestrationV2RunStatus,
   ProviderInstanceId,
+  ProviderInteractionMode,
   RunId,
   RuntimeMode,
   ThreadId,
@@ -271,9 +273,48 @@ export const spawnWorkspaceFromInput = (workspace: J5SpawnWorkspace) =>
             : { startFromOrigin: workspace.start_from_origin }),
         };
 
+/**
+ * A spawn's workspace choice: a Crew seat's three, and the project's own checkout, which is
+ * upstream's `root`. A spawn into another project has no "your own checkout" to share.
+ */
+export const J5SpawnAgentWorkspace = Schema.Union([
+  ...J5SpawnWorkspace.members,
+  Schema.Struct({ type: Schema.Literal("root") }),
+]);
+export type J5SpawnAgentWorkspace = typeof J5SpawnAgentWorkspace.Type;
+
 export const J5SpawnAgentInput = Schema.Struct({
   brief: NonEmptyString,
   title: Schema.optional(NonEmptyString),
+  project_id: Schema.optional(
+    LedgerProjectId.annotate({
+      description:
+        "Project the Peer Agent joins. Omit for your own; find others with t3_project_list.",
+    }),
+  ),
+  scratch: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        'Spawn without a project: the agent joins the "No project" project and works in a fresh folder of its own, outside any repository. Not with project_id; workspace must be {"type":"root"}.',
+    }),
+  ),
+  runtime_mode: Schema.optional(
+    RuntimeMode.annotate({
+      description:
+        "The agent's permission mode. Omit to give it yours. Not broader than your own, and not with persona, whose policy sets it.",
+    }),
+  ),
+  interaction_mode: Schema.optional(
+    ProviderInteractionMode.annotate({
+      description:
+        "The agent's interaction mode. Omit to give it yours. Not broader than your own.",
+    }),
+  ),
+  attachments: Schema.optional(
+    Schema.Array(McpAttachmentInput).check(Schema.isMinLength(1), Schema.isMaxLength(8)).annotate({
+      description: "Files for the brief: pending uploads from t3_attachment_prepare_upload.",
+    }),
+  ),
   persona: Schema.optional(
     AgentPersonaId.annotate({
       description:
@@ -283,9 +324,9 @@ export const J5SpawnAgentInput = Schema.Struct({
   provider: ProviderInstanceId,
   model: NonEmptyString,
   reasoning: NonEmptyString,
-  workspace: J5SpawnWorkspace.annotate({
+  workspace: J5SpawnAgentWorkspace.annotate({
     description:
-      'Where the Peer Agent works, chosen every time: {"type":"shared"} is your own checkout and branch; {"type":"worktree","base_ref":...} a new worktree and branch from base_ref; {"type":"existing_worktree","worktree_path":...} one of this project\'s worktrees, on its branch.',
+      'Where the Peer Agent works, chosen every time: {"type":"shared"} is your own checkout and branch, in your own project only; {"type":"root"} the project\'s main checkout; {"type":"worktree","base_ref":...} a new worktree and branch from base_ref; {"type":"existing_worktree","worktree_path":...} one of the project\'s worktrees, on its branch.',
   }),
   client_request_id: Schema.optional(NonEmptyString),
 });
@@ -297,7 +338,8 @@ export const J5SpawnAgentResult = Schema.Struct({
   project_id: LedgerProjectId,
   project_title: Schema.String,
   placement: Schema.Struct({
-    placement_parent_id: ParticipantId,
+    /** The spawner, when the agent joined the spawner's own project; null in another project. */
+    placement_parent_id: Schema.NullOr(ParticipantId),
     provenance: Schema.Struct({
       kind: Schema.Literal("spawned-by"),
       spawned_by_participant_id: ParticipantId,
@@ -517,7 +559,7 @@ export const J5ArchiveCrewFailure = Schema.Struct({
 export type J5ArchiveCrewFailure = typeof J5ArchiveCrewFailure.Type;
 
 export const J5_SPAWN_AGENT_DESCRIPTION =
-  "Spawn a Peer Agent: a full-citizen teammate with its own top-level thread, starting on your brief as its first turn. It joins your project, is placed under you, and records you as its immutable spawner; it is addressable the moment this returns. In your brief, tell the new agent what it should do first and whether it should reply to you. Choose provider, model, and reasoning for the work in the brief — see orchestrator_capabilities for what's available. To run a persona from j5_list_personas, set `persona` to its id: the spawn gets that persona's instructions and runtime policy, and provider, model, and reasoning must be one of that persona's declared routes. Choose its workspace every time (see the workspace field). A new worktree is prepared after this returns, and the agent begins once it is bound, possibly while the project's setup script is still running; if preparing it fails, the agent's thread shows why, and it is not retried. Reuse client_request_id to retry the same spawn safely; a retry replays the first spawn, so a different base_ref or worktree_path needs a fresh client_request_id.";
+  "Spawn a Peer Agent: a full-citizen teammate with its own top-level thread, starting on your brief as its first turn. It joins your project unless you name another with project_id or set scratch for none, and records you as its immutable spawner; in your own project it is placed under you. It is addressable the moment this returns. In your brief, tell the new agent what it should do first and whether it should reply to you. Choose provider, model, and reasoning for the work in the brief — see orchestrator_capabilities for what's available. To run a persona from j5_list_personas, set `persona` to its id: the spawn gets that persona's instructions and runtime policy, and provider, model, and reasoning must be one of that persona's declared routes. Without a persona it runs in your permission and interaction modes, or in narrower ones you set with runtime_mode and interaction_mode. Attach files to the brief with attachments. Choose its workspace every time (see the workspace field). A new worktree is prepared after this returns, and the agent begins once it is bound, possibly while the project's setup script is still running; if preparing it fails, the agent's thread shows why, and it is not retried. Reuse client_request_id to retry the same spawn safely; a retry replays the first spawn, so a different base_ref or worktree_path needs a fresh client_request_id.";
 
 export const J5_LIST_AGENTS_DESCRIPTION =
   "List the personas in this environment: id, purpose, runtime policy, whether each can start now, and the provider, model, and reasoning it would run on. Read this before choosing a persona for j5_spawn_agent or a crew roster so the choice fits the task and the user's budget. Read-only.";
@@ -578,6 +620,11 @@ const spawnDependencies = [
   // A Crew member is refused before anything is created (members never spawn Peer Agents).
   AgentCrewInstanceService,
   ProviderRegistry,
+  // Another project, the "No project" project and its per-thread folder, and brief attachments.
+  ProjectService,
+  ManagedProjectFolders,
+  ServerConfig,
+  FileSystem.FileSystem,
 ];
 
 const crewProposalDependencies = [

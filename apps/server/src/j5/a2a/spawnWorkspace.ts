@@ -1,4 +1,5 @@
 import type {
+  ChatAttachment,
   CommandId,
   MessageId,
   ModelSelection,
@@ -263,6 +264,8 @@ export interface StartSpawnBriefInput {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  /** Files for the brief, already claimed into the thread; a Crew seat's brief has none. */
+  readonly attachments?: ReadonlyArray<ChatAttachment>;
 }
 
 export interface SpawnWorkspaceServiceShape {
@@ -491,7 +494,7 @@ const make = Effect.gen(function* () {
             threadId: input.threadId,
             messageId: input.messageId,
             text: input.text,
-            attachments: [],
+            attachments: input.attachments ?? [],
             modelSelection: input.modelSelection,
             dispatchMode: { type: "start_immediately" },
           })
@@ -512,7 +515,11 @@ const make = Effect.gen(function* () {
               ...(input.workspace.branch === undefined ? {} : { branch: input.workspace.branch }),
               startFromOrigin: input.workspace.startFromOrigin,
             },
-            initialMessage: { messageId: input.messageId, text: input.text, attachments: [] },
+            initialMessage: {
+              messageId: input.messageId,
+              text: input.text,
+              attachments: input.attachments ?? [],
+            },
             createdBy: "agent",
             creationSource: "mcp",
           })

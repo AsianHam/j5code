@@ -45,6 +45,7 @@ import { layer as threadLifecycleServiceLayer } from "../../../orchestration-v2/
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationCommandReceipts from "../../../persistence/OrchestrationCommandReceipts.ts";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
+import { ManagedProjectFolders } from "../../../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import { AntigravityInstallation } from "../../../provider/AntigravityInstallation.ts";
 import * as CodexInstallation from "../../../provider/CodexInstallation.ts";
@@ -211,6 +212,14 @@ const callerMidRunLayer = Layer.effect(
 );
 const handlersLayer = J5ToolkitHandlersLive.pipe(
   Layer.provide(callerMidRunLayer),
+  // The spawn here stays in the caller's project and shares its checkout, so none is read.
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "/tmp/j5-luna-named-projects" }),
+      Layer.mock(ProjectService.ProjectService)({}),
+      serverConfigLayer,
+    ),
+  ),
   Layer.provideMerge(j5Layer),
   Layer.provide(orchestrationLayer),
   Layer.provide(orchestratorMcpLayer),

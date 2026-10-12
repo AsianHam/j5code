@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ChatAttachmentId,
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
@@ -8,13 +9,16 @@ import {
   ThreadId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -25,6 +29,10 @@ import { McpInvocationContext } from "../../mcp/McpInvocationContext.ts";
 import { OrchestratorMcpService } from "../../mcp/OrchestratorMcpService.ts";
 import type { ThreadLaunchInput } from "../../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
+import { createPendingAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
+import { ServerConfig } from "../../config.ts";
+import { ManagedProjectFolders } from "../../project/ManagedProjectFolders.ts";
+import { ProjectService } from "../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
 import { ArchiveCrewService } from "./ArchiveCrewService.ts";
@@ -129,16 +137,22 @@ const callerParticipantId = ParticipantId.make("agent:j5:spawn-workspace-caller"
 const childParticipantId = ParticipantId.make("agent:j5:spawn-workspace-child");
 const projectId = ProjectId.make("project:j5:spawn-workspace");
 const createdAt = DateTime.makeUnsafe("2026-10-02T12:00:00.000Z");
+const otherProjectId = ProjectId.make("project:j5:spawn-workspace-other");
+const scratchProjectId = ProjectId.make("project:j5:spawn-workspace-scratch");
+const scratchFolder = "/scratch/2026-10-02-fix-the-login-bug";
+const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+  prefix: "j5-spawn-workspace-",
+}).pipe(Layer.provide(NodeServices.layer));
 
 /** The caller works on the project's root checkout, which records no branch or worktree. */
-const callerThread = (threadId: ThreadId) =>
+const callerThread = (threadId: ThreadId, runtimeMode: RuntimeMode = "full-access") =>
   ({
     thread: {
       id: threadId,
       projectId,
       title: "Caller",
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
-      runtimeMode: "full-access",
+      runtimeMode,
       interactionMode: "default",
       branch: null,
       worktreePath: null,
@@ -154,6 +168,12 @@ const spawnHarness = (input: {
   readonly commands?: Ref.Ref<ReadonlyArray<OrchestrationV2ServerCommand>>;
   /** Runs inside each thread.create before it lands, so a test can hold a start open. */
   readonly beforeCreate?: Effect.Effect<void>;
+  /** The caller's own permission mode; full access unless a test narrows it. */
+  readonly callerRuntimeMode?: RuntimeMode;
+  /** The agent an earlier attempt of the same request already created, in this mode. */
+  readonly existingChildRuntimeMode?: RuntimeMode;
+  /** Runs inside each read of the target project, so a test can hold a call before its start. */
+  readonly beforeProjectRead?: Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
     const log = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -161,6 +181,8 @@ const spawnHarness = (input: {
       input.commands ?? (yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]));
     const launches = yield* Ref.make<ReadonlyArray<ThreadLaunchInput>>([]);
     const failFacts = yield* Ref.make(false);
+    const factProjects = yield* Ref.make<ReadonlyArray<LedgerProjectId>>([]);
+    const folderClaims = yield* Ref.make(0);
     const callerRow = {
       projectId: ledgerProjectId,
       participantId: callerParticipantId,
@@ -197,13 +219,15 @@ const spawnHarness = (input: {
                 cause: new Error("injected"),
               });
             yield* Ref.update(log, (items) => [...items, "facts"]);
+            yield* Ref.update(factProjects, (items) => [...items, facts.projectId]);
             return {
-              home: { projectId: ledgerProjectId, participantId: childParticipantId },
+              home: { projectId: facts.projectId, participantId: childParticipantId },
               placement: {
-                projectId: ledgerProjectId,
+                projectId: facts.projectId,
                 participantId: childParticipantId,
                 provenance: facts.provenance,
-                placementParentId: callerParticipantId,
+                // The placement tree is one project's: a spawner elsewhere is no parent.
+                placementParentId: facts.projectId === ledgerProjectId ? callerParticipantId : null,
                 createdEventSeq: 1,
                 updatedEventSeq: 1,
               },
@@ -211,20 +235,48 @@ const spawnHarness = (input: {
           }),
       }),
       Layer.mock(ThreadManagementService)({
-        getThreadProjection: (threadId) => Effect.succeed(callerThread(threadId)),
+        getThreadProjection: (threadId) =>
+          Effect.succeed(callerThread(threadId, input.callerRuntimeMode)),
         // The caller is mid-run, as upstream's tool access check requires; the child does not
         // exist yet.
         getThreadShell: (threadId) =>
           Effect.succeed(
             threadId === invocation.thread.threadId
               ? ({
-                  ...callerThread(threadId).thread,
+                  ...callerThread(threadId, input.callerRuntimeMode).thread,
                   providerInstanceId: invocation.thread.providerInstanceId,
                   activeRunId: "run:j5:spawn-workspace-caller",
                   archivedAt: null,
                   deletedAt: null,
                 } as never)
-              : null,
+              : input.existingChildRuntimeMode === undefined
+                ? null
+                : ({
+                    ...callerThread(threadId, input.existingChildRuntimeMode).thread,
+                    archivedAt: null,
+                    deletedAt: null,
+                  } as never),
+          ).pipe(
+            // A thread this harness has created exists from then on, as a real one does.
+            Effect.flatMap((shell) =>
+              shell !== null
+                ? Effect.succeed(shell)
+                : Ref.get(commands).pipe(
+                    Effect.map((all) => {
+                      const create = all.find(
+                        (command) =>
+                          command.type === "thread.create" && command.threadId === threadId,
+                      );
+                      return create?.type === "thread.create"
+                        ? ({
+                            ...callerThread(threadId, create.runtimeMode).thread,
+                            archivedAt: null,
+                            deletedAt: null,
+                          } as never)
+                        : null;
+                    }),
+                  ),
+            ),
           ),
         dispatch: (command) =>
           Effect.gen(function* () {
@@ -289,6 +341,34 @@ const spawnHarness = (input: {
         ensureRegistered: () =>
           Effect.succeed({ projectId: ledgerProjectId, participantId: callerParticipantId }),
       }),
+      Layer.mock(ProjectService)({
+        getById: (id) =>
+          (input.beforeProjectRead ?? Effect.void).pipe(
+            Effect.as(
+              id === otherProjectId || id === scratchProjectId
+                ? Option.some({
+                    id,
+                    title: id === otherProjectId ? "Other project" : "No project",
+                    workspaceRoot: "/other-repo",
+                    defaultModelSelection: null,
+                    scripts: [],
+                    createdAt: DateTime.formatIso(createdAt),
+                    updatedAt: DateTime.formatIso(createdAt),
+                    deletedAt: null,
+                  })
+                : Option.none(),
+            ),
+          ),
+      }),
+      Layer.mock(ManagedProjectFolders)({
+        namedProjectsRoot: "/named-projects",
+        ensureScratchProject: Effect.succeed({ projectId: scratchProjectId }),
+        folderForThread: ({ projectId }) =>
+          Ref.update(folderClaims, (count) => count + 1).pipe(
+            Effect.as(projectId === scratchProjectId ? Option.some(scratchFolder) : Option.none()),
+          ),
+      }),
+      serverConfigLayer,
       NodeServices.layer,
     );
     const layer = J5ToolkitHandlersLive.pipe(
@@ -322,7 +402,7 @@ const spawnHarness = (input: {
             Effect.provideService(McpInvocationContext, invocation),
           );
       });
-    return { layer, call, log, commands, launches, failFacts };
+    return { layer, call, log, commands, launches, failFacts, factProjects, folderClaims };
   });
 
 const spawnArgs = {
@@ -332,6 +412,280 @@ const spawnArgs = {
   reasoning: "high",
   workspace: { type: "worktree", base_ref: "j5/main" },
 } satisfies J5SpawnAgentInput;
+
+const message = (response: { readonly result: unknown }) =>
+  (response.result as { readonly message: string }).message;
+
+it.effect("spawns into another project's main checkout, as a root of that project", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands, factProjects } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+    });
+    yield* Effect.gen(function* () {
+      // The caller's own checkout belongs to the caller's project.
+      const shared = yield* call({
+        ...spawnArgs,
+        project_id: LedgerProjectId.make(otherProjectId),
+        workspace: { type: "shared" },
+      });
+      assert.isTrue(shared.isFailure);
+      assert.include(message(shared), "Your own checkout belongs to your project");
+      const missing = yield* call({
+        ...spawnArgs,
+        project_id: LedgerProjectId.make("project:j5:spawn-workspace-gone"),
+        workspace: { type: "root" },
+      });
+      assert.isTrue(missing.isFailure);
+      assert.include(message(missing), "no project project:j5:spawn-workspace-gone");
+      assert.lengthOf(yield* Ref.get(commands), 0, "a refused spawn creates nothing");
+
+      const spawned = yield* call({
+        ...spawnArgs,
+        project_id: LedgerProjectId.make(otherProjectId),
+        workspace: { type: "root" },
+        client_request_id: "other-project",
+      });
+      assert.isFalse(spawned.isFailure);
+      const result = spawned.result as { readonly thread_id: ThreadId };
+      assert.deepStrictEqual(spawned.result, {
+        participant_id: childParticipantId,
+        thread_id: result.thread_id,
+        project_id: LedgerProjectId.make(otherProjectId),
+        project_title: "Other project",
+        placement: {
+          // The spawner is recorded, and is no parent in a project it is not in.
+          placement_parent_id: null,
+          provenance: {
+            kind: "spawned-by",
+            spawned_by_participant_id: callerParticipantId,
+            source: "j5_spawn",
+          },
+        },
+      });
+      assert.deepStrictEqual(yield* Ref.get(factProjects), [LedgerProjectId.make(otherProjectId)]);
+      const [create, brief] = yield* Ref.get(commands);
+      assert.equal(create?.type, "thread.create");
+      if (create?.type === "thread.create") {
+        assert.equal(create.projectId, otherProjectId);
+        assert.isNull(create.branch);
+        assert.isNull(create.worktreePath);
+      }
+      assert.equal(brief?.type, "message.dispatch");
+      if (brief?.type === "message.dispatch") assert.include(brief.text, "Other project");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("spawns an agent with no project into a folder of its own", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+    });
+    yield* Effect.gen(function* () {
+      const withProject = yield* call({
+        ...spawnArgs,
+        scratch: true,
+        project_id: LedgerProjectId.make(otherProjectId),
+        workspace: { type: "root" },
+      });
+      assert.isTrue(withProject.isFailure);
+      const inWorktree = yield* call({ ...spawnArgs, scratch: true });
+      assert.isTrue(inWorktree.isFailure);
+      assert.include(message(inWorktree), "works in a folder of its own");
+      assert.lengthOf(yield* Ref.get(commands), 0);
+
+      const spawned = yield* call({ ...spawnArgs, scratch: true, workspace: { type: "root" } });
+      assert.isFalse(spawned.isFailure);
+      // Naming the "No project" project by its id is the same spawn: the project decides
+      // whether a main-checkout thread gets a folder, not how the caller spelled it.
+      const byId = yield* call({
+        ...spawnArgs,
+        project_id: LedgerProjectId.make(scratchProjectId),
+        workspace: { type: "root" },
+      });
+      assert.isFalse(byId.isFailure);
+      assert.deepStrictEqual(
+        (yield* Ref.get(commands)).flatMap((command) =>
+          command.type === "thread.create" ? [[command.projectId, command.worktreePath]] : [],
+        ),
+        [
+          [scratchProjectId, scratchFolder],
+          [scratchProjectId, scratchFolder],
+        ],
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("claims one folder when the same no-project spawn is sent twice at once", () =>
+  Effect.gen(function* () {
+    const reachedCreate = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const { layer, call, folderClaims } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      beforeCreate: Deferred.succeed(reachedCreate, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      ),
+    });
+    yield* Effect.gen(function* () {
+      const args = {
+        ...spawnArgs,
+        scratch: true,
+        workspace: { type: "root" },
+        client_request_id: "scratch-twice",
+      } satisfies J5SpawnAgentInput;
+      const first = yield* call(args).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(reachedCreate);
+      const second = yield* call(args);
+      assert.isTrue(second.isFailure);
+      assert.include(message(second), "already in progress");
+      yield* Deferred.succeed(release, undefined);
+      assert.isFalse((yield* Fiber.join(first)).isFailure);
+      assert.equal(yield* Ref.get(folderClaims), 1, "the refused call claimed no folder");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("claims no second folder for a retry that read the thread before it existed", () =>
+  Effect.gen(function* () {
+    // The retry reads "no thread yet", then is held until the first call has created it.
+    const projectReads = yield* Ref.make(0);
+    const retryHeld = yield* Deferred.make<void>();
+    const releaseRetry = yield* Deferred.make<void>();
+    const { layer, call, commands, folderClaims } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      beforeProjectRead: Ref.getAndUpdate(projectReads, (count) => count + 1).pipe(
+        Effect.flatMap((earlier) =>
+          earlier === 0
+            ? Deferred.succeed(retryHeld, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseRetry)),
+              )
+            : Effect.void,
+        ),
+      ),
+    });
+    yield* Effect.gen(function* () {
+      const args = {
+        ...spawnArgs,
+        scratch: true,
+        workspace: { type: "root" },
+        client_request_id: "scratch-delayed-retry",
+      } satisfies J5SpawnAgentInput;
+      const retry = yield* call(args).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(retryHeld);
+      assert.isFalse((yield* call(args)).isFailure);
+      yield* Deferred.succeed(releaseRetry, undefined);
+      assert.isFalse((yield* Fiber.join(retry)).isFailure);
+      assert.equal(yield* Ref.get(folderClaims), 1);
+      assert.deepStrictEqual(
+        (yield* Ref.get(commands)).flatMap((command) =>
+          command.type === "thread.create" ? [command.worktreePath] : [],
+        )[0],
+        scratchFolder,
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("refuses to finish an agent a retry finds in broader modes than the caller has now", () =>
+  Effect.gen(function* () {
+    // The first attempt created the agent in full access; the caller has since been narrowed.
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      callerRuntimeMode: "approval-required",
+      existingChildRuntimeMode: "full-access",
+    });
+    yield* Effect.gen(function* () {
+      const retried = yield* call({
+        ...spawnArgs,
+        workspace: { type: "shared" },
+        client_request_id: "narrowed-since",
+      });
+      assert.isTrue(retried.isFailure);
+      assert.include(message(retried), "broader than yours is now");
+      assert.lengthOf(yield* Ref.get(commands), 0, "the brief is not started on it");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("gives the agent the caller's modes, or narrower ones the caller chose", () =>
+  Effect.gen(function* () {
+    const narrow = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      callerRuntimeMode: "auto-accept-edits",
+    });
+    yield* Effect.gen(function* () {
+      const broader = yield* narrow.call({
+        ...spawnArgs,
+        workspace: { type: "shared" },
+        runtime_mode: "full-access",
+      });
+      assert.isTrue(broader.isFailure);
+      assert.include(message(broader), "broader than your own");
+      assert.lengthOf(yield* Ref.get(narrow.commands), 0);
+
+      yield* narrow.call({ ...spawnArgs, workspace: { type: "shared" } });
+      yield* narrow.call({
+        ...spawnArgs,
+        workspace: { type: "shared" },
+        runtime_mode: "approval-required",
+        interaction_mode: "plan",
+      });
+      assert.deepStrictEqual(
+        (yield* Ref.get(narrow.commands)).flatMap((command) =>
+          command.type === "thread.create" ? [[command.runtimeMode, command.interactionMode]] : [],
+        ),
+        [
+          ["auto-accept-edits", "default"],
+          ["approval-required", "plan"],
+        ],
+      );
+    }).pipe(Effect.provide(narrow.layer));
+  }),
+);
+
+it.effect("claims the brief's attachments into the new agent's thread", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+    });
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const attachment = {
+        type: "image" as const,
+        id: ChatAttachmentId.make(createPendingAttachmentId()!),
+        name: "screen.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+      };
+      yield* fs.writeFile(
+        resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
+        new Uint8Array([1, 2, 3]),
+      );
+      const spawned = yield* call({
+        ...spawnArgs,
+        workspace: { type: "shared" },
+        attachments: [attachment],
+      });
+      assert.isFalse(spawned.isFailure);
+      const brief = (yield* Ref.get(commands)).find(
+        (command) => command.type === "message.dispatch",
+      );
+      assert.equal(brief?.type, "message.dispatch");
+      if (brief?.type !== "message.dispatch") return;
+      assert.lengthOf(brief.attachments, 1);
+      const claimed = brief.attachments[0]!;
+      assert.notEqual(claimed.id, attachment.id, "the brief carries the claimed copy");
+      assert.deepEqual(
+        yield* fs.readFile(
+          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment: claimed })!,
+        ),
+        new Uint8Array([1, 2, 3]),
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
 
 it.effect("spawns into a new worktree from base_ref, keeping home, placement, and result", () =>
   Effect.gen(function* () {

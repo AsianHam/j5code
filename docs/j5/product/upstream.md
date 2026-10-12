@@ -369,7 +369,7 @@ These already diverge on `j5/main`, but no human ruling is on record. Each lande
 
 **Why:** once agents spawn agents, a flat list stops telling the truth about what is running (Bryant, #205).
 
-**Consequences:** this differs from the Fleet page definition (AC3: nothing is hidden from the sidebar because of how it was created), though the agent stays one click away in the expander rather than hidden. Jackson set aside the original rule (SB5) on 2026-09-04, because he has the Director spawn most of the agents he talks to. The Crews definition hides only Crew members. Pinning a spawned agent from its own thread brings it back to the top level.
+**Consequences:** this differs from the Fleet page definition (AC3: nothing is hidden from the sidebar because of how it was created), though the agent stays one click away in the expander rather than hidden. Jackson set aside the original rule (SB5) on 2026-09-04, because he has the Director spawn most of the agents he talks to. The Crews definition hides only Crew members. Pinning a spawned agent from its own thread brings it back to the top level. An agent spawned into another project has no parent in that project's tree, so it stays at the top level there (#519).
 
 **Status:** reintroduced in PR #149 (Bryant), approved in review on 2026-09-21 without a ruling on this point. Depends on the human-contact spectrum discussion (#336): which agents belong in the sidebar follows from where they sit on that spectrum.
 
@@ -438,3 +438,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-12 — D4 widened: its exception covers every Codex GPT 6 model, not Astra alone (Jackson, [#569](https://github.com/Jacksondr5/j5code/pull/569)).
 - 2026-10-11 — D2: upstream's project create, project update and environment preferences tools are admitted; project delete waits on #552 (Jackson, [#519](https://github.com/Jacksondr5/j5code/issues/519)).
 - 2026-10-11 — D4 narrowed to the default: a sender may ask for a steer or a restart (Jackson, [#519](https://github.com/Jacksondr5/j5code/issues/519)).
+- 2026-10-11 — D22: an agent spawned into another project stays at the top level of the sidebar (Jackson, [#519](https://github.com/Jacksondr5/j5code/issues/519)).

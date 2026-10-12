@@ -21,12 +21,13 @@ import { isSendRefusal } from "../SendService.ts";
 /**
  * Upstream's upload tools on upstream's handlers. `t3_attachment_prepare_upload` is re-declared
  * for one sentence: upstream's description sends the upload to `t3_thread_send_attachments`,
- * which J5 does not register. An agent attaches a file with `j5_send_message`.
+ * which J5 does not register. An agent attaches a file with `j5_send_message` or to a
+ * `j5_spawn_agent` brief.
  */
 export const J5AttachmentUploadToolkit = Toolkit.make(
   Tool.make("t3_attachment_prepare_upload", {
     description:
-      "Create the app's signed upload URL. POST the exact bytes to relativeUrl on this MCP server's HTTP origin, then pass the attachment metadata and returned ID in j5_send_message's attachments. Upload is separate from sending; provider attachment support is decided by its adapter.",
+      "Create the app's signed upload URL. POST the exact bytes to relativeUrl on this MCP server's HTTP origin, then pass the attachment metadata and returned ID in the attachments of j5_send_message or j5_spawn_agent. Upload is separate from sending; provider attachment support is decided by its adapter.",
     parameters: AttachmentToolkit.tools.t3_attachment_prepare_upload.parametersSchema,
     success: AttachmentToolkit.tools.t3_attachment_prepare_upload.successSchema,
     failure: OrchestratorMcpFailure,
