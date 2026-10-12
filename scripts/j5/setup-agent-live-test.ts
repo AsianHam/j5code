@@ -8,6 +8,11 @@
  *   node scripts/j5/setup-agent-live-test.ts stop       stop the server
  *   node scripts/j5/setup-agent-live-test.ts rebuild    stop, delete the test home and repository, build and start again
  *
+ * A start and `rebuild` take a mode flag. With none, the home holds a test
+ * project and pre-made threads. `--fresh` gives an empty home, so the first-run
+ * wizard shows. A worktree has one live-test home at a time and its mode is
+ * fixed when it is built: `rebuild` with another flag switches.
+ *
  * The test repository, the J5 home that holds only that project, the server's
  * log and the record of its process group live in this worktree's gitignored
  * `.j5code/live-test`. (The dev server and the provider CLIs still write their
@@ -41,14 +46,27 @@ const RECOVERY_LOG_LINE = "V2 orchestration recovery completed";
 /** A reason this script will not act, printed as-is. */
 export class LiveTestRefusal extends Error {}
 
-/** What the generator records about the build. Paths are never read from it: see LiveTestPaths. */
-interface Manifest {
+/** How the home is built: with the test project and pre-made threads, or empty. */
+const MODE_FLAGS = { default: "", fresh: "--fresh" } as const;
+export type LiveTestMode = keyof typeof MODE_FLAGS;
+
+/** What the generator records about a default build. Paths are never read from it: see LiveTestPaths. */
+interface DefaultManifest {
+  /** Absent in the generator's file, which only ever describes a default build. */
+  readonly mode?: "default";
   readonly project: { readonly title: string };
   readonly defaultModel: string;
-  readonly personas: ReadonlyArray<{ readonly id: string; readonly model: string }>;
+  readonly personas: ReadonlyArray<{
+    readonly id: string;
+    readonly model: string;
+    /** The second route. Absent in a home built before the generator recorded it. */
+    readonly fallbackModel?: string;
+  }>;
   readonly playbooks: ReadonlyArray<string>;
   readonly holdScript: string;
 }
+/** Marks a finished build and records its mode. */
+type Manifest = DefaultManifest | { readonly mode: "fresh" };
 
 /** Every path the script acts on, derived from the worktree and checked to stay inside it. */
 export interface LiveTestPaths {
@@ -386,23 +404,40 @@ export function formatInstructions(input: {
 The pairing URL works once. \`status\` prints a fresh one, and so does:
   ${pairCommand}
 
-Project to use: "${manifest.project.title}", a small TODO app (\`pnpm test\`)
+${
+  manifest.mode === "fresh"
+    ? `Mode: fresh. The home is empty and no default model is set. The first-run
+wizard shows only in a browser profile that has not completed it: pair in an
+incognito tab.
+
+Project to add when the wizard or a test asks for one: a small TODO app (\`pnpm test\`)
+  ${paths.testRepo}
+  Add only this directory. Do not add a real repository: that is how a test
+  reaches one.`
+    : `Project to use: "${manifest.project.title}", a small TODO app (\`pnpm test\`)
   ${paths.testRepo}
   It is the only project in this home. Do not add another project: that is how
   a test reaches a real repository.
 
 New threads default to ${manifest.defaultModel}.
-Personas: ${manifest.personas.map((persona) => `${persona.id} (${persona.model})`).join(", ")}
+Personas: ${manifest.personas
+        .map(
+          (persona) =>
+            `${persona.id} (${persona.model}${persona.fallbackModel === undefined ? "" : `, or ${persona.fallbackModel} as its second route`})`,
+        )
+        .join("; ")}
 Playbooks: ${manifest.playbooks.join(", ")}
 
 Hold a turn open by asking the agent to run: ${manifest.holdScript}
-Release it with: touch ${NodePath.join(paths.testRepo, HOLD_RELEASE_FILE)}
+Release it with: touch ${NodePath.join(paths.testRepo, HOLD_RELEASE_FILE)}`
+}
 
 Commands:
   ${selfCommand(paths, "status")}    say whether it is running
   ${selfCommand(paths, "restart")}   stop, then start on the same home
   ${selfCommand(paths, "stop")}      stop the server
   ${selfCommand(paths, "rebuild")}   stop, delete ${paths.root}, build and start again
+                                      (add --fresh for an empty home, or no flag for the test project)
 
 How to test is in .agents/skills/j5-live-test/SKILL.md.
 `;
@@ -474,11 +509,32 @@ function logTail(paths: LiveTestPaths): string {
   return NodeFS.readFileSync(paths.log, "utf8").split("\n").slice(-40).join("\n");
 }
 
-function buildHome(paths: LiveTestPaths): void {
+function buildHome(paths: LiveTestPaths, mode: LiveTestMode): void {
+  const rebuild = selfCommand(paths, `rebuild ${MODE_FLAGS[mode]}`);
   if (NodeFS.existsSync(paths.root)) {
     throw new LiveTestRefusal(
-      `${paths.root} exists but holds no finished build. Start over with: ${selfCommand(paths, "rebuild")}`,
+      `${paths.root} exists but holds no finished build. Start over with: ${rebuild}`,
     );
+  }
+  if (mode === "fresh") {
+    NodeFS.mkdirSync(paths.home, { recursive: true });
+    // The same test repository as the default mode, but not registered: it is
+    // there to be added by hand when the wizard or a test asks for a project.
+    const repo = NodeChildProcess.spawnSync(
+      process.execPath,
+      [
+        NodePath.join(paths.worktree, "apps/server/src/j5/test-support/liveTestRepo.ts"),
+        paths.testRepo,
+        NodePath.join(paths.root, "test-repo-origin.git"),
+      ],
+      { cwd: paths.worktree, stdio: ["ignore", "ignore", "inherit"] },
+    );
+    if (repo.status !== 0) {
+      throw new LiveTestRefusal(`Building the test repository failed. Retry with: ${rebuild}`);
+    }
+    const manifest: Manifest = { mode: "fresh" };
+    NodeFS.writeFileSync(paths.manifest, `${JSON.stringify(manifest)}\n`);
+    return;
   }
   console.log("Building the test repository and home (about 30 seconds, no model calls)...");
   const build = NodeChildProcess.spawnSync(
@@ -495,9 +551,7 @@ function buildHome(paths: LiveTestPaths): void {
     },
   );
   if (build.status !== 0) {
-    throw new LiveTestRefusal(
-      `Building the test home failed. Retry with: ${selfCommand(paths, "rebuild")}`,
-    );
+    throw new LiveTestRefusal(`Building the test home failed. Retry with: ${rebuild}`);
   }
 }
 
@@ -574,12 +628,42 @@ async function waitUntilReady(paths: LiveTestPaths): Promise<void> {
   }
 }
 
-async function start(paths: LiveTestPaths): Promise<void> {
+/**
+ * Why a start in `requested` mode must not use the home that is already
+ * built, or undefined when it may. A home's mode is fixed when it is built,
+ * so that nobody tests against data they did not ask for.
+ */
+export function modeRefusal(input: {
+  readonly requested: LiveTestMode;
+  readonly built: LiveTestMode;
+  readonly startCommand: (mode: LiveTestMode) => string;
+  readonly rebuildCommand: (mode: LiveTestMode) => string;
+}): string | undefined {
+  if (input.requested === input.built) return undefined;
+  return `The live-test home here was built in ${input.built} mode, not ${input.requested} mode.\nUse it as built: ${input.startCommand(input.built)}\nOr replace it: ${input.rebuildCommand(input.requested)}`;
+}
+
+function builtMode(paths: LiveTestPaths): LiveTestMode | undefined {
+  return NodeFS.existsSync(paths.manifest) ? (readManifest(paths).mode ?? "default") : undefined;
+}
+
+async function start(paths: LiveTestPaths, mode: LiveTestMode): Promise<void> {
+  const built = builtMode(paths);
+  const refusal =
+    built === undefined
+      ? undefined
+      : modeRefusal({
+          requested: mode,
+          built,
+          startCommand: (other) => selfCommand(paths, MODE_FLAGS[other]),
+          rebuildCommand: (other) => selfCommand(paths, `rebuild ${MODE_FLAGS[other]}`),
+        });
+  if (refusal !== undefined) throw new LiveTestRefusal(refusal);
   const state = currentServerState(paths);
   if (state.kind === "unverified") throw new LiveTestRefusal(state.reason);
   // Already started, perhaps by a call that is still waiting: wait with it.
   if (state.kind !== "stopped") return waitUntilReady(paths);
-  if (!NodeFS.existsSync(paths.manifest)) buildHome(paths);
+  if (built === undefined) buildHome(paths, mode);
 
   const log = NodeFS.openSync(paths.log, "w");
   // Detached makes the child the leader of a new process group, so its pid is
@@ -625,27 +709,45 @@ function status(paths: LiveTestPaths): void {
   if (state.kind === "unverified") throw new LiveTestRefusal(state.reason);
   if (state.kind === "running") return printRunning(paths, state.facts);
   if (state.kind === "notServing") return console.log(notServingMessage(paths, state.reason));
+  const built = builtMode(paths);
   console.log(
     `J5 Code live-test server: STOPPED\n\n${
-      NodeFS.existsSync(paths.manifest)
-        ? `The test home is built at ${paths.root}.`
-        : "No test home is built yet."
-    }\nStart it with: ${selfCommand(paths, "")}`,
+      built === undefined
+        ? "No test home is built yet."
+        : `The test home is built at ${paths.root}, in ${built} mode.`
+    }\nStart it with: ${selfCommand(paths, MODE_FLAGS[built ?? "default"])}`,
   );
 }
 
-export function parseCommand(args: ReadonlyArray<string>): LiveTestCommand {
-  const [command = "start", ...rest] = args;
-  if (rest.length > 0 || !COMMANDS.some((known) => known === command)) {
-    throw new LiveTestRefusal(
-      `Usage: node scripts/j5/setup-agent-live-test.ts [${COMMANDS.join(" | ")}]`,
-    );
+const USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts [--fresh]
+       node scripts/j5/setup-agent-live-test.ts rebuild [--fresh]
+       node scripts/j5/setup-agent-live-test.ts status | restart | stop`;
+
+/**
+ * The command and, for a start or `rebuild`, the mode its flags ask for.
+ * `status`, `restart` and `stop` act on whatever is built and take no flags.
+ */
+export function parseCommand(args: ReadonlyArray<string>): {
+  readonly command: LiveTestCommand;
+  readonly mode: LiveTestMode;
+} {
+  const flags = args.filter((argument) => argument.startsWith("--"));
+  const words = args.filter((argument) => !argument.startsWith("--"));
+  const command = words[0] ?? "start";
+  const takesMode = command === "start" || command === "rebuild";
+  if (
+    words.length > 1 ||
+    !COMMANDS.some((known) => known === command) ||
+    flags.some((flag) => flag !== MODE_FLAGS.fresh) ||
+    flags.length > (takesMode ? 1 : 0)
+  ) {
+    throw new LiveTestRefusal(USAGE);
   }
-  return command as LiveTestCommand;
+  return { command: command as LiveTestCommand, mode: flags.length === 1 ? "fresh" : "default" };
 }
 
 async function main(): Promise<void> {
-  const command = parseCommand(process.argv.slice(2));
+  const { command, mode } = parseCommand(process.argv.slice(2));
   // oxlint-disable-next-line t3code/no-global-process-runtime -- a standalone CLI with no Effect runtime.
   if (NodeOS.platform() !== "linux") {
     throw new LiveTestRefusal("This script reads /proc and runs only on Linux.");
@@ -666,7 +768,8 @@ async function main(): Promise<void> {
   if (command === "restart" || command === "rebuild") await stop(paths);
   // resolveLiveTestPaths has confirmed this directory is inside the worktree's own .j5code.
   if (command === "rebuild") NodeFS.rmSync(paths.root, { recursive: true, force: true });
-  await start(paths);
+  // A restart keeps the mode that is built; only a start or rebuild chooses one.
+  await start(paths, command === "restart" ? (builtMode(paths) ?? "default") : mode);
 }
 
 if (import.meta.main) {

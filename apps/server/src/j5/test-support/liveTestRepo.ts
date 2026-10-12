@@ -231,3 +231,14 @@ export function createLiveTestRepo(input: {
   git(input.repoDir, "remote", "add", "origin", input.originDir);
   git(input.repoDir, "push", "--set-upstream", "origin", "main");
 }
+
+// Run directly, it makes just the repository, for a home that has no project yet:
+//   node liveTestRepo.ts <repo directory> <origin directory>
+if (import.meta.main) {
+  const [repoDir, originDir] = process.argv.slice(2);
+  if (repoDir === undefined || originDir === undefined || process.argv.length !== 4) {
+    process.stderr.write("Usage: liveTestRepo.ts <repo directory> <origin directory>\n");
+    process.exit(64);
+  }
+  createLiveTestRepo({ repoDir, originDir });
+}

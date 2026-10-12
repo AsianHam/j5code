@@ -117,7 +117,12 @@ export interface LiveTestHomeManifest {
   readonly testRepoOrigin: string;
   readonly project: { readonly id: string; readonly title: string };
   readonly defaultModel: string;
-  readonly personas: ReadonlyArray<{ readonly id: string; readonly model: string }>;
+  /** `fallbackModel` is the second route, used when the first is unavailable or the launcher prefers its own provider. */
+  readonly personas: ReadonlyArray<{
+    readonly id: string;
+    readonly model: string;
+    readonly fallbackModel: string;
+  }>;
   readonly playbooks: ReadonlyArray<string>;
   readonly holdScript: string;
   readonly holdReleaseFile: string;
@@ -374,7 +379,11 @@ export const buildLiveTestHome = Effect.fn("buildLiveTestHome")(function* (input
     testRepoOrigin,
     project: { id: projectId, title: LIVE_TEST_PROJECT_TITLE },
     defaultModel: LIVE_TEST_DEFAULT_MODEL.model,
-    personas: LIVE_TEST_PERSONAS.map(({ id, routes }) => ({ id, model: routes[0].model })),
+    personas: LIVE_TEST_PERSONAS.map(({ id, routes }) => ({
+      id,
+      model: routes[0].model,
+      fallbackModel: routes[1].model,
+    })),
     playbooks: LIVE_TEST_PLAYBOOKS,
     holdScript: LIVE_TEST_HOLD_SCRIPT,
     holdReleaseFile: NodePath.join(testRepo, LIVE_TEST_HOLD_RELEASE_FILE),

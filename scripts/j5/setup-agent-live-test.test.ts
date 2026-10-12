@@ -9,6 +9,8 @@ import {
   classifyServer,
   LiveTestRefusal,
   liveTestEnvironment,
+  type LiveTestMode,
+  modeRefusal,
   parseCommand,
   readServerLog,
   resolveLiveTestPaths,
@@ -301,12 +303,53 @@ describe("classifyServer", () => {
 });
 
 describe("parseCommand", () => {
-  it("defaults to start and refuses anything it does not know", () => {
-    assert.equal(parseCommand([]), "start");
-    assert.equal(parseCommand(["restart"]), "restart");
-    assert.equal(parseCommand(["rebuild"]), "rebuild");
-    assert.throws(() => parseCommand(["--fresh"]), LiveTestRefusal);
-    assert.throws(() => parseCommand(["stop", "now"]), LiveTestRefusal);
+  it("defaults to a start in default mode", () => {
+    assert.deepEqual(parseCommand([]), { command: "start", mode: "default" });
+    assert.deepEqual(parseCommand(["restart"]), { command: "restart", mode: "default" });
+  });
+
+  it("takes a mode flag on a start and on rebuild, in either position", () => {
+    assert.deepEqual(parseCommand(["--fresh"]), { command: "start", mode: "fresh" });
+    assert.deepEqual(parseCommand(["rebuild", "--fresh"]), { command: "rebuild", mode: "fresh" });
+    assert.deepEqual(parseCommand(["--fresh", "rebuild"]), { command: "rebuild", mode: "fresh" });
+  });
+
+  it("refuses unknown words and flags, and a mode flag where none applies", () => {
+    for (const args of [
+      ["bogus"],
+      ["stop", "now"],
+      ["--peer"],
+      ["--fresh", "--fresh"],
+      // These act on whatever is built; a flag would suggest they could change it.
+      ["status", "--fresh"],
+      ["restart", "--fresh"],
+      ["stop", "--fresh"],
+    ]) {
+      assert.throws(() => parseCommand(args), LiveTestRefusal);
+    }
+  });
+});
+
+describe("modeRefusal", () => {
+  const commands = {
+    startCommand: (mode: LiveTestMode) => `start:${mode}`,
+    rebuildCommand: (mode: LiveTestMode) => `rebuild:${mode}`,
+  };
+
+  it("lets a start use a home built in the mode it asks for", () => {
+    assert.isUndefined(modeRefusal({ requested: "fresh", built: "fresh", ...commands }));
+    assert.isUndefined(modeRefusal({ requested: "default", built: "default", ...commands }));
+  });
+
+  it("refuses the other mode and names both ways forward", () => {
+    // A bare start asks for the test project; an empty home must not answer it.
+    const bare = modeRefusal({ requested: "default", built: "fresh", ...commands }) ?? "";
+    assert.include(bare, "built in fresh mode, not default mode");
+    assert.include(bare, "start:fresh");
+    assert.include(bare, "rebuild:default");
+    const fresh = modeRefusal({ requested: "fresh", built: "default", ...commands }) ?? "";
+    assert.include(fresh, "start:default");
+    assert.include(fresh, "rebuild:fresh");
   });
 });
 

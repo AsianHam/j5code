@@ -38,6 +38,11 @@ it.live(
       const manifest = yield* build;
 
       assert.equal(manifest.home, NodePath.join(root, "home"));
+      // Each persona's second route is recorded too: a launch can resolve to it.
+      assert.deepEqual(manifest.personas, [
+        { id: "haiku-helper", model: "claude-haiku-4-5", fallbackModel: "gpt-6-luna" },
+        { id: "luna-helper", model: "gpt-6-luna", fallbackModel: "claude-haiku-4-5" },
+      ]);
       assert.deepEqual(
         JSON.parse(NodeFS.readFileSync(NodePath.join(root, "manifest.json"), "utf8")),
         manifest,
