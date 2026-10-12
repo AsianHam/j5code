@@ -8,6 +8,9 @@ import {
   PAIRING_SCOPES,
   classifyServer,
   LiveTestRefusal,
+  addRemoteUrl,
+  listsPeer,
+  peerSteps,
   liveTestEnvironment,
   type LiveTestMode,
   modeRefusal,
@@ -117,6 +120,8 @@ describe("resolveLiveTestPaths after a build", () => {
     for (const [name, target] of [
       ["home", (layout: ReturnType<typeof makeLayout>) => layout.liveHome],
       ["test-repo", (layout: ReturnType<typeof makeLayout>) => layout.mainCheckout],
+      // The second server's home in the peer modes is held to the same rule.
+      ["remote/home", (layout: ReturnType<typeof makeLayout>) => layout.liveHome],
       // The state directory inside a real home, linked to the live database's directory.
       [
         "home/userdata",
@@ -128,6 +133,23 @@ describe("resolveLiveTestPaths after a build", () => {
       NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, name)), { recursive: true });
       NodeFS.symlinkSync(target(layout), NodePath.join(root, name));
       assert.include(await refusal(resolve(layout)), `outside ${root}`);
+      NodeFS.rmSync(layout.base, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a Remote home that is Local's home under another name", async () => {
+    for (const link of ["remote/home", "remote/home/userdata", "remote/test-repo"]) {
+      const layout = makeLayout();
+      const root = NodePath.join(layout.worktree, ".j5code", "live-test");
+      NodeFS.mkdirSync(NodePath.join(root, "home", "userdata"), { recursive: true });
+      NodeFS.mkdirSync(NodePath.join(root, "test-repo"), { recursive: true });
+      NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, link)), { recursive: true });
+      // Inside the root, so the containment check alone would let it through.
+      NodeFS.symlinkSync(
+        NodePath.join(root, link.replace("remote/", "")),
+        NodePath.join(root, link),
+      );
+      assert.include(await refusal(resolve(layout)), "must have separate homes and repositories");
       NodeFS.rmSync(layout.base, { recursive: true, force: true });
     }
   });
@@ -312,14 +334,24 @@ describe("parseCommand", () => {
     assert.deepEqual(parseCommand(["--fresh"]), { command: "start", mode: "fresh" });
     assert.deepEqual(parseCommand(["rebuild", "--fresh"]), { command: "rebuild", mode: "fresh" });
     assert.deepEqual(parseCommand(["--fresh", "rebuild"]), { command: "rebuild", mode: "fresh" });
+    assert.deepEqual(parseCommand(["--peer"]), { command: "start", mode: "peer" });
+    assert.deepEqual(parseCommand(["rebuild", "--peer", "--poll"]), {
+      command: "rebuild",
+      mode: "peer-poll",
+    });
+    assert.deepEqual(parseCommand(["--poll", "--peer"]), { command: "start", mode: "peer-poll" });
   });
 
   it("refuses unknown words and flags, and a mode flag where none applies", () => {
     for (const args of [
       ["bogus"],
       ["stop", "now"],
-      ["--peer"],
+      ["--base"],
       ["--fresh", "--fresh"],
+      // --poll says how two servers peer; it means nothing alone or with an empty home.
+      ["--poll"],
+      ["--fresh", "--peer"],
+      ["status", "--peer"],
       // These act on whatever is built; a flag would suggest they could change it.
       ["status", "--fresh"],
       ["restart", "--fresh"],
@@ -350,6 +382,91 @@ describe("modeRefusal", () => {
     const fresh = modeRefusal({ requested: "fresh", built: "default", ...commands }) ?? "";
     assert.include(fresh, "start:default");
     assert.include(fresh, "rebuild:fresh");
+  });
+});
+
+describe("peerSteps", () => {
+  const local = {
+    home: "/w/home",
+    origin: "http://127.0.0.1:1",
+    environmentId: "L",
+    name: "Local",
+  };
+  const remote = {
+    home: "/w/remote/home",
+    origin: "http://127.0.0.1:2",
+    environmentId: "R",
+    name: "Remote",
+  };
+
+  it("has the issuer mint for the holder's environment, and the holder record the issuer's origin", () => {
+    const steps = peerSteps({ issuer: remote, holder: local, poll: false });
+    assert.deepEqual(steps.credential, [
+      "credential",
+      "--base-dir",
+      "/w/remote/home",
+      "--origin",
+      "http://127.0.0.1:2",
+      "--for",
+      "L",
+      "--label",
+      "Local",
+      "--credential-only",
+    ]);
+    assert.deepEqual(steps.add("SECRET"), [
+      "add",
+      "--base-dir",
+      "/w/home",
+      "--origin",
+      "http://127.0.0.1:1",
+      "--peer-origin",
+      "http://127.0.0.1:2",
+      "--credential",
+      "SECRET",
+    ]);
+  });
+
+  it("in poll mode has the issuer store messages and the holder poll for them", () => {
+    const steps = peerSteps({ issuer: local, holder: remote, poll: true });
+    assert.equal(steps.credential.at(-1), "--store");
+    assert.equal(steps.add("SECRET").at(-1), "--poll");
+  });
+});
+
+describe("listsPeer", () => {
+  const list = (peers: ReadonlyArray<object>) => JSON.stringify({ ok: true, peers });
+
+  it("is true only when the server's own list names the other with no error", () => {
+    assert.isTrue(listsPeer(list([{ label: "Remote", lastError: null }]), "Remote"));
+    // Two ports listening is not peering: an empty list is the usual unpeered state.
+    assert.isFalse(listsPeer(list([]), "Remote"));
+    assert.isFalse(listsPeer(list([{ label: "Local", lastError: null }]), "Remote"));
+    assert.isFalse(listsPeer(list([{ label: "Remote", lastError: "hello failed" }]), "Remote"));
+  });
+
+  it("is false when the list could not be read", () => {
+    assert.isFalse(listsPeer(undefined, "Remote"));
+    assert.isFalse(listsPeer("", "Remote"));
+    assert.isFalse(listsPeer("not json", "Remote"));
+  });
+});
+
+describe("addRemoteUrl", () => {
+  it("points Local's web app at Remote's server with Remote's token", () => {
+    assert.equal(
+      addRemoteUrl({
+        localWebPort: 7594,
+        remoteServerPort: 15961,
+        remotePairingUrl: "http://localhost:7921/pair#token=ABC123",
+      }),
+      "http://localhost:7594/pair?host=http%3A%2F%2Flocalhost%3A15961&label=Remote#token=ABC123",
+    );
+  });
+
+  it("is absent when no token could be minted for Remote", () => {
+    assert.isUndefined(
+      addRemoteUrl({ localWebPort: 7594, remoteServerPort: 15961, remotePairingUrl: undefined }),
+    );
   });
 });
 
