@@ -211,6 +211,12 @@ export const parseDevDeliverySeedArgs = (args: ReadonlyArray<string>) => {
 
 const isInside = (path: Path.Path, candidate: string, parent: string) => {
   const relative = path.relative(parent, candidate);
+  // SPIKE (#546): thread worktrees live at <home>/worktrees/<project>/<name>,
+  // and a tester's disposable home is that checkout's own `.j5code`. Those hold
+  // no live state, so they are not "below the shared home" for this guard.
+  if (relative === "worktrees" || relative.startsWith(`worktrees${path.sep}`)) {
+    return relative.split(path.sep).length < 4;
+  }
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 };
 
