@@ -50,8 +50,8 @@ it.live(
       assert.equal(manifest.home, NodePath.join(root, "home"));
       // Each persona's second route is recorded too: a launch can resolve to it.
       assert.deepEqual(manifest.personas, [
-        { id: "haiku-helper", model: "claude-haiku-4-5", fallbackModel: "gpt-6-luna" },
-        { id: "luna-helper", model: "gpt-6-luna", fallbackModel: "claude-haiku-4-5" },
+        { id: "haiku-helper", model: "claude-haiku-5-5", fallbackModel: "gpt-6-luna" },
+        { id: "luna-helper", model: "gpt-6-luna", fallbackModel: "claude-haiku-5-5" },
       ]);
       assert.deepEqual(
         JSON.parse(NodeFS.readFileSync(NodePath.join(root, "manifest.json"), "utf8")),
@@ -98,7 +98,11 @@ it.live(
 
       const stateDir = NodePath.join(manifest.home, "userdata");
       assert.deepEqual(JSON.parse(NodeFS.readFileSync(`${stateDir}/settings.json`, "utf8")), {
-        defaultModelSelection: { instanceId: "claudeAgent", model: "claude-haiku-4-5" },
+        defaultModelSelection: {
+          instanceId: "claudeAgent",
+          model: "claude-haiku-5-5",
+          options: [{ id: "effort", value: "low" }],
+        },
       });
       // Each persona file must decode as the library decodes it, or Settings shows none at all.
       assert.deepEqual(
@@ -111,7 +115,7 @@ it.live(
             return [file, persona.id, persona.modelRoute[0].model];
           }),
         [
-          ["haiku-helper.yaml", "haiku-helper", "claude-haiku-4-5"],
+          ["haiku-helper.yaml", "haiku-helper", "claude-haiku-5-5"],
           ["luna-helper.yaml", "luna-helper", "gpt-6-luna"],
         ],
       );

@@ -88,12 +88,17 @@ const LIVE_TEST_REPLAYS: ReadonlyArray<readonly [fixture: string, driver: Replay
 ];
 
 const LIVE_TEST_PROJECT_TITLE = "Live test repo";
-/** New threads in the home start on this model, the cheapest Claude. */
+/**
+ * New threads in the home start on this model. Haiku 5.5 and not 4.5: 4.5
+ * exposes no reasoning options, so `j5_spawn_agent` cannot start it, and it has
+ * no Auto mode.
+ */
 const LIVE_TEST_DEFAULT_MODEL = {
   instanceId: "claudeAgent",
-  model: "claude-haiku-4-5",
+  model: "claude-haiku-5-5",
+  options: [{ id: "effort", value: "low" }],
 } as const;
-const HAIKU_ROUTE = { driver: "claudeAgent", model: "claude-haiku-4-5" } as const;
+const HAIKU_ROUTE = { driver: "claudeAgent", model: "claude-haiku-5-5" } as const;
 const LUNA_ROUTE = { driver: "codex", model: "gpt-6-luna" } as const;
 /** A persona names exactly two routes; the second is used only when the first is unavailable. */
 const LIVE_TEST_PERSONAS = [
