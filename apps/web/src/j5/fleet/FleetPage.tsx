@@ -17,6 +17,7 @@ import { Button } from "../../components/ui/button";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { SidebarInset } from "../../components/ui/sidebar";
 import { toastManager } from "../../components/ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
@@ -701,10 +702,21 @@ function FleetRowItem(
       >
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate">{title}</span>
-          {agent.origin === "human" ? null : (
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {originLabel(agent.origin)}
-            </span>
+          {agent.outsideSpawner !== undefined ? (
+            // The label is whatever the client registered, so it yields to the agent's title; the
+            // name comes first so a cut keeps it, and the full text is on hover.
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="max-w-[50%] shrink-0 truncate text-xs text-muted-foreground" />
+                }
+              >
+                {originLabel(agent)}
+              </TooltipTrigger>
+              <TooltipPopup>{originLabel(agent)}</TooltipPopup>
+            </Tooltip>
+          ) : agent.origin === "human" ? null : (
+            <span className="shrink-0 text-xs text-muted-foreground">{originLabel(agent)}</span>
           )}
           {props.badge ? (
             <Badge variant="outline" size="sm" className="shrink-0">

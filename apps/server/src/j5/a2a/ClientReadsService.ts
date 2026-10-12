@@ -8,6 +8,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { type A2AHumanInboxError, A2AHumanInbox } from "./HumanInboxService.ts";
 import { ParticipantId } from "./contracts.ts";
+import { outsideAgentNameRows } from "./outsideAgentNames.ts";
 
 export const DisplayIdentity = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("known"), displayName: TrimmedNonEmptyString }),
@@ -202,6 +203,8 @@ export const layer: Layer.Layer<ClientReadsService, never, A2AHumanInbox | SqlCl
                 WHERE participant_id IN ${sql.in(participantIdBatch)}
               `),
             );
+            // An outside agent has no thread either; it is shown by the label it signed in with.
+            rows.push(...(yield* outsideAgentNameRows(sql, participantIdBatch)));
             // A sender homed on a peer has no thread here; the label its server
             // sent with its latest delivery stands in, and only for ids nothing
             // local named, so local-only reads never touch received history.

@@ -29,8 +29,10 @@ import {
   formatClosedHumanEnvelope,
   formatClosedPeerEnvelope,
   formatMachineEnvelope,
+  formatOutsideAgentEnvelope,
   formatPeerEnvelope,
 } from "./EnvelopeFormatter.ts";
+import { outsideAgentNameRows } from "./outsideAgentNames.ts";
 import { PeerDeliveryRefusalCode } from "./PeerInboundService.ts";
 import { PeerRegistryService } from "./PeerRegistryService.ts";
 import { peerProtocolHeaders, responseProtocolMismatch } from "./peerProtocol.ts";
@@ -41,6 +43,7 @@ import {
   ExchangeId,
   isHumanParticipantId,
   isMachineParticipantId,
+  isOutsideAgentParticipantId,
   Participant,
   ParticipantId,
   type LedgerMessageId,
@@ -284,7 +287,11 @@ export const requestedSteeringRun = (
 };
 
 export const formatAgentDeliveryEnvelope = (
-  input: AgentDeliveryInput & { readonly originProjectTitle?: string | undefined },
+  input: AgentDeliveryInput & {
+    readonly originProjectTitle?: string | undefined;
+    /** The label an outside agent signed in with. */
+    readonly outsideAgentName?: string | undefined;
+  },
 ): string => {
   switch (input.envelopeChannel) {
     case "peer":
@@ -312,16 +319,22 @@ export const formatAgentDeliveryEnvelope = (
                 originProjectTitle: input.originProjectTitle,
                 message: input.message,
               })
-            : formatPeerEnvelope({
-                senderId: input.senderId,
-                originProjectId: input.originProjectId,
-                originProjectTitle: input.originProjectTitle,
-                exchangeId: input.exchangeId,
-                message: input.message,
-                ...(input.senderServerName === undefined
-                  ? {}
-                  : { senderServerName: input.senderServerName }),
-              });
+            : isOutsideAgentParticipantId(input.senderId)
+              ? formatOutsideAgentEnvelope({
+                  senderId: input.senderId,
+                  senderName: input.outsideAgentName,
+                  message: input.message,
+                })
+              : formatPeerEnvelope({
+                  senderId: input.senderId,
+                  originProjectId: input.originProjectId,
+                  originProjectTitle: input.originProjectTitle,
+                  exchangeId: input.exchangeId,
+                  message: input.message,
+                  ...(input.senderServerName === undefined
+                    ? {}
+                    : { senderServerName: input.senderServerName }),
+                });
     case "silence_notice":
     case "lifecycle_notice":
       return input.message;
@@ -492,15 +505,26 @@ export const live: Layer.Layer<
                       new A2ADeliveryTransportError({ operation: "read origin project", cause }),
                   ),
                 );
+          const outsideAgent = !isOutsideAgentParticipantId(input.senderId)
+            ? []
+            : yield* outsideAgentNameRows(sql, [input.senderId]).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new A2ADeliveryTransportError({ operation: "read outside agent", cause }),
+                ),
+              );
           const envelope = formatAgentDeliveryEnvelope({
             ...input,
             originProjectTitle: originProject[0]?.title,
+            outsideAgentName: outsideAgent[0]?.display_name,
           });
-          // Upstream links an agent-authored message to its sending thread.
+          // Upstream links an agent-authored message to its sending thread. A machine and an
+          // outside agent have none.
           const senderThreadId =
             input.envelopeChannel === "peer" &&
             !isHumanParticipantId(input.senderId) &&
-            !isMachineParticipantId(input.senderId)
+            !isMachineParticipantId(input.senderId) &&
+            !isOutsideAgentParticipantId(input.senderId)
               ? yield* agentThreadId(input.originProjectId, input.senderId)
               : undefined;
           const sendInput = {

@@ -185,6 +185,48 @@ describe("resolvedSpawnBriefContext", () => {
   });
 });
 
+describe("a brief from an outside agent", () => {
+  // The identity block `spawnFirstTurnText` writes when the spawner is an outside agent.
+  const outsideRaw = [
+    "<j5_spawn_context>",
+    "Platform-provided identity facts:",
+    "participant_id: agent:reviewer",
+    "project_id: project-prod",
+    "project_title: Production Monitoring",
+    "spawned_by: outside:session-1",
+    "spawned_by_outside_agent: Claude Desktop",
+    "spawner_reply: You were started by an outside agent: one that runs outside this app. You cannot reply to it with j5_send_message.",
+    "</j5_spawn_context>",
+    "",
+    "<spawner_brief>",
+    brief,
+    "</spawner_brief>",
+  ].join("\n");
+
+  it("names the outside agent as the spawner, with no spawner thread to open", () => {
+    const outsideMessage = message({ text: outsideRaw });
+    expect(presentSpawnBrief(outsideMessage)).toEqual({
+      brief,
+      participantId: "agent:reviewer",
+      spawnedBy: "outside:session-1",
+      spawnerThreadId: null,
+    });
+    expect(participantIdsForSpawnBrief(outsideMessage)).toEqual(["outside:session-1"]);
+  });
+
+  it("marks the spawner as an outside agent, named or not", () => {
+    expect(
+      presentSpawnerIdentity({
+        spawnedBy: "outside:session-1",
+        participantLabels: new Map([["outside:session-1", "Claude Desktop"]]),
+      }),
+    ).toEqual({ label: "Claude Desktop (outside agent)", tooltipParticipantId: null });
+    expect(
+      presentSpawnerIdentity({ spawnedBy: "outside:session-1", participantLabels: new Map() }),
+    ).toEqual({ label: "an outside agent", tooltipParticipantId: "outside:session-1" });
+  });
+});
+
 describe("presentSpawnerIdentity", () => {
   it("names a known spawner without a tooltip", () => {
     expect(

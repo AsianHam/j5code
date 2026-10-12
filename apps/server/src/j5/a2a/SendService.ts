@@ -19,6 +19,7 @@ import {
   ExchangeId,
   isHumanParticipantId,
   isMachineParticipantId,
+  isOutsideAgentParticipantId,
   LedgerMessageId,
   MessageSentPayload,
   LIFECYCLE_PARTICIPANT_ID,
@@ -26,6 +27,7 @@ import {
   type ParticipantDirectoryRow,
   ParticipantId,
   type SendAsMachineInput,
+  type SendAsOutsideAgentInput,
   type SendMessageInput,
   type SendMessageResult,
   participantId,
@@ -38,6 +40,7 @@ import {
 } from "./ThreadRegistration.ts";
 import { isRegisteredHumanPerson, listRegisteredHumanPersonIds } from "./HumanPersonRegistry.ts";
 import { A2ALedgerTransactionWriter, A2ALedger, type A2ALedgerError } from "./LedgerService.ts";
+import { recordOutsideAgentName } from "./outsideAgentNames.ts";
 import { PeerDirectory, type PeerDirectoryError } from "./PeerDirectory.ts";
 import { findPeerCounterparty, findPeerRoute } from "./peerCounterparty.ts";
 
@@ -287,6 +290,33 @@ export class A2AMachineSenderNotRegisteredError extends Schema.TaggedError<A2AMa
   }
 }
 
+export class A2AOutsideAgentCannotReceiveError extends Schema.TaggedError<A2AOutsideAgentCannotReceiveError>()(
+  "A2AOutsideAgentCannotReceiveError",
+  { participantId: Schema.String },
+) {
+  override get message(): string {
+    return `Participant ${this.participantId} is an outside agent with no thread, and nothing can be delivered to it, so j5_send_message cannot reach it.`;
+  }
+}
+
+export class A2AOutsideAgentCannotAskError extends Schema.TaggedError<A2AOutsideAgentCannotAskError>()(
+  "A2AOutsideAgentCannotAskError",
+  { participantId: Schema.String },
+) {
+  override get message(): string {
+    return `A send to human participant ${this.participantId} is refused. A person receives only asks, and an outside agent cannot ask because no reply can reach it. Tell the person yourself, or message an agent on this server with j5_send_message.`;
+  }
+}
+
+export class A2AOutsideAgentLocalOnlyError extends Schema.TaggedError<A2AOutsideAgentLocalOnlyError>()(
+  "A2AOutsideAgentLocalOnlyError",
+  { participantId: Schema.String },
+) {
+  override get message(): string {
+    return `Participant ${this.participantId} is not an agent on this server. Outside agents reach agents on this server only; to reach an agent on a peer server, sign in to that server's own MCP URL. Call j5_list_participants with a project_id to see this server's agents.`;
+  }
+}
+
 export type A2ASendError =
   | A2ALedgerError
   | Schema.SchemaError
@@ -294,6 +324,9 @@ export type A2ASendError =
   | PeerDirectoryError
   | A2AMachineCannotReceiveError
   | A2AMachineSenderNotRegisteredError
+  | A2AOutsideAgentCannotReceiveError
+  | A2AOutsideAgentCannotAskError
+  | A2AOutsideAgentLocalOnlyError
   | A2AHomeRegistrationError
   | A2ASenderNotJoinedError
   | A2ASenderRetiredError
@@ -327,6 +360,9 @@ export const isSendRefusal = Schema.is(
   Schema.Union([
     A2AMachineCannotReceiveError,
     A2AMachineSenderNotRegisteredError,
+    A2AOutsideAgentCannotReceiveError,
+    A2AOutsideAgentCannotAskError,
+    A2AOutsideAgentLocalOnlyError,
     A2ASenderNotJoinedError,
     A2ASenderRetiredError,
     A2AHomeMembershipStateError,
@@ -352,6 +388,12 @@ interface MembershipRow {
   readonly participant_id: string;
   readonly payload: string;
   readonly archived_at: string | null;
+}
+
+/** The agent on this server an outside agent addresses: where its message is recorded and lands. */
+interface OutsideAgentReceiver {
+  readonly projectId: LedgerProjectId;
+  readonly threadId: ThreadId;
 }
 
 interface RetiredParticipantRow {
@@ -443,6 +485,20 @@ export interface A2ASendServiceShape {
   readonly sendAsMachine: (
     input: SendAsMachineInput,
   ) => Effect.Effect<SendMessageResult, A2ASendError>;
+  /**
+   * The receiver an outside agent named, or the refusal that names its legal move. The caller
+   * checks the receiver's thread against the sign-in level before `sendAsOutsideAgent`.
+   */
+  readonly outsideAgentReceiver: (
+    to: ParticipantId,
+  ) => Effect.Effect<OutsideAgentReceiver, A2ASendError>;
+  /**
+   * An outside agent commits a plain message to the receiver `outsideAgentReceiver` resolved. It
+   * has no project, so the message is recorded in the receiver's. Peers are not resolved for it.
+   */
+  readonly sendAsOutsideAgent: (
+    input: SendAsOutsideAgentInput,
+  ) => Effect.Effect<SendMessageResult, A2ASendError>;
   readonly clearOwnAsk: (
     input: ClearOwnAskInput,
   ) => Effect.Effect<ClearOwnAskOutcome, A2ASendError>;
@@ -450,6 +506,14 @@ export interface A2ASendServiceShape {
     senderThreadId: ThreadId,
     includeArchived?: boolean,
   ) => Effect.Effect<ReadonlyArray<ParticipantDirectoryRow>, A2ASendError>;
+  /**
+   * The same address book for a caller with no thread, such as an outside agent. People are
+   * placed in `peopleProjectId` and left out without one.
+   */
+  readonly listParticipantsWithoutCaller: (input: {
+    readonly includeArchived?: boolean;
+    readonly peopleProjectId?: LedgerProjectId;
+  }) => Effect.Effect<ReadonlyArray<ParticipantDirectoryRow>, A2ASendError>;
 }
 
 export class A2ASendService extends Context.Service<A2ASendService, A2ASendServiceShape>()(
@@ -665,11 +729,17 @@ const rawLayer: Layer.Layer<
       };
     });
 
-    /** Local agent ids only; people and machines are never on a peer, and a known local agent needs no lookup. */
+    /** Local agent ids only; people, machines and outside agents are never on a peer, and a known local agent needs no lookup. */
     const needsRemoteResolution = Effect.fn("j5.a2a.send.needsRemoteResolution")(function* (
       id: ParticipantId,
     ) {
-      if (isHumanParticipantId(id) || isMachineParticipantId(id)) return false;
+      if (
+        isHumanParticipantId(id) ||
+        isMachineParticipantId(id) ||
+        isOutsideAgentParticipantId(id)
+      ) {
+        return false;
+      }
       const local = yield* sql<{ readonly one: number }>`
           SELECT 1 AS one FROM j5_a2a_membership WHERE participant_id = ${id} LIMIT 1
         `;
@@ -696,7 +766,11 @@ const rawLayer: Layer.Layer<
       | A2AAmbiguousParticipantError
       | A2AParticipantArchivedError
       | A2AMachineCannotReceiveError
+      | A2AOutsideAgentCannotReceiveError
     > {
+      if (isOutsideAgentParticipantId(id)) {
+        return yield* new A2AOutsideAgentCannotReceiveError({ participantId: id });
+      }
       if (isHumanParticipantId(id)) {
         if (!(yield* isRegisteredHumanPerson(sql, id))) {
           return yield* new A2AParticipantNotFoundError({ participantId: id });
@@ -747,14 +821,27 @@ const rawLayer: Layer.Layer<
       };
     });
 
-    const listParticipants: A2ASendServiceShape["listParticipants"] = (
-      senderThreadId,
+    const listParticipantsWithoutCaller: A2ASendServiceShape["listParticipantsWithoutCaller"] = ({
       includeArchived = false,
-    ) =>
+      peopleProjectId,
+    }) =>
       Effect.gen(function* () {
-        const sender = yield* senderMembership(senderThreadId);
         const rows = yield* membershipRows();
-        const people = yield* listRegisteredHumanPersonIds(sql);
+        const people =
+          peopleProjectId === undefined
+            ? []
+            : (yield* listRegisteredHumanPersonIds(sql)).map(
+                (personId) =>
+                  ({
+                    projectId: peopleProjectId,
+                    participantId: personId,
+                    participant: { kind: "human", id: personId },
+                    archived: false,
+                    canReceiveMessage: false,
+                    canOpenExchange: true,
+                    acceptsUrgency: true,
+                  }) satisfies ParticipantDirectoryRow,
+              );
         const membershipCounts = new Map<string, number>();
         for (const row of rows) {
           membershipCounts.set(
@@ -784,18 +871,7 @@ const rawLayer: Layer.Layer<
         );
         return [
           ...agents,
-          ...people.map(
-            (personId) =>
-              ({
-                projectId: sender.projectId,
-                participantId: personId,
-                participant: { kind: "human", id: personId },
-                archived: false,
-                canReceiveMessage: false,
-                canOpenExchange: true,
-                acceptsUrgency: true,
-              }) satisfies ParticipantDirectoryRow,
-          ),
+          ...people,
           // Machines are listed so an agent can recognize a sender by name; nothing reaches them.
           ...(yield* machineRows()).map(
             (row) =>
@@ -815,6 +891,16 @@ const rawLayer: Layer.Layer<
           ),
         ];
       });
+
+    const listParticipants: A2ASendServiceShape["listParticipants"] = (
+      senderThreadId,
+      includeArchived = false,
+    ) =>
+      senderMembership(senderThreadId).pipe(
+        Effect.flatMap((sender) =>
+          listParticipantsWithoutCaller({ includeArchived, peopleProjectId: sender.projectId }),
+        ),
+      );
 
     const replayedSend = Effect.fn("j5.a2a.send.replayedSend")(function* (
       messageId: LedgerMessageId,
@@ -1163,6 +1249,70 @@ const rawLayer: Layer.Layer<
         return result;
       });
 
+    const outsideAgentReceiver = Effect.fn("j5.a2a.send.outsideAgentReceiver")(function* (
+      to: ParticipantId,
+    ): Effect.fn.Return<OutsideAgentReceiver, A2ASendError> {
+      if (isOutsideAgentParticipantId(to)) {
+        return yield* new A2AOutsideAgentCannotReceiveError({ participantId: to });
+      }
+      if (isHumanParticipantId(to)) {
+        return yield* new A2AOutsideAgentCannotAskError({ participantId: to });
+      }
+      const matches = (yield* membershipRows()).filter((row) => row.participant_id === to);
+      if (matches.length > 1) return yield* new A2AAmbiguousParticipantError({ participantId: to });
+      const row = matches[0];
+      if (row === undefined) {
+        if (isMachineParticipantId(to) && (yield* machineRows(to))[0] !== undefined) {
+          return yield* new A2AMachineCannotReceiveError({ participantId: to });
+        }
+        const retired = (yield* retiredParticipantRows(to))[0];
+        return retired === undefined
+          ? yield* new A2AOutsideAgentLocalOnlyError({ participantId: to })
+          : yield* new A2AParticipantArchivedError({
+              participantId: to,
+              projectId: retired.project_id,
+            });
+      }
+      if (row.archived_at !== null) {
+        return yield* new A2AParticipantArchivedError({
+          participantId: to,
+          projectId: row.project_id,
+        });
+      }
+      const participant = yield* decodeParticipant(row.payload);
+      if (participant.kind !== "agent") {
+        return yield* new A2AOutsideAgentLocalOnlyError({ participantId: to });
+      }
+      return { projectId: LedgerProjectId.make(row.project_id), threadId: participant.threadId };
+    });
+
+    const sendAsOutsideAgent: A2ASendServiceShape["sendAsOutsideAgent"] = (input) =>
+      Effect.gen(function* () {
+        const committed: Array<StoredCommEvent> = [];
+        const { senderName, senderParticipantId, receiverProjectId, ...message } = input;
+        const result = yield* writer.withPermit(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              // The name the envelope shows.
+              yield* recordOutsideAgentName(sql, {
+                participantId: senderParticipantId,
+                name: senderName,
+                at: input.acceptedAt,
+              });
+              // It replays a retry, and resolves the receiver again inside the transaction.
+              return yield* sendInternal(
+                message,
+                { projectId: receiverProjectId, participantId: senderParticipantId },
+                committed,
+                null,
+              );
+            }),
+          ),
+        );
+        yield* writer.publishCommitted(committed);
+        return result;
+      });
+
     const clearOwnAsk: A2ASendServiceShape["clearOwnAsk"] = (input) =>
       Effect.gen(function* () {
         const sender = yield* senderMembership(input.senderThreadId);
@@ -1289,7 +1439,15 @@ const rawLayer: Layer.Layer<
         } satisfies ClearOwnAskOutcome;
       });
 
-    return A2ASendService.of({ send, sendAsMachine, clearOwnAsk, listParticipants });
+    return A2ASendService.of({
+      send,
+      sendAsMachine,
+      outsideAgentReceiver,
+      sendAsOutsideAgent,
+      clearOwnAsk,
+      listParticipants,
+      listParticipantsWithoutCaller,
+    });
   }),
 );
 

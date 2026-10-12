@@ -93,17 +93,24 @@ export function resolvedSpawnBriefContext(brief: string): ResolvedUserMessageCon
   return { text: brief, records: [], recordsById: new Map() };
 }
 
-/** The spawner's name when known; otherwise the honest unnamed label with the id as a tooltip. */
+/**
+ * The spawner's name when known; otherwise the honest unnamed label with the id as a tooltip. An
+ * outside agent (`outside:<session id>`, an MCP client signed in from outside the app) is marked
+ * as one, since its label alone reads like an agent in this app and it has no thread to open.
+ */
 export function presentSpawnerIdentity(input: {
   readonly spawnedBy: string | null;
   readonly participantLabels: ReadonlyMap<string, string>;
 }): ParticipantIdentityPresentation {
-  return input.spawnedBy === null
-    ? { label: "another agent", tooltipParticipantId: null }
-    : presentParticipantIdentity({
-        participantId: input.spawnedBy,
-        participantLabels: input.participantLabels,
-      });
+  if (input.spawnedBy === null) return { label: "another agent", tooltipParticipantId: null };
+  const identity = presentParticipantIdentity({
+    participantId: input.spawnedBy,
+    participantLabels: input.participantLabels,
+  });
+  if (!input.spawnedBy.startsWith("outside:")) return identity;
+  return identity.tooltipParticipantId === null
+    ? { label: `${identity.label} (outside agent)`, tooltipParticipantId: null }
+    : { label: "an outside agent", tooltipParticipantId: input.spawnedBy };
 }
 
 export function SpawnerIdentity(props: {

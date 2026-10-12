@@ -339,7 +339,10 @@ export const J5SpawnAgentResult = Schema.Struct({
   project_id: LedgerProjectId,
   project_title: Schema.String,
   placement: Schema.Struct({
-    /** The spawner, when the agent joined the spawner's own project; null in another project. */
+    /**
+     * The spawner, when the agent joined the spawner's own project; null in another project, and
+     * for every agent an outside agent starts.
+     */
     placement_parent_id: Schema.NullOr(ParticipantId),
     provenance: Schema.Struct({
       kind: Schema.Literal("spawned-by"),

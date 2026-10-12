@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  type AuthMcpClientAccess,
   ChatAttachmentId,
   EnvironmentId,
   ProjectId,
@@ -25,7 +26,7 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 
-import { McpInvocationContext } from "../../mcp/McpInvocationContext.ts";
+import { McpInvocationContext, type McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
 import { OrchestratorMcpService } from "../../mcp/OrchestratorMcpService.ts";
 import type { ThreadLaunchInput } from "../../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
@@ -43,7 +44,7 @@ import { A2AHomeRegistrar } from "./HomeRegistrar.ts";
 import { A2ALedger } from "./LedgerService.ts";
 import { ParticipantPlacementService, PlacementStorageError } from "./PlacementService.ts";
 import { A2ASendService } from "./SendService.ts";
-import { SpawnCompositionService } from "./SpawnCompositionService.ts";
+import { type RecordSpawnFactsInput, SpawnCompositionService } from "./SpawnCompositionService.ts";
 import { ThreadRegistration } from "./ThreadRegistration.ts";
 import { ParticipantId, LedgerProjectId, type ParticipantDirectoryRow } from "./contracts.ts";
 import { J5ToolkitHandlersLive } from "./mcp/handlers.ts";
@@ -174,6 +175,8 @@ const spawnHarness = (input: {
   readonly existingChildRuntimeMode?: RuntimeMode;
   /** Runs inside each read of the target project, so a test can hold a call before its start. */
   readonly beforeProjectRead?: Effect.Effect<void>;
+  /** Who calls; the thread caller unless a test calls as an outside agent. */
+  readonly scope?: McpInvocationScope;
 }) =>
   Effect.gen(function* () {
     const log = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -183,6 +186,7 @@ const spawnHarness = (input: {
     const failFacts = yield* Ref.make(false);
     const factProjects = yield* Ref.make<ReadonlyArray<LedgerProjectId>>([]);
     const folderClaims = yield* Ref.make(0);
+    const recorded = yield* Ref.make<ReadonlyArray<RecordSpawnFactsInput>>([]);
     const callerRow = {
       projectId: ledgerProjectId,
       participantId: callerParticipantId,
@@ -213,6 +217,7 @@ const spawnHarness = (input: {
       Layer.mock(SpawnCompositionService)({
         recordFacts: (facts) =>
           Effect.gen(function* () {
+            yield* Ref.update(recorded, (items) => [...items, facts]);
             if (yield* Ref.get(failFacts))
               return yield* new PlacementStorageError({
                 operation: "record spawn facts",
@@ -399,10 +404,20 @@ const spawnHarness = (input: {
             Stream.unwrap,
             Stream.run(Sink.last()),
             Effect.flatMap(Effect.fromOption),
-            Effect.provideService(McpInvocationContext, invocation),
+            Effect.provideService(McpInvocationContext, input.scope ?? invocation),
           );
       });
-    return { layer, call, log, commands, launches, failFacts, factProjects, folderClaims };
+    return {
+      layer,
+      call,
+      log,
+      commands,
+      launches,
+      failFacts,
+      factProjects,
+      folderClaims,
+      recorded,
+    };
   });
 
 const spawnArgs = {
@@ -642,6 +657,193 @@ it.effect("gives the agent the caller's modes, or narrower ones the caller chose
       );
     }).pipe(Effect.provide(narrow.layer));
   }),
+);
+
+/** An outside agent's scope, as the MCP OAuth authenticator builds it. */
+const outsideScope = (
+  access: AuthMcpClientAccess,
+  sessionId = "session-1",
+): McpInvocationScope => ({
+  environmentId: invocation.environmentId,
+  capabilities: new Set(["orchestration", "worktree", "pull-requests"] as const),
+  issuedAt: 1,
+  requestNamespace: `client:${sessionId}`,
+  thread: undefined,
+  client: { sessionId, label: "Claude Code\n(laptop)", access },
+});
+const outsideId = ParticipantId.make("outside:session-1");
+
+it.effect("an outside agent starts a top-level agent in the project it names", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands, recorded, log } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      scope: outsideScope("auto-accept-edits"),
+    });
+    yield* Effect.gen(function* () {
+      const args = {
+        ...spawnArgs,
+        project_id: LedgerProjectId.make(otherProjectId),
+        workspace: { type: "root" },
+        client_request_id: "outside-root",
+      } satisfies J5SpawnAgentInput;
+      const spawned = yield* call(args);
+      assert.isFalse(spawned.isFailure, JSON.stringify(spawned.result));
+      const result = spawned.result as { readonly thread_id: ThreadId };
+      assert.deepStrictEqual(spawned.result, {
+        participant_id: childParticipantId,
+        thread_id: result.thread_id,
+        project_id: LedgerProjectId.make(otherProjectId),
+        project_title: "Other project",
+        placement: {
+          placement_parent_id: null,
+          provenance: {
+            kind: "spawned-by",
+            spawned_by_participant_id: outsideId,
+            source: "j5_spawn",
+          },
+        },
+      });
+      const [fact] = yield* Ref.get(recorded);
+      assert.equal(fact?.projectId, LedgerProjectId.make(otherProjectId));
+      assert.equal(fact?.outsideSpawnerName, "Claude Code\n(laptop)");
+      const [create, brief] = yield* Ref.get(commands);
+      assert.equal(create?.type, "thread.create");
+      if (create?.type === "thread.create") {
+        assert.equal(create.projectId, otherProjectId);
+        // No mode was asked for, so the agent runs at the level the sign-in was approved at.
+        assert.equal(create.runtimeMode, "auto-accept-edits");
+        assert.equal(create.interactionMode, "default");
+        assert.isNull(create.worktreePath);
+      }
+      assert.equal(brief?.type, "message.dispatch");
+      if (brief?.type === "message.dispatch") {
+        assert.include(brief.text, `spawned_by: ${outsideId}\n`);
+        // The label stays on one line of the identity block.
+        assert.include(brief.text, "spawned_by_outside_agent: Claude Code (laptop)\n");
+        assert.include(brief.text, "You were started by an outside agent");
+        assert.include(brief.text, "You cannot reply to it with j5_send_message.");
+        assert.notInclude(brief.text, "spawner_thread_id");
+        assert.isTrue(brief.text.endsWith(`<spawner_brief>\n${spawnArgs.brief}\n</spawner_brief>`));
+      }
+
+      // A retry with the same key replays the first spawn.
+      const replay = yield* call(args);
+      assert.deepStrictEqual(replay.result, spawned.result);
+
+      // A narrower mode is the caller's to choose, and a new worktree is prepared as usual.
+      const narrower = yield* call({
+        ...spawnArgs,
+        project_id: LedgerProjectId.make(otherProjectId),
+        runtime_mode: "approval-required",
+      });
+      assert.isFalse(narrower.isFailure, JSON.stringify(narrower.result));
+      assert.equal((yield* Ref.get(log)).at(-1), "launch");
+      assert.equal(
+        (yield* Ref.get(commands))
+          .flatMap((command) => (command.type === "thread.create" ? [command.runtimeMode] : []))
+          .at(-1),
+        "approval-required",
+      );
+
+      const scratch = yield* call({ ...spawnArgs, scratch: true, workspace: { type: "root" } });
+      assert.isFalse(scratch.isFailure, JSON.stringify(scratch.result));
+      const scratchCreate = (yield* Ref.get(commands)).findLast(
+        (command) => command.type === "thread.create",
+      );
+      if (scratchCreate?.type === "thread.create") {
+        assert.equal(scratchCreate.projectId, scratchProjectId);
+        assert.equal(scratchCreate.worktreePath, scratchFolder);
+      }
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a retry key belongs to one sign-in, so a new sign-in starts its own agent", () =>
+  Effect.gen(function* () {
+    const args = {
+      ...spawnArgs,
+      project_id: LedgerProjectId.make(otherProjectId),
+      workspace: { type: "root" },
+      client_request_id: "same-key",
+    } satisfies J5SpawnAgentInput;
+    const broad = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      scope: outsideScope("full-access", "session-broad"),
+    });
+    const first = yield* broad.call(args).pipe(Effect.provide(broad.layer));
+    // The same key from a sign-in approved for less, on the same command log.
+    const narrow = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      scope: outsideScope("approval-required", "session-narrow"),
+      commands: broad.commands,
+    });
+    const second = yield* narrow.call(args).pipe(Effect.provide(narrow.layer));
+    assert.isFalse(first.isFailure);
+    assert.isFalse(second.isFailure);
+    assert.notEqual(
+      (second.result as { readonly thread_id: ThreadId }).thread_id,
+      (first.result as { readonly thread_id: ThreadId }).thread_id,
+    );
+    assert.deepStrictEqual(
+      (yield* Ref.get(broad.commands)).flatMap((command) =>
+        command.type === "thread.create" ? [command.runtimeMode] : [],
+      ),
+      ["full-access", "approval-required"],
+    );
+  }),
+);
+
+it.effect(
+  "refuses an outside agent's spawn that names no project, shares a checkout or exceeds its level",
+  () =>
+    Effect.gen(function* () {
+      const { layer, call, commands } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+        scope: outsideScope("auto-accept-edits"),
+      });
+      const inProject = { ...spawnArgs, project_id: LedgerProjectId.make(otherProjectId) };
+      yield* Effect.gen(function* () {
+        const nowhere = yield* call({ ...spawnArgs, workspace: { type: "root" } });
+        assert.isTrue(nowhere.isFailure);
+        assert.include(message(nowhere), "An outside agent has no project of its own");
+        assert.include(message(nowhere), "project_id");
+        assert.include(message(nowhere), "scratch");
+
+        const shared = yield* call({ ...inProject, workspace: { type: "shared" } });
+        assert.isTrue(shared.isFailure);
+        assert.include(message(shared), "an outside agent has none");
+        assert.include(message(shared), '{"type":"root"}');
+
+        const broader = yield* call({ ...inProject, runtime_mode: "full-access" });
+        assert.isTrue(broader.isFailure);
+        assert.include(message(broader), "broader than your own");
+        assert.lengthOf(yield* Ref.get(commands), 0, "a refused spawn creates nothing");
+      }).pipe(Effect.provide(layer));
+
+      const readOnly = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+        scope: outsideScope("read-only"),
+      });
+      const refused = yield* readOnly
+        .call({ ...inProject, workspace: { type: "root" } })
+        .pipe(Effect.provide(readOnly.layer));
+      assert.isTrue(refused.isFailure);
+      assert.include(message(refused), "approved for read-only access");
+      assert.lengthOf(yield* Ref.get(readOnly.commands), 0);
+
+      // A retry that finds an agent above the approved level is refused, as a thread caller's is.
+      const above = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+        scope: outsideScope("approval-required"),
+        existingChildRuntimeMode: "full-access",
+      });
+      const retried = yield* above
+        .call({ ...inProject, workspace: { type: "root" }, client_request_id: "above-level" })
+        .pipe(Effect.provide(above.layer));
+      assert.isTrue(retried.isFailure);
+      assert.include(message(retried), "broader than yours is now");
+      assert.lengthOf(yield* Ref.get(above.commands), 0);
+    }),
 );
 
 it.effect("claims the brief's attachments into the new agent's thread", () =>

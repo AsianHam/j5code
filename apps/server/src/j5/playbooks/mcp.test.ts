@@ -60,6 +60,9 @@ const projectId = ProjectId.make("project:playbook-mcp");
 const createdAt = "2026-09-21T09:00:00.000Z";
 const decodeStep = Schema.decodeUnknownEffect(PlaybookStepResponse);
 const decodeFailure = Schema.decodeUnknownEffect(PlaybookError);
+// A missing capability is refused by the playbook tool for a read and by the access declaration
+// for a run tool; both say `capability_denied`.
+const decodeFailureCode = Schema.decodeUnknownEffect(Schema.Struct({ code: Schema.String }));
 const decodeListed = Schema.decodeUnknownEffect(PlaybookDiscovery);
 const decodeRead = Schema.decodeUnknownEffect(PlaybookReadResponse);
 type PlaybookToolName = (typeof playbookTools)[number]["name"];
@@ -317,7 +320,7 @@ it.effect("denies a different owner and every tool when orchestration capability
       ];
       for (const response of responses) {
         assert.isTrue(response.isFailure);
-        assert.equal((yield* decodeFailure(response.result)).code, expected);
+        assert.equal((yield* decodeFailureCode(response.result)).code, expected);
       }
     }
     const deniedScope = { ...scopeFor(), capabilities: new Set<never>() };
@@ -328,7 +331,7 @@ it.effect("denies a different owner and every tool when orchestration capability
       deniedScope,
     );
     assert.equal((yield* decodeFailure(deniedDiscovery.result)).code, "capability_denied");
-    assert.equal((yield* decodeFailure(deniedStart.result)).code, "capability_denied");
+    assert.equal((yield* decodeFailureCode(deniedStart.result)).code, "capability_denied");
     const current = yield* call("j5_playbook_current", { runId: run.runId });
     assert.equal((yield* decodeStep(current.result)).currentStepId, "research");
     assert.equal((yield* decodeStep(current.result)).status, "active");

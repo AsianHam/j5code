@@ -90,7 +90,25 @@ describe("fleet tree", () => {
     const roots = buildFleetTree(cyclic);
     expect(roots.map((node) => node.row.agent.participantId).length).toBeGreaterThan(0);
     expect(countFleetAlerts([project])).toBe(1);
-    expect(originLabel("unknown")).toBe("?");
+    expect(originLabel({ origin: "unknown" })).toBe("?");
+  });
+});
+
+describe("fleet origin", () => {
+  it("names the outside agent that started an agent, by its label and else by its id", () => {
+    expect(originLabel({ origin: "agent" })).toBe("Agent-spawned");
+    expect(
+      originLabel({
+        origin: "agent",
+        outsideSpawner: { participantId: "outside:session-1", name: "Claude Desktop" },
+      }),
+    ).toBe("Claude Desktop (outside agent)");
+    expect(
+      originLabel({
+        origin: "agent",
+        outsideSpawner: { participantId: "outside:session-1", name: null },
+      }),
+    ).toBe("outside:session-1 (outside agent)");
   });
 });
 

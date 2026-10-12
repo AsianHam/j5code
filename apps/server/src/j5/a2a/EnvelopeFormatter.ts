@@ -67,6 +67,24 @@ export const formatMachineEnvelope = (input: {
     machineInstruction: config.machineInstruction,
   });
 
+/**
+ * An outside agent is named by the label its client signed in with, kept on the header's one
+ * line and clear of its closing bracket. It has no project, so the header names none.
+ */
+export const formatOutsideAgentEnvelope = (input: {
+  readonly senderId: ParticipantId;
+  readonly senderName?: string | undefined;
+  readonly message: string;
+}): string => {
+  const name = input.senderName?.replace(/[\]\s]+/g, " ").trim() ?? "";
+  return render(config.outsideAgentMessage, {
+    senderName: name.length === 0 ? "unnamed" : name,
+    senderId: input.senderId,
+    message: input.message,
+    outsideAgentInstruction: config.outsideAgentInstruction,
+  });
+};
+
 export const formatClosedPeerEnvelope = (input: {
   readonly senderId: ParticipantId;
   readonly originProjectId: LedgerProjectId;

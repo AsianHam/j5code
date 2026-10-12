@@ -71,6 +71,42 @@ it("drops retired agents; a live child keeps its parent id for the client to roo
   );
 });
 
+it("names the outside agent that spawned a top-level agent", () => {
+  const outside = ParticipantId.make("outside:session-fleet");
+  const projected = projectFleetProject({
+    project: { id: projectId, name: "Fleet" },
+    participants: [
+      agentRow(builder, builderThread, spawnedBy(outside), null),
+      agentRow(captain, captainThread, { kind: "unrecorded" }, null),
+    ],
+    crews: [],
+    openAsks: new Map(),
+    outsideAgentNames: new Map([[outside, "Claude Code (laptop)"]]),
+  });
+  assert.deepStrictEqual(
+    projected.agents.map(({ participantId, origin, placementParentId, outsideSpawner }) => ({
+      participantId,
+      origin,
+      placementParentId,
+      outsideSpawner,
+    })),
+    [
+      {
+        participantId: builder,
+        origin: "agent",
+        placementParentId: null,
+        outsideSpawner: { participantId: outside, name: "Claude Code (laptop)" },
+      },
+      {
+        participantId: captain,
+        origin: "human",
+        placementParentId: null,
+        outsideSpawner: undefined,
+      },
+    ],
+  );
+});
+
 const crew: AgentCrewInstance = {
   id: "crew:1",
   projectId,

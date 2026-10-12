@@ -72,6 +72,18 @@ export const isPlatformParticipantId = (id: string): boolean => id.startsWith("p
 export const machineParticipantIdForName = (name: string) =>
   ParticipantId.make(`${MACHINE_PARTICIPANT_ID_PREFIX}${name}`);
 
+/**
+ * An outside agent: an MCP client signed in through OAuth, one participant per sign-in. It has no
+ * thread and no project, sends plain messages only, and can never receive. It joins no ledger, so
+ * it is not in the `Participant` union; its name is kept in `j5_a2a_outside_agent`.
+ */
+const OUTSIDE_AGENT_PARTICIPANT_ID_PREFIX = "outside:";
+export const isOutsideAgentParticipantId = (id: ParticipantId): boolean =>
+  id.startsWith(OUTSIDE_AGENT_PARTICIPANT_ID_PREFIX) &&
+  id.length > OUTSIDE_AGENT_PARTICIPANT_ID_PREFIX.length;
+export const outsideAgentParticipantId = (sessionId: string) =>
+  ParticipantId.make(`${OUTSIDE_AGENT_PARTICIPANT_ID_PREFIX}${sessionId}`);
+
 export const AgentParticipant = Schema.Struct({
   kind: Schema.Literal("agent"),
   id: ParticipantId,
@@ -392,6 +404,23 @@ export const SendAsMachineInput = Schema.Struct({
   acceptedAt: Schema.String,
 });
 export type SendAsMachineInput = typeof SendAsMachineInput.Type;
+
+/** An outside agent commits a plain message only, to an agent on this server. */
+export const SendAsOutsideAgentInput = Schema.Struct({
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  mode: Schema.optional(SendMode),
+  modeLimit: Schema.optional(SendModeLimit),
+  commandId: CommCommandId,
+  senderParticipantId: ParticipantId,
+  /** The label the client signed in with; kept so the envelope can name the sender. */
+  senderName: Schema.String,
+  to: ParticipantId,
+  /** The receiver's project, from `outsideAgentReceiver`: where the message is recorded. */
+  receiverProjectId: LedgerProjectId,
+  message: Schema.String.check(Schema.isNonEmpty()),
+  acceptedAt: Schema.String,
+});
+export type SendAsOutsideAgentInput = typeof SendAsOutsideAgentInput.Type;
 
 export const SendMessageResult = Schema.Struct({
   messageId: LedgerMessageId,

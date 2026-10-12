@@ -49,6 +49,7 @@ import {
   LedgerMessageId,
   LIFECYCLE_PARTICIPANT_ID,
   LedgerProjectId,
+  outsideAgentParticipantId,
   ParticipantId,
   type AgentParticipant,
   type MachineParticipant,
@@ -634,6 +635,38 @@ it.effect("delivers a machine's send to its agent receiver instead of withdrawin
         SELECT status FROM j5_a2a_delivery WHERE message_id = ${sent.messageId}
       `;
       assert.deepStrictEqual(state, [{ status: "delivered" }]);
+    }).pipe(Effect.provide(makeTestLayer(transport)));
+  }),
+);
+
+it.effect("delivers an outside agent's send, though it holds no membership", () =>
+  Effect.gen(function* () {
+    const delivered = yield* Ref.make<ReadonlyArray<ParticipantId>>([]);
+    const transport: A2ADeliveryTransportShape = {
+      deliverAgent: (input) => Ref.update(delivered, (senders) => [...senders, input.senderId]),
+      cancelAgent: () => Effect.succeed("cancelled" as const),
+      deliverPeer: () => Effect.die("peer delivery is not under test"),
+      deliverHuman: () => Effect.void,
+    };
+    yield* Effect.gen(function* () {
+      yield* runJ5A2AMigrations();
+      const projectId = LedgerProjectId.make("project:delivery:outside");
+      yield* (yield* A2ALedger).ensureProject({ projectId: projectId, createdAt: timestamp });
+      yield* join(projectId, receiver, "outside-receiver");
+      const outsideId = outsideAgentParticipantId("delivery-session");
+      yield* (yield* A2ASendService).sendAsOutsideAgent({
+        commandId: CommCommandId.make("command:delivery:outside"),
+        senderParticipantId: outsideId,
+        senderName: "Claude Code",
+        to: receiver.id,
+        receiverProjectId: projectId,
+        message: "The deploy is red.",
+        acceptedAt: timestamp,
+      });
+
+      const delivery = yield* (yield* A2ADeliveryWorker).runOnce;
+      assert.equal(delivery?.state, "delivered");
+      assert.deepStrictEqual(yield* Ref.get(delivered), [outsideId]);
     }).pipe(Effect.provide(makeTestLayer(transport)));
   }),
 );

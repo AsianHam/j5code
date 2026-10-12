@@ -36,6 +36,7 @@ import {
   ExchangeId,
   isHumanParticipantId,
   isMachineParticipantId,
+  isOutsideAgentParticipantId,
   LedgerMessageId,
   MessageReceivedPayload,
   MessageSentPayload,
@@ -559,10 +560,14 @@ const makeLayer = (daemon: boolean) =>
           ...(row.receiver_environment_id == null ? [row.receiver_id] : []),
         ];
         for (const id of ids) {
-          // Humans and machines never hold agent membership, and a registered
-          // machine is never retired, so only agents can become unavailable.
+          // Humans, machines and outside agents never hold agent membership, and a
+          // registered machine is never retired, so only agents can become unavailable.
           const participantId = ParticipantId.make(id);
-          if (isHumanParticipantId(participantId) || isMachineParticipantId(participantId)) {
+          if (
+            isHumanParticipantId(participantId) ||
+            isMachineParticipantId(participantId) ||
+            isOutsideAgentParticipantId(participantId)
+          ) {
             continue;
           }
           const membership =

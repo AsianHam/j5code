@@ -4,11 +4,17 @@ import * as Effect from "effect/Effect";
 import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
+import { actsAsThreadCaller, spawnAndBrief } from "./outsideAgent.ts";
 import { J5OrchestratorSurface, mapJ5OrchestratorCapabilities } from "./orchestratorSurface.ts";
 
-// Declared as upstream declares the tools these stand in for.
 const handlers = {
-  delegate_task: McpToolAccess.actsAsCaller(delegateTask),
+  // A delegated task reports back to the thread that asked for it, and an outside agent has none.
+  delegate_task: actsAsThreadCaller(
+    "delegate_task",
+    spawnAndBrief("delegate the task"),
+    delegateTask,
+  ),
+  // Declared as upstream declares the tool this stands in for.
   orchestrator_capabilities: McpToolAccess.reads(() =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;

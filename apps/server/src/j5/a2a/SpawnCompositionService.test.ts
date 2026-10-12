@@ -163,6 +163,38 @@ it.effect("commits joined home and placement facts in one transaction", () =>
   }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("records an outside agent as the spawner of a top-level agent", () =>
+  Effect.gen(function* () {
+    yield* runJ5A2AMigrations();
+    const service = yield* SpawnCompositionService;
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = LedgerProjectId.make("project:spawn-composition:outside");
+    yield* seedProjectAndSpawner(projectId, ThreadId.make("thread:spawn-composition:resident"));
+    const outsideId = ParticipantId.make("outside:session-composition");
+    const input = inputFor({
+      name: "outside",
+      projectId,
+      threadId: ThreadId.make("thread:spawn-composition:outside-child"),
+      spawnedByParticipantId: outsideId,
+    });
+
+    const result = yield* service.recordFacts({ ...input, outsideSpawnerName: "Claude Code" });
+    assert.deepStrictEqual(result.placement.provenance, {
+      kind: "spawned-by",
+      spawnedByParticipantId: outsideId,
+      source: "j5_spawn",
+    });
+    // It is in no project, so the agent it starts has no placement parent.
+    assert.isNull(result.placement.placementParentId);
+    // A retry replays the placement. A sign-in's label never changes, so the first one stands.
+    const replay = yield* service.recordFacts({ ...input, outsideSpawnerName: "Claude Code 2" });
+    assert.deepStrictEqual(replay, result);
+    assert.deepStrictEqual(yield* sql`SELECT participant_id, name FROM j5_a2a_outside_agent`, [
+      { participant_id: outsideId, name: "Claude Code" },
+    ]);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("rolls home registration back when placement fails afterward", () =>
   Effect.gen(function* () {
     yield* runJ5A2AMigrations();

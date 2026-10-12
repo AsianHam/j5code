@@ -13,6 +13,7 @@ import {
 import { A2ALedgerTransactionWriter } from "./LedgerService.ts";
 import { ParticipantPlacementTransactionWriter, type PlacementError } from "./PlacementService.ts";
 import type { CommCommandId, LedgerProjectId } from "./contracts.ts";
+import { recordOutsideAgentName } from "./outsideAgentNames.ts";
 import type {
   ParticipantPlacement,
   ParticipantProvenance,
@@ -25,6 +26,11 @@ export interface RecordSpawnFactsInput {
   readonly projectId: LedgerProjectId;
   readonly threadId: ThreadId;
   readonly provenance: ParticipantProvenance;
+  /**
+   * Set when the spawner is an outside agent: the label its client signed in with, recorded with
+   * the placement so the spawner named in provenance is one this server knows.
+   */
+  readonly outsideSpawnerName?: string;
   readonly createdAt: string;
 }
 
@@ -80,6 +86,16 @@ export const layer: Layer.Layer<
                   threadId: input.threadId,
                   createdAt: input.createdAt,
                 });
+                if (
+                  input.outsideSpawnerName !== undefined &&
+                  input.provenance.kind === "spawned-by"
+                ) {
+                  yield* recordOutsideAgentName(sql, {
+                    participantId: input.provenance.spawnedByParticipantId,
+                    name: input.outsideSpawnerName,
+                    at: input.createdAt,
+                  });
+                }
                 const placement = yield* placements.recordCreationInTransaction({
                   commandId: input.placementCommandId,
                   projectId: input.projectId,

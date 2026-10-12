@@ -15,6 +15,7 @@ import * as Result from "effect/Result";
 
 import {
   McpInvocationContext,
+  type McpInvocationScope,
   type McpThreadInvocationScope,
   requireThreadScope,
 } from "../../../mcp/McpInvocationContext.ts";
@@ -65,6 +66,15 @@ import { withDeliveryNotice } from "../receiverBacklog.ts";
 import { A2ASendService } from "../SendService.ts";
 import { stopThread } from "../stopThread.ts";
 import { sendClaimingAttachments } from "./attachments.ts";
+import {
+  assertPersonaWithinApprovedLevel,
+  outsideAgentCaller,
+  outsideSpawnHasNoCheckout,
+  outsideSpawnNeedsProject,
+  sendAsOutsideAgent,
+  spawnAndBrief,
+  actsAsThreadCaller,
+} from "./outsideAgent.ts";
 import { SpawnCompositionService } from "../SpawnCompositionService.ts";
 import {
   SpawnWorkspaceService,
@@ -86,7 +96,13 @@ import {
   spawnTitle,
   stablePart,
 } from "../spawnIds.ts";
-import { CommCommandId, LedgerProjectId, type ParticipantDirectoryRow } from "../contracts.ts";
+import {
+  CommCommandId,
+  LedgerProjectId,
+  type ParticipantDirectoryRow,
+  type ParticipantId,
+  outsideAgentParticipantId,
+} from "../contracts.ts";
 import type { ParticipantProvenanceView } from "../placementContracts.ts";
 import {
   J5_LIST_PARTICIPANTS_DEFAULT_LIMIT,
@@ -203,8 +219,9 @@ const stateError = (state: string, nextCommand: string) =>
   new J5AgentToolStateError({ state, nextCommand });
 
 /**
- * The calling thread's scope. Every handler that reads it is declared `readsAsCaller` or
- * `actsAsCaller` below, which refuses a caller without a thread before the handler runs.
+ * The calling thread's scope, for a handler that has already ruled out an outside agent or is
+ * declared `actsAsCaller`. Tools an outside agent is refused use `actsAsThreadCaller`, which names
+ * its legal move.
  */
 const callerScope = McpInvocationContext.pipe(
   Effect.flatMap((scope) => requireThreadScope(scope, "This tool")),
@@ -284,7 +301,7 @@ const preflightSpawnCaller = Effect.fn("j5.a2a.mcp.preflightSpawnCaller")(functi
 });
 
 const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
-  scope: McpThreadInvocationScope,
+  scope: McpInvocationScope,
   input: { readonly provider: string; readonly model: string; readonly reasoning: string },
 ) {
   const capabilities = yield* (yield* OrchestratorMcpService)
@@ -388,6 +405,54 @@ const prepareSpawnPersona = Effect.fn("j5.a2a.mcp.prepareSpawnPersona")(function
   };
 });
 
+/**
+ * The calling thread as a spawner: its home, its project and its checkout. An outside agent has
+ * none of these, so `j5_spawn_agent` reads this for a thread caller only.
+ */
+const preflightThreadSpawner = Effect.fn("j5.a2a.mcp.preflightThreadSpawner")(function* (
+  scope: McpThreadInvocationScope,
+) {
+  const caller = yield* preflightSpawnCaller(scope);
+  // Only a Captain grows a Crew, and only through the human gate (Bryant, 2026-09-14): a seat
+  // that wants more hands escalates to its Captain; its own helpers are subagents.
+  const membership = yield* (yield* AgentCrewInstanceService)
+    .findMembership(caller.participantId)
+    .pipe(
+      Effect.mapError((error) =>
+        stateError(
+          `Crew membership for ${caller.participantId} cannot be read: ${error.message}.`,
+          "Retry j5_spawn_agent once crew records are readable.",
+        ),
+      ),
+    );
+  if (membership !== null) {
+    return yield* stateError(
+      `Caller ${caller.participantId} is seat ${membership.seatName} of crew ${membership.crewInstanceId}; crew members cannot spawn Peer Agents.`,
+      "Ask your Captain for the seat with j5_send_message, or run the work yourself as a subagent with delegate_task.",
+    );
+  }
+  const parent = yield* (yield* ThreadManagementService)
+    .getThreadProjection(scope.thread.threadId)
+    .pipe(
+      Effect.mapError((error) =>
+        stateError(
+          `Caller thread ${scope.thread.threadId} cannot be read for j5_spawn_agent: ${error.message}.`,
+          "Read the caller thread state and retry j5_spawn_agent after it is available.",
+        ),
+      ),
+    );
+  return {
+    participantId: caller.participantId,
+    // Retry keys are the provider session's, as they were before outside agents could spawn.
+    requestNamespace: scope.thread.providerSessionId,
+    home: {
+      ledgerProject: { id: caller.projectId, title: caller.project.name },
+      thread: parent.thread,
+    },
+    outside: undefined,
+  };
+});
+
 /** Crew requests come from a Peer Agent with a home that is not itself a crew member (R20). */
 const preflightCrewCaptain = Effect.fn("j5.a2a.mcp.preflightCrewCaptain")(function* (
   scope: McpThreadInvocationScope,
@@ -483,8 +548,21 @@ export const crewSeatFromInput = (seat: J5ProposeCrewInput["seats"][number]) => 
 
 const handlers = {
   ...playbookHandlers,
-  j5_send_message: McpToolAccess.actsAsCaller((input) =>
+  // Declared `writes` so an outside agent is admitted and a read-only client is refused. A thread
+  // caller gets the checks `actsAsCaller` gave it, and `writes` also requires the orchestration
+  // capability, which every provider session J5 starts carries.
+  j5_send_message: McpToolAccess.writes((input) =>
     Effect.gen(function* () {
+      const outside = yield* outsideAgentCaller;
+      if (outside !== undefined) {
+        return yield* sendAsOutsideAgent(outside, input, (requestKey) =>
+          commandIdForRequest({
+            toolName: "send_message",
+            providerSessionId: outside.scope.requestNamespace,
+            requestKey,
+          }),
+        );
+      }
       const scope = yield* callerScope;
       // The send below registers a caller that has no home yet and refuses a Subagent.
       const callerParticipantId = yield* (yield* A2AHomeRegistrar)
@@ -611,34 +689,55 @@ const handlers = {
       });
     }).pipe(Effect.mapError(failure)),
   ),
-  j5_clear_own_ask: McpToolAccess.actsAsCaller((input) =>
-    Effect.gen(function* () {
-      const scope = yield* callerScope;
-      const service = yield* A2ASendService;
-      const acceptedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
-      const cleared = yield* service.clearOwnAsk({
-        commandId: commandIdForRequest({
-          toolName: "clear_own_ask",
-          providerSessionId: scope.thread.providerSessionId,
-          requestKey: input.client_request_id,
-        }),
-        senderThreadId: scope.thread.threadId,
-        exchangeId: input.exchange_id,
-        acceptedAt,
-      });
-      // A withdrawal addressed to a peer is a pending delivery; wake the worker as a send does.
-      const { withdrawalQueued, ...result } = cleared;
-      if (withdrawalQueued) yield* (yield* A2ADeliveryWorker).notify;
-      return result;
-    }).pipe(Effect.mapError(failure)),
+  j5_clear_own_ask: actsAsThreadCaller(
+    "j5_clear_own_ask",
+    "An outside agent cannot ask, so it has no ask to withdraw.",
+    (input, scope) =>
+      Effect.gen(function* () {
+        const service = yield* A2ASendService;
+        const acceptedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
+        const cleared = yield* service.clearOwnAsk({
+          commandId: commandIdForRequest({
+            toolName: "clear_own_ask",
+            providerSessionId: scope.thread.providerSessionId,
+            requestKey: input.client_request_id,
+          }),
+          senderThreadId: scope.thread.threadId,
+          exchangeId: input.exchange_id,
+          acceptedAt,
+        });
+        // A withdrawal addressed to a peer is a pending delivery; wake the worker as a send does.
+        const { withdrawalQueued, ...result } = cleared;
+        if (withdrawalQueued) yield* (yield* A2ADeliveryWorker).notify;
+        return result;
+      }).pipe(Effect.mapError(failure)),
   ),
-  j5_list_participants: McpToolAccess.readsAsCaller((input) =>
+  j5_list_participants: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const scope = yield* callerScope;
+      const outside = yield* outsideAgentCaller;
+      const callerThreadId =
+        outside === undefined ? (yield* callerScope).thread.threadId : undefined;
       const service = yield* A2ASendService;
       const orchestrator = yield* OrchestratorV2;
       const includeArchived = input.include_archived ?? false;
-      const directory = yield* service.listParticipants(scope.thread.threadId, includeArchived);
+      // An outside agent has no row and no project of its own, so it names the project.
+      if (callerThreadId === undefined && input.project_id === undefined) {
+        return yield* stateError(
+          "An outside agent has no project of its own, so j5_list_participants needs a project_id.",
+          "Call t3_project_list and retry j5_list_participants with one of its project ids.",
+        );
+      }
+      const directory =
+        callerThreadId === undefined
+          ? // An outside agent sends plain messages only, so nobody accepts an Exchange or an
+            // urgency from it, and a person, who takes only asks, accepts nothing.
+            (yield* service.listParticipantsWithoutCaller({
+              includeArchived,
+              ...(input.project_id === undefined
+                ? {}
+                : { peopleProjectId: LedgerProjectId.make(input.project_id) }),
+            })).map((row) => ({ ...row, canOpenExchange: false, acceptsUrgency: false }))
+          : yield* service.listParticipants(callerThreadId, includeArchived);
       // A project's title beside its id places a participant. Titles are
       // enrichment: a read that fails leaves them null rather than taking the
       // address book with it.
@@ -667,10 +766,13 @@ const handlers = {
                   .map((name) => ({ name, local: false })),
               ],
             };
-      const self = directory.find(
-        (row) =>
-          row.participant.kind === "agent" && row.participant.threadId === scope.thread.threadId,
-      );
+      const self =
+        callerThreadId === undefined
+          ? undefined
+          : directory.find(
+              (row) =>
+                row.participant.kind === "agent" && row.participant.threadId === callerThreadId,
+            );
       const people = directory.filter((row) => row.participant.kind === "human");
       // People belong to no project, so their rows carry the project being listed.
       const personRowsIn = (listed: ParticipantDirectoryRow["projectId"] | undefined) =>
@@ -744,8 +846,11 @@ const handlers = {
             },
             self: false,
             archived: agent.archived,
-            can_receive_message: !agent.archived && agent.canReceiveMessage,
-            can_open_exchange: !agent.archived && agent.canReceiveMessage,
+            // An outside agent reaches this server's agents only.
+            can_receive_message:
+              callerThreadId !== undefined && !agent.archived && agent.canReceiveMessage,
+            can_open_exchange:
+              callerThreadId !== undefined && !agent.archived && agent.canReceiveMessage,
             accepts_urgency: false,
             thread_id: agent.threadId,
             provenance: projectProvenance({ kind: "unrecorded" } as const),
@@ -875,41 +980,29 @@ const handlers = {
       );
     }).pipe(Effect.mapError(failure)),
   ),
-  j5_spawn_agent: McpToolAccess.actsAsCaller((input) =>
+  // Declared `writes`, as send and stop are, so an outside agent is admitted and a read-only
+  // client is refused. The handler holds the chosen modes to the caller's limits itself: a
+  // thread's own modes, or the level an outside agent's sign-in was approved at.
+  j5_spawn_agent: McpToolAccess.writes((input) =>
     Effect.gen(function* () {
-      const scope = yield* callerScope;
+      const scope = yield* McpInvocationContext;
       const crypto = yield* Crypto.Crypto;
-      const caller = yield* preflightSpawnCaller(scope);
-      // Only a Captain grows a Crew, and only through the human gate (Bryant, 2026-09-14): a seat
-      // that wants more hands escalates to its Captain; its own helpers are subagents.
-      const membership = yield* (yield* AgentCrewInstanceService)
-        .findMembership(caller.participantId)
-        .pipe(
-          Effect.mapError((error) =>
-            stateError(
-              `Crew membership for ${caller.participantId} cannot be read: ${error.message}.`,
-              "Retry j5_spawn_agent once crew records are readable.",
-            ),
-          ),
-        );
-      if (membership !== null) {
-        return yield* stateError(
-          `Caller ${caller.participantId} is seat ${membership.seatName} of crew ${membership.crewInstanceId}; crew members cannot spawn Peer Agents.`,
-          "Ask your Captain for the seat with j5_send_message, or run the work yourself as a subagent with delegate_task.",
-        );
-      }
+      // An outside agent has no thread, home, project or checkout: it is recorded as the spawner
+      // and the new agent sits at the top level of the project it names.
+      const outside = yield* outsideAgentCaller;
+      const spawner =
+        outside === undefined
+          ? yield* preflightThreadSpawner(yield* callerScope)
+          : {
+              participantId: outsideAgentParticipantId(outside.client.sessionId),
+              // A new sign-in is a new session, so it is a new set of retry keys.
+              requestNamespace: scope.requestNamespace,
+              home: undefined,
+              outside,
+            };
+      const { home } = spawner;
       const selected = yield* selectSpawnModel(scope, input);
       const threadManagement = yield* ThreadManagementService;
-      const parent = yield* threadManagement
-        .getThreadProjection(scope.thread.threadId)
-        .pipe(
-          Effect.mapError((error) =>
-            stateError(
-              `Caller thread ${scope.thread.threadId} cannot be read for j5_spawn_agent: ${error.message}.`,
-              "Read the caller thread state and retry j5_spawn_agent after it is available.",
-            ),
-          ),
-        );
       const personaId = input.persona;
       const persona =
         personaId === undefined
@@ -924,9 +1017,19 @@ const handlers = {
           "Retry j5_spawn_agent without runtime_mode, or without persona.",
         );
       }
-      const runtimeMode = input.runtime_mode ?? persona?.runtimeMode ?? parent.thread.runtimeMode;
-      const interactionMode = input.interaction_mode ?? parent.thread.interactionMode;
       const { limits } = yield* loadCaller();
+      // An outside agent's persona is held to its approved level, which a thread caller's is not.
+      if (persona !== undefined && personaId !== undefined && outside !== undefined) {
+        yield* assertPersonaWithinApprovedLevel(outside, personaId, persona.runtimeMode);
+      }
+      // With no mode chosen the agent gets the caller's: its thread's, or its approved level.
+      const runtimeMode =
+        input.runtime_mode ??
+        persona?.runtimeMode ??
+        home?.thread.runtimeMode ??
+        limits.runtimeMode;
+      const interactionMode =
+        input.interaction_mode ?? home?.thread.interactionMode ?? limits.interactionMode;
       {
         // Each mode is held to the caller's own only where the caller chose it, so choosing an
         // interaction mode does not put a persona's permission mode under the ceiling.
@@ -943,7 +1046,7 @@ const handlers = {
       }
       const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
       const stableInput = {
-        providerSessionId: scope.thread.providerSessionId,
+        providerSessionId: spawner.requestNamespace,
         requestKey,
       };
       const threadId = spawnThreadId(stableInput);
@@ -953,8 +1056,9 @@ const handlers = {
       const firstAttempt = existing === null;
       // A retry finishes the agent its first attempt created, in the modes it was created with.
       // A caller's modes can be narrowed within one provider session, so those are checked
-      // against what the caller may touch now. A persona's agent runs under its own policy.
-      if (existing !== null && persona === undefined) {
+      // against what the caller may touch now. A persona's agent runs under its own policy,
+      // except for an outside agent, whose approved level caps every agent it starts.
+      if (existing !== null && (persona === undefined || outside !== undefined)) {
         const exceeded = exceededDispatchModeLimit(limits, existing);
         if (exceeded !== undefined) {
           return yield* stateError(
@@ -982,38 +1086,46 @@ const handlers = {
                 ),
               ),
             )
-          : input.project_id === undefined
-            ? parent.thread.projectId
-            : ProjectId.make(input.project_id);
-      const elsewhere = target !== parent.thread.projectId;
-      const targetProject = !elsewhere
-        ? { id: caller.projectId, title: caller.project.name }
-        : yield* (yield* ProjectService).getById(target).pipe(
-            Effect.mapError((error) =>
-              stateError(
-                `Project ${target} cannot be read now: ${error.message}.`,
-                "Retry j5_spawn_agent.",
+          : input.project_id !== undefined
+            ? ProjectId.make(input.project_id)
+            : home === undefined
+              ? yield* outsideSpawnNeedsProject
+              : home.thread.projectId;
+      // The spawner's own project and checkout, when the agent joins that project.
+      const own = home !== undefined && target === home.thread.projectId ? home : undefined;
+      const elsewhere = own === undefined;
+      const targetProject =
+        own !== undefined
+          ? own.ledgerProject
+          : yield* (yield* ProjectService).getById(target).pipe(
+              Effect.mapError((error) =>
+                stateError(
+                  `Project ${target} cannot be read now: ${error.message}.`,
+                  "Retry j5_spawn_agent.",
+                ),
               ),
-            ),
-            Effect.flatMap(
-              Option.match({
-                onNone: () =>
-                  Effect.fail(
-                    stateError(
-                      `This server has no project ${target}.`,
-                      "Call t3_project_list and retry j5_spawn_agent with one of its project ids.",
+              Effect.flatMap(
+                Option.match({
+                  onNone: () =>
+                    Effect.fail(
+                      stateError(
+                        `This server has no project ${target}.`,
+                        "Call t3_project_list and retry j5_spawn_agent with one of its project ids.",
+                      ),
                     ),
-                  ),
-                onSome: (project) =>
-                  Effect.succeed({ id: LedgerProjectId.make(project.id), title: project.title }),
-              }),
-            ),
-          );
+                  onSome: (project) =>
+                    Effect.succeed({ id: LedgerProjectId.make(project.id), title: project.title }),
+                }),
+              ),
+            );
       if (input.scratch === true && input.workspace.type !== "root") {
         return yield* stateError(
           "An agent without a project works in a folder of its own, not in a checkout or a worktree.",
           'Retry j5_spawn_agent with workspace {"type":"root"}.',
         );
+      }
+      if (home === undefined && input.workspace.type === "shared") {
+        return yield* outsideSpawnHasNoCheckout;
       }
       if (elsewhere && input.workspace.type === "shared") {
         return yield* stateError(
@@ -1038,7 +1150,7 @@ const handlers = {
           ? null
           : yield* spawnWorkspace.inspect({
               projectId: target,
-              worktreePath: elsewhere ? null : parent.thread.worktreePath,
+              worktreePath: own?.thread.worktreePath ?? null,
               checkBranches,
               baseRefs: namedBaseRefs([choice]),
               existingWorktreePaths: namedWorktreePaths([choice]),
@@ -1068,8 +1180,8 @@ const handlers = {
                 .getThreadShell(threadId)
                 .pipe(Effect.orElseSucceed(() => null))) !== null;
             const sharedCheckout =
-              input.workspace.type !== "root"
-                ? parent.thread
+              input.workspace.type !== "root" && home !== undefined
+                ? home.thread
                 : {
                     branch: null,
                     worktreePath: created
@@ -1130,9 +1242,10 @@ const handlers = {
                 threadId,
                 provenance: {
                   kind: "spawned-by",
-                  spawnedByParticipantId: caller.participantId,
+                  spawnedByParticipantId: spawner.participantId,
                   source: "j5_spawn",
                 },
+                ...(outside === undefined ? {} : { outsideSpawnerName: outside.client.label }),
                 createdAt: DateTime.formatIso(child.thread.createdAt),
               })
               .pipe(
@@ -1143,7 +1256,8 @@ const handlers = {
                   ),
                 ),
               );
-            // In the spawner's own project the agent sits under it; in another it is a root.
+            // In the spawner's own project the agent sits under it; in another it is a root, as
+            // is every agent an outside agent starts.
             if (
               facts.placement.provenance.kind !== "spawned-by" ||
               facts.placement.provenance.source !== "j5_spawn" ||
@@ -1183,8 +1297,10 @@ const handlers = {
                   participantId: facts.home.participantId,
                   projectId: facts.home.projectId,
                   projectTitle: targetProject.title,
-                  spawnedByParticipantId: caller.participantId,
-                  spawnerThreadId: scope.thread.threadId,
+                  spawnedByParticipantId: spawner.participantId,
+                  ...(outside === undefined
+                    ? { spawnerThreadId: scope.thread?.threadId }
+                    : { outsideAgentName: outside.client.label }),
                 }),
                 modelSelection,
                 runtimeMode,
@@ -1225,68 +1341,72 @@ const handlers = {
         );
     }).pipe(Effect.mapError(failure)),
   ),
-  j5_propose_crew: McpToolAccess.actsAsCaller((input) =>
-    Effect.gen(function* () {
-      const scope = yield* callerScope;
-      const crypto = yield* Crypto.Crypto;
-      const captain = yield* preflightCrewCaptain(scope, "j5_propose_crew");
-      const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
-      // The Captain's playbooks are the ones its own j5_playbook_list shows.
-      const playbook =
-        input.playbook === undefined
-          ? undefined
-          : {
-              name: input.playbook,
-              workspaceRoot: yield* playbookWorkspaceRoot(captain.thread.id).pipe(
-                Effect.mapError((error) =>
-                  stateError(
-                    `Your playbook workspace could not be read: ${error.message}`,
-                    "Retry, or propose the crew without a playbook.",
+  j5_propose_crew: actsAsThreadCaller(
+    "j5_propose_crew",
+    spawnAndBrief("propose the Crew"),
+    (input, scope) =>
+      Effect.gen(function* () {
+        const crypto = yield* Crypto.Crypto;
+        const captain = yield* preflightCrewCaptain(scope, "j5_propose_crew");
+        const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+        // The Captain's playbooks are the ones its own j5_playbook_list shows.
+        const playbook =
+          input.playbook === undefined
+            ? undefined
+            : {
+                name: input.playbook,
+                workspaceRoot: yield* playbookWorkspaceRoot(captain.thread.id).pipe(
+                  Effect.mapError((error) =>
+                    stateError(
+                      `Your playbook workspace could not be read: ${error.message}`,
+                      "Retry, or propose the crew without a playbook.",
+                    ),
                   ),
                 ),
-              ),
-            };
-      const outcome = yield* (yield* CrewProposalService)
-        .propose({
-          requestKey: `${scope.thread.providerSessionId}:${requestKey}`,
-          captain,
-          displayName: input.name,
-          brief: input.brief,
-          ...(playbook === undefined ? {} : { playbook }),
-          seats: input.seats.map(crewSeatFromInput),
-        })
-        .pipe(Effect.mapError((error) => stateError(error.message, crewProposalNextStep(error))));
-      return projectCrewProposal(outcome);
-    }).pipe(Effect.mapError(failure)),
+              };
+        const outcome = yield* (yield* CrewProposalService)
+          .propose({
+            requestKey: `${scope.thread.providerSessionId}:${requestKey}`,
+            captain,
+            displayName: input.name,
+            brief: input.brief,
+            ...(playbook === undefined ? {} : { playbook }),
+            seats: input.seats.map(crewSeatFromInput),
+          })
+          .pipe(Effect.mapError((error) => stateError(error.message, crewProposalNextStep(error))));
+        return projectCrewProposal(outcome);
+      }).pipe(Effect.mapError(failure)),
   ),
-  j5_request_crew_member: McpToolAccess.actsAsCaller((input) =>
-    Effect.gen(function* () {
-      const scope = yield* callerScope;
-      const crypto = yield* Crypto.Crypto;
-      const captain = yield* preflightCrewCaptain(scope, "j5_request_crew_member");
-      const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
-      const outcome = yield* (yield* CrewProposalService)
-        .requestMember({
-          requestKey: `${scope.thread.providerSessionId}:${requestKey}`,
-          captain,
-          crewInstanceId: input.crew_instance_id ?? null,
-          seat: {
-            seat: input.seat,
-            agentId: input.persona ?? null,
-            reason: input.reason,
-            ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
-            ...(input.model_selection === undefined
-              ? {}
-              : { modelSelection: input.model_selection }),
-            ...(input.runtime_mode === undefined ? {} : { runtimeMode: input.runtime_mode }),
-            ...(input.steps === undefined ? {} : { steps: input.steps }),
-            workspace: spawnWorkspaceFromInput(input.workspace),
-          },
-          brief: input.brief ?? null,
-        })
-        .pipe(Effect.mapError((error) => stateError(error.message, crewProposalNextStep(error))));
-      return projectCrewProposal(outcome);
-    }).pipe(Effect.mapError(failure)),
+  j5_request_crew_member: actsAsThreadCaller(
+    "j5_request_crew_member",
+    spawnAndBrief("propose the Crew and ask for the seat"),
+    (input, scope) =>
+      Effect.gen(function* () {
+        const crypto = yield* Crypto.Crypto;
+        const captain = yield* preflightCrewCaptain(scope, "j5_request_crew_member");
+        const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+        const outcome = yield* (yield* CrewProposalService)
+          .requestMember({
+            requestKey: `${scope.thread.providerSessionId}:${requestKey}`,
+            captain,
+            crewInstanceId: input.crew_instance_id ?? null,
+            seat: {
+              seat: input.seat,
+              agentId: input.persona ?? null,
+              reason: input.reason,
+              ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+              ...(input.model_selection === undefined
+                ? {}
+                : { modelSelection: input.model_selection }),
+              ...(input.runtime_mode === undefined ? {} : { runtimeMode: input.runtime_mode }),
+              ...(input.steps === undefined ? {} : { steps: input.steps }),
+              workspace: spawnWorkspaceFromInput(input.workspace),
+            },
+            brief: input.brief ?? null,
+          })
+          .pipe(Effect.mapError((error) => stateError(error.message, crewProposalNextStep(error))));
+        return projectCrewProposal(outcome);
+      }).pipe(Effect.mapError(failure)),
   ),
   j5_list_personas: McpToolAccess.reads(() =>
     Effect.gen(function* () {
@@ -1331,22 +1451,29 @@ const handlers = {
       };
     }).pipe(Effect.mapError(failure)),
   ),
-  j5_stop_agent: McpToolAccess.actsAsCaller((input) =>
+  j5_stop_agent: McpToolAccess.writes((input) =>
     Effect.gen(function* () {
-      const scope = yield* callerScope;
+      const invocation = yield* McpInvocationContext;
+      const outside = yield* outsideAgentCaller;
+      const scope = outside === undefined ? yield* callerScope : undefined;
       const crypto = yield* Crypto.Crypto;
-      const caller = yield* resolveCallerMembership(scope);
+      // An outside agent has no membership, and is never a Captain.
+      const callerParticipantId: ParticipantId | undefined =
+        scope === undefined ? undefined : (yield* resolveCallerMembership(scope)).participantId;
+      const service = yield* A2ASendService;
       // Any agent on this server, archived ones included: archiving can leave a run executing.
-      const matches = (yield* (yield* A2ASendService)
-        .listParticipants(scope.thread.threadId, true)
-        .pipe(
-          Effect.mapError((error) =>
-            stateError(
-              `This server's participants cannot be read for j5_stop_agent: ${error.message}.`,
-              "Retry j5_stop_agent with the same client_request_id.",
-            ),
+      const matches = (yield* (
+        scope === undefined
+          ? service.listParticipantsWithoutCaller({ includeArchived: true })
+          : service.listParticipants(scope.thread.threadId, true)
+      ).pipe(
+        Effect.mapError((error) =>
+          stateError(
+            `This server's participants cannot be read for j5_stop_agent: ${error.message}.`,
+            "Retry j5_stop_agent with the same client_request_id.",
           ),
-        )).filter((row) => row.participantId === input.participant_id);
+        ),
+      )).filter((row) => row.participantId === input.participant_id);
       if (matches.length !== 1) {
         return yield* stateError(
           `This server has ${matches.length === 0 ? "no" : "an ambiguous"} participant ${input.participant_id}.`,
@@ -1377,7 +1504,9 @@ const handlers = {
       const seat = yield* crews.findMembership(input.participant_id);
       const crew = seat === null ? null : yield* crews.read(seat.crewInstanceId);
       const limits =
-        crew !== null && crew.captainParticipantId === caller.participantId
+        callerParticipantId !== undefined &&
+        crew !== null &&
+        crew.captainParticipantId === callerParticipantId
           ? undefined
           : (yield* loadCaller()).limits;
       if (limits !== undefined) {
@@ -1392,7 +1521,8 @@ const handlers = {
       }
       const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
       const commandId = lifecycleCommandId({
-        providerSessionId: scope.thread.providerSessionId,
+        // An outside agent's retry keys are namespaced by its client session.
+        providerSessionId: scope?.thread.providerSessionId ?? invocation.requestNamespace,
         requestKey,
         operation: "stop-agent",
       });
@@ -1412,87 +1542,91 @@ const handlers = {
         : ("interrupt_requested" as const);
     }).pipe(Effect.mapError(failure)),
   ),
-  j5_stop_crew: McpToolAccess.actsAsCaller((input) =>
-    Effect.gen(function* () {
-      const scope = yield* callerScope;
-      const crypto = yield* Crypto.Crypto;
-      const caller = yield* resolveCallerMembership(scope);
-      const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
-      const outcome = yield* (yield* CrewStopService)
-        .stop({
+  j5_stop_crew: actsAsThreadCaller(
+    "j5_stop_crew",
+    "Only a Crew's Captain stops it: message the Captain with j5_send_message, or stop one agent with j5_stop_agent.",
+    (input, scope) =>
+      Effect.gen(function* () {
+        const crypto = yield* Crypto.Crypto;
+        const caller = yield* resolveCallerMembership(scope);
+        const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+        const outcome = yield* (yield* CrewStopService)
+          .stop({
+            callerParticipantId: caller.participantId,
+            projectId: caller.projectId,
+            crewInstanceId: input.crew_instance_id,
+            commandIds: (seatName) => ({
+              interruptCommandId: lifecycleCommandId({
+                providerSessionId: scope.thread.providerSessionId,
+                requestKey: crewSeatRequestKey(requestKey, seatName),
+                operation: "stop-crew-interrupt",
+              }),
+            }),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              stateError(
+                error.message,
+                error._tag === "CrewStopNotFoundError"
+                  ? "Check crew_instance_id against the <j5_crew_gate> roster notice and retry."
+                  : error._tag === "CrewStopRequestError"
+                    ? error.nextStep
+                    : "Retry j5_stop_crew with the same client_request_id; seats already interrupted stay interrupted.",
+              ),
+            ),
+          );
+        return {
+          crew_instance_id: outcome.crewInstanceId,
+          members: outcome.members.map((member) => ({
+            seat: member.seatName,
+            participant_id: member.participantId,
+            result: member.result,
+          })),
+        };
+      }).pipe(Effect.mapError(failure)),
+  ),
+  j5_archive_crew: actsAsThreadCaller(
+    "j5_archive_crew",
+    "Only a Crew's Captain archives it: message the Captain with j5_send_message and ask it to.",
+    (input, scope) =>
+      Effect.gen(function* () {
+        const crypto = yield* Crypto.Crypto;
+        const caller = yield* resolveCallerMembership(scope);
+        const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+        const archivedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
+        const outcome = yield* (yield* ArchiveCrewService).archive({
+          providerSessionId: scope.thread.providerSessionId,
           callerParticipantId: caller.participantId,
           projectId: caller.projectId,
           crewInstanceId: input.crew_instance_id,
+          clientRequestKey: requestKey,
+          ...(input.confirmation_token === undefined
+            ? {}
+            : { confirmationToken: input.confirmation_token }),
+          archivedAt,
           commandIds: (seatName) => ({
             interruptCommandId: lifecycleCommandId({
               providerSessionId: scope.thread.providerSessionId,
               requestKey: crewSeatRequestKey(requestKey, seatName),
-              operation: "stop-crew-interrupt",
+              operation: "archive-crew-interrupt",
+            }),
+            archiveCommandId: lifecycleCommandId({
+              providerSessionId: scope.thread.providerSessionId,
+              requestKey: crewSeatRequestKey(requestKey, seatName),
+              operation: "archive-crew-thread",
             }),
           }),
-        })
-        .pipe(
-          Effect.mapError((error) =>
-            stateError(
-              error.message,
-              error._tag === "CrewStopNotFoundError"
-                ? "Check crew_instance_id against the <j5_crew_gate> roster notice and retry."
-                : error._tag === "CrewStopRequestError"
-                  ? error.nextStep
-                  : "Retry j5_stop_crew with the same client_request_id; seats already interrupted stay interrupted.",
-            ),
-          ),
-        );
-      return {
-        crew_instance_id: outcome.crewInstanceId,
-        members: outcome.members.map((member) => ({
-          seat: member.seatName,
-          participant_id: member.participantId,
-          result: member.result,
-        })),
-      };
-    }).pipe(Effect.mapError(failure)),
-  ),
-  j5_archive_crew: McpToolAccess.actsAsCaller((input) =>
-    Effect.gen(function* () {
-      const scope = yield* callerScope;
-      const crypto = yield* Crypto.Crypto;
-      const caller = yield* resolveCallerMembership(scope);
-      const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
-      const archivedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
-      const outcome = yield* (yield* ArchiveCrewService).archive({
-        providerSessionId: scope.thread.providerSessionId,
-        callerParticipantId: caller.participantId,
-        projectId: caller.projectId,
-        crewInstanceId: input.crew_instance_id,
-        clientRequestKey: requestKey,
-        ...(input.confirmation_token === undefined
-          ? {}
-          : { confirmationToken: input.confirmation_token }),
-        archivedAt,
-        commandIds: (seatName) => ({
-          interruptCommandId: lifecycleCommandId({
-            providerSessionId: scope.thread.providerSessionId,
-            requestKey: crewSeatRequestKey(requestKey, seatName),
-            operation: "archive-crew-interrupt",
-          }),
-          archiveCommandId: lifecycleCommandId({
-            providerSessionId: scope.thread.providerSessionId,
-            requestKey: crewSeatRequestKey(requestKey, seatName),
-            operation: "archive-crew-thread",
-          }),
-        }),
-      });
-      return {
-        status: outcome.status,
-        crew_instance_id: input.crew_instance_id,
-        members: outcome.members.map((member) => ({
-          seat: member.seatName,
-          participant_id: member.participantId,
-          result: member.result,
-        })),
-      };
-    }).pipe(Effect.mapError(archiveCrewFailure)),
+        });
+        return {
+          status: outcome.status,
+          crew_instance_id: input.crew_instance_id,
+          members: outcome.members.map((member) => ({
+            seat: member.seatName,
+            participant_id: member.participantId,
+            result: member.result,
+          })),
+        };
+      }).pipe(Effect.mapError(archiveCrewFailure)),
   ),
 } satisfies McpToolAccess.Handlers<typeof J5Toolkit.tools>;
 

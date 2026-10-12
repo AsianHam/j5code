@@ -357,6 +357,14 @@ export const FleetAgent = Schema.Struct({
   /** `agent` when another agent spawned it (roster-only in the sidebar); `unknown` when never recorded. */
   origin: Schema.Literals(["human", "agent", "unknown"]),
   placementParentId: Schema.NullOr(Schema.String),
+  /**
+   * Set when an outside agent (an MCP client signed in from outside the app) spawned it. Such an
+   * agent has `origin: "agent"` and no placement parent, so this is the only place its spawner is
+   * named. `name` is the label the client signed in with.
+   */
+  outsideSpawner: Schema.optional(
+    Schema.Struct({ participantId: Schema.String, name: Schema.NullOr(Schema.String) }),
+  ),
   crew: Schema.NullOr(
     Schema.Struct({
       crewInstanceId: Schema.String,

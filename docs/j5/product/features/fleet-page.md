@@ -27,7 +27,7 @@ A person's attention splits across three surfaces, each with one job:
 
 The rows of the Active and Settled tables are **agents**: every agent participant, arranged as the placement tree with siblings in creation order. Each tree's root row names its **project**, and when several environments are merged, the environment beside it; the rows beneath a root belong to the same project, because a placement tree never crosses one. Roots are grouped by upstream's logical project, so the copies of one project on two machines sit together. People are never rows; they appear as counterparties in an agent's asks. Provider-native Subagents never appear; upstream's own panel is their home. Rows keep their positions. A problem marks a row; it never moves one.
 
-An agent's **placement** is where it sits in that tree: under its spawner, and at its project's root when no agent spawned it. Whoever briefs an agent commands it, so the tree shows who is running what. An agent's **provenance** is the recorded fact of how it came to exist — spawned by a named agent, forked from another, or unrecorded — written once and never changed. Neither restricts who may message whom; the tree carries decisions, never messages.
+An agent's **placement** is where it sits in that tree: under its spawner, and at its project's root when no agent in that project spawned it. An agent started from another project, or by an [outside agent](../a2a/index.md#participants), is at the root. Whoever briefs an agent commands it, so the tree shows who is running what. An agent's **provenance** is the recorded fact of how it came to exist — spawned by a named agent, forked from another, or unrecorded — written once and never changed. The named spawner may be an outside agent, which is in no project and is shown by the label it signed in with. Neither restricts who may message whom; the tree carries decisions, never messages.
 
 **Settled is a measurement, not a mood.** An agent is settled when its thread shell says so, the same fact the sidebar and a Crew's state summary read, and only when nothing outranks it: a running turn, a failed last run, or a pending approval or input keeps an agent Active whatever its settle mark says. Idle is not settled: an agent that merely stopped talking stays Active, because silence proves nothing ([principles](../principles.md): never guess). An agent the client cannot read is unknown, and unknown is Active. A Crew is settled as a unit when every seat, and everything placed beneath a seat, is settled. A placement tree is placed by its root and never split: it moves to Settled only when the root and every agent and Crew beneath it are settled, and otherwise stays whole in Active, where a settled root's status cell reads "Settled" so the reader sees why the tree has not moved. A Settled row is still the agent: clicking it opens its thread, and a settled Crew still offers Archive crew, though never Stop crew, since nothing runs.
 
@@ -69,7 +69,7 @@ The Fleet page is **not** the inbox: it never demands a reply. It is **not** a p
 9. Rows are arranged as the placement tree, siblings in creation order, and are never reordered by activity or by problems.
 10. People are never rows; a person appears only as the counterparty on an agent's asks. Provider-native Subagents never appear.
 11. A retired agent is not a row; an agent still live beneath it renders at its project's root.
-12. Each row shows its provenance as a fact: spawned by which agent, forked, or unrecorded.
+12. Each row shows its provenance as a fact: spawned by which agent, forked, or unrecorded. An outside agent that spawned it is named by its label.
 13. Retired (see History).
 14. Clicking a row opens the agent's thread.
 
@@ -112,7 +112,7 @@ The Fleet page is **not** the inbox: it never demands a reply. It is **not** a p
 
 ### Placement and provenance
 
-34. An agent's placement equals its spawner at creation and changes only by a person's action; a placement tree lives entirely within one project.
+34. An agent's placement equals its spawner at creation and changes only by a person's action; a placement tree lives entirely within one project. An agent whose spawner is in another project, or is an outside agent, is placed at the root.
 35. An agent's provenance is recorded at creation and never changes.
 
 ## Scenarios
@@ -145,3 +145,4 @@ The Fleet page is **not** the inbox: it never demands a reply. It is **not** a p
 - 2026-09-24 — AC28's roster snapshot reads seat, agent, why it joined, and version: the person approves every seat, so the roster records no approver, as in [Crews](crews.md) AC6 and AC20 ([#229](https://github.com/Jacksondr5/j5code/issues/229)).
 - 2026-09-25 — a retired Crew comes back with its Captain when it retired because the Captain was archived, so AC28 no longer says it can never be reactivated; the roster snapshot shows why each seat joined, since the roster records no approver (Bryant; [#312](https://github.com/Jacksondr5/j5code/issues/312)).
 - 2026-10-07 — Squadrons retired: the page reads every project and groups roots by upstream's logical project, the sidebar is upstream's project sidebar, and every thread but a provider Subagent is a participant, so AC1 (the Squadron scope) and AC13 (the footer for threads without a home) are retired. Placement and provenance moved here from the retired Squadron definition: its AC10, AC12 and AC13 are AC34 and AC35 (Jackson, 2026-10-05; [#412](https://github.com/Jacksondr5/j5code/issues/412)).
+- 2026-10-12 — an outside agent can be a spawner: the agent it starts is placed at its project's root and its provenance names the outside agent by its label; AC12 and AC34 (Jackson, 2026-10-11; [#498](https://github.com/Jacksondr5/j5code/issues/498)).

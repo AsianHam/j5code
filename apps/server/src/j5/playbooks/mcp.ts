@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 import { McpInvocationContext, requireThreadScope } from "../../mcp/McpInvocationContext.ts";
-import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
+import { actsAsThreadCaller, readsAsThreadCaller, spawnAndBrief } from "../a2a/mcp/outsideAgent.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
 import { PlaybookCrewRelay } from "./PlaybookCrewRelay.ts";
@@ -134,20 +134,32 @@ const mutate = Effect.fn("PlaybookMcp.mutate")(function* (input: PlaybookMutatio
   return yield* (yield* PlaybookCrewRelay).mutate(yield* ownerScope, input);
 });
 
+/** A run belongs to a calling thread, so an outside agent is told to start one that runs it. */
+const runsPlaybook = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+  actsAsThreadCaller("A playbook tool", spawnAndBrief("run the playbook"), handle);
+
+/** Playbooks are read from the calling thread's workspace, and a run is read by its owner. */
+const readsPlaybooks = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+  readsAsThreadCaller(
+    "A playbook tool",
+    spawnAndBrief("read or run the playbook, since playbooks live in an agent's workspace"),
+    handle,
+  );
+
 export const playbookHandlers = {
-  j5_playbook_list: McpToolAccess.readsAsCaller(() =>
+  j5_playbook_list: readsPlaybooks(() =>
     Effect.gen(function* () {
       const { root } = yield* workspace;
       return yield* (yield* PlaybookStore).discover(root);
     }),
   ),
-  j5_playbook_read: McpToolAccess.readsAsCaller((input: typeof Read.Type) =>
+  j5_playbook_read: readsPlaybooks((input: typeof Read.Type) =>
     Effect.gen(function* () {
       const { root } = yield* workspace;
       return yield* (yield* PlaybookStore).read(root, input.name);
     }),
   ),
-  j5_playbook_start: McpToolAccess.actsAsCaller((input: typeof Start.Type) =>
+  j5_playbook_start: runsPlaybook((input: typeof Start.Type) =>
     Effect.gen(function* () {
       const { owner, root } = yield* workspace;
       if (input.crew_instance_id === undefined)
@@ -166,24 +178,24 @@ export const playbookHandlers = {
       });
     }),
   ),
-  j5_playbook_current: McpToolAccess.readsAsCaller((input: typeof Current.Type) =>
+  j5_playbook_current: readsPlaybooks((input: typeof Current.Type) =>
     Effect.gen(function* () {
       return yield* (yield* PlaybookCrewRelay).current(yield* ownerScope, input.runId);
     }),
   ),
-  j5_playbook_next: McpToolAccess.actsAsCaller((input: typeof Movement.Type) =>
+  j5_playbook_next: runsPlaybook((input: typeof Movement.Type) =>
     mutate({ ...input, operation: "next" }),
   ),
-  j5_playbook_back: McpToolAccess.actsAsCaller((input: typeof Movement.Type) =>
+  j5_playbook_back: runsPlaybook((input: typeof Movement.Type) =>
     mutate({ ...input, operation: "back" }),
   ),
-  j5_playbook_reselect: McpToolAccess.actsAsCaller((input: typeof Reselection.Type) =>
+  j5_playbook_reselect: runsPlaybook((input: typeof Reselection.Type) =>
     mutate({ ...input, operation: "reselect" }),
   ),
-  j5_playbook_complete: McpToolAccess.actsAsCaller((input: typeof Movement.Type) =>
+  j5_playbook_complete: runsPlaybook((input: typeof Movement.Type) =>
     mutate({ ...input, operation: "complete" }),
   ),
-  j5_playbook_cancel: McpToolAccess.actsAsCaller((input: typeof Mutation.Type) =>
+  j5_playbook_cancel: runsPlaybook((input: typeof Mutation.Type) =>
     mutate({ ...input, operation: "cancel" }),
   ),
 };

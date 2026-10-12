@@ -41,6 +41,9 @@ const MACHINE_DELIVERY_INSTRUCTIONS = new Set(
       `This message came from an automated sender outside any agent session. It cannot receive a reply; act on it directly, and take any question to a person or a peer agent with ${tool}.`,
   ),
 );
+// Added after the `j5_` prefix, so no stored delivery names the older tool.
+const OUTSIDE_AGENT_DELIVERY_INSTRUCTION =
+  "This message came from an outside agent: one that runs outside this app. You cannot reply to it with j5_send_message.";
 
 export interface ThreadA2ADeliveryCompositionInput {
   readonly message: ChatMessage;
@@ -76,6 +79,8 @@ export type ThreadA2ADeliveryPresentation =
       readonly exchangeId: string | null;
       /** A registered machine sender (script, watchdog) rather than an agent. */
       readonly automated: boolean;
+      /** An MCP client signed in from outside the app. It has no thread to open. */
+      readonly outsideAgent: boolean;
     }
   | {
       readonly kind: "human";
@@ -160,7 +165,13 @@ function parsePeerEnvelope(rawEnvelope: string) {
   });
   return instruction === null
     ? null
-    : { senderId, body, automated: false as const, ...instruction };
+    : {
+        senderId,
+        body,
+        automated: false as const,
+        outsideAgent: false as const,
+        ...instruction,
+      };
 }
 
 /** The machine template: a plain send from a registered script, never an exchange. */
@@ -176,11 +187,42 @@ function parseMachineEnvelope(rawEnvelope: string) {
     exchange: "plain" as const,
     exchangeId: null,
     automated: true as const,
+    outsideAgent: false as const,
   };
 }
 
-function parsePeerOrMachineEnvelope(rawEnvelope: string) {
-  return parsePeerEnvelope(rawEnvelope) ?? parseMachineEnvelope(rawEnvelope);
+// The server's `outsideAgentMessage` template (apps/server/src/j5/a2a/envelopes.v1.json): the
+// label the client signed in with, then its id in parentheses. The label is one line with no `]`
+// but may itself hold parentheses, so it is matched greedily and the id closes the header. The
+// card names the sender from the participant-identities read, as it does every sender.
+const OUTSIDE_AGENT_HEADER =
+  /^\[Message from outside agent [^\]\n]+ \((outside:[^\]\s()]+)\)\]\n\n/;
+
+/** The outside-agent template: a plain send from an MCP client, never an exchange. */
+function parseOutsideAgentEnvelope(rawEnvelope: string) {
+  const header = OUTSIDE_AGENT_HEADER.exec(rawEnvelope);
+  if (!header) return null;
+  const content = rawEnvelope.slice(header[0].length);
+  const divider = content.lastIndexOf("\n\n");
+  if (divider <= 0 || content.slice(divider + 2) !== OUTSIDE_AGENT_DELIVERY_INSTRUCTION) {
+    return null;
+  }
+  return {
+    senderId: header[1]!,
+    body: content.slice(0, divider),
+    exchange: "plain" as const,
+    exchangeId: null,
+    automated: false as const,
+    outsideAgent: true as const,
+  };
+}
+
+function parseAgentAuthoredEnvelope(rawEnvelope: string) {
+  return (
+    parsePeerEnvelope(rawEnvelope) ??
+    parseMachineEnvelope(rawEnvelope) ??
+    parseOutsideAgentEnvelope(rawEnvelope)
+  );
 }
 
 function parseHumanEnvelope(rawEnvelope: string) {
@@ -281,7 +323,7 @@ export function presentThreadA2ADelivery(
   if (!isThreadA2ADeliveryMessage(message)) return null;
 
   if (message.createdBy === "agent") {
-    const peer = parsePeerOrMachineEnvelope(message.text);
+    const peer = parseAgentAuthoredEnvelope(message.text);
     if (peer) {
       const sender = presentParticipantIdentity({
         participantId: peer.senderId,
@@ -297,6 +339,7 @@ export function presentThreadA2ADelivery(
         exchange: peer.exchange,
         exchangeId: peer.exchangeId,
         automated: peer.automated,
+        outsideAgent: peer.outsideAgent,
       };
     }
   } else if (message.createdBy === "user") {
@@ -335,7 +378,7 @@ export function formatThreadA2AQueuedDelivery(
   text: string,
   participantLabels: ReadonlyMap<string, string>,
 ): { readonly label: string; readonly tooltipParticipantId: string | null } | null {
-  const peer = parsePeerOrMachineEnvelope(text);
+  const peer = parseAgentAuthoredEnvelope(text);
   if (peer === null) return null;
   const sender = presentParticipantIdentity({ participantId: peer.senderId, participantLabels });
   const firstLine = peer.body.split("\n")[0]?.trim() ?? "";
@@ -346,7 +389,7 @@ export function formatThreadA2AQueuedDelivery(
 }
 
 export function participantIdsForThreadA2AEnvelope(text: string): ReadonlyArray<string> {
-  const peer = parsePeerOrMachineEnvelope(text);
+  const peer = parseAgentAuthoredEnvelope(text);
   return peer === null ? [] : [peer.senderId];
 }
 
@@ -458,6 +501,7 @@ function PeerDeliveryCard({
   body,
   exchange,
   now,
+  outsideAgent = false,
   senderLabel,
   senderTooltipParticipantId,
   sentAt,
@@ -466,6 +510,7 @@ function PeerDeliveryCard({
   readonly body: string;
   readonly exchange: "expects-reply" | "plain" | "closed";
   readonly now?: number | undefined;
+  readonly outsideAgent?: boolean | undefined;
   readonly senderLabel: string;
   readonly senderTooltipParticipantId: string | null;
   readonly sentAt: string;
@@ -500,6 +545,14 @@ function PeerDeliveryCard({
             data-j5-a2a-automated
           >
             Automation
+          </span>
+        ) : null}
+        {outsideAgent ? (
+          <span
+            className="rounded-md border border-border/70 px-1.5 py-0.5 text-2xs font-semibold text-muted-foreground"
+            data-j5-a2a-outside-agent
+          >
+            Outside agent
           </span>
         ) : null}
         {isOpen ? (
@@ -540,6 +593,7 @@ export function renderThreadA2ADelivery(props: ThreadA2ADeliveryCompositionInput
         body={presentation.body}
         exchange={presentation.exchange}
         now={props.now}
+        outsideAgent={presentation.outsideAgent}
         senderLabel={presentation.senderLabel}
         senderTooltipParticipantId={presentation.senderTooltipParticipantId}
         sentAt={props.message.createdAt}

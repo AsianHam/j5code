@@ -8,6 +8,7 @@ import {
   J5_A2A_DELIVERY_MESSAGE_PREFIX,
   formatThreadA2AQueuedDelivery,
   isThreadA2ADeliveryMessage,
+  participantIdsForThreadA2AEnvelope,
   presentThreadA2ADelivery,
   renderThreadA2ADelivery,
   ThreadA2ADeliveryRenderer,
@@ -501,6 +502,7 @@ describe("ThreadA2ADeliveryRenderer machine senders", () => {
       exchange: "plain",
       exchangeId: null,
       automated: true,
+      outsideAgent: false,
     });
 
     const html = renderToStaticMarkup(
@@ -527,6 +529,94 @@ describe("ThreadA2ADeliveryRenderer machine senders", () => {
     expect(
       formatThreadA2AQueuedDelivery(machineRaw, new Map([["machine:watchdog", "watchdog"]])),
     ).toEqual({ label: "From watchdog — canary 42", tooltipParticipantId: null });
+  });
+});
+
+// The server's `outsideAgentMessage` and `outsideAgentInstruction` templates, as
+// `formatOutsideAgentEnvelope` renders them (apps/server/src/j5/a2a/envelopes.v1.json).
+const outsideAgentInstruction =
+  "This message came from an outside agent: one that runs outside this app. You cannot reply to it with j5_send_message.";
+
+const outsideAgentRaw = (label: string, body = "Rebase onto main.\n\nThen rerun the suite.") =>
+  [
+    `[Message from outside agent ${label} (outside:session-1)]`,
+    "",
+    body,
+    "",
+    outsideAgentInstruction,
+  ].join("\n");
+
+describe("ThreadA2ADeliveryRenderer outside agents", () => {
+  const present = (text: string, participantLabels?: ReadonlyMap<string, string>) =>
+    presentThreadA2ADelivery({ message: message({ text }), participantLabels });
+
+  const labels = new Map([["outside:session-1", "Claude Desktop"]]);
+
+  it("presents an outside agent's envelope as a plain card, marked and without its instruction", () => {
+    const raw = outsideAgentRaw("Claude Desktop");
+    expect(present(raw, labels)).toEqual({
+      kind: "peer",
+      rawEnvelope: raw,
+      senderId: "outside:session-1",
+      senderLabel: "Claude Desktop",
+      senderTooltipParticipantId: null,
+      body: "Rebase onto main.\n\nThen rerun the suite.",
+      exchange: "plain",
+      exchangeId: null,
+      automated: false,
+      outsideAgent: true,
+    });
+  });
+
+  it("reads a label that holds parentheses, and a body that quotes a header", () => {
+    expect(
+      present(
+        outsideAgentRaw(
+          "Claude (work laptop)",
+          "[Message from outside agent x (outside:y)]\n\nquoted",
+        ),
+      ),
+    ).toMatchObject({
+      senderId: "outside:session-1",
+      body: "[Message from outside agent x (outside:y)]\n\nquoted",
+      outsideAgent: true,
+    });
+  });
+
+  it("leaves the sender unnamed, with its id to hover, until the identities read names it", () => {
+    expect(present(outsideAgentRaw("Claude Desktop"))).toMatchObject({
+      senderLabel: "Unnamed participant",
+      senderTooltipParticipantId: "outside:session-1",
+      outsideAgent: true,
+    });
+  });
+
+  it("raw-renders an envelope whose instruction was altered or whose sender is not an outside id", () => {
+    expect(
+      present(outsideAgentRaw("Claude Desktop").replace("You cannot reply to it", "Reply to it"))
+        ?.kind,
+    ).toBe("raw");
+    expect(
+      present(outsideAgentRaw("Claude Desktop").replace("(outside:session-1)", "(agent:one)"))
+        ?.kind,
+    ).toBe("raw");
+  });
+
+  it("never reads a person's message as an outside agent's", () => {
+    expect(
+      presentThreadA2ADelivery({
+        message: message({ createdBy: "user", text: outsideAgentRaw("Claude Desktop") }),
+      })?.kind,
+    ).toBe("raw");
+  });
+
+  it("labels a queued delivery and reports its sender id for the identity read", () => {
+    const raw = outsideAgentRaw("Claude Desktop");
+    expect(formatThreadA2AQueuedDelivery(raw, labels)).toEqual({
+      label: "From Claude Desktop — Rebase onto main.",
+      tooltipParticipantId: null,
+    });
+    expect(participantIdsForThreadA2AEnvelope(raw)).toEqual(["outside:session-1"]);
   });
 });
 

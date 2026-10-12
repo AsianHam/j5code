@@ -148,6 +148,13 @@ const threadManagementMock = (
     ...service,
   });
 
+/** The send service's methods for a caller with no thread; these tests call as a thread. */
+const unusedOutsideAgentSends = {
+  outsideAgentReceiver: () => Effect.die("unused"),
+  sendAsOutsideAgent: () => Effect.die("unused"),
+  listParticipantsWithoutCaller: () => Effect.die("unused"),
+};
+
 const projectId = ProjectId.make("project:j5:mcp-handler");
 const createdAt = DateTime.makeUnsafe("2026-08-30T16:00:00.000Z");
 
@@ -252,6 +259,7 @@ it.effect("namespaces mutating-tool idempotency and sender identity from authent
     const sendService = Layer.succeed(
       A2ASendService,
       A2ASendService.of({
+        ...unusedOutsideAgentSends,
         send: (input) =>
           input.to === multiMembershipRecipientId
             ? Effect.fail(
@@ -423,6 +431,7 @@ it.effect(
         Layer.succeed(
           A2ASendService,
           A2ASendService.of({
+            ...unusedOutsideAgentSends,
             send: (input) =>
               Ref.update(sends, (items) => [...items, input]).pipe(
                 Effect.as({
@@ -615,6 +624,7 @@ it.effect("keeps participant listing placement-read-only", () =>
     const sendService = Layer.succeed(
       A2ASendService,
       A2ASendService.of({
+        ...unusedOutsideAgentSends,
         send: () => Effect.die("j5_send_message is outside this placement-handler test"),
         clearOwnAsk: () => Effect.die("j5_clear_own_ask is outside this placement-handler test"),
         sendAsMachine: () => Effect.die("unused"),
@@ -812,6 +822,7 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
     const sendService = Layer.succeed(
       A2ASendService,
       A2ASendService.of({
+        ...unusedOutsideAgentSends,
         send: () => Effect.die("unused"),
         clearOwnAsk: () => Effect.die("unused"),
         sendAsMachine: () => Effect.die("unused"),
@@ -1033,6 +1044,7 @@ it.effect("returns null display names when the ambient shell snapshot fails", ()
     const sendService = Layer.succeed(
       A2ASendService,
       A2ASendService.of({
+        ...unusedOutsideAgentSends,
         send: () => Effect.die("unused"),
         clearOwnAsk: () => Effect.die("unused"),
         sendAsMachine: () => Effect.die("unused"),
@@ -1117,6 +1129,7 @@ it.effect("preflights home before creation and records facts before the one stab
     const sendService = Layer.succeed(
       A2ASendService,
       A2ASendService.of({
+        ...unusedOutsideAgentSends,
         send: () => Effect.die("j5_send_message is outside this spawn test"),
         clearOwnAsk: () => Effect.die("j5_clear_own_ask is outside this spawn test"),
         sendAsMachine: () => Effect.die("unused"),
@@ -1569,8 +1582,9 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
               projectId: ledgerProjectId,
               participantId: childParticipantId,
               provenance: input.provenance,
+              // An outside agent is in no project, so it is nobody's placement parent.
               placementParentId:
-                input.provenance.kind === "spawned-by"
+                input.provenance.kind === "spawned-by" && input.outsideSpawnerName === undefined
                   ? input.provenance.spawnedByParticipantId
                   : null,
               createdEventSeq: 1,
@@ -1624,8 +1638,24 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
           Effect.succeed({ projectId: ledgerProjectId, participantId: callerParticipantId }),
       }),
 
-      Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "/tmp/j5-mcp-named-projects" }),
-      Layer.mock(ProjectService)({}),
+      Layer.mock(ManagedProjectFolders)({
+        namedProjectsRoot: "/tmp/j5-mcp-named-projects",
+        // Only the "No project" project gives a thread a folder of its own.
+        folderForThread: () => Effect.succeedNone,
+      }),
+      Layer.mock(ProjectService)({
+        getById: (id) =>
+          Effect.succeedSome({
+            id,
+            title: "Persona",
+            workspaceRoot: "/tmp/j5-mcp-spawn-persona",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: DateTime.formatIso(createdAt),
+            updatedAt: DateTime.formatIso(createdAt),
+            deletedAt: null,
+          }),
+      }),
       ServerConfig.layerTest(process.cwd(), { prefix: "j5-mcp-spawn-persona-" }),
     ).pipe(Layer.provideMerge(NodeServices.layer));
     const layer = J5ToolkitHandlersLive.pipe(
@@ -1635,14 +1665,14 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
 
     yield* Effect.gen(function* () {
       const toolkit = yield* J5Toolkit;
-      const call = (args: J5SpawnAgentInput) =>
+      const call = (args: J5SpawnAgentInput, caller: McpInvocationScope = scope) =>
         toolkit
           .handle("j5_spawn_agent", args)
           .pipe(
             Stream.unwrap,
             Stream.run(Sink.last()),
             Effect.flatMap(Effect.fromOption),
-            Effect.provideService(McpInvocationContext, scope),
+            Effect.provideService(McpInvocationContext, caller),
           );
       const failureMessage = (response: { readonly result: unknown }) =>
         (response.result as { readonly message: string }).message;
@@ -1810,6 +1840,44 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
       });
       assert.isTrue(chosen.isFailure);
       assert.include(failureMessage(chosen), "sets its own permission mode");
+
+      // An outside agent's approved level caps a persona too, which a thread caller's does not.
+      const outside: McpInvocationScope = {
+        ...scope,
+        requestNamespace: "client:session-persona",
+        thread: undefined,
+        client: {
+          sessionId: "session-persona",
+          label: "Claude Code",
+          access: "approval-required",
+        },
+      };
+      const elsewhere = {
+        project_id: LedgerProjectId.make(projectId),
+        workspace: { type: "root" as const },
+      };
+      const createdBefore = (yield* createdThreads()).length;
+      const above = yield* call(
+        { ...scout, ...elsewhere, persona: "operator", client_request_id: "outside-operator" },
+        outside,
+      );
+      assert.isTrue(above.isFailure);
+      assert.include(
+        failureMessage(above),
+        "Persona operator runs in permission mode full-access, which is broader than the level this MCP client was approved for (approval-required).",
+      );
+      assert.include(failureMessage(above), "a persona within that level");
+      assert.include(failureMessage(above), "sign in again");
+      assert.lengthOf(yield* createdThreads(), createdBefore, "a refused spawn creates nothing");
+
+      const within = yield* call(
+        { ...scout, ...elsewhere, client_request_id: "outside-scout" },
+        outside,
+      );
+      assert.isFalse(within.isFailure, failureMessage(within));
+      const withinCreate = (yield* createdThreads()).at(-1)!;
+      assert.equal(withinCreate.agentPersonaAssignment?.personaId, "scout");
+      assert.equal(withinCreate.runtimeMode, "approval-required");
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -2369,6 +2437,7 @@ it.effect(
         Layer.succeed(
           A2ASendService,
           A2ASendService.of({
+            ...unusedOutsideAgentSends,
             send: () => Effect.die("j5_send_message is outside this stop test"),
             clearOwnAsk: () => Effect.die("j5_clear_own_ask is outside this stop test"),
             sendAsMachine: () => Effect.die("unused"),
@@ -2584,6 +2653,7 @@ it.effect(
         Layer.succeed(
           A2ASendService,
           A2ASendService.of({
+            ...unusedOutsideAgentSends,
             send: () => Effect.die("unused"),
             clearOwnAsk: () => Effect.die("unused"),
             sendAsMachine: () => Effect.die("unused"),

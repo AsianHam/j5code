@@ -298,9 +298,19 @@ export const countFleetAlerts = (projects: ReadonlyArray<FleetLedgerProject>) =>
     0,
   );
 
-/** Origin copy for the Roster row; unknown renders as `?` rather than a plausible guess. */
-export const originLabel = (origin: FleetAgent["origin"]) =>
-  origin === "human" ? "Human-created" : origin === "agent" ? "Agent-spawned" : "?";
+/**
+ * Origin copy for the Roster row; unknown renders as `?` rather than a plausible guess. An
+ * outside agent that started the agent is named by the label it signed in with, and by its id
+ * when it registered none: it has no thread, so the row is the only place it is named.
+ */
+export const originLabel = (agent: Pick<FleetAgent, "origin" | "outsideSpawner">) =>
+  agent.outsideSpawner !== undefined
+    ? `${agent.outsideSpawner.name ?? agent.outsideSpawner.participantId} (outside agent)`
+    : agent.origin === "human"
+      ? "Human-created"
+      : agent.origin === "agent"
+        ? "Agent-spawned"
+        : "?";
 
 /**
  * The sidebar rows the roster says are involved in a Crew or a spawn: every seat, every Captain

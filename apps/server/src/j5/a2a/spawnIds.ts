@@ -101,10 +101,18 @@ export const spawnFirstTurnText = (input: {
   readonly projectId: string;
   readonly projectTitle: string;
   readonly spawnedByParticipantId: string;
-  readonly spawnerThreadId: string;
+  /** The spawner's thread. An outside agent has none. */
+  readonly spawnerThreadId?: string | undefined;
+  /** Set when the spawner is an outside agent: the label its client signed in with. */
+  readonly outsideAgentName?: string | undefined;
   readonly crew?: CrewBriefContext;
 }) => {
-  const identity = `<j5_spawn_context>\nPlatform-provided identity facts:\nparticipant_id: ${input.participantId}\nproject_id: ${input.projectId}\nproject_title: ${input.projectTitle}\nspawned_by: ${input.spawnedByParticipantId}\nspawner_thread_id: ${input.spawnerThreadId}\n</j5_spawn_context>`;
+  // Every line stays a `key: value` fact, which is what the web parser reads and skips.
+  const spawner =
+    input.outsideAgentName === undefined
+      ? `spawner_thread_id: ${input.spawnerThreadId ?? ""}`
+      : `spawned_by_outside_agent: ${briefLine(input.outsideAgentName) || "unnamed"}\nspawner_reply: You were started by an outside agent: one that runs outside this app. You cannot reply to it with j5_send_message.`;
+  const identity = `<j5_spawn_context>\nPlatform-provided identity facts:\nparticipant_id: ${input.participantId}\nproject_id: ${input.projectId}\nproject_title: ${input.projectTitle}\nspawned_by: ${input.spawnedByParticipantId}\n${spawner}\n</j5_spawn_context>`;
   const brief = `<spawner_brief>\n${input.brief}\n</spawner_brief>`;
   if (input.crew === undefined) return `${identity}\n\n${brief}`;
   const crew = input.crew;

@@ -129,7 +129,11 @@ import {
   live as watchdogLayer,
   QUEUED_RUN_WATCHDOG_DELAY_MS,
 } from "../run-observability/QueuedRunWatchdog.ts";
-import { formatClosedHumanEnvelope, formatPeerEnvelope } from "./EnvelopeFormatter.ts";
+import {
+  formatClosedHumanEnvelope,
+  formatOutsideAgentEnvelope,
+  formatPeerEnvelope,
+} from "./EnvelopeFormatter.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { readReceiverBacklog } from "./receiverBacklog.ts";
 import { noneLayer as peerDirectoryNoneLayer } from "./PeerDirectory.ts";
@@ -148,6 +152,7 @@ import {
   CommCommandId,
   LedgerProjectId,
   ExchangeId,
+  outsideAgentParticipantId,
   LedgerMessageId,
   ParticipantId,
   type AgentParticipant,
@@ -1457,6 +1462,52 @@ it.effect("attributes human-origin delivery to the user actor", () =>
       );
     }).pipe(Effect.provide(makeTestLayer(harness)));
   }),
+);
+
+it.effect(
+  "delivers an outside agent's message under its own envelope, with no sending thread",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagementService;
+        const transport = yield* A2ADeliveryTransport;
+        const sql = yield* SqlClient.SqlClient;
+        const target = yield* seedTarget("outside-origin");
+        const outsideId = outsideAgentParticipantId("transport-session");
+        const messageId = LedgerMessageId.make("message:j5-a2a-delivery-outside-origin");
+        const message = "The deploy is red.";
+        yield* sql`
+        INSERT INTO j5_a2a_outside_agent (participant_id, name, created_at)
+        VALUES (${outsideId}, 'Claude Code (laptop)', '2026-10-12T12:00:00.000Z')
+      `;
+
+        yield* transport.deliverAgent({
+          ...target.delivery,
+          messageId,
+          senderId: outsideId,
+          exchangeId: null,
+          exchangeRole: "none",
+          message,
+        });
+
+        const upstreamMessageId = deliveryMessageId(messageId);
+        const projection = yield* threads.getThreadProjection(target.threadId);
+        const delivered = projection.messages.find(
+          (candidate) => candidate.id === upstreamMessageId,
+        );
+        assert.equal(
+          delivered?.text,
+          formatOutsideAgentEnvelope({
+            senderId: outsideId,
+            senderName: "Claude Code (laptop)",
+            message,
+          }),
+        );
+        assert.equal(delivered?.createdBy, "agent");
+        assert.notExists(delivered?.senderThreadId);
+      }).pipe(Effect.provide(makeTestLayer(harness)));
+    }),
 );
 
 it.effect("routes real archive and delete commands through lifecycle closure exactly once", () =>

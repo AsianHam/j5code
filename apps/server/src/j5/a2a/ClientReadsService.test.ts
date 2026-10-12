@@ -9,6 +9,7 @@ import { runMigrations } from "../../persistence/Migrations.ts";
 import { A2AHumanInbox, layer as humanInboxLayer } from "./HumanInboxService.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
+import { recordOutsideAgentName } from "./outsideAgentNames.ts";
 import {
   ClientReadsService,
   explainOpenInboxCountStatement,
@@ -193,6 +194,34 @@ it.effect("reads total batched identities without participant-id normalization",
     assert.deepStrictEqual(yield* reads.participantIdentities({ participantIds: [] }), {
       entries: [],
     });
+  }).pipe(Effect.provide(makeTestLayer())),
+);
+
+it.effect("names an outside agent by the label it signed in with", () =>
+  Effect.gen(function* () {
+    yield* runMigrations();
+    yield* runJ5A2AMigrations();
+    const sql = yield* SqlClient.SqlClient;
+    const reads = yield* ClientReadsService;
+    const known = ParticipantId.make("outside:session-known");
+    const unseen = ParticipantId.make("outside:session-unseen");
+    yield* recordOutsideAgentName(sql, {
+      participantId: known,
+      name: "Claude Code (laptop)",
+      at: "2026-10-12T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(
+      yield* reads.participantIdentities({ participantIds: [known, unseen] }),
+      {
+        entries: [
+          {
+            participantId: known,
+            identity: { kind: "known", displayName: "Claude Code (laptop)" },
+          },
+          { participantId: unseen, identity: { kind: "unknown" } },
+        ],
+      },
+    );
   }).pipe(Effect.provide(makeTestLayer())),
 );
 

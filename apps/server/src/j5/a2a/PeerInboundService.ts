@@ -19,6 +19,7 @@ import {
   ExchangeId,
   isHumanParticipantId,
   isMachineParticipantId,
+  isOutsideAgentParticipantId,
   isPlatformParticipantId,
   LedgerMessageId,
   LIFECYCLE_PARTICIPANT_ID,
@@ -163,7 +164,15 @@ export class A2APeerSenderNotAllowedError extends Schema.TaggedError<A2APeerSend
   "A2APeerSenderNotAllowedError",
   {
     senderId: Schema.String,
-    reason: Schema.Literals(["human", "machine", "platform", "channel", "role", "exchange"]),
+    reason: Schema.Literals([
+      "human",
+      "machine",
+      "outside",
+      "platform",
+      "channel",
+      "role",
+      "exchange",
+    ]),
   },
 ) {
   override get message(): string {
@@ -172,6 +181,8 @@ export class A2APeerSenderNotAllowedError extends Schema.TaggedError<A2APeerSend
         return `${this.senderId} is a person; a peer server may not deliver as a person.`;
       case "machine":
         return `${this.senderId} is a machine participant; a peer server may not deliver as one.`;
+      case "outside":
+        return `${this.senderId} is an outside agent; it reaches agents on its own server only, and a peer server may not deliver as one.`;
       case "platform":
         return `${this.senderId} is not a platform notice a peer may carry: only the lifecycle's terminal notice or the silence detector's notice, each on its own channel and in its own shape.`;
       case "channel":
@@ -252,6 +263,7 @@ const assertSenderShape = (input: PeerInboundInput) => {
     Effect.fail(new A2APeerSenderNotAllowedError({ senderId, reason }));
   if (isHumanParticipantId(senderId)) return refuse("human");
   if (isMachineParticipantId(senderId)) return refuse("machine");
+  if (isOutsideAgentParticipantId(senderId)) return refuse("outside");
   if (isPlatformParticipantId(senderId)) {
     const terminalNotice =
       senderId === LIFECYCLE_PARTICIPANT_ID &&

@@ -10,6 +10,7 @@ import {
   Participant,
   ParticipantId,
   isHumanParticipantId,
+  isOutsideAgentParticipantId,
   participantId as participantIdOf,
 } from "./contracts.ts";
 import {
@@ -390,6 +391,9 @@ export const layer: Layer.Layer<
         /** A spawner may live in another project on this server; a fork's source may not. */
         anyProject: boolean,
       ) {
+        // An outside agent joins no ledger, so there is no join to find. The spawn records its
+        // label in this same transaction.
+        if (anyProject && isOutsideAgentParticipantId(participantId)) return;
         const rows = yield* sql<{ readonly participant_id: string }>`
           SELECT json_extract(payload, '$.participant.id') AS participant_id
           FROM j5_a2a_comm_event
@@ -553,8 +557,10 @@ export const layer: Layer.Layer<
           ) {
             // A spawner may spawn into another project. It is recorded as provenance and is no
             // parent there: the placement tree is one project's, so the agent is a root in its
-            // own. A spawner that is in no project at all is returned for `ensureParent` to refuse.
-            return (yield* isParticipantSomewhere(input.provenance.spawnedByParticipantId))
+            // own. An outside agent is in no project, so what it spawns is always a root. Any
+            // other spawner that is in no project at all is returned for `ensureParent` to refuse.
+            return isOutsideAgentParticipantId(input.provenance.spawnedByParticipantId) ||
+              (yield* isParticipantSomewhere(input.provenance.spawnedByParticipantId))
               ? null
               : input.provenance.spawnedByParticipantId;
           }
@@ -641,6 +647,7 @@ export const layer: Layer.Layer<
         // Immutable provenance may retain a departed source, but it must name
         // an identity that actually joined at least once: this project for a fork's source,
         // any project on this server for a spawner, which may spawn into another project.
+        // An outside agent spawner joins none.
         yield* ensureProvenanceParticipant(
           input.projectId,
           provenanceParticipantId,

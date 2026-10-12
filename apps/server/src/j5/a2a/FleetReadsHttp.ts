@@ -12,7 +12,8 @@ import { AgentCrewInstanceService, type AgentCrewInstance } from "./AgentCrewIns
 import { authenticateClientRead, jsonBody } from "./ClientReadsHttp.ts";
 import { A2ALedger } from "./LedgerService.ts";
 import { ParticipantPlacementService } from "./PlacementService.ts";
-import { LedgerProjectId } from "./contracts.ts";
+import { LedgerProjectId, isOutsideAgentParticipantId } from "./contracts.ts";
+import { outsideAgentNameRows } from "./outsideAgentNames.ts";
 import type { ParticipantPlacementView } from "./placementContracts.ts";
 
 export const CLIENT_READS_FLEET_PATH = "/api/j5/a2a/client-reads/fleet";
@@ -36,6 +37,8 @@ export const projectFleetProject = (input: {
   readonly openAsks: ReadonlyMap<string, number>;
   /** Each live Crew's active playbook run, by Crew id. */
   readonly playbookRuns?: ReadonlyMap<string, J5Contracts.FleetCrew["playbookRun"]>;
+  /** The label of each outside agent that spawned one of the participants, by its id. */
+  readonly outsideAgentNames?: ReadonlyMap<string, string>;
 }): FleetResponse["projects"][number] => {
   const seatByParticipant = new Map<string, FleetAgent["crew"]>();
   for (const crew of input.crews) {
@@ -95,6 +98,15 @@ export const projectFleetProject = (input: {
               ? "unknown"
               : "human",
         placementParentId: row.placementParentId,
+        ...(row.provenance.kind === "spawned-by" &&
+        isOutsideAgentParticipantId(row.provenance.spawnedByParticipantId)
+          ? {
+              outsideSpawner: {
+                participantId: row.provenance.spawnedByParticipantId,
+                name: input.outsideAgentNames?.get(row.provenance.spawnedByParticipantId) ?? null,
+              },
+            }
+          : {}),
         crew: seatByParticipant.get(row.participantId) ?? null,
         openAsks: input.openAsks.get(row.participantId) ?? 0,
       })),
@@ -159,6 +171,22 @@ export const makeFleetReadsHttpRouteLayer = (path: HttpRouter.PathInput) =>
             `;
               for (const row of rows) openAsks.set(row.receiver_id, Number(row.count));
             }
+            const outsideSpawnerIds = [
+              ...new Set(
+                participants.flatMap((row) =>
+                  row.provenance.kind === "spawned-by" &&
+                  isOutsideAgentParticipantId(row.provenance.spawnedByParticipantId)
+                    ? [row.provenance.spawnedByParticipantId]
+                    : [],
+                ),
+              ),
+            ];
+            const outsideAgentNames = new Map(
+              (outsideSpawnerIds.length === 0
+                ? []
+                : yield* outsideAgentNameRows(sql, outsideSpawnerIds)
+              ).map((row) => [row.participant_id, row.display_name] as const),
+            );
             // Retired Crews carry rosters and briefs; only the page that shows them pays for them.
             const projectCrews = (yield* crews.listForProject(project.id)).filter(
               (crew) => includeRetired || crew.archivedAt === null,
@@ -175,6 +203,7 @@ export const makeFleetReadsHttpRouteLayer = (path: HttpRouter.PathInput) =>
                 crews: projectCrews,
                 openAsks,
                 playbookRuns,
+                outsideAgentNames,
               }),
             );
           }
