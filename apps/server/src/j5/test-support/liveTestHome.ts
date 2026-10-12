@@ -27,9 +27,11 @@ import {
   readProviderReplayTranscript,
 } from "@t3tools/provider-testing/replayTranscript";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
@@ -98,6 +100,16 @@ const LIVE_TEST_PERSONAS = [
   { id: "haiku-helper", displayName: "Haiku helper", routes: [HAIKU_ROUTE, LUNA_ROUTE] },
   { id: "luna-helper", displayName: "Luna helper", routes: [LUNA_ROUTE, HAIKU_ROUTE] },
 ] as const;
+/**
+ * The time to build as, in epoch milliseconds, when `J5_LIVE_TEST_NOW` is set.
+ * `setup-agent-live-test --base` sets it for both builds, so a base and a head
+ * home date their replayed threads identically.
+ */
+const fixedNow = Config.Int("J5_LIVE_TEST_NOW").pipe(
+  Config.option,
+  Config.map(Option.getOrUndefined),
+  Effect.orElseSucceed(() => undefined),
+);
 /** The replayed threads are spaced this far apart, ending just before the build. */
 const REPLAY_SPACING_MS = 20 * 60 * 1000;
 
@@ -338,7 +350,7 @@ export const buildLiveTestHome = Effect.fn("buildLiveTestHome")(function* (input
   const projectId = registerProject({ home, testRepo, databasePath });
 
   const replays = input.replays ?? LIVE_TEST_REPLAYS;
-  const now = yield* Clock.currentTimeMillis;
+  const now = (yield* fixedNow) ?? (yield* Clock.currentTimeMillis);
   const finishReplay = <Error>(name: string, replay: Effect.Effect<void, Error, Scope.Scope>) =>
     replay.pipe(
       Effect.scoped,

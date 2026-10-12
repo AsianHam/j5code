@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off globalFetch:off - a standalone Node CLI that manages one child process group and prints instructions.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off globalFetch:off globalTimers:off - a standalone Node CLI that manages one child process group and prints instructions.
 /**
  * One command for an agent that needs to live-test J5 Code:
  *
@@ -14,7 +14,10 @@
  * home and test project, peered so their agents can message each other;
  * `--peer --poll` has Remote poll Local instead of being reached by it.
  * `--for-dev` is different in kind: a server for the developer to use, on a
- * copy of their data, shared on the tailnet. Agents take no turns on it. A
+ * copy of their data, shared on the tailnet. Agents take no turns on it.
+ * `--base <ref>` runs a second server from a checkout of this repository at
+ * `<ref>`, on a home built by that checkout's own generator with the same
+ * clock, for before and after screenshots. A
  * worktree has one live-test build at a time and its mode is fixed when it is
  * built: `rebuild` with another flag switches.
  *
@@ -66,14 +69,23 @@ const MODE_FLAGS = {
   peer: "--peer",
   "peer-poll": "--peer --poll",
   "for-dev": "--for-dev",
+  base: "--base",
 } as const;
 export type LiveTestMode = keyof typeof MODE_FLAGS;
 const isPeerMode = (mode: LiveTestMode) => mode === "peer" || mode === "peer-poll";
+/** The flags that ask for `mode`; the base mode's flag carries the ref it was given. */
+const modeFlags = (mode: LiveTestMode, baseRef: string | undefined) =>
+  mode === "base" ? `${MODE_FLAGS.base} ${baseRef ?? "<ref>"}` : MODE_FLAGS[mode];
 
 /** What the generator records about a default build. Paths are never read from it: see LiveTestPaths. */
 interface DefaultManifest {
-  /** Absent in the generator's file; the script adds it for the peer modes. */
-  readonly mode?: "default" | "peer" | "peer-poll";
+  /** Absent in the generator's file; the script adds it for the peer and base modes. */
+  readonly mode?: "default" | "peer" | "peer-poll" | "base";
+  /** In base mode: the ref as it was given, and the commit it named then. */
+  readonly baseRef?: string;
+  readonly baseCommit?: string;
+  /** In base mode: the clock both builds are given, in epoch milliseconds. */
+  readonly baseClock?: number;
   readonly project: { readonly title: string };
   readonly defaultModel: string;
   readonly personas: ReadonlyArray<{
@@ -105,6 +117,8 @@ export interface ServerPaths {
 export interface LiveTestPaths extends ServerPaths {
   readonly root: string;
   readonly manifest: string;
+  /** In base mode, a git worktree of this repository at the base ref. */
+  readonly base: string;
   readonly remote: ServerPaths & { readonly root: string };
 }
 
@@ -215,6 +229,7 @@ export async function resolveLiveTestPaths(input: {
     remote.home,
     NodePath.join(remote.home, "userdata"),
     remote.testRepo,
+    NodePath.join(root, "base"),
   ]) {
     if (!isInside(canonicalPath(inside), canonicalRoot)) {
       throw new LiveTestRefusal(
@@ -231,6 +246,7 @@ export async function resolveLiveTestPaths(input: {
     log: NodePath.join(root, "server.log"),
     record: NodePath.join(root, "server.json"),
     remote,
+    base: NodePath.join(root, "base"),
   };
 }
 
@@ -536,7 +552,8 @@ Commands:
   ${selfCommand(paths, "rebuild")}   stop, delete ${paths.root}, build and start again
                                       (flags: none for the test project, --fresh for an empty home,
                                       --peer or --peer --poll for two peered servers,
-                                      --for-dev for a server the developer uses)
+                                      --for-dev for a server the developer uses,
+                                      --base <ref> for a second server at that ref)
 
 How to test is in .agents/skills/j5-live-test/SKILL.md.
 `;
@@ -646,8 +663,8 @@ function logTail(paths: ServerPaths): string {
   return NodeFS.readFileSync(paths.log, "utf8").split("\n").slice(-40).join("\n");
 }
 
-function buildHome(paths: LiveTestPaths, mode: LiveTestMode): void {
-  const rebuild = selfCommand(paths, `rebuild ${MODE_FLAGS[mode]}`);
+function buildHome(paths: LiveTestPaths, mode: LiveTestMode, base: BaseTarget | undefined): void {
+  const rebuild = selfCommand(paths, `rebuild ${modeFlags(mode, base?.ref)}`);
   if (NodeFS.existsSync(paths.root)) {
     throw new LiveTestRefusal(
       `${paths.root} exists but holds no finished build. Start over with: ${rebuild}`,
@@ -718,7 +735,18 @@ function buildHome(paths: LiveTestPaths, mode: LiveTestMode): void {
   };
   if (!isPeerMode(mode)) {
     console.log("Building the test repository and home (about 30 seconds, no model calls)...");
-    return generate(paths.root);
+    generate(paths.root);
+    if (base !== undefined) {
+      const manifest: Manifest = {
+        ...(readManifest(paths) as DefaultManifest),
+        mode: "base",
+        baseRef: base.ref,
+        baseCommit: base.commit,
+        baseClock: Number(process.env.J5_LIVE_TEST_NOW),
+      };
+      NodeFS.writeFileSync(paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`);
+    }
+    return;
   }
   console.log("Building two test repositories and homes (about a minute, no model calls)...");
   // Remote first: Local's manifest is the mark of a finished build, so it comes last.
@@ -1065,6 +1093,13 @@ export function modeRefusal(input: {
   return `The live-test home here was built in ${input.built} mode, not ${input.requested} mode.\nUse it as built: ${input.startCommand(input.built)}\nOr replace it: ${input.rebuildCommand(input.requested)}`;
 }
 
+/** The ref a base build was given, or undefined for any other build. */
+function builtBaseRef(paths: LiveTestPaths): string | undefined {
+  if (!NodeFS.existsSync(paths.manifest)) return undefined;
+  const manifest = readManifest(paths);
+  return "baseRef" in manifest ? manifest.baseRef : undefined;
+}
+
 function builtMode(paths: LiveTestPaths): LiveTestMode | undefined {
   return NodeFS.existsSync(paths.manifest) ? (readManifest(paths).mode ?? "default") : undefined;
 }
@@ -1332,21 +1367,65 @@ function arePeered(
   );
 }
 
-async function start(paths: LiveTestPaths, mode: LiveTestMode): Promise<void> {
+async function start(
+  paths: LiveTestPaths,
+  mode: LiveTestMode,
+  baseRef: string | undefined,
+): Promise<void> {
   const deadline = Date.now() + START_BUDGET_MS;
   const built = builtMode(paths);
+  const builtManifest = built === undefined ? undefined : readManifest(paths);
+  const builtRef = builtBaseRef(paths);
   const refusal =
     built === undefined
       ? undefined
       : modeRefusal({
           requested: mode,
           built,
-          startCommand: (other) => selfCommand(paths, MODE_FLAGS[other]),
-          rebuildCommand: (other) => selfCommand(paths, `rebuild ${MODE_FLAGS[other]}`),
+          startCommand: (other) => selfCommand(paths, modeFlags(other, builtRef)),
+          rebuildCommand: (other) => selfCommand(paths, `rebuild ${modeFlags(other, baseRef)}`),
         });
   if (refusal !== undefined) throw new LiveTestRefusal(refusal);
-  if (built === undefined && currentServerState(paths).kind === "stopped") buildHome(paths, mode);
+  const base = mode === "base" ? resolveBase(paths, baseRef ?? builtRef ?? "") : undefined;
+  if (
+    base !== undefined &&
+    builtManifest !== undefined &&
+    "baseCommit" in builtManifest &&
+    builtManifest.baseCommit !== base.commit
+  ) {
+    throw new LiveTestRefusal(
+      `The base here was built at ${builtManifest.baseCommit?.slice(0, 10)}, and ${base.ref} is now ${base.commit.slice(0, 10)}.\nReplace it: ${selfCommand(paths, `rebuild ${modeFlags("base", base.ref)}`)}`,
+    );
+  }
+  if (base !== undefined && built === undefined) {
+    // The head's generator reads this now; the manifest keeps it for every base start.
+    process.env.J5_LIVE_TEST_NOW = String(Date.now());
+  }
+  if (built === undefined && currentServerState(paths).kind === "stopped") {
+    buildHome(paths, mode, base);
+  }
 
+  if (base !== undefined) {
+    console.log(`Starting the head server here and the base server at ${base.ref}...`);
+    // The head server boots in its own process while the base's steps run here.
+    const headStarting = startServer(paths, "dev", {}, deadline);
+    headStarting.catch(() => undefined);
+    let baseOutput: string | undefined;
+    let baseFailure: unknown;
+    try {
+      baseOutput = await advanceBase(paths, deadline);
+    } catch (cause) {
+      baseFailure = cause;
+    }
+    printRunning(paths, await headStarting, undefined);
+    if (baseFailure !== undefined) throw baseFailure;
+    if (baseOutput !== undefined) {
+      return console.log(`${baseHeading(paths)}\n\n${baseOutput}\n${baseCheckoutNote(paths)}`);
+    }
+    throw new LiveTestRefusal(
+      `${formatBaseProgress(paths, readBaseProgress(paths, false).progress)}\nThe time for this command ran out before the base was ready. The step that was running has been ended, with everything it started.\nRun the same command again to continue: ${selfCommand(paths, modeFlags("base", base.ref))}`,
+    );
+  }
   if (mode === "for-dev") {
     console.log("Starting the dev server and sharing it on the tailnet...");
     return console.log(
@@ -1390,6 +1469,392 @@ async function start(paths: LiveTestPaths, mode: LiveTestMode): Promise<void> {
   printRunning(paths, local, remote, true);
 }
 
+/** A base ref as the caller gave it, and the commit it names now. */
+interface BaseTarget {
+  readonly ref: string;
+  readonly commit: string;
+}
+
+const LIVE_TEST_SCRIPT = "scripts/j5/setup-agent-live-test.ts";
+
+/**
+ * Resolves `ref` in this repository and checks the base can run at all: it
+ * needs this script, which starts its server and carries its own generator.
+ */
+function resolveBase(paths: LiveTestPaths, ref: string): BaseTarget {
+  const git = (...args: ReadonlyArray<string>) =>
+    NodeChildProcess.spawnSync("git", args, { cwd: paths.worktree, encoding: "utf8" });
+  const commit = git("rev-parse", "--verify", "--quiet", `${ref}^{commit}`);
+  if (commit.status !== 0) {
+    throw new LiveTestRefusal(`${ref} does not name a commit in this repository. Fetch it first.`);
+  }
+  const target = { ref, commit: commit.stdout.trim() };
+  if (git("cat-file", "-e", `${target.commit}:${LIVE_TEST_SCRIPT}`).status !== 0) {
+    throw new LiveTestRefusal(
+      `${ref} (${target.commit.slice(0, 10)}) has no ${LIVE_TEST_SCRIPT}, so it cannot build a test home or start a server on one. Pick a base that contains it.`,
+    );
+  }
+  return target;
+}
+
+/**
+ * The environment for the base checkout's script: the head's cleaned one,
+ * plus the clock the head was built with, so a base that reads it dates its
+ * threads the same. Given on every base start, not only the first.
+ */
+export function baseEnvironment(
+  environment: NodeJS.ProcessEnv,
+  worktree: string,
+  manifest: { readonly baseClock?: number },
+): NodeJS.ProcessEnv {
+  return {
+    ...liveTestEnvironment(environment, worktree),
+    ...(manifest.baseClock === undefined ? {} : { J5_LIVE_TEST_NOW: String(manifest.baseClock) }),
+  };
+}
+
+/*
+ * The base is a linked worktree, so its own copy of this script gives it its
+ * own ports, its own `.j5code/live-test`, its own generator and its own
+ * process record, with the rules of its version. The head adds no second way
+ * to start, stop or prove a server.
+ */
+
+/** What the base's steps leave on disk. Nothing else knows their state: no step runs in the background. */
+const baseFiles = (paths: LiveTestPaths) => ({
+  /** Written last by the install step, so its presence means the install finished. */
+  installed: NodePath.join(paths.root, "base-installed"),
+  /** The step that last failed and what it said. Removed when that step next succeeds. */
+  failure: NodePath.join(paths.root, "base-failure.json"),
+});
+
+/** The base is made ready in these steps, in this order. Each can be run again. */
+export const BASE_STEPS = ["checkout", "install", "server"] as const;
+export type BaseStep = (typeof BASE_STEPS)[number];
+export type BaseProgress = Readonly<Record<BaseStep, "done" | "not done" | "failed">>;
+
+/**
+ * Each step's state, from what is on disk and what the base's own script
+ * says about its server. A later step is never "done" on top of an earlier
+ * one that is not.
+ */
+export function baseProgress(input: {
+  /** The base checkout's HEAD, or undefined when there is no checkout. */
+  readonly checkoutHead: string | undefined;
+  readonly sameRepository: boolean;
+  readonly commit: string;
+  readonly installed: boolean;
+  readonly serverRunning: boolean;
+  readonly failedStep: BaseStep | undefined;
+}): BaseProgress {
+  const checkout =
+    input.checkoutHead === undefined
+      ? input.failedStep === "checkout"
+        ? "failed"
+        : "not done"
+      : input.checkoutHead === input.commit && input.sameRepository
+        ? "done"
+        : "failed";
+  const install =
+    input.failedStep === "install"
+      ? "failed"
+      : checkout === "done" && input.installed
+        ? "done"
+        : "not done";
+  const server =
+    input.failedStep === "server"
+      ? "failed"
+      : install === "done" && input.serverRunning
+        ? "done"
+        : "not done";
+  return { checkout, install, server };
+}
+
+/**
+ * Refuses unless `<root>/base` is a worktree of this repository checked out
+ * at the commit the build recorded. A checkout that was moved, or a stale
+ * directory, would otherwise be served as the "before". It is never reset.
+ */
+function assertBaseCheckout(paths: LiveTestPaths, commit: string): void {
+  const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+    NodeChildProcess.spawnSync("git", args, { cwd, encoding: "utf8" }).stdout?.trim();
+  const commonDir = (cwd: string) =>
+    git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  const head = git(paths.base, "rev-parse", "HEAD");
+  if (head !== commit || commonDir(paths.base) !== commonDir(paths.worktree)) {
+    throw new LiveTestRefusal(
+      `${paths.base} is not this repository checked out at ${commit.slice(0, 10)} (it is at ${head?.slice(0, 10) || "no commit"}). It has not been changed. Replace the build: ${selfCommand(paths, `rebuild ${modeFlags("base", builtBaseRef(paths))}`)}`,
+    );
+  }
+}
+
+/** Whether the base's generator reads the shared clock; one from before that change dates its threads itself. */
+function baseHonoursClock(paths: LiveTestPaths, commit: string): boolean {
+  return (
+    NodeChildProcess.spawnSync(
+      "git",
+      ["grep", "--quiet", "J5_LIVE_TEST_NOW", commit, "--", "apps/server/src/j5/test-support"],
+      { cwd: paths.worktree },
+    ).status === 0
+  );
+}
+
+const gitIn = (cwd: string, ...args: ReadonlyArray<string>) =>
+  NodeChildProcess.spawnSync("git", args, { cwd, encoding: "utf8" }).stdout?.trim();
+
+const sameRepository = (paths: LiveTestPaths) =>
+  gitIn(paths.base, "rev-parse", "--path-format=absolute", "--git-common-dir") ===
+  gitIn(paths.worktree, "rev-parse", "--path-format=absolute", "--git-common-dir");
+
+/** Runs the base checkout's own copy of this script and waits, for no longer than `timeoutMs`. */
+function baseScriptNow(paths: LiveTestPaths, args: ReadonlyArray<string>, timeoutMs: number) {
+  return NodeChildProcess.spawnSync(
+    process.execPath,
+    [NodePath.join(paths.base, LIVE_TEST_SCRIPT), ...args],
+    {
+      cwd: paths.base,
+      env: baseEnvironment(process.env, paths.worktree, readManifest(paths) as DefaultManifest),
+      encoding: "utf8",
+      timeout: Math.max(1, timeoutMs),
+    },
+  );
+}
+
+/** How long `status` waits for the base's own status. */
+const BASE_STATUS_TIMEOUT_MS = 30_000;
+
+function readBaseProgress(
+  paths: LiveTestPaths,
+  /** False when there is no time left to ask the base about its server: its step then reads "not done". */
+  askServer = true,
+): {
+  readonly progress: BaseProgress;
+  /** What the base's own `status` printed, when its install is finished. */
+  readonly serverStatus: string | undefined;
+  readonly failure: { readonly step: BaseStep; readonly said: string } | undefined;
+} {
+  const files = baseFiles(paths);
+  const commit = (readManifest(paths) as DefaultManifest).baseCommit ?? "";
+  const failure = NodeFS.existsSync(files.failure)
+    ? (JSON.parse(NodeFS.readFileSync(files.failure, "utf8")) as {
+        readonly step: BaseStep;
+        readonly said: string;
+      })
+    : undefined;
+  const checkedOut = NodeFS.existsSync(paths.base);
+  const installed = NodeFS.existsSync(files.installed);
+  const status =
+    askServer && checkedOut && installed
+      ? baseScriptNow(paths, ["status"], BASE_STATUS_TIMEOUT_MS)
+      : undefined;
+  return {
+    progress: baseProgress({
+      checkoutHead: checkedOut ? gitIn(paths.base, "rev-parse", "HEAD") : undefined,
+      sameRepository: checkedOut && sameRepository(paths),
+      commit,
+      installed,
+      serverRunning:
+        status?.status === 0 && /^J5 Code live-test server: RUNNING/m.test(status.stdout),
+      failedStep: failure?.step,
+    }),
+    serverStatus: status?.stdout,
+    failure,
+  };
+}
+
+const formatBaseProgress = (paths: LiveTestPaths, progress: BaseProgress) => {
+  const manifest = readManifest(paths) as DefaultManifest;
+  return `Base server, at ${manifest.baseRef} (${manifest.baseCommit?.slice(0, 10)}), step by step:\n${BASE_STEPS.map(
+    (step) => `  ${step.padEnd(10)} ${progress[step]}`,
+  ).join("\n")}`;
+};
+
+/** How long a step's group has to end after SIGTERM before it is killed. */
+const STEP_KILL_GRACE_MS = 5_000;
+
+/**
+ * Runs a command in the foreground, in a process group of its own, and waits
+ * for it. If `deadline` passes first, the whole group is ended and waited for
+ * before this returns, so nothing the command started is left running. The
+ * group was spawned here a moment ago, so signalling it needs no further proof.
+ */
+export async function runInOwnGroup(
+  command: string,
+  args: ReadonlyArray<string>,
+  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv; readonly deadline: number },
+): Promise<{
+  readonly status: number | null;
+  readonly output: string;
+  readonly timedOut: boolean;
+}> {
+  // Output goes to a file, not a pipe: a grandchild holding a pipe open would
+  // keep this waiting after the command itself had gone.
+  const capture = NodePath.join(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j5-live-test-step-")),
+    "output",
+  );
+  const sink = NodeFS.openSync(capture, "w");
+  const child = NodeChildProcess.spawn(command, [...args], {
+    cwd: options.cwd,
+    env: options.env,
+    detached: true,
+    stdio: ["ignore", sink, sink],
+  });
+  NodeFS.closeSync(sink);
+  const group = child.pid;
+  let timedOut = false;
+  const signalGroup = (signal: NodeJS.Signals) => {
+    if (group === undefined) return;
+    try {
+      process.kill(-group, signal);
+    } catch {
+      // Already gone.
+    }
+  };
+  // A command that ignores SIGTERM never exits on its own, so the hard kill is
+  // armed when the deadline passes, not after waiting for an exit.
+  let hardKill: NodeJS.Timeout | undefined;
+  const timer = setTimeout(
+    () => {
+      timedOut = true;
+      signalGroup("SIGTERM");
+      hardKill = setTimeout(() => signalGroup("SIGKILL"), STEP_KILL_GRACE_MS);
+    },
+    Math.max(0, options.deadline - Date.now()),
+  );
+  // If this command is itself told to stop, the step it is waiting on goes too:
+  // the step is in its own group and would otherwise carry on.
+  const endWithUs = (signal: NodeJS.Signals) => {
+    signalGroup("SIGKILL");
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGTERM", endWithUs);
+  process.once("SIGINT", endWithUs);
+  const status = await new Promise<number | null>((resolve) => {
+    child.on("error", () => resolve(null));
+    child.on("exit", (code) => resolve(code));
+  });
+  clearTimeout(timer);
+  if (timedOut && group !== undefined) {
+    // The command is gone; wait until what it started is gone too. The hard
+    // kill stays armed until then.
+    const until = Date.now() + 2 * STEP_KILL_GRACE_MS;
+    while (membersOfGroup(group).length > 0 && Date.now() < until) {
+      await NodeTimersPromises.setTimeout(100);
+    }
+    if (membersOfGroup(group).length > 0) signalGroup("SIGKILL");
+  }
+  clearTimeout(hardKill);
+  process.removeListener("SIGTERM", endWithUs);
+  process.removeListener("SIGINT", endWithUs);
+  const output = NodeFS.readFileSync(capture, "utf8");
+  NodeFS.rmSync(NodePath.dirname(capture), { recursive: true, force: true });
+  return { status, output, timedOut };
+}
+
+/**
+ * Takes the base as far towards a running server as fits before `deadline`:
+ * check it out, install it, start its server. Every step runs in the
+ * foreground, in its own process group, and leaves its result on disk. A run
+ * that is out of time ends the step's whole group and stops, and the same
+ * command picks up at the first step that is not done. Returns the base's own
+ * start output once its server is up, or undefined when time ran out first.
+ * A step that fails is recorded and refused.
+ */
+async function advanceBase(paths: LiveTestPaths, deadline: number): Promise<string | undefined> {
+  const files = baseFiles(paths);
+  const manifest = readManifest(paths) as DefaultManifest;
+  const commit = manifest.baseCommit;
+  if (commit === undefined) throw new LiveTestRefusal("This build has no base.");
+  const environment = baseEnvironment(process.env, paths.worktree, manifest);
+  const again = selfCommand(paths, modeFlags("base", manifest.baseRef));
+
+  /** Runs one step's command within the time left. Undefined means it ran out of time. */
+  const step = async (
+    name: BaseStep,
+    command: string,
+    args: ReadonlyArray<string>,
+    cwd: string,
+  ): Promise<string | undefined> => {
+    if (Date.now() >= deadline) return undefined;
+    const result = await runInOwnGroup(command, args, { cwd, env: environment, deadline });
+    // Ended by the deadline: not a failure, just not finished.
+    if (result.timedOut) return undefined;
+    if (result.status !== 0) {
+      const said = result.output.split("\n").slice(-40).join("\n");
+      NodeFS.writeFileSync(files.failure, `${JSON.stringify({ step: name, said })}\n`);
+      throw new LiveTestRefusal(
+        `The base's ${name} step failed:\n${said}\nWhen that is fixed, run the same command again: ${again}`,
+      );
+    }
+    NodeFS.rmSync(files.failure, { force: true });
+    return result.output;
+  };
+
+  if (!NodeFS.existsSync(paths.base)) {
+    const added = await step(
+      "checkout",
+      "git",
+      ["worktree", "add", "--detach", paths.base, commit],
+      paths.worktree,
+    );
+    if (added === undefined) return undefined;
+  }
+  assertBaseCheckout(paths, commit);
+  if (!NodeFS.existsSync(files.installed)) {
+    const installed = await step("install", "pnpm", ["install", "--frozen-lockfile"], paths.base);
+    if (installed === undefined) return undefined;
+    NodeFS.writeFileSync(files.installed, "");
+  }
+  // Its own script builds its home if needed and starts or rejoins its server.
+  // A build that an earlier run cut off part-way leaves a directory with no
+  // manifest, which that script refuses to build over, so it is rebuilt.
+  const baseRoot = NodePath.join(paths.base, ".j5code", "live-test");
+  const cutOff =
+    NodeFS.existsSync(baseRoot) && !NodeFS.existsSync(NodePath.join(baseRoot, "manifest.json"));
+  return step(
+    "server",
+    process.execPath,
+    [NodePath.join(paths.base, LIVE_TEST_SCRIPT), ...(cutOff ? ["rebuild"] : [])],
+    paths.base,
+  );
+}
+
+/** What to print above the base's own output: which commit it is, and whether its dates match. */
+function baseHeading(paths: LiveTestPaths): string {
+  const manifest = readManifest(paths) as DefaultManifest;
+  const commit = manifest.baseCommit ?? "";
+  return `Base server, at ${manifest.baseRef} (${commit.slice(0, 10)}), as its own script reports it:${
+    baseHonoursClock(paths, commit)
+      ? ""
+      : "\nThis base predates the shared clock, so its threads are dated from its own build and differ from the head's by the time between the two builds."
+  }`;
+}
+
+/** The base checkout stays registered in the real repository until it is removed. */
+const baseCheckoutNote = (paths: LiveTestPaths) =>
+  `The base checkout is a git worktree of this repository (detached, no branch) at ${paths.base}.\nWhen the before and after work is done, remove it with: ${selfCommand(paths, "rebuild")}`;
+
+/**
+ * Removes the base checkout through git, so the repository keeps no stale
+ * worktree entry. Not forced: if git will not remove it, say why and stop.
+ */
+function removeBaseCheckout(paths: LiveTestPaths): void {
+  if (!NodeFS.existsSync(paths.base)) return;
+  // The base's own test home is ignored there, but a nested repository's
+  // worktrees are not something `git worktree remove` will delete for us.
+  NodeFS.rmSync(NodePath.join(paths.base, ".j5code"), { recursive: true, force: true });
+  const removed = NodeChildProcess.spawnSync("git", ["worktree", "remove", paths.base], {
+    cwd: paths.worktree,
+    encoding: "utf8",
+  });
+  if (removed.status !== 0) {
+    throw new LiveTestRefusal(
+      `git would not remove the base checkout at ${paths.base}:\n${removed.stderr.trim()}\nNothing else was deleted. Fix that, then run the command again.`,
+    );
+  }
+}
+
 /** The servers a build has: one, or Local and Remote in the peer modes. */
 const serversOf = (
   paths: LiveTestPaths,
@@ -1401,7 +1866,7 @@ const serversOf = (
       ]
     : [{ name: "", paths }];
 
-async function stop(paths: LiveTestPaths): Promise<void> {
+async function stop(paths: LiveTestPaths, replacing = false): Promise<void> {
   // Classify every server before signalling any, so a refusal leaves both alone.
   const servers = serversOf(paths).map((server) => ({
     ...server,
@@ -1432,10 +1897,47 @@ async function stop(paths: LiveTestPaths): Promise<void> {
     NodeFS.rmSync(server.record, { force: true });
     console.log(`J5 Code live-test server${name}: STOPPED`);
   }
+  if (NodeFS.existsSync(NodePath.join(paths.base, LIVE_TEST_SCRIPT))) {
+    const stopped = baseScriptNow(paths, ["stop"], BASE_STATUS_TIMEOUT_MS + STOP_TIMEOUT_MS);
+    console.log(`Base: ${stopped.stdout.trim()}`);
+    if (stopped.status !== 0) {
+      throw new LiveTestRefusal("The base server could not be stopped; see the line above.");
+    }
+    // Checked on every command. Here it comes after the stop, so a moved
+    // checkout is reported without leaving its server running. A rebuild is
+    // about to replace the build, which is the way out of a moved checkout.
+    const commit = (readManifest(paths) as DefaultManifest).baseCommit;
+    if (!replacing && builtMode(paths) === "base" && commit !== undefined) {
+      assertBaseCheckout(paths, commit);
+    }
+  }
   removeTailnetMapping();
 }
 
 function status(paths: LiveTestPaths): void {
+  statusOfHead(paths);
+  if (builtMode(paths) !== "base") return;
+  const { progress, serverStatus, failure } = readBaseProgress(paths);
+  console.log(`\n${formatBaseProgress(paths, progress)}`);
+  if (failure !== undefined) {
+    throw new LiveTestRefusal(
+      `The ${failure.step} step failed:\n${failure.said}\nWhen that is fixed, run: ${selfCommand(paths, modeFlags("base", builtBaseRef(paths)))}`,
+    );
+  }
+  if (progress.checkout === "failed") {
+    // Says which commit it is at and that it was not changed.
+    assertBaseCheckout(paths, (readManifest(paths) as DefaultManifest).baseCommit ?? "");
+  }
+  if (progress.server !== "done") {
+    const next = `Nothing is running in the background.\nContinue with: ${selfCommand(paths, modeFlags("base", builtBaseRef(paths)))}`;
+    // With the head stopped too, this is simply a stopped build, not a fault.
+    if (currentServerState(paths).kind === "stopped") return console.log(next);
+    throw new LiveTestRefusal(`The base is not ready. ${next}`);
+  }
+  console.log(`\n${baseHeading(paths)}\n\n${serverStatus}\n${baseCheckoutNote(paths)}`);
+}
+
+function statusOfHead(paths: LiveTestPaths): void {
   const servers = serversOf(paths).map((server) => ({
     ...server,
     state: currentServerState(server.paths),
@@ -1473,12 +1975,12 @@ function status(paths: LiveTestPaths): void {
       built === undefined
         ? "No test home is built yet."
         : `The test home is built at ${paths.root}, in ${built} mode.`
-    }\nStart it with: ${selfCommand(paths, MODE_FLAGS[built ?? "default"])}`,
+    }\nStart it with: ${selfCommand(paths, modeFlags(built ?? "default", builtBaseRef(paths)))}`,
   );
 }
 
-const USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts [--fresh | --peer [--poll] | --for-dev]
-       node scripts/j5/setup-agent-live-test.ts rebuild [--fresh | --peer [--poll] | --for-dev]
+const USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts [--fresh | --peer [--poll] | --for-dev | --base <ref>]
+       node scripts/j5/setup-agent-live-test.ts rebuild [--fresh | --peer [--poll] | --for-dev | --base <ref>]
        node scripts/j5/setup-agent-live-test.ts status | restart | stop`;
 
 /**
@@ -1488,29 +1990,44 @@ const USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts [--fresh | --peer
 export function parseCommand(args: ReadonlyArray<string>): {
   readonly command: LiveTestCommand;
   readonly mode: LiveTestMode;
+  /** The ref given with `--base`. */
+  readonly baseRef?: string;
 } {
-  const flags = args
+  // --base is the one flag with a value; take the pair out before sorting the rest.
+  const baseIndex = args.indexOf(MODE_FLAGS.base);
+  const baseRef = baseIndex === -1 ? undefined : args[baseIndex + 1];
+  const rest = baseIndex === -1 ? args : args.toSpliced(baseIndex, 2);
+  const flags = rest
     .filter((argument) => argument.startsWith("--"))
     .toSorted()
     .join(" ");
-  const words = args.filter((argument) => !argument.startsWith("--"));
+  const words = rest.filter((argument) => !argument.startsWith("--"));
   const command = words[0] ?? "start";
-  const mode = (Object.keys(MODE_FLAGS) as ReadonlyArray<LiveTestMode>).find(
-    (candidate) => MODE_FLAGS[candidate].split(" ").toSorted().join(" ") === flags,
+  const plainMode = (Object.keys(MODE_FLAGS) as ReadonlyArray<LiveTestMode>).find(
+    (candidate) =>
+      candidate !== "base" && MODE_FLAGS[candidate].split(" ").toSorted().join(" ") === flags,
   );
+  // A base is compared with the default build, so --base goes with no other mode flag.
+  const mode = baseIndex === -1 ? plainMode : plainMode === "default" ? "base" : undefined;
   if (
     words.length > 1 ||
     !COMMANDS.some((known) => known === command) ||
     mode === undefined ||
+    // The ref is printed inside commands, and git allows shell characters in ref names.
+    (mode === "base" && (baseRef === undefined || !/^[\w@+=:,./][\w@+=:,./^~-]*$/.test(baseRef))) ||
     (mode !== "default" && command !== "start" && command !== "rebuild")
   ) {
     throw new LiveTestRefusal(USAGE);
   }
-  return { command: command as LiveTestCommand, mode };
+  return {
+    command: command as LiveTestCommand,
+    mode,
+    ...(mode === "base" && baseRef !== undefined ? { baseRef } : {}),
+  };
 }
 
 async function main(): Promise<void> {
-  const { command, mode } = parseCommand(process.argv.slice(2));
+  const { command, mode, baseRef } = parseCommand(process.argv.slice(2));
   // oxlint-disable-next-line t3code/no-global-process-runtime -- a standalone CLI with no Effect runtime.
   if (NodeOS.platform() !== "linux") {
     throw new LiveTestRefusal("This script reads /proc and runs only on Linux.");
@@ -1528,11 +2045,20 @@ async function main(): Promise<void> {
   });
   if (command === "status") return status(paths);
   if (command === "stop") return stop(paths);
-  if (command === "restart" || command === "rebuild") await stop(paths);
+  if (command === "restart" || command === "rebuild") await stop(paths, command === "rebuild");
   // resolveLiveTestPaths has confirmed this directory is inside the worktree's own .j5code.
-  if (command === "rebuild") NodeFS.rmSync(paths.root, { recursive: true, force: true });
+  // Refuse an unusable base before a rebuild deletes the build that is there.
+  if (command === "rebuild" && baseRef !== undefined) resolveBase(paths, baseRef);
+  if (command === "rebuild") {
+    // A base checkout is a registered git worktree: unregister it, not just delete it.
+    removeBaseCheckout(paths);
+    NodeFS.rmSync(paths.root, { recursive: true, force: true });
+  }
   // A restart keeps the mode that is built; only a start or rebuild chooses one.
-  await start(paths, command === "restart" ? (builtMode(paths) ?? "default") : mode);
+  if (command === "restart") {
+    return start(paths, builtMode(paths) ?? "default", builtBaseRef(paths));
+  }
+  await start(paths, mode, baseRef);
 }
 
 if (import.meta.main) {

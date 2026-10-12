@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - builds throwaway directory layouts to exercise the path guards.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - builds throwaway directory layouts to exercise the path guards.
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -9,6 +9,8 @@ import {
   classifyServer,
   LiveTestRefusal,
   addRemoteUrl,
+  baseEnvironment,
+  baseProgress,
   listsPeer,
   peerRepairCommand,
   peerSteps,
@@ -23,6 +25,7 @@ import {
   parseCommand,
   readServerLog,
   resolveLiveTestPaths,
+  runInOwnGroup,
   startRefusal,
   type ServerLogFacts,
 } from "./setup-agent-live-test.ts";
@@ -128,6 +131,8 @@ describe("resolveLiveTestPaths after a build", () => {
       ["test-repo", (layout: ReturnType<typeof makeLayout>) => layout.mainCheckout],
       // The second server's home in the peer modes is held to the same rule.
       ["remote/home", (layout: ReturnType<typeof makeLayout>) => layout.liveHome],
+      // The base checkout is deleted by rebuild, so it must be a directory of this build.
+      ["base", (layout: ReturnType<typeof makeLayout>) => layout.mainCheckout],
       // The state directory inside a real home, linked to the live database's directory.
       [
         "home/userdata",
@@ -485,13 +490,35 @@ describe("parseCommand", () => {
       command: "rebuild",
       mode: "for-dev",
     });
+    assert.deepEqual(parseCommand(["--base", "origin/j5/main"]), {
+      command: "start",
+      mode: "base",
+      baseRef: "origin/j5/main",
+    });
+    assert.deepEqual(parseCommand(["rebuild", "--base", "v1"]), {
+      command: "rebuild",
+      mode: "base",
+      baseRef: "v1",
+    });
   });
 
   it("refuses unknown words and flags, and a mode flag where none applies", () => {
     for (const args of [
       ["bogus"],
       ["stop", "now"],
+      // --base needs a ref, compares against the default build only, and is not a ref named "rebuild".
       ["--base"],
+      ["--base", "--fresh"],
+      ["--base", "main", "--fresh"],
+      ["--base", "main", "--peer"],
+      ["status", "--base", "main"],
+      // The ref is printed inside commands; git allows these characters in ref names.
+      ["--base", "main;rm"],
+      ["--base", "$(x)"],
+      ["--base", "a b"],
+      ["--base", "-x"],
+      // A shell expands a leading tilde when the printed command is pasted.
+      ["--base", "~user"],
       ["--fresh", "--fresh"],
       // --poll says how two servers peer; it means nothing alone or with an empty home.
       ["--poll"],
@@ -625,6 +652,138 @@ describe("addRemoteUrl", () => {
     assert.isUndefined(
       addRemoteUrl({ localWebPort: 7594, remoteServerPort: 15961, remotePairingUrl: undefined }),
     );
+  });
+});
+
+describe("runInOwnGroup", () => {
+  const options = (deadline: number) => ({ cwd: NodeOS.tmpdir(), env: process.env, deadline });
+
+  it("returns a finished command's status and what it printed", async () => {
+    const done = await runInOwnGroup(
+      process.execPath,
+      ["-e", "console.log('built'); console.error('warned'); process.exit(3)"],
+      options(Date.now() + 20_000),
+    );
+    assert.deepEqual(
+      { status: done.status, timedOut: done.timedOut },
+      { status: 3, timedOut: false },
+    );
+    assert.include(done.output, "built");
+    assert.include(done.output, "warned");
+  });
+
+  it("at the deadline ends the command and everything it started", async () => {
+    const pidFile = NodePath.join(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j5-live-test-group-")),
+      "grandchild.pid",
+    );
+    // A step whose child starts a grandchild that would outlive it, as an
+    // install or a build does. Killing the child alone would leave it running.
+    const step = `
+      const { spawn } = require("node:child_process");
+      const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+      require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(grandchild.pid));
+      setInterval(() => {}, 1000);
+    `;
+    const started = Date.now();
+    const cut = await runInOwnGroup(process.execPath, ["-e", step], options(Date.now() + 1_500));
+    assert.isTrue(cut.timedOut);
+    assert.isBelow(Date.now() - started, 10_000);
+    const grandchild = Number(NodeFS.readFileSync(pidFile, "utf8"));
+    assert.isAbove(grandchild, 0);
+    assert.isFalse(NodeFS.existsSync(`/proc/${grandchild}`), "the grandchild is still running");
+    NodeFS.rmSync(NodePath.dirname(pidFile), { recursive: true, force: true });
+  });
+});
+
+describe("runInOwnGroup against a command that will not stop", () => {
+  it("kills a command that ignores the request to end, and returns", async () => {
+    const started = Date.now();
+    const cut = await runInOwnGroup(
+      process.execPath,
+      ["-e", 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'],
+      { cwd: NodeOS.tmpdir(), env: process.env, deadline: Date.now() + 500 },
+    );
+    assert.isTrue(cut.timedOut);
+    // Half a second to the deadline, five more of grace, then the kill.
+    assert.isBelow(Date.now() - started, 15_000);
+  }, 30_000);
+});
+
+describe("baseProgress", () => {
+  const ready = {
+    checkoutHead: "abc",
+    sameRepository: true,
+    commit: "abc",
+    installed: true,
+    serverRunning: true,
+    failedStep: undefined,
+  };
+
+  it("reports each step from what is on disk", () => {
+    assert.deepEqual(baseProgress(ready), { checkout: "done", install: "done", server: "done" });
+    assert.deepEqual(baseProgress({ ...ready, serverRunning: false }), {
+      checkout: "done",
+      install: "done",
+      server: "not done",
+    });
+    assert.deepEqual(
+      baseProgress({ ...ready, checkoutHead: undefined, installed: false, serverRunning: false }),
+      { checkout: "not done", install: "not done", server: "not done" },
+    );
+  });
+
+  it("never counts a later step as done on top of an earlier one that is not", () => {
+    // An install marker left beside a checkout that has since gone or moved proves nothing.
+    assert.deepEqual(baseProgress({ ...ready, checkoutHead: undefined }), {
+      checkout: "not done",
+      install: "not done",
+      server: "not done",
+    });
+    assert.deepEqual(baseProgress({ ...ready, installed: false }), {
+      checkout: "done",
+      install: "not done",
+      server: "not done",
+    });
+  });
+
+  it("calls a checkout at another commit, or of another repository, failed", () => {
+    assert.equal(baseProgress({ ...ready, checkoutHead: "def" }).checkout, "failed");
+    assert.equal(baseProgress({ ...ready, sameRepository: false }).checkout, "failed");
+  });
+
+  it("shows the step that last failed as failed until it succeeds", () => {
+    assert.deepEqual(
+      baseProgress({ ...ready, installed: false, serverRunning: false, failedStep: "install" }),
+      { checkout: "done", install: "failed", server: "not done" },
+    );
+    assert.equal(
+      baseProgress({ ...ready, serverRunning: false, failedStep: "server" }).server,
+      "failed",
+    );
+    assert.equal(
+      baseProgress({ ...ready, checkoutHead: undefined, failedStep: "checkout" }).checkout,
+      "failed",
+    );
+  });
+});
+
+describe("baseEnvironment", () => {
+  const inherited = { T3CODE_PORT: "5773", J5CODE_HOME: "/home/dev/.j5code", PATH: "/usr/bin" };
+
+  it("gives the base the clock the head was built with, on every start", () => {
+    const manifest = { baseClock: 1_760_000_000_000 };
+    const first = baseEnvironment(inherited, "/w", manifest);
+    // A retry in a later invocation has no J5_LIVE_TEST_NOW of its own; the manifest supplies it.
+    const retry = baseEnvironment({ PATH: "/usr/bin" }, "/w", manifest);
+    assert.equal(first.J5_LIVE_TEST_NOW, "1760000000000");
+    assert.equal(retry.J5_LIVE_TEST_NOW, "1760000000000");
+    assert.isUndefined(first.T3CODE_PORT);
+    assert.isUndefined(first.J5CODE_HOME);
+  });
+
+  it("sets no clock for a build that recorded none", () => {
+    assert.isUndefined(baseEnvironment(inherited, "/w", {}).J5_LIVE_TEST_NOW);
   });
 });
 

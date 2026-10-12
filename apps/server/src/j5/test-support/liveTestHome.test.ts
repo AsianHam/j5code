@@ -28,6 +28,16 @@ it.live(
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
       );
+      // A base and a head build are given the same clock so their threads are dated alike.
+      const fixedNow = Math.floor((yield* Clock.currentTimeMillis) / 1000) * 1000 - 60 * 60 * 1000;
+      const previousNow = process.env.J5_LIVE_TEST_NOW;
+      process.env.J5_LIVE_TEST_NOW = String(fixedNow);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (previousNow === undefined) delete process.env.J5_LIVE_TEST_NOW;
+          else process.env.J5_LIVE_TEST_NOW = previousNow;
+        }),
+      );
       const build = buildLiveTestHome({
         root,
         replays: [
@@ -68,6 +78,8 @@ it.live(
         assert.include(titles, "Replay fixture: multi_turn (Claude)");
         assert.include(titles, "Replay fixture: subagent (Codex)");
         assert.include(titles, "J5 disposable A2A receiver seed");
+        // Two replays, twenty minutes apart, ending twenty minutes before the given clock.
+        assert.equal(Date.parse(String(threads[0]?.created_at)), fixedNow - 2 * 20 * 60 * 1000);
         const dayAgo = (yield* Clock.currentTimeMillis) - 24 * 60 * 60 * 1000;
         for (const thread of threads) {
           assert.equal(thread.project_id, manifest.project.id);
