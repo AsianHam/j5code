@@ -408,6 +408,8 @@ migrations after upstream migrations.
 
     On a pin advance, check that the `clientRpcPermissions.ts` spread is still the last entry of the map, that upstream has not added a J5 method name to its own entries, and that `createEnvironmentRpcCommand` still exposes `permissionAtom`.
 
+65. Server shard weights are recorded from J5's suite (Jackson's 2026-10-11 go-ahead). `apps/server/src/testUtils/shardWeights.json` holds the recorded duration of each server test file, which `weightedShardSequencer.ts` uses to split the suite into CI shards of equal length. Upstream records it from its own suite, so it held no J5 test file and every one counted as a fast file. J5 regenerates it with upstream's script, `node apps/server/scripts/update-test-shard-weights.ts`, unchanged. The file is data, not code: on a pin advance take either side of a conflict, then rerun the script and commit what it writes.
+
 ## Pin and upstream advance runbook
 
 Current pin: `29980a31409234b676f97bd477c4e46fdb61a929`, from upstream `main` (frozen 2026-10-08). The previous pin was `67a2be0fdbee7afb64b691f147ed286a108c706b`, from upstream's V2 branch `t3code/codex-turn-mapping`.
@@ -713,6 +715,7 @@ explicitly marked.
 | `apps/server/src/serviceLauncher.ts`                                  | R       | H, 50                                          |
 | `apps/server/src/telemetry/AnalyticsService.ts`                       | N       | B, 63                                          |
 | `apps/server/src/telemetry/Identify.ts`                               | R       | H                                              |
+| `apps/server/src/testUtils/shardWeights.json`                         | N       | 65                                             |
 | `apps/server/src/ws.ts`                                               | A       | 37, 42, 58, Role library, Saved-agent mentions |
 | `apps/web/index.html`                                                 | R       | B                                              |
 | `apps/web/src/branding.test.ts`                                       | R       | B                                              |
