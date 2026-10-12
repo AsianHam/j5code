@@ -94,7 +94,7 @@ import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import {
   A2ADeliveryHeldError,
   A2ADeliveryTransport,
-  astraPeerSteeringRun,
+  gpt6PeerSteeringRun,
   deliveryMessageId,
   formatAgentDeliveryEnvelope,
   live as deliveryTransportLive,
@@ -651,238 +651,250 @@ const publishCommandExecution = (
     },
   });
 
-it.effect.each(["gpt-6-astra", "astra"])(
-  "delivers updates into a running %s turn without restarting its tools",
-  (model) =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness;
-      yield* Effect.gen(function* () {
-        const threads = yield* ThreadManagementService;
-        const transport = yield* A2ADeliveryTransport;
-        const worker = yield* OrchestrationEffectWorkerV2;
-        const sink = yield* EventSinkV2;
-        const target = yield* seedTarget(model, model);
-        const active = yield* threads.sendToThread({
-          projectId: target.projectId,
-          threadId: target.threadId,
-          commandId: CommandId.make(`command:${model}:start`),
-          messageId: MessageId.make(`message:${model}:start`),
-          text: "Finish the original build while receiving updates.",
-          attachments: [],
-          mode: "queue",
-          createdBy: "user",
-          creationSource: "web",
-        });
-        // Starting/preparing is not a live provider turn: never use auto/restart.
-        const starting = yield* threads.getThreadProjection(target.threadId);
-        assert.isUndefined(astraPeerSteeringRun(starting, "peer"));
-        const running = yield* sink.stream({ threadId: target.threadId }).pipe(
-          Stream.filter(
-            (stored) =>
-              stored.event.type === "provider-turn.updated" &&
-              stored.event.payload.status === "running",
-          ),
-          Stream.runHead,
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* worker.runOnce;
-        yield* Fiber.join(running);
-        const projection = yield* threads.getThreadProjection(target.threadId);
-        assert.equal(astraPeerSteeringRun(projection, "peer")?.id, active.run.id);
-        for (const channel of ["silence_notice", "lifecycle_notice"] as const) {
-          assert.isUndefined(astraPeerSteeringRun(projection, channel));
-        }
-        for (const otherModel of ["gpt-5.6-sol", "gpt-6-astra-custom", "claude-fable-5-1"]) {
-          assert.isUndefined(
-            astraPeerSteeringRun(
-              {
-                ...projection,
-                runs: projection.runs.map((run) => ({
-                  ...run,
-                  modelSelection: { ...run.modelSelection, model: otherModel },
-                })),
-              },
-              "peer",
-            ),
-          );
-        }
+it.effect.each([
+  "gpt-6-astra",
+  "astra",
+  "gpt-6-luna",
+  "gpt-6-sol",
+  "gpt-6.1-sol",
+  "openai.gpt-6-luna",
+  "gpt-6-astra-custom",
+])("delivers updates into a running %s turn without restarting its tools", (model) =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const threads = yield* ThreadManagementService;
+      const transport = yield* A2ADeliveryTransport;
+      const worker = yield* OrchestrationEffectWorkerV2;
+      const sink = yield* EventSinkV2;
+      const target = yield* seedTarget(model, model);
+      const active = yield* threads.sendToThread({
+        projectId: target.projectId,
+        threadId: target.threadId,
+        commandId: CommandId.make(`command:${model}:start`),
+        messageId: MessageId.make(`message:${model}:start`),
+        text: "Finish the original build while receiving updates.",
+        attachments: [],
+        mode: "queue",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      // Starting/preparing is not a live provider turn: never use auto/restart.
+      const starting = yield* threads.getThreadProjection(target.threadId);
+      assert.isUndefined(gpt6PeerSteeringRun(starting, "peer"));
+      const running = yield* sink.stream({ threadId: target.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "provider-turn.updated" &&
+            stored.event.payload.status === "running",
+        ),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* worker.runOnce;
+      yield* Fiber.join(running);
+      const projection = yield* threads.getThreadProjection(target.threadId);
+      assert.equal(gpt6PeerSteeringRun(projection, "peer")?.id, active.run.id);
+      for (const channel of ["silence_notice", "lifecycle_notice"] as const) {
+        assert.isUndefined(gpt6PeerSteeringRun(projection, channel));
+      }
+      for (const otherModel of [
+        "gpt-5.6-sol",
+        "openai.gpt-5.6-sol",
+        "gpt-5.4",
+        "gpt-60-nova",
+        "claude-fable-5-1",
+      ]) {
         assert.isUndefined(
-          astraPeerSteeringRun(
+          gpt6PeerSteeringRun(
             {
               ...projection,
-              providerThreads: projection.providerThreads.map((thread) => ({
-                ...thread,
-                driver: ProviderDriverKind.make("claude"),
+              runs: projection.runs.map((run) => ({
+                ...run,
+                modelSelection: { ...run.modelSelection, model: otherModel },
               })),
             },
             "peer",
           ),
         );
-        assert.isUndefined(astraPeerSteeringRun({ ...projection, providerSessions: [] }, "peer"));
-        assert.isUndefined(
-          astraPeerSteeringRun(
-            { ...projection, thread: { ...projection.thread, archivedAt: yield* DateTime.now } },
-            "peer",
-          ),
-        );
-        assert.isUndefined(
-          astraPeerSteeringRun(
-            {
-              ...projection,
-              providerSessions: projection.providerSessions.map((session) => ({
-                ...session,
-                driver: ProviderDriverKind.make("claude"),
-              })),
-            },
-            "peer",
-          ),
-        );
-        assert.isUndefined(
-          astraPeerSteeringRun(
-            {
-              ...projection,
-              providerSessions: projection.providerSessions.map((session) => ({
-                ...session,
-                capabilities: {
-                  ...session.capabilities,
-                  turns: { ...session.capabilities.turns, supportsActiveSteering: false },
-                },
-              })),
-            },
-            "peer",
-          ),
-        );
-        assert.isUndefined(astraPeerSteeringRun({ ...projection, providerTurns: [] }, "peer"));
-        const turn = (yield* Ref.get(harness.activeTurns)).get(target.threadId)!;
-        const startedAt = yield* DateTime.now;
-        yield* publishCommandExecution(turn, {
-          ordinal: 1,
-          command: "long build",
-          status: "running",
-          startedAt,
-          completedAt: null,
-        });
-        // The picker can change while the current run retains its original model.
-        const orchestrator = yield* OrchestratorV2;
-        yield* orchestrator.dispatch({
-          type: "thread.model-selection.set",
-          commandId: CommandId.make(`command:${model}:picker-change`),
-          threadId: target.threadId,
-          modelSelection: { ...modelSelection, model: "gpt-5.6-sol" },
-        });
-        const firstDelivery = yield* transport
-          .deliverAgent(target.delivery)
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* runWorkerUntil(worker, firstDelivery);
-        yield* transport.deliverAgent(target.delivery);
-        const secondId = LedgerMessageId.make(`message:${model}:second`);
-        const secondInput = {
-          ...target.delivery,
-          messageId: secondId,
-          exchangeRole: "reply",
-          message: "The answer to your question.",
-        } as const;
-        const secondDelivery = yield* transport
-          .deliverAgent(secondInput)
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* runWorkerUntil(worker, secondDelivery);
-        const steers = yield* Ref.get(harness.steerInputs);
-        assert.lengthOf(steers, 2);
-        // A steered delivery carries the ordinary envelope and nothing else.
-        assert.sameDeepMembers(
-          steers.map((input) => [input.message.messageId, input.message.text]),
-          [
-            [deliveryMessageId(target.messageId), formatAgentDeliveryEnvelope(target.delivery)],
-            [deliveryMessageId(secondId), formatAgentDeliveryEnvelope(secondInput)],
-          ],
-        );
-        for (const steer of steers) {
-          assert.equal(steer.runId, active.run.id);
-          assert.equal(steer.providerTurnId, turn.providerTurnId);
-        }
-        const toolCompleted = yield* sink.stream({ threadId: target.threadId }).pipe(
-          Stream.filter(
-            (stored) =>
-              stored.event.type === "turn-item.updated" &&
-              stored.event.payload.type === "command_execution" &&
-              stored.event.payload.status === "completed",
-          ),
-          Stream.runHead,
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* publishCommandExecution(turn, {
-          ordinal: 1,
-          command: "long build",
-          status: "completed",
-          startedAt,
-          completedAt: yield* DateTime.now,
-        });
-        yield* Fiber.join(toolCompleted);
-        const after = yield* threads.getThreadProjection(target.threadId);
-        assert.lengthOf(after.runs, 1);
-        assert.equal(after.runs[0]?.status, "running");
-        assert.lengthOf(after.attempts, 1);
-        assert.lengthOf(yield* Ref.get(harness.interruptInputs), 0);
-        assert.lengthOf(
-          after.messages.filter((message) => message.id === deliveryMessageId(target.messageId)),
-          1,
-        );
-        // Notices remain queued even for Astra; they do not become peer steers.
-        for (const channel of ["silence_notice", "lifecycle_notice"] as const) {
-          yield* transport.deliverAgent({
-            ...target.delivery,
-            messageId: LedgerMessageId.make(`message:${model}:${channel}`),
-            envelopeChannel: channel,
-          });
-        }
-        assert.isFalse(yield* worker.runOnce);
-        assert.lengthOf(yield* Ref.get(harness.steerInputs), 2);
-        const withNotices = yield* threads.getThreadProjection(target.threadId);
-        assert.equal(withNotices.runs.filter((run) => run.status === "queued").length, 2);
-        // A provider turn can finish between the eligibility read and dispatch.
-        // Keep the stale eligibility snapshot while the real projection moves on.
-        const ended = yield* sink.stream({ threadId: target.threadId }).pipe(
-          Stream.filter(
-            (stored) =>
-              stored.event.type === "provider-turn.updated" &&
-              stored.event.payload.status === "completed",
-          ),
-          Stream.runHead,
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* PubSub.publish(turn.events, {
-          type: "provider_turn.updated",
-          driver,
-          providerTurn: {
-            ...projection.providerTurns[0]!,
-            status: "completed",
-            completedAt: yield* DateTime.now,
+      }
+      assert.isUndefined(
+        gpt6PeerSteeringRun(
+          {
+            ...projection,
+            providerThreads: projection.providerThreads.map((thread) => ({
+              ...thread,
+              driver: ProviderDriverKind.make("claude"),
+            })),
           },
-        });
-        yield* Fiber.join(ended);
-        yield* Ref.set(harness.staleProjection, projection);
-        const racedDelivery = {
+          "peer",
+        ),
+      );
+      assert.isUndefined(gpt6PeerSteeringRun({ ...projection, providerSessions: [] }, "peer"));
+      assert.isUndefined(
+        gpt6PeerSteeringRun(
+          { ...projection, thread: { ...projection.thread, archivedAt: yield* DateTime.now } },
+          "peer",
+        ),
+      );
+      assert.isUndefined(
+        gpt6PeerSteeringRun(
+          {
+            ...projection,
+            providerSessions: projection.providerSessions.map((session) => ({
+              ...session,
+              driver: ProviderDriverKind.make("claude"),
+            })),
+          },
+          "peer",
+        ),
+      );
+      assert.isUndefined(
+        gpt6PeerSteeringRun(
+          {
+            ...projection,
+            providerSessions: projection.providerSessions.map((session) => ({
+              ...session,
+              capabilities: {
+                ...session.capabilities,
+                turns: { ...session.capabilities.turns, supportsActiveSteering: false },
+              },
+            })),
+          },
+          "peer",
+        ),
+      );
+      assert.isUndefined(gpt6PeerSteeringRun({ ...projection, providerTurns: [] }, "peer"));
+      const turn = (yield* Ref.get(harness.activeTurns)).get(target.threadId)!;
+      const startedAt = yield* DateTime.now;
+      yield* publishCommandExecution(turn, {
+        ordinal: 1,
+        command: "long build",
+        status: "running",
+        startedAt,
+        completedAt: null,
+      });
+      // The picker can change while the current run retains its original model.
+      const orchestrator = yield* OrchestratorV2;
+      yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(`command:${model}:picker-change`),
+        threadId: target.threadId,
+        modelSelection: { ...modelSelection, model: "gpt-5.6-sol" },
+      });
+      const firstDelivery = yield* transport
+        .deliverAgent(target.delivery)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* runWorkerUntil(worker, firstDelivery);
+      yield* transport.deliverAgent(target.delivery);
+      const secondId = LedgerMessageId.make(`message:${model}:second`);
+      const secondInput = {
+        ...target.delivery,
+        messageId: secondId,
+        exchangeRole: "reply",
+        message: "The answer to your question.",
+      } as const;
+      const secondDelivery = yield* transport
+        .deliverAgent(secondInput)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* runWorkerUntil(worker, secondDelivery);
+      const steers = yield* Ref.get(harness.steerInputs);
+      assert.lengthOf(steers, 2);
+      // A steered delivery carries the ordinary envelope and nothing else.
+      assert.sameDeepMembers(
+        steers.map((input) => [input.message.messageId, input.message.text]),
+        [
+          [deliveryMessageId(target.messageId), formatAgentDeliveryEnvelope(target.delivery)],
+          [deliveryMessageId(secondId), formatAgentDeliveryEnvelope(secondInput)],
+        ],
+      );
+      for (const steer of steers) {
+        assert.equal(steer.runId, active.run.id);
+        assert.equal(steer.providerTurnId, turn.providerTurnId);
+      }
+      const toolCompleted = yield* sink.stream({ threadId: target.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "turn-item.updated" &&
+            stored.event.payload.type === "command_execution" &&
+            stored.event.payload.status === "completed",
+        ),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* publishCommandExecution(turn, {
+        ordinal: 1,
+        command: "long build",
+        status: "completed",
+        startedAt,
+        completedAt: yield* DateTime.now,
+      });
+      yield* Fiber.join(toolCompleted);
+      const after = yield* threads.getThreadProjection(target.threadId);
+      assert.lengthOf(after.runs, 1);
+      assert.equal(after.runs[0]?.status, "running");
+      assert.lengthOf(after.attempts, 1);
+      assert.lengthOf(yield* Ref.get(harness.interruptInputs), 0);
+      assert.lengthOf(
+        after.messages.filter((message) => message.id === deliveryMessageId(target.messageId)),
+        1,
+      );
+      // Notices remain queued even for Astra; they do not become peer steers.
+      for (const channel of ["silence_notice", "lifecycle_notice"] as const) {
+        yield* transport.deliverAgent({
           ...target.delivery,
-          messageId: LedgerMessageId.make(`message:${model}:race`),
-        };
-        for (let retry = 0; retry < 2; retry++) yield* transport.deliverAgent(racedDelivery);
-        yield* Ref.set(harness.staleProjection, undefined);
-        const afterRace = yield* threads.getThreadProjection(target.threadId);
-        assert.lengthOf(
-          afterRace.messages.filter(
-            (message) => message.id === deliveryMessageId(racedDelivery.messageId),
-          ),
-          1,
-        );
-        const queuedFollowUps = afterRace.runs.filter(
-          (run) => run.userMessageId === deliveryMessageId(racedDelivery.messageId),
-        );
-        assert.lengthOf(queuedFollowUps, 1);
-        assert.equal(queuedFollowUps[0]!.status, "queued");
-        assert.equal(queuedFollowUps[0]!.modelSelection.model, model);
-        assert.lengthOf(yield* Ref.get(harness.interruptInputs), 0);
-      }).pipe(Effect.provide(makeTestLayer(harness)));
-    }),
+          messageId: LedgerMessageId.make(`message:${model}:${channel}`),
+          envelopeChannel: channel,
+        });
+      }
+      assert.isFalse(yield* worker.runOnce);
+      assert.lengthOf(yield* Ref.get(harness.steerInputs), 2);
+      const withNotices = yield* threads.getThreadProjection(target.threadId);
+      assert.equal(withNotices.runs.filter((run) => run.status === "queued").length, 2);
+      // A provider turn can finish between the eligibility read and dispatch.
+      // Keep the stale eligibility snapshot while the real projection moves on.
+      const ended = yield* sink.stream({ threadId: target.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "provider-turn.updated" &&
+            stored.event.payload.status === "completed",
+        ),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* PubSub.publish(turn.events, {
+        type: "provider_turn.updated",
+        driver,
+        providerTurn: {
+          ...projection.providerTurns[0]!,
+          status: "completed",
+          completedAt: yield* DateTime.now,
+        },
+      });
+      yield* Fiber.join(ended);
+      yield* Ref.set(harness.staleProjection, projection);
+      const racedDelivery = {
+        ...target.delivery,
+        messageId: LedgerMessageId.make(`message:${model}:race`),
+      };
+      for (let retry = 0; retry < 2; retry++) yield* transport.deliverAgent(racedDelivery);
+      yield* Ref.set(harness.staleProjection, undefined);
+      const afterRace = yield* threads.getThreadProjection(target.threadId);
+      assert.lengthOf(
+        afterRace.messages.filter(
+          (message) => message.id === deliveryMessageId(racedDelivery.messageId),
+        ),
+        1,
+      );
+      const queuedFollowUps = afterRace.runs.filter(
+        (run) => run.userMessageId === deliveryMessageId(racedDelivery.messageId),
+      );
+      assert.lengthOf(queuedFollowUps, 1);
+      assert.equal(queuedFollowUps[0]!.status, "queued");
+      assert.equal(queuedFollowUps[0]!.modelSelection.model, model);
+      assert.lengthOf(yield* Ref.get(harness.interruptInputs), 0);
+    }).pipe(Effect.provide(makeTestLayer(harness)));
+  }),
 );
 
 /** Starts a user turn on the target and returns once its provider turn is running. */

@@ -69,7 +69,7 @@ Delivery is **log-first**: the ledger row is the act, and delivery is an attempt
 
 Two policies govern what happens when a message reaches an agent whose turn is running, and they are independent of each other.
 
-The **agent-side policy** is J5's: a message from an agent **queues** behind the running turn and starts when it ends. **Steering** — injecting into the running turn — is a controller's act, and in J5 the only controller of an agent's turn is the person, so no agent's message steers. There is one exception, ruled for one provider: a peer's message to an already-running Codex Astra turn is delivered into the turn as an ordinary envelope, because Astra is built to take messages during work. What the agent does with it is the agent's judgment, exactly as with any other message; the platform adds no guidance about whose instructions win. Platform notices always queue.
+The **agent-side policy** is J5's: a message from an agent **queues** behind the running turn and starts when it ends. **Steering** — injecting into the running turn — is a controller's act, and in J5 the only controller of an agent's turn is the person, so no agent's message steers. There is one exception, ruled for one provider: a peer's message to an already-running Codex GPT 6 turn (Astra, Luna, Sol and their point releases) is delivered into the turn as an ordinary envelope, because the GPT 6 models are built to take messages during work. What the agent does with it is the agent's judgment, exactly as with any other message; the platform adds no guidance about whose instructions win. Platform notices always queue.
 
 A queued message costs its receiver a whole turn, so a stream of small updates becomes a stream of turns. When a sender's message will wait behind the receiver's running turn, the platform tells the sender at once, with the measured backlog, and advises one message in place of many. It advises; it never refuses or holds a send.
 
@@ -119,7 +119,7 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 ### Delivery
 
 12. Every delivery attempt is recorded; a delivery that fails past the retry limit is shown as an alarm attributed to the sender and is never marked repaired by time passing or by a different message succeeding.
-13. A message to an agent whose turn is running is queued and delivered when the turn ends; no agent-originated delivery steers a running turn, except a peer message into a running Codex Astra turn, which is delivered into the turn as an ordinary envelope with nothing added.
+13. A message to an agent whose turn is running is queued and delivered when the turn ends; no agent-originated delivery steers a running turn, except a peer message into a running Codex GPT 6 turn, which is delivered into the turn as an ordinary envelope with nothing added.
 14. Only a person can steer a running turn. How the person's steer is offered, labeled and sent — in the composer and on a queued row, including whether a send steers or queues by default — follows upstream.
 15. Platform notices are always queued, never steered.
 
@@ -150,7 +150,7 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 
 ### Sending to a busy agent
 
-29. A send to an agent whose turn is running, and which will not take the message into that turn, returns a notice stating how many messages are waiting for it, how many of them the caller sent, and that each will run as its own turn; a send to an idle agent or to a running Codex Astra turn returns no notice, and no send is refused because of the backlog.
+29. A send to an agent whose turn is running, and which will not take the message into that turn, returns a notice stating how many messages are waiting for it, how many of them the caller sent, and that each will run as its own turn; a send to an idle agent or to a running Codex GPT 6 turn returns no notice, and no send is refused because of the backlog.
 
 ## Scenarios
 
@@ -171,6 +171,7 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 - 2026-09-02 — a person receives only asks and replies ([record](../../worklog/2026-09-02-human-addressed-sends-ruling.md)).
 - 2026-09-03 — agent deliveries queue; only the person steers; former QS1–QS4 ([record](../../worklog/2026-09-03-queue-vs-steer-ruling.md)). 2026-09-05 — the person-side default returns to upstream's (steer on send, an explicit queue shortcut) with the upstream integration (PR #112); the agent-side queue policy, the Astra exception and the truthful-steer guard stand, and the two policies are recorded as independent.
 - 2026-09-04 — the Codex Astra exception ([record](../../worklog/2026-09-04-astra-peer-delivery.md)); 2026-09-08 — a person never opens an ask through the platform; their only ledger act is the closing answer (the 2026-08-14 design's person-as-sender is dropped; the unused person-origin envelope channel goes with it, issue #119). Same day, the delivery guidance that path appended ("continue the unfinished task… change course only when the user's instructions require it") is removed: an agent told by a peer that it should change course should not wait for a user who may never come; the model's behavior is observed instead (issue filed).
+- 2026-10-12 — the Codex Astra exception covers every Codex GPT 6 model: Luna and Sol take messages during work as Astra does (Jackson, [#569](https://github.com/Jacksondr5/j5code/pull/569)).
 - 2026-09-05 — rewritten into the definition shape; 2026-09-07 — provenance and placement moved to the Squadron definition (they are organization, not communication). One change of substance: an agent may hold several open asks to a person, with explicit follow-ups shown in the inbox — reversing the one-ask-per-person rule of 2026-09-02 (issue #111). Former identifiers: D1 → Participants (delegation half retired); D2 → Participants; D3, D8 → The ledger, AC3; D4 → AC5; D5 → Delivery, AC1; D6 → Silence, AC20; D7 → the A2A plan; D9 → The Exchange; D10 → the Squadron definition (placement and provenance), with its obligation half being the Exchange; R3 → How an Exchange works, AC9; R4 → Silence; R21 → the Squadron definition; R22 → Participants; R25 → Envelopes, AC22; QS1–QS4 → Delivery, AC13–AC15.
 - 2026-09-15 — machine participants: registered non-agent senders with an immutable Squadron home and no thread, plain sends only, never receive, token-bound identity through the `a2a:send` scope; AC24–AC28 and the scraper scenario (issue #74).
 - 2026-09-24 — the truthful-steer layer is retired with the upstream V2 advance: the person's steer and queue presentation follows upstream's as-is, and AC14 keeps only the rule that a person alone steers; remaining steer UX gaps are tracked in the upstream give-back backlog (issue #276).

@@ -82,17 +82,17 @@ Letter codes in the Decided lines (SC2, QS1, AR3, and so on) are rulings recorde
 
 **Decided:** Bryant built the approvals, 2026-09-10 to 2026-09-15. Jackson's ruling of 2026-09-26 (#233) kept them and limited them to Codex and Claude; Bryant accepted it by narrowing and merging #301 and closing #233 on 2026-09-29. Muse Code: Jackson, 2026-10-08. Recorded in FORK.md's saved-agent mentions section.
 
-#### D4. Agent deliveries queue behind a running turn; Astra peers can steer
+#### D4. Agent deliveries queue behind a running turn; GPT 6 peers can steer
 
 **Upstream:** a message sent to a busy thread steers the running turn when it can.
 
-**J5:** a message from one agent to another waits until the receiver's turn ends. The exception is peer updates to a running Codex Astra turn, which arrive as steers.
+**J5:** a message from one agent to another waits until the receiver's turn ends. The exception is peer updates to a running Codex GPT 6 turn (Astra, Luna, Sol and their point releases), which arrive as steers.
 
-**Why:** a peer owns nothing about another agent's turn, and upstream's steering was actively harmful. On Claude, a steer aborts the turn and makes the agent report that "the user doesn't want to take this action", a refusal the human never gave. On Cursor, it destroys the turn. The ruling expected this to fold back into upstream: J5 only changed the default value of upstream's own delivery setting, so that it would collapse if upstream shipped a queue option. Astra is built to take messages during work. Without the exception, a 36-minute Astra run worked from stale guidance because its peers' updates waited for the end.
+**Why:** a peer owns nothing about another agent's turn, and upstream's steering was actively harmful. On Claude, a steer aborts the turn and makes the agent report that "the user doesn't want to take this action", a refusal the human never gave. On Cursor, it destroys the turn. The ruling expected this to fold back into upstream: J5 only changed the default value of upstream's own delivery setting, so that it would collapse if upstream shipped a queue option. The GPT 6 models are built to take messages during work. Without the exception, a 36-minute Astra run worked from stale guidance because its peers' updates waited for the end.
 
-**Consequences:** this changes when a message is admitted, not whether the model reads it. Queueing also removed an accidental way of freeing a stuck start, so a queued run's age became something the Fleet page shows. Each advance checks the outbox and follow-up behavior this depends on. Checked on 2026-10-08 against upstream `main`, it is still needed: upstream still steers whenever it can (Claude with `priority: "now"`, which cancels sibling tool calls), and has no Astra-specific or asynchronous delivery. **J5 wants to drop this divergence** and follow upstream's delivery once upstream can deliver a message to a running turn without aborting it (Claude) or restarting it (Cursor), and supports Astra's in-work messaging. Upstream's Stop holds a thread's queue. A stopped agent's queued messages wait until a person resumes its queue; no agent tool releases them, and a message sent after the stop runs ahead of them. J5 doesn't guard a steer that races a Stop (D5, retired): a peer steer already in flight when the person presses Stop can occasionally wake an Astra agent, and the person stops it again.
+**Consequences:** this changes when a message is admitted, not whether the model reads it. Queueing also removed an accidental way of freeing a stuck start, so a queued run's age became something the Fleet page shows. Each advance checks the outbox and follow-up behavior this depends on. Checked on 2026-10-08 against upstream `main`, it is still needed: upstream still steers whenever it can (Claude with `priority: "now"`, which cancels sibling tool calls), and has no GPT 6-specific or asynchronous delivery. **J5 wants to drop this divergence** and follow upstream's delivery once upstream can deliver a message to a running turn without aborting it (Claude) or restarting it (Cursor), and supports the GPT 6 models' in-work messaging. Upstream's Stop holds a thread's queue. A stopped agent's queued messages wait until a person resumes its queue; no agent tool releases them, and a message sent after the stop runs ahead of them. J5 doesn't guard a steer that races a Stop (D5, retired): a peer steer already in flight when the person presses Stop can occasionally wake a GPT 6 agent, and the person stops it again.
 
-**Decided:** Jackson with Product, 2026-09-03 (QS1); the Astra exception by Jackson, 2026-09-04. Recorded in FORK.md case 26.
+**Decided:** Jackson with Product, 2026-09-03 (QS1); the Astra exception by Jackson, 2026-09-04, widened by him to every Codex GPT 6 model on 2026-10-12. Recorded in FORK.md case 26.
 
 #### D6. Native resume starts fresh only when the conversation is gone
 
@@ -385,7 +385,7 @@ The person ruled against these. They still diverge on `j5/main` until their fix 
 
 **Why:** to mirror the Fable aliases that existed at the time, which upstream has since removed.
 
-**Consequences:** D4's Astra exception checks the resolved name, so removing the aliases needs checking against it.
+**Consequences:** D4's GPT 6 exception checks the resolved name, so removing the aliases needs checking against it.
 
 **Status:** introduced in PR #101 (2026-09-04), merged on the Director's authority. To be removed in favor of upstream (#342). Recorded in FORK.md case 32.
 
@@ -409,7 +409,7 @@ A scheduled run was refused before creating a thread when several Squadrons refe
 
 #### D5. A committed Stop wins over a racing steer
 
-Once a Stop was committed, J5 kept a steer the provider had accepted before it from starting a new turn. It arrived with the 2026-09-17 upstream integration and Jackson kept it on 2026-09-24. Jackson ruled on 2026-09-28 that controlling a thread's turns is upstream's area and this is a race J5 doesn't design for. Removed 2026-10-08 ([#343](https://github.com/Jacksondr5/j5code/issues/343)): J5 runs upstream's code. Upstream's Stop holds the thread's queue, which covers queued messages; a peer steer already in flight to an Astra agent can still wake it (D4).
+Once a Stop was committed, J5 kept a steer the provider had accepted before it from starting a new turn. It arrived with the 2026-09-17 upstream integration and Jackson kept it on 2026-09-24. Jackson ruled on 2026-09-28 that controlling a thread's turns is upstream's area and this is a race J5 doesn't design for. Removed 2026-10-08 ([#343](https://github.com/Jacksondr5/j5code/issues/343)): J5 runs upstream's code. Upstream's Stop holds the thread's queue, which covers queued messages; a peer steer already in flight to a GPT 6 agent can still wake it (D4).
 
 #### D7. Codex CLI version floor
 
@@ -435,3 +435,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-09 — D30 added: a message from another participant holds a merged thread open (Jackson).
 - 2026-10-09 — D1 rewritten: J5's instruction text lives in upstream's shared provider package and reaches Pi (Jackson).
 - 2026-10-11 — D32 added: a server's name can be set with `J5CODE_SERVER_NAME` (Jackson, [#545](https://github.com/Jacksondr5/j5code/issues/545)).
+- 2026-10-12 — D4 widened: its exception covers every Codex GPT 6 model, not Astra alone (Jackson, [#569](https://github.com/Jacksondr5/j5code/pull/569)).

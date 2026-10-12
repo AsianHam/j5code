@@ -55,7 +55,7 @@ A conversation on any harness can propose a crew. On **Codex** and **Claude**, a
 - **Cursor** proposes a crew only when the conversation runs in **Full access**. In other modes, a Cursor team admin can add the t3-code tools to the team's MCP tool allowlist.
 - An OpenCode conversation on an external server cannot propose a crew.
 
-Members can talk directly to each other and their Captain, and Captains can coordinate with other Captains. They share findings, questions, blockers, and results as messages while work continues; creating a report is not a prerequisite for communication. Active Astra runs can receive peer messages during work; other providers receive queued messages at the next safe turn boundary.
+Members can talk directly to each other and their Captain, and Captains can coordinate with other Captains. They share findings, questions, blockers, and results as messages while work continues; creating a report is not a prerequisite for communication. Active Codex GPT 6 runs can receive peer messages during work; other models and providers receive queued messages at the next safe turn boundary.
 
 When a member needs help, it tells the Captain. The Captain can request another member, explaining the gap and the proposed assignment. The request appears under **Crew requests** in the Inbox and counts on the Inbox badge. Review why the member is needed, its instructions, and its harness, model, reasoning level, and access, then approve or decline it there; independent work can continue while the request awaits your decision. A crew holds at most twelve seats, and only its Captain can request additions.
 

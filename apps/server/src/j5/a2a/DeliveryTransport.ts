@@ -11,7 +11,7 @@ import {
   peerCredentialRejectedReason,
   type PeerDeliveryRequest,
 } from "@t3tools/contracts/j5";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+import { codexModelFamily, normalizeModelSlug } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -202,8 +202,12 @@ const assertPersonReply = (input: AgentDeliveryInput): never => {
   );
 };
 
+// Every GPT 6 model (Astra, Luna, Sol and their point releases) takes messages during work.
+const isGpt6Model = (model: string | null) =>
+  model !== null && /^gpt-6[-.]/.test(codexModelFamily(model));
+
 /** Use the active run's selection, not the picker selection for future runs. */
-export const astraPeerSteeringRun = (
+export const gpt6PeerSteeringRun = (
   target: Pick<
     OrchestrationV2ThreadProjection,
     "thread" | "runs" | "providerTurns" | "providerThreads" | "providerSessions"
@@ -222,7 +226,7 @@ export const astraPeerSteeringRun = (
   return providerThread?.driver === "codex" &&
     session?.driver === "codex" &&
     session.capabilities.turns.supportsActiveSteering === true &&
-    normalizeModelSlug(run.modelSelection.model, providerThread.driver) === "gpt-6-astra"
+    isGpt6Model(normalizeModelSlug(run.modelSelection.model, providerThread.driver))
     ? run
     : undefined;
 };
@@ -411,14 +415,14 @@ export const live: Layer.Layer<
             (effect) => effect.request.type === "provider-turn.steer",
           );
           if (priorSteer !== undefined) return yield* awaitSteeringOutcome(priorSteer.id);
-          // Astra can receive peer updates during its long turns. Other models
+          // GPT 6 models can receive peer updates during their long turns. Other models
           // and platform notices retain QS1's queue policy (Claude issue #73).
           const alreadyAccepted = target.messages.some(
             (message) => message.id === deliveryMessageId(input.messageId),
           );
           const steeringRun = alreadyAccepted
             ? undefined
-            : astraPeerSteeringRun(target, input.envelopeChannel);
+            : gpt6PeerSteeringRun(target, input.envelopeChannel);
           // The header names the sender's project by id, with its title when the sender is on this
           // server. A peer server's project is not one of ours, so it is named by id alone.
           const originProject =

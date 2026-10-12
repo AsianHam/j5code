@@ -38,7 +38,7 @@ Two different things share the word "handoff". J5 docs call upstream's history t
 ## Steering and queues
 
 - **Upstream:** a queue-or-steer follow-up setting, a shared composer dispatch, editing, reordering and promoting queued messages, and held queues after a restart. Stop and a provider failure now hold the queue too. Scheduled tasks bound to a thread queue instead of steering. A delegated task's completion steers its parent only when the session says steering doesn't interrupt tools (`activeSteeringInterruptsTools`).
-- **J5:** follows upstream's steering and queues. Agent-to-agent deliveries still queue behind a running turn, with the Astra exception ([divergence D4](upstream.md)). A delivery to a thread whose queue is held waits for a resume (#272). The remaining UX gaps are in the give-back backlog (#276).
+- **J5:** follows upstream's steering and queues. Agent-to-agent deliveries still queue behind a running turn, with the GPT 6 exception ([divergence D4](upstream.md)). A delivery to a thread whose queue is held waits for a resume (#272). The remaining UX gaps are in the give-back backlog (#276).
 - **Watch for:** `activeSteeringInterruptsTools` is upstream's first admission that a steer can be harmful. If upstream stops steering where it would abort or restart a turn, D4 can go.
 
 ## Long-running autonomy
@@ -74,3 +74,4 @@ Fixes J5 carries that belong upstream are tracked in #276. V2 has merged upstrea
 - 2026-09-23 — started as a research watchlist, rewritten at every upstream advance ([Merging upstream](../process/upstream-merge.md)).
 - 2026-09-29 — moved from `research/` to `product/`: it is kept current at every advance, so it is a maintained document rather than a dated study (Jackson, [#354](https://github.com/Jacksondr5/j5code/pull/354)).
 - 2026-10-08 — rewritten against upstream `main` after V2 merged: outside-agent sign-in, environment-wide thread tools, upstream's Stop, pull-request watches, webhook schedules and provider packages added.
+- 2026-10-12 — divergence D4's exception named as GPT 6, not Astra alone (Jackson, [#569](https://github.com/Jacksondr5/j5code/pull/569)).

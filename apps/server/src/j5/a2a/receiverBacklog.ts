@@ -6,7 +6,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { latestActiveRun } from "../../orchestration-v2/ThreadManagementService.ts";
 import {
-  astraPeerSteeringRun,
+  gpt6PeerSteeringRun,
   deliveryMessageId,
   isDeliveryMessageId,
 } from "./DeliveryTransport.ts";
@@ -26,7 +26,7 @@ const decodeParticipant = Schema.decodeUnknownEffect(Schema.fromJsonString(Parti
  * What a just-sent message is waiting behind: the receiver's running turn and the
  * A2A messages after it, both those already queued as runs and those the delivery
  * worker has not handed over yet. Undefined when the message will not wait: the
- * receiver is idle, takes it mid-turn (Astra), holds its queue, is not an agent on
+ * receiver is idle, takes it mid-turn (a GPT 6 model), holds its queue, is not an agent on
  * this server, or the message has already run or will never run. Measured when
  * called and never stored, so it is advice to the sender, not a delivery fact. A
  * failed read is logged and reads as undefined: the message is already committed,
@@ -77,9 +77,9 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
     const sentRun = runByMessage.get(deliveryMessageId(input.sentMessageId));
     // Already started or finished (a replay reports the current state, not the first one).
     if (sentRun !== undefined && sentRun.status !== "queued") return undefined;
-    // Not yet handed over, so a running Astra turn will take it mid-turn. Once queued,
+    // Not yet handed over, so a running GPT 6 turn will take it mid-turn. Once queued,
     // it stays queued even if the receiver's turn later becomes steerable.
-    if (sentRun === undefined && astraPeerSteeringRun(target, "peer") !== undefined)
+    if (sentRun === undefined && gpt6PeerSteeringRun(target, "peer") !== undefined)
       return undefined;
 
     const pending = pendingRows.filter(
