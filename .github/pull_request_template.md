@@ -12,6 +12,14 @@
      If the change involves motion or interaction, include a short video.
      Delete this section if not applicable. -->
 
+## Live testing
+
+<!-- What was tested on a real server, from the tester's report (see the j5-live-test skill):
+     the verdict and the commit tested; what was not exercised live, and why;
+     anything a person needs to test by hand, with exact steps.
+     Name the report artifact, for example `test-reports/<branch>.md`.
+     Delete this section if nothing in the PR can be live-tested. -->
+
 ## Upstream impact
 
 <!-- Delete if the PR only touches J5-owned paths (apps/*/src/j5, packages/*/src/j5, docs/j5,
@@ -25,6 +33,7 @@
 - [ ] One concern: the description has no "also"
 - [ ] Tests cover the changed behavior (backend changes ship with focused tests)
 - [ ] UI changes: before/after screenshots above, and a video for motion or interaction
+- [ ] Live testing: the section above says what ran live and what did not
 - [ ] Upstream-owned files: each one is recorded in `FORK.md` (case text and file-table row) in this PR
 - [ ] Upstream product: any change to what upstream's product does has a human decision linked above and a register entry in `docs/j5/product/upstream.md`
 - [ ] Surfaces: entry points, clients, providers, contracts, reverse states, connection modes (see `AGENTS.md`)

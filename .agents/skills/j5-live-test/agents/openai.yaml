@@ -1,0 +1,4 @@
+interface:
+  display_name: "J5 Live Testing"
+  short_description: "Live-test a change on a safe J5 test server"
+  default_prompt: "Use $j5-live-test to set up a test server and live-test the affected flow."
