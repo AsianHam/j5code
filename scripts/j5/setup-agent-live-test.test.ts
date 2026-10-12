@@ -10,7 +10,13 @@ import {
   LiveTestRefusal,
   addRemoteUrl,
   listsPeer,
+  peerRepairCommand,
   peerSteps,
+  isOwnMapping,
+  mappingCleanup,
+  mappingsFromStatus,
+  shareRefusal,
+  tailnetMappings,
   liveTestEnvironment,
   type LiveTestMode,
   modeRefusal,
@@ -189,6 +195,8 @@ describe("startRefusal", () => {
     baseDir: "/w/.j5code/live-test/home",
     pairingUrl: undefined,
     recovered: false,
+    sharedUrl: undefined,
+    shareFailure: undefined,
   };
   const input = { facts, home: "/w/.j5code/live-test/home", inheritedPort: "5773" };
 
@@ -213,6 +221,118 @@ describe("startRefusal", () => {
       "live server's port",
     );
     assert.include(startRefusal({ ...input, inheritedPort: "15634" }) ?? "", "live server's port");
+  });
+
+  it("abandons a server that had to be shared and was not", () => {
+    const unshared = { ...facts, shareFailure: "permission denied" };
+    assert.include(
+      startRefusal({ ...input, facts: unshared, requireShare: true }) ?? "",
+      "could not share on the tailnet: permission denied",
+    );
+    // A test server that nobody asked to share carries on.
+    assert.isUndefined(startRefusal({ ...input, facts: unshared }));
+  });
+});
+
+describe("tailnet mappings", () => {
+  const status = [
+    "https://openclaw.tail477304.ts.net:8444 (tailnet only)",
+    "|-- / proxy http://127.0.0.1:5773",
+    "",
+    "https://openclaw.tail477304.ts.net:7594 (tailnet only)",
+    "|-- / proxy http://localhost:7594",
+  ].join("\n");
+  const mappings = tailnetMappings(status);
+
+  it("reads each mapped port with where it proxies to", () => {
+    assert.deepEqual(mappings, [
+      { port: 8444, targets: ["http://127.0.0.1:5773"] },
+      { port: 7594, targets: ["http://localhost:7594"] },
+    ]);
+    assert.deepEqual(tailnetMappings("No serve config\n"), []);
+  });
+
+  it("calls a mapping ours only when it proxies to our own web port on loopback", () => {
+    for (const target of ["http://localhost:7594", "http://127.0.0.1:7594", "http://[::1]:7594"]) {
+      assert.isTrue(isOwnMapping({ port: 7594, targets: [target] }, 7594));
+    }
+    // The live install's mapping, seen from a worktree whose web port is 8444.
+    assert.isFalse(isOwnMapping({ port: 8444, targets: ["http://127.0.0.1:5773"] }, 8444));
+    assert.isFalse(isOwnMapping({ port: 7594, targets: ["http://10.0.0.5:7594"] }, 7594));
+    assert.isFalse(isOwnMapping({ port: 7594, targets: ["http://localhost:75940"] }, 7594));
+    assert.isFalse(isOwnMapping({ port: 7594, targets: [] }, 7594));
+    // An extra route to somewhere else makes the whole mapping not ours.
+    assert.isFalse(
+      isOwnMapping({ port: 7594, targets: ["http://localhost:7594", "http://localhost:9"] }, 7594),
+    );
+  });
+
+  const allowed = () => true;
+
+  it("never shares on a port browsers refuse, using the dev runner's own list", async () => {
+    // Pinning the port skips the runner's check, so the script applies it.
+    const runner = (await import(NodePath.join(import.meta.dirname, "../dev-runner.ts"))) as {
+      readonly isBrowserAllowedPort: (port: number) => boolean;
+    };
+    for (const port of [6000, 6566, 6667, 6697]) {
+      assert.include(
+        shareRefusal(port, [], runner.isBrowserAllowedPort) ?? "",
+        "browsers refuse to open",
+      );
+    }
+    assert.isUndefined(shareRefusal(7594, [], runner.isBrowserAllowedPort));
+  });
+
+  it("never shares on the live install's tailnet port", () => {
+    assert.include(shareRefusal(8444, [], allowed) ?? "", "live install's tailnet port");
+    assert.include(shareRefusal(8444, mappings, allowed) ?? "", "live install's tailnet port");
+  });
+
+  it("never shares over a mapping this server did not make", () => {
+    const foreign = [{ port: 7000, targets: ["http://127.0.0.1:3000"] }];
+    assert.include(shareRefusal(7000, foreign, allowed) ?? "", "this server did not set up");
+  });
+
+  it("treats a failed status read as an error, not as nothing mapped", () => {
+    assert.throws(
+      () => mappingsFromStatus({ status: 1, stdout: "", stderr: "tailscaled is not running" }),
+      /cannot be read:\ntailscaled is not running/,
+    );
+    assert.throws(
+      () => mappingsFromStatus({ status: null, stdout: "", stderr: "" }),
+      LiveTestRefusal,
+    );
+    assert.deepEqual(mappingsFromStatus({ status: 0, stdout: status, stderr: "" }), mappings);
+  });
+
+  it("on stop removes only a mapping this run made", () => {
+    const shared = {
+      serverPort: 15634,
+      webPort: 7594,
+      baseDir: "/w/.j5code/live-test/home",
+      pairingUrl: "https://host.ts.net:7594/pair#token=T",
+      recovered: true,
+      sharedUrl: "https://host.ts.net:7594/",
+      shareFailure: undefined,
+    };
+    assert.deepEqual(mappingCleanup(shared, mappings), { kind: "remove", port: 7594 });
+    // Already removed by the dev runner on its way out.
+    assert.deepEqual(mappingCleanup(shared, [mappings[0]!]), { kind: "nothing" });
+    // This run's log never recorded a share: whatever is on the port is not ours to touch.
+    assert.deepEqual(mappingCleanup({ ...shared, sharedUrl: undefined }, mappings), {
+      kind: "nothing",
+    });
+    // The port now carries someone else's mapping, such as the live install's.
+    assert.deepEqual(mappingCleanup({ ...shared, webPort: 8444 }, mappings), {
+      kind: "foreign",
+      port: 8444,
+      targets: ["http://127.0.0.1:5773"],
+    });
+  });
+
+  it("shares on a free port, and over its own leftover mapping", () => {
+    assert.isUndefined(shareRefusal(7000, mappings, allowed));
+    assert.isUndefined(shareRefusal(7594, mappings, allowed));
   });
 });
 
@@ -251,6 +371,8 @@ describe("readServerLog", () => {
       baseDir: "/w/.j5code/live-test/home",
       pairingUrl: "http://localhost:7594/pair#token=NEW",
       recovered: true,
+      sharedUrl: undefined,
+      shareFailure: undefined,
     });
     assert.deepEqual(readServerLog("starting"), {
       serverPort: undefined,
@@ -258,7 +380,24 @@ describe("readServerLog", () => {
       baseDir: undefined,
       pairingUrl: undefined,
       recovered: false,
+      sharedUrl: undefined,
+      shareFailure: undefined,
     });
+  });
+
+  it("reads where the dev runner shared the server, or why it could not", () => {
+    assert.equal(
+      readServerLog(
+        "[23:01:02.003] INFO (#1): [dev-runner] shared on tailnet: https://host.ts.net:7594",
+      ).sharedUrl,
+      "https://host.ts.net:7594",
+    );
+    assert.equal(
+      readServerLog(
+        "[23:01:02.003] WARN (#1): [dev-runner] could not share on the tailnet: permission denied. Continuing unshared.",
+      ).shareFailure,
+      "permission denied. Continuing unshared.",
+    );
   });
 });
 
@@ -269,6 +408,8 @@ describe("classifyServer", () => {
     baseDir: "/w/.j5code/live-test/home",
     pairingUrl: "http://localhost:7594/pair#token=T",
     recovered: true,
+    sharedUrl: undefined,
+    shareFailure: undefined,
   };
   const ours = {
     worktree: "/w",
@@ -340,6 +481,10 @@ describe("parseCommand", () => {
       mode: "peer-poll",
     });
     assert.deepEqual(parseCommand(["--poll", "--peer"]), { command: "start", mode: "peer-poll" });
+    assert.deepEqual(parseCommand(["rebuild", "--for-dev"]), {
+      command: "rebuild",
+      mode: "for-dev",
+    });
   });
 
   it("refuses unknown words and flags, and a mode flag where none applies", () => {
@@ -351,6 +496,7 @@ describe("parseCommand", () => {
       // --poll says how two servers peer; it means nothing alone or with an empty home.
       ["--poll"],
       ["--fresh", "--peer"],
+      ["--for-dev", "--peer"],
       ["status", "--peer"],
       // These act on whatever is built; a flag would suggest they could change it.
       ["status", "--fresh"],
@@ -430,6 +576,18 @@ describe("peerSteps", () => {
     const steps = peerSteps({ issuer: local, holder: remote, poll: true });
     assert.equal(steps.credential.at(-1), "--store");
     assert.equal(steps.add("SECRET").at(-1), "--poll");
+  });
+});
+
+describe("peerRepairCommand", () => {
+  it("is the same start when both servers are up, and restart when either is not", () => {
+    assert.equal(peerRepairCommand("peer", "RUNNING", "RUNNING"), "--peer");
+    assert.equal(peerRepairCommand("peer-poll", "RUNNING", "RUNNING"), "--peer --poll");
+    // A start would only wait on a server that is there but not serving.
+    assert.equal(peerRepairCommand("peer", "RUNNING", "NOT SERVING"), "restart");
+    assert.equal(peerRepairCommand("peer", "NOT SERVING", "RUNNING"), "restart");
+    assert.equal(peerRepairCommand("peer", "RUNNING", "STOPPED"), "restart");
+    assert.equal(peerRepairCommand("peer", "RUNNING", "UNVERIFIED"), "restart");
   });
 });
 

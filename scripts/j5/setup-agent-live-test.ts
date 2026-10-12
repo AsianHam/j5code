@@ -12,7 +12,9 @@
  * project and pre-made threads. `--fresh` gives an empty home, so the first-run
  * wizard shows. `--peer` runs two servers, Local and Remote, each with its own
  * home and test project, peered so their agents can message each other;
- * `--peer --poll` has Remote poll Local instead of being reached by it. A
+ * `--peer --poll` has Remote poll Local instead of being reached by it.
+ * `--for-dev` is different in kind: a server for the developer to use, on a
+ * copy of their data, shared on the tailnet. Agents take no turns on it. A
  * worktree has one live-test build at a time and its mode is fixed when it is
  * built: `rebuild` with another flag switches.
  *
@@ -48,8 +50,8 @@ const LIVE_SERVER_PORT = 5773;
  */
 const START_BUDGET_MS = 100_000;
 const STOP_TIMEOUT_MS = 20_000;
-/** How long `status` waits for one server's peer list. The call takes about four seconds on a busy host. */
-const PEER_LIST_TIMEOUT_MS = 15_000;
+/** How long `status` waits for both servers' peer lists together. Each read takes about four seconds on a busy host. */
+const PEER_LIST_TIMEOUT_MS = 20_000;
 /** `scripts/hold.sh` in the test repository waits for this file in the repository root. */
 const HOLD_RELEASE_FILE = ".hold-release";
 const RECOVERY_LOG_LINE = "V2 orchestration recovery completed";
@@ -63,6 +65,7 @@ const MODE_FLAGS = {
   fresh: "--fresh",
   peer: "--peer",
   "peer-poll": "--peer --poll",
+  "for-dev": "--for-dev",
 } as const;
 export type LiveTestMode = keyof typeof MODE_FLAGS;
 const isPeerMode = (mode: LiveTestMode) => mode === "peer" || mode === "peer-poll";
@@ -83,7 +86,7 @@ interface DefaultManifest {
   readonly holdScript: string;
 }
 /** Marks a finished build and records its mode. */
-type Manifest = DefaultManifest | { readonly mode: "fresh" };
+type Manifest = DefaultManifest | { readonly mode: "fresh" } | { readonly mode: "for-dev" };
 
 /** What one server uses: its home, its test repository, its log and its process record. */
 export interface ServerPaths {
@@ -260,6 +263,10 @@ export interface ServerLogFacts {
   readonly baseDir: string | undefined;
   readonly pairingUrl: string | undefined;
   readonly recovered: boolean;
+  /** The tailnet URL the dev runner shared the web server at, with `--share`. */
+  readonly sharedUrl: string | undefined;
+  /** Why sharing failed. The dev runner only warns and carries on unshared. */
+  readonly shareFailure: string | undefined;
 }
 
 /** What the dev server's log says so far. The latest pairing URL wins: a file-watch restart mints a new one. */
@@ -274,6 +281,8 @@ export function readServerLog(log: string): ServerLogFacts {
     baseDir: runner?.[3],
     pairingUrl: pairingUrls.at(-1)?.[1],
     recovered: text.includes(RECOVERY_LOG_LINE),
+    sharedUrl: /\[dev-runner\] shared on tailnet: (\S+)/.exec(text)?.[1],
+    shareFailure: /\[dev-runner\] could not share on the tailnet: (.*)/.exec(text)?.[1],
   };
 }
 
@@ -285,8 +294,13 @@ export function startRefusal(input: {
   readonly facts: ServerLogFacts;
   readonly home: string;
   readonly inheritedPort: string | undefined;
+  /** Set for a server that must be shared on the tailnet: an unshared one is no use to the developer. */
+  readonly requireShare?: boolean;
 }): string | undefined {
   const { facts } = input;
+  if (input.requireShare === true && facts.shareFailure !== undefined) {
+    return `The dev server could not share on the tailnet: ${facts.shareFailure}`;
+  }
   if (facts.baseDir !== undefined && canonicalPath(facts.baseDir) !== canonicalPath(input.home)) {
     return `The dev server chose ${facts.baseDir}, not the test home ${input.home}.`;
   }
@@ -488,7 +502,7 @@ The pairing URL works once. \`status\` prints a fresh one, and so does:
   ${pairCommand}
 
 ${
-  manifest.mode === "fresh"
+  manifest.mode === "fresh" || manifest.mode === "for-dev"
     ? `Mode: fresh. The home is empty and no default model is set. The first-run
 wizard shows only in a browser profile that has not completed it: pair in an
 incognito tab.
@@ -521,7 +535,8 @@ Commands:
   ${selfCommand(paths, "stop")}      stop the server
   ${selfCommand(paths, "rebuild")}   stop, delete ${paths.root}, build and start again
                                       (flags: none for the test project, --fresh for an empty home,
-                                      --peer or --peer --poll for two peered servers)
+                                      --peer or --peer --poll for two peered servers,
+                                      --for-dev for a server the developer uses)
 
 How to test is in .agents/skills/j5-live-test/SKILL.md.
 `;
@@ -658,6 +673,31 @@ function buildHome(paths: LiveTestPaths, mode: LiveTestMode): void {
     NodeFS.writeFileSync(paths.manifest, `${JSON.stringify(manifest)}\n`);
     return;
   }
+  if (mode === "for-dev") {
+    console.log(
+      "Copying a slice of the developer's data into a new home (the live database is only read)...",
+    );
+    // migrate-dev-db reads ~/.j5code/userdata read-only and writes only below --base-dir.
+    const copy = NodeChildProcess.spawnSync(
+      process.execPath,
+      [
+        NodePath.join(paths.worktree, "apps/server/scripts/migrate-dev-db.ts"),
+        "--base-dir",
+        paths.home,
+      ],
+      {
+        cwd: paths.worktree,
+        env: liveTestEnvironment(process.env, paths.worktree),
+        stdio: ["ignore", "ignore", "inherit"],
+      },
+    );
+    if (copy.status !== 0) {
+      throw new LiveTestRefusal(`Copying the developer's data failed. Retry with: ${rebuild}`);
+    }
+    const manifest: Manifest = { mode: "for-dev" };
+    NodeFS.writeFileSync(paths.manifest, `${JSON.stringify(manifest)}\n`);
+    return;
+  }
   const generate = (root: string) => {
     const build = NodeChildProcess.spawnSync(
       process.execPath,
@@ -686,6 +726,246 @@ function buildHome(paths: LiveTestPaths, mode: LiveTestMode): void {
   generate(paths.root);
   const manifest: Manifest = { ...(readManifest(paths) as DefaultManifest), mode };
   NodeFS.writeFileSync(paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+/**
+ * The block for `--for-dev`. The pairing URL is the server's startup URL from
+ * its log: `pair` would mint a localhost one, which is no use off this
+ * machine. Nothing here opens it.
+ */
+export function formatForDeveloper(paths: LiveTestPaths, facts: ServerLogFacts): string {
+  return `J5 Code server for the developer: RUNNING
+
+  Pairing URL   ${facts.pairingUrl}
+  Shared at     ${facts.sharedUrl}
+  Server port   ${facts.serverPort}
+  Home          ${paths.home}
+  Log           ${paths.log}
+
+This server is for the developer, not for testing. Give them the pairing URL.
+Do not open it yourself: it works once. If it has been used, \`restart\` prints a new one.
+Take no agent turns here. The home is a copy of the developer's data, so its
+threads point at real checkouts and resume real provider sessions.
+Whether another device can reach the shared address was not checked; only the
+developer can confirm that.
+
+Commands:
+  ${selfCommand(paths, "status")}    say whether it is running
+  ${selfCommand(paths, "restart")}   stop, then start and share on the same home
+  ${selfCommand(paths, "stop")}      stop the server and remove its tailnet mapping
+  ${selfCommand(paths, "rebuild --for-dev")}   stop, delete ${paths.root}, copy the data again and start
+`;
+}
+
+/** The live install's tailnet port. A `--for-dev` server must never share on it. */
+const LIVE_TAILNET_PORT = 8444;
+/** The dev runner's server port is its web port plus this (scripts/dev-runner.ts base ports). */
+const SERVER_PORT_ABOVE_WEB = 8040;
+
+export interface TailnetMapping {
+  readonly port: number;
+  /** Where the mapping proxies to, such as "http://localhost:7594". */
+  readonly targets: ReadonlyArray<string>;
+}
+
+/**
+ * The mappings in `tailscale serve status` output, which prints each as
+ *   https://host.ts.net:8444 (tailnet only)
+ *   |-- / proxy http://127.0.0.1:5773
+ */
+export function tailnetMappings(serveStatus: string): ReadonlyArray<TailnetMapping> {
+  const mappings: Array<{ port: number; targets: Array<string> }> = [];
+  for (const line of serveStatus.split("\n")) {
+    const mapping = /^https:\/\/\S+?:(\d+)\b/.exec(line);
+    if (mapping !== null) {
+      mappings.push({ port: Number(mapping[1]), targets: [] });
+      continue;
+    }
+    const target = /^\|--.*\bproxy\s+(\S+)/.exec(line);
+    if (target !== null) mappings.at(-1)?.targets.push(target[1] ?? "");
+  }
+  return mappings;
+}
+
+/** Whether a mapping is one this server made: it proxies only to this server's web port on loopback. */
+export function isOwnMapping(mapping: TailnetMapping, webPort: number): boolean {
+  const own = new RegExp(`^http://(localhost|127\\.0\\.0\\.1|\\[::1\\]):${webPort}/?$`);
+  return (
+    mapping.port === webPort &&
+    mapping.targets.length > 0 &&
+    mapping.targets.every((target) => own.test(target))
+  );
+}
+
+/**
+ * Why this server must not be shared on `webPort`, or undefined when it may.
+ * `--share` replaces whatever is mapped on the port, so the port must not be
+ * the live install's and must not carry a mapping this server did not make.
+ */
+export function shareRefusal(
+  webPort: number,
+  mappings: ReadonlyArray<TailnetMapping>,
+  /** The dev runner's own test for ports browsers refuse to open. Pinning the port skips the runner's use of it. */
+  isBrowserAllowedPort: (port: number) => boolean,
+): string | undefined {
+  if (!isBrowserAllowedPort(webPort)) {
+    return `This worktree's web port is ${webPort}, which browsers refuse to open, so a shared URL on it would be useless. Use a different worktree for --for-dev.`;
+  }
+  if (webPort === LIVE_TAILNET_PORT) {
+    return `This worktree's web port is ${LIVE_TAILNET_PORT}, the live install's tailnet port. Sharing would replace the live mapping. Use a different worktree for --for-dev.`;
+  }
+  const foreign = mappings.find(
+    (mapping) => mapping.port === webPort && !isOwnMapping(mapping, webPort),
+  );
+  return foreign === undefined
+    ? undefined
+    : `Tailnet port ${webPort} is already mapped to ${foreign.targets.join(", ") || "something else"}, which this server did not set up. Sharing would replace it. Use a different worktree for --for-dev.`;
+}
+
+/**
+ * The mappings from a finished `tailscale serve status`. A failed read is an
+ * error, never "nothing is mapped": acting on that would be acting blind.
+ */
+export function mappingsFromStatus(result: {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}): ReadonlyArray<TailnetMapping> {
+  if (result.status !== 0) {
+    throw new LiveTestRefusal(
+      `\`tailscale serve status\` failed, so the tailnet mappings cannot be read:\n${result.stderr.trim() || "no output"}`,
+    );
+  }
+  return tailnetMappings(result.stdout);
+}
+
+/** How long one `tailscale` read may take outside a start, which has its own deadline. */
+const TAILSCALE_TIMEOUT_MS = 15_000;
+
+function readTailnetMappings(deadline?: number): ReadonlyArray<TailnetMapping> {
+  const status = NodeChildProcess.spawnSync("tailscale", ["serve", "status"], {
+    encoding: "utf8",
+    timeout: Math.max(1, (deadline ?? Date.now() + TAILSCALE_TIMEOUT_MS) - Date.now()),
+  });
+  return mappingsFromStatus({
+    status: status.status,
+    stdout: status.stdout ?? "",
+    stderr: status.stderr ?? String(status.error ?? ""),
+  });
+}
+
+/**
+ * The flags that pin the dev runner to this worktree's own ports and share
+ * it. Unpinned, the runner moves to the next free port pair, which could be
+ * one that was never checked; with both ports given it uses exactly these.
+ * Refuses before anything is started if the web port must not be shared.
+ */
+async function pinnedShareArgs(
+  paths: LiveTestPaths,
+  deadline: number,
+): Promise<ReadonlyArray<string>> {
+  const environment = liveTestEnvironment(process.env, paths.worktree);
+  // Each child here is given only the time the start has left.
+  const timeLeft = () => ({ timeout: Math.max(1, deadline - Date.now()) });
+  const { isBrowserAllowedPort } = await import("../dev-runner.ts");
+  // With both ports explicit the runner skips its search, so this prints the
+  // web port derived from the worktree path and nothing else.
+  const dryRun = NodeChildProcess.spawnSync(
+    process.execPath,
+    [
+      NodePath.join(paths.worktree, "scripts/dev-runner.ts"),
+      "dev",
+      "--dry-run",
+      "--home-dir",
+      paths.home,
+      "--port",
+      "1",
+      "--dev-url",
+      "http://localhost:1",
+    ],
+    { cwd: paths.worktree, env: environment, encoding: "utf8", ...timeLeft() },
+  );
+  const webPort = readServerLog(`${dryRun.stdout}${dryRun.stderr}`).webPort;
+  if (webPort === undefined) {
+    throw new LiveTestRefusal(`The dev runner did not report its web port:\n${dryRun.stderr}`);
+  }
+  const refusal = shareRefusal(webPort, readTailnetMappings(deadline), isBrowserAllowedPort);
+  if (refusal !== undefined) throw new LiveTestRefusal(refusal);
+  if (listenerOn(webPort) !== undefined) {
+    throw new LiveTestRefusal(
+      `Something is already listening on port ${webPort}; sharing it would publish that instead of this server.`,
+    );
+  }
+  const status = NodeChildProcess.spawnSync("tailscale", ["status", "--json"], {
+    encoding: "utf8",
+    ...timeLeft(),
+  });
+  const dnsName =
+    status.status === 0
+      ? (JSON.parse(status.stdout) as { Self?: { DNSName?: string } }).Self?.DNSName?.replace(
+          /\.$/,
+          "",
+        )
+      : undefined;
+  if (dnsName === undefined || dnsName === "") {
+    throw new LiveTestRefusal("This machine has no tailnet name, so the server cannot be shared.");
+  }
+  return [
+    "--port",
+    String(webPort + SERVER_PORT_ABOVE_WEB),
+    // The address --share will publish; given here so the web port stays the one checked above.
+    "--dev-url",
+    `https://${dnsName}:${webPort}/`,
+    "--share",
+  ];
+}
+
+/**
+ * What a stopped `--for-dev` server should do about the tailnet: nothing,
+ * remove its own mapping, or leave a foreign one alone and say so. It acts
+ * only when this run's log recorded a share, and only on a mapping that
+ * proxies to this server's own web port.
+ */
+export function mappingCleanup(
+  facts: ServerLogFacts,
+  mappings: ReadonlyArray<TailnetMapping>,
+):
+  | { readonly kind: "nothing" }
+  | { readonly kind: "remove"; readonly port: number }
+  | { readonly kind: "foreign"; readonly port: number; readonly targets: ReadonlyArray<string> } {
+  const { webPort } = facts;
+  if (facts.sharedUrl === undefined || webPort === undefined) return { kind: "nothing" };
+  const mapping = mappings.find((candidate) => candidate.port === webPort);
+  if (mapping === undefined) return { kind: "nothing" };
+  return isOwnMapping(mapping, webPort)
+    ? { kind: "remove", port: webPort }
+    : { kind: "foreign", port: webPort, targets: mapping.targets };
+}
+
+/**
+ * After a stop, makes sure this server's tailnet mapping is gone. The dev
+ * runner removes it on a normal exit; this covers a runner that was killed.
+ */
+function removeOwnTailnetMapping(facts: ServerLogFacts): void {
+  if (facts.sharedUrl === undefined) return;
+  const cleanup = mappingCleanup(facts, readTailnetMappings());
+  if (cleanup.kind === "nothing") return;
+  if (cleanup.kind === "foreign") {
+    // Said and passed over, not refused: a refusal here would stop every later
+    // rebuild too, and the mapping is not this server's to act on.
+    console.log(
+      `Tailnet port ${cleanup.port} is mapped to ${cleanup.targets.join(", ")}, which this server did not set up. It has been left alone.`,
+    );
+    return;
+  }
+  NodeChildProcess.spawnSync("tailscale", ["serve", `--https=${cleanup.port}`, "off"], {
+    timeout: TAILSCALE_TIMEOUT_MS,
+  });
+  if (mappingCleanup(facts, readTailnetMappings()).kind !== "nothing") {
+    throw new LiveTestRefusal(
+      `The tailnet mapping for port ${cleanup.port} is still there. Remove it with: tailscale serve --https=${cleanup.port} off`,
+    );
+  }
 }
 
 /** What to tell an agent about a server that is ours but has no listener on its port. */
@@ -725,7 +1005,11 @@ async function stopGroup(group: number): Promise<void> {
  * says. Returns by `deadline` either way: a server that is merely
  * slow is left running and reported as still starting.
  */
-async function waitUntilReady(paths: ServerPaths, deadline: number): Promise<ServerLogFacts> {
+async function waitUntilReady(
+  paths: ServerPaths,
+  deadline: number,
+  requireShare: boolean,
+): Promise<ServerLogFacts> {
   for (;;) {
     const facts = readServerLog(NodeFS.readFileSync(paths.log, "utf8"));
     // Classify before anything else: a refusal below signals the group, and
@@ -742,13 +1026,19 @@ async function waitUntilReady(paths: ServerPaths, deadline: number): Promise<Ser
       facts,
       home: paths.home,
       inheritedPort: process.env.T3CODE_PORT,
+      requireShare,
     });
     if (refusal !== undefined) {
       await stopGroup(state.group);
       NodeFS.rmSync(paths.record, { force: true });
       throw new LiveTestRefusal(`${refusal} It has been stopped.`);
     }
-    if (state.kind === "running" && facts.pairingUrl !== undefined && facts.recovered) {
+    if (
+      state.kind === "running" &&
+      facts.pairingUrl !== undefined &&
+      facts.recovered &&
+      (!requireShare || facts.sharedUrl !== undefined)
+    ) {
       return state.facts;
     }
     if (Date.now() > deadline) {
@@ -788,18 +1078,26 @@ async function startServer(
   runnerMode: "dev" | "dev:server",
   environment: Readonly<Record<string, string>>,
   deadline: number,
+  runnerArgs: ReadonlyArray<string> = [],
 ): Promise<ServerLogFacts> {
+  const share = runnerArgs.includes("--share");
   const state = currentServerState(paths);
   if (state.kind === "unverified") throw new LiveTestRefusal(state.reason);
   // Already started, perhaps by a call that is still waiting: wait with it.
-  if (state.kind !== "stopped") return waitUntilReady(paths, deadline);
+  if (state.kind !== "stopped") return waitUntilReady(paths, deadline, share);
 
   const log = NodeFS.openSync(paths.log, "w");
   // Detached makes the child the leader of a new process group, so its pid is
   // the group id. That group is the only thing this script ever signals.
   const child = NodeChildProcess.spawn(
     process.execPath,
-    [NodePath.join(paths.worktree, "scripts/dev-runner.ts"), runnerMode, "--home-dir", paths.home],
+    [
+      NodePath.join(paths.worktree, "scripts/dev-runner.ts"),
+      runnerMode,
+      "--home-dir",
+      paths.home,
+      ...runnerArgs,
+    ],
     {
       cwd: paths.worktree,
       env: { ...liveTestEnvironment(process.env, paths.worktree), ...environment },
@@ -815,7 +1113,7 @@ async function startServer(
   const record: ServerRecord = { processGroup: child.pid, leaderStartTime };
   NodeFS.writeFileSync(paths.record, `${JSON.stringify(record)}\n`);
   child.unref();
-  return waitUntilReady(paths, deadline);
+  return waitUntilReady(paths, deadline, share);
 }
 
 /** Runs the server's own `j5` CLI against one of the two homes. */
@@ -898,6 +1196,16 @@ export function peerSteps(input: {
 }
 
 /**
+ * The command that finishes a peering that did not complete. With both
+ * servers up, the same start peers them. A start only joins a server that is
+ * already there, so one that is not serving has to be stopped and started
+ * again first, which is `restart`.
+ */
+export function peerRepairCommand(mode: LiveTestMode, local: string, remote: string): string {
+  return local === "RUNNING" && remote === "RUNNING" ? MODE_FLAGS[mode] : "restart";
+}
+
+/**
  * Peers the two running servers, as `scripts/j5/pr-env.sh --peer` does. Safe
  * to repeat: issuing again rotates the credential and re-adding rotates the
  * record, so every start leaves one clean pair.
@@ -925,10 +1233,13 @@ async function peerServers(
       unverified: "UNVERIFIED",
     }[kind];
   };
-  const notPeeredYet = (detail: string) =>
-    new LiveTestRefusal(
-      `NOT peered yet: ${detail}\nLocal is ${stateNow(paths)} and Remote is ${stateNow(paths.remote)}.\nFinish with: ${selfCommand(paths, MODE_FLAGS[mode])}`,
+  const notPeeredYet = (detail: string) => {
+    const local = stateNow(paths);
+    const remote = stateNow(paths.remote);
+    return new LiveTestRefusal(
+      `NOT peered yet: ${detail}\nLocal is ${local} and Remote is ${remote}.\nFinish with: ${selfCommand(paths, peerRepairCommand(mode, local, remote))}`,
     );
+  };
   if (Date.now() > deadline) {
     throw notPeeredYet("the time for this start ran out before peering began.");
   }
@@ -1006,13 +1317,14 @@ function arePeered(
   localPort: number | undefined,
   remotePort: number | undefined,
 ): boolean {
-  // Capped, so a server that accepts and never answers cannot hang `status`.
-  // A list that does not arrive in time counts as no evidence.
+  // One deadline for both reads, so a server that accepts and never answers
+  // cannot hang `status`. A list that does not arrive in time counts as no evidence.
+  const deadline = Date.now() + PEER_LIST_TIMEOUT_MS;
   const peerList = (home: string, port: number | undefined) =>
     peerCli(
       paths,
       ["list", "--json", "--base-dir", home, "--origin", `http://127.0.0.1:${port}`],
-      Date.now() + PEER_LIST_TIMEOUT_MS,
+      deadline,
     ).output;
   return (
     listsPeer(peerList(paths.home, localPort), "Remote") &&
@@ -1035,6 +1347,24 @@ async function start(paths: LiveTestPaths, mode: LiveTestMode): Promise<void> {
   if (refusal !== undefined) throw new LiveTestRefusal(refusal);
   if (built === undefined && currentServerState(paths).kind === "stopped") buildHome(paths, mode);
 
+  if (mode === "for-dev") {
+    console.log("Starting the dev server and sharing it on the tailnet...");
+    return console.log(
+      formatForDeveloper(
+        paths,
+        // Pinned and checked only when this call is the one that starts it.
+        await startServer(
+          paths,
+          "dev",
+          {},
+          deadline,
+          currentServerState(paths).kind === "stopped"
+            ? await pinnedShareArgs(paths, deadline)
+            : ["--share"],
+        ),
+      ),
+    );
+  }
   if (!isPeerMode(mode)) {
     console.log("Starting the dev server...");
     return printRunning(paths, await startServer(paths, "dev", {}, deadline), undefined);
@@ -1077,8 +1407,20 @@ async function stop(paths: LiveTestPaths): Promise<void> {
     ...server,
     state: currentServerState(server.paths),
   }));
+  const removeTailnetMapping = () => {
+    if (builtMode(paths) !== "for-dev") return;
+    removeOwnTailnetMapping(
+      readServerLog(NodeFS.existsSync(paths.log) ? NodeFS.readFileSync(paths.log, "utf8") : ""),
+    );
+  };
   for (const { state } of servers) {
-    if (state.kind === "unverified") throw new LiveTestRefusal(state.reason);
+    if (state.kind === "unverified") {
+      // A runner killed outright leaves a group this script will not signal.
+      // Its tailnet mapping can still go: that signals nothing, and is limited
+      // to a mapping this run made.
+      removeTailnetMapping();
+      throw new LiveTestRefusal(state.reason);
+    }
   }
   for (const { name, paths: server, state } of servers) {
     if (state.kind === "stopped" || state.kind === "unverified") {
@@ -1090,6 +1432,7 @@ async function stop(paths: LiveTestPaths): Promise<void> {
     NodeFS.rmSync(server.record, { force: true });
     console.log(`J5 Code live-test server${name}: STOPPED`);
   }
+  removeTailnetMapping();
 }
 
 function status(paths: LiveTestPaths): void {
@@ -1101,6 +1444,9 @@ function status(paths: LiveTestPaths): void {
     if (state.kind === "unverified") throw new LiveTestRefusal(state.reason);
   }
   const [first, second] = servers;
+  if (first?.state.kind === "running" && builtMode(paths) === "for-dev") {
+    return console.log(formatForDeveloper(paths, first.state.facts));
+  }
   if (
     first?.state.kind === "running" &&
     (second === undefined || second.state.kind === "running")
@@ -1131,8 +1477,8 @@ function status(paths: LiveTestPaths): void {
   );
 }
 
-const USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts [--fresh | --peer [--poll]]
-       node scripts/j5/setup-agent-live-test.ts rebuild [--fresh | --peer [--poll]]
+const USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts [--fresh | --peer [--poll] | --for-dev]
+       node scripts/j5/setup-agent-live-test.ts rebuild [--fresh | --peer [--poll] | --for-dev]
        node scripts/j5/setup-agent-live-test.ts status | restart | stop`;
 
 /**
