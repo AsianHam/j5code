@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ThreadId, type EnvironmentId } from "@t3tools/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { ProjectId, ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import { scopedInboxItemKey, type ScopedHumanInboxItem } from "@t3tools/contracts/j5";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -8,6 +8,8 @@ import {
   type PresentedHumanInboxItem as HumanInboxItem,
 } from "@t3tools/client-runtime/j5/inbox";
 import { spansMultipleEnvironments } from "@t3tools/client-runtime/j5/readSources";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import * as Cause from "effect/Cause";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -19,6 +21,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import ChatMarkdown from "../../components/ChatMarkdown";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../../components/WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../../components/WorkspacePageHeader";
 import { Badge } from "../../components/ui/badge";
@@ -29,6 +32,7 @@ import { Textarea } from "../../components/ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { isElectron } from "../../env";
 import { randomUUID } from "../../lib/utils";
+import { useProject, useThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { formatElapsedDurationLabel } from "../../timestampFormat";
 import { answerHumanExchange } from "./humanInboxClient";
@@ -204,6 +208,35 @@ function OpenThreadButton({
   );
 }
 
+/**
+ * An agent's message, rendered as the sender's thread renders it. Relative file links resolve
+ * against the sender's worktree, or the project's root once the sender has left the roster.
+ */
+function InboxMessage({ item }: { readonly item: HumanInboxItem }) {
+  const threadRef =
+    item.senderThreadId === null
+      ? null
+      : scopeThreadRef(item.environmentId, ThreadId.make(item.senderThreadId));
+  const thread = useThreadShell(threadRef);
+  const project = useProject(scopeProjectRef(item.environmentId, ProjectId.make(item.projectId)));
+  const cwd = project
+    ? projectScriptCwd({
+        project: { cwd: project.workspaceRoot },
+        worktreePath: thread?.worktreePath ?? null,
+      })
+    : undefined;
+  return (
+    <ChatMarkdown
+      className="max-w-[72ch] text-sm text-foreground/90"
+      cwd={cwd}
+      environmentId={item.environmentId}
+      lineBreaks={shouldPreserveAssistantLineBreaks(item.message)}
+      text={item.message}
+      threadRef={threadRef ?? undefined}
+    />
+  );
+}
+
 function OpenInboxItem({
   item,
   answer,
@@ -275,9 +308,7 @@ function OpenInboxItem({
           />
         </summary>
         <div className="border-t border-border/50 px-1 pb-5 pt-4 sm:ms-24 sm:px-0 sm:pe-1">
-          <p className="max-w-[72ch] whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/90">
-            {item.message}
-          </p>
+          <InboxMessage item={item} />
           <div className="mt-4 flex flex-col gap-3">
             <Textarea
               aria-label={`Answer ${item.intent}`}
