@@ -53,7 +53,7 @@ it("renders the versioned peer envelope with exact reply semantics", () => {
     message: "Please verify the worker.",
   });
 
-  assert.equal(A2A_ENVELOPE_VERSION, 25);
+  assert.equal(A2A_ENVELOPE_VERSION, 26);
   assert.include(rendered, "Cross-agent message");
   assert.notMatch(rendered, /\b(?:J5|A2A)\b/);
   assert.include(rendered, "agent:sender");
@@ -62,6 +62,21 @@ it("renders the versioned peer envelope with exact reply semantics", () => {
   assert.include(rendered, 'j5_send_message(to="agent:sender", exchange_id="exchange:one"');
   assert.include(rendered, "Reply once");
   assert.notInclude(rendered, "{{");
+});
+
+it("tells the receiver of a plain message that no reply was requested, not that none is allowed", () => {
+  const rendered = formatPeerEnvelope({
+    senderId: ParticipantId.make("agent:sender"),
+    originProjectId: LedgerProjectId.make("project:origin"),
+    exchangeId: null,
+    message: "Say READY in your thread.",
+  });
+
+  assert.include(
+    rendered,
+    "The sender did not request a reply to this message. Use j5_send_message without exchange_id only if a new message is needed.",
+  );
+  assert.notInclude(rendered, "No reply is required");
 });
 
 it("names a remote sender's server in its sender line and leaves a local one unchanged", () => {

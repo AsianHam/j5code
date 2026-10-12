@@ -46,7 +46,7 @@ const peerPlainRaw = [
   "",
   "Nothing further is needed.",
   "",
-  "No reply is required. Use j5_send_message without exchange_id only if a new message is needed.",
+  "The sender did not request a reply to this message. Use j5_send_message without exchange_id only if a new message is needed.",
 ].join("\n");
 
 const closedInstruction =
@@ -641,6 +641,17 @@ describe("envelope headers across formats", () => {
     ).toMatchObject({ kind: "peer", senderId: "agent:delivery-sender", body: "Hello." });
   });
 
+  it("still reads a plain delivery stored before its footer was reworded", () => {
+    expect(
+      present(
+        peerPlainRaw.replace(
+          "The sender did not request a reply to this message.",
+          "No reply is required.",
+        ),
+      ),
+    ).toMatchObject({ kind: "peer", exchange: "plain", body: "Nothing further is needed." });
+  });
+
   // Stored conversations keep the headers they were delivered with.
   it("still reads the headers stored before Squadrons were retired", () => {
     expect(
@@ -684,7 +695,15 @@ describe("history recorded before the j5_ prefix", () => {
       exchangeId: "exchange:one",
       body: "Please verify the worker.",
     });
-    expect(present(peerPlainRaw)).toMatchObject({ kind: "peer", exchange: "plain" });
+    // The older tool name was only ever written with the older footer.
+    expect(
+      present(
+        peerPlainRaw.replace(
+          "The sender did not request a reply to this message.",
+          "No reply is required.",
+        ),
+      ),
+    ).toMatchObject({ kind: "peer", exchange: "plain" });
     expect(present(machineRaw)).toMatchObject({ kind: "peer", automated: true });
     expect(
       presentThreadA2ADelivery({

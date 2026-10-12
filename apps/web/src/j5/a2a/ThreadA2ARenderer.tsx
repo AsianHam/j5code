@@ -21,12 +21,16 @@ export const J5_A2A_DELIVERY_MESSAGE_PREFIX = "message:j5:a2a:delivery:";
 // were written with, so everything here that reads the timeline accepts both.
 const SEND_TOOL_NAMES = ["j5_send_message", "send_message"] as const;
 
-const PLAIN_DELIVERY_INSTRUCTIONS = new Set(
-  SEND_TOOL_NAMES.map(
+// The footer of a plain message said "No reply is required." until 2026-10-12 (#566). Stored
+// deliveries keep the sentence they were written with, so both are recognised. The newer one was
+// never written with the older tool name.
+const PLAIN_DELIVERY_INSTRUCTIONS = new Set([
+  "The sender did not request a reply to this message. Use j5_send_message without exchange_id only if a new message is needed.",
+  ...SEND_TOOL_NAMES.map(
     (tool) =>
       `No reply is required. Use ${tool} without exchange_id only if a new message is needed.`,
   ),
-);
+]);
 const CLOSED_DELIVERY_INSTRUCTION =
   "The platform closed this exchange when this reply was sent. No further reply is required.";
 const REPLY_DELIVERY_INSTRUCTION_SUFFIX =
