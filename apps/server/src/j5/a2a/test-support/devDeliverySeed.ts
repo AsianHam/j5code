@@ -39,6 +39,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { isSqlError } from "effect/sql/SqlError";
 import * as NodeOS from "node:os";
 
+import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
+
 import { EnvironmentAuth } from "../../../auth/EnvironmentAuth.ts";
 import * as CheckpointStore from "../../../checkpointing/CheckpointStore.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
@@ -214,7 +216,13 @@ const isInside = (path: Path.Path, candidate: string, parent: string) => {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 };
 
-/** Require an existing, absolute disposable T3 home; resolves symlinks before rejecting live state. */
+/**
+ * Require an existing, absolute disposable T3 home; resolves symlinks before rejecting live state.
+ *
+ * Thread worktrees live below the shared home, at `~/.j5code/worktrees/...`. A
+ * linked git worktree's own `.j5code` is that checkout's disposable dev state,
+ * so a base directory inside one is accepted wherever the worktree lives.
+ */
 export const validateIsolatedBaseDir = (baseDir: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -245,26 +253,31 @@ export const validateIsolatedBaseDir = (baseDir: string) =>
       if (parent === existingParent) break;
       existingParent = parent;
     }
-    const canonicalExistingParent = yield* fileSystem.realPath(existingParent);
-    if (
-      sharedHomes.some(
-        (sharedHome) =>
-          isInside(path, requested, sharedHome) ||
-          isInside(path, canonicalExistingParent, sharedHome),
-      )
-    ) {
-      return yield* new DevDeliverySeedArgumentError({
-        message:
-          "--base-dir must not be ~/.t3 or ~/.j5code or anything below either, including their userdata directories.",
-      });
+    // The requested path with every existing symlink resolved, before anything is created.
+    const canonicalRequested = path.resolve(
+      yield* fileSystem.realPath(existingParent),
+      path.relative(existingParent, requested),
+    );
+    const isSharedState = Effect.fn(function* (candidate: string) {
+      if (!sharedHomes.some((sharedHome) => isInside(path, candidate, sharedHome))) return false;
+      const worktreeHome = yield* resolveWorktreeT3Home(candidate);
+      return (
+        worktreeHome === undefined ||
+        !isInside(path, candidate, worktreeHome) ||
+        sharedHomes.some((sharedHome) => isInside(path, sharedHome, worktreeHome))
+      );
+    });
+    const sharedStateError = new DevDeliverySeedArgumentError({
+      message:
+        "--base-dir must not be ~/.t3 or ~/.j5code or anything below either, including their userdata directories. The one exception is a linked git worktree's own .j5code.",
+    });
+    if ((yield* isSharedState(requested)) || (yield* isSharedState(canonicalRequested))) {
+      return yield* sharedStateError;
     }
     yield* fileSystem.makeDirectory(requested, { recursive: true });
     const resolvedBaseDir = yield* fileSystem.realPath(requested);
-    if (sharedHomes.some((sharedHome) => isInside(path, resolvedBaseDir, sharedHome))) {
-      return yield* new DevDeliverySeedArgumentError({
-        message:
-          "--base-dir must not be ~/.t3 or ~/.j5code or anything below either, including their userdata directories.",
-      });
+    if (yield* isSharedState(resolvedBaseDir)) {
+      return yield* sharedStateError;
     }
     return resolvedBaseDir;
   });
@@ -290,9 +303,9 @@ const unavailableAdapter: ProviderAdapterV2Shape = {
     Effect.die("The disposable A2A seed runner must never open a provider session."),
 };
 
-const makeRuntimeLayer = (databasePath: string, baseDir: string) => {
+const makeRuntimeLayer = (databasePath: string, baseDir: string, cwd: string) => {
   const database = makeSqlitePersistenceLive(databasePath).pipe(Layer.provide(NodeServices.layer));
-  const config = ServerConfig.layerTest(process.cwd(), baseDir);
+  const config = ServerConfig.layerTest(cwd, baseDir);
   // The seed never crosses servers: the peer registry is real but empty.
   const peerRegistry = peerRegistryLayer.pipe(
     Layer.provide(FetchHttpClient.layer),
@@ -508,21 +521,34 @@ const joinScenarioAgents = (input: {
     });
   });
 
-export const runDevDeliverySeed = (requestedBaseDir: string) =>
+/**
+ * Seeds the delivery scenarios into `requestedBaseDir`.
+ *
+ * By default the seed makes its own project rooted at `process.cwd()`. Pass
+ * `project` to put the seed threads into a project that already exists in the
+ * home, so the home keeps one project per directory.
+ */
+export const runDevDeliverySeed = (
+  requestedBaseDir: string,
+  options: {
+    readonly project?: { readonly id: ProjectId; readonly workspaceRoot: string };
+  } = {},
+) =>
   Effect.gen(function* () {
     const baseDir = yield* validateIsolatedBaseDir(requestedBaseDir);
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const runId = `j5-a2a-seed-${yield* crypto.randomUUIDv4}`;
     const now = DateTime.formatIso(yield* DateTime.now);
-    const projectId = ProjectId.make(`project:${runId}`);
+    const projectId = options.project?.id ?? ProjectId.make(`project:${runId}`);
+    const workspaceRoot = options.project?.workspaceRoot ?? process.cwd();
     const senderThreadId = ThreadId.make(`thread:${runId}:sender`);
     const receiverThreadId = ThreadId.make(`thread:${runId}:receiver`);
     const senderId = ParticipantId.make(`agent:${runId}:sender`);
     const receiverId = ParticipantId.make(`agent:${runId}:receiver`);
     // A thread's home is its project, so the ledger is keyed by the project's id.
     const ledgerProjectId = LedgerProjectId.make(projectId);
-    const runtime = makeRuntimeLayer(databasePathFor(path, baseDir), baseDir);
+    const runtime = makeRuntimeLayer(databasePathFor(path, baseDir), baseDir, workspaceRoot);
 
     const seed = Effect.gen(function* () {
       const threads = yield* ThreadManagementService;
@@ -547,15 +573,28 @@ export const runDevDeliverySeed = (requestedBaseDir: string) =>
       yield* scenario(
         "bootstrap",
         Effect.gen(function* () {
-          // The seed runs no project commands, so it writes the project row the ledger reads
-          // titles from and a machine registration requires.
-          yield* (yield* SqlClient.SqlClient)`
-            INSERT INTO projection_projects (
-              project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at
-            ) VALUES (
-              ${projectId}, 'J5 disposable A2A seed', ${process.cwd()}, '[]', ${now}, ${now}, NULL
-            )
-          `;
+          const sql = yield* SqlClient.SqlClient;
+          if (options.project === undefined) {
+            // The seed runs no project commands, so it writes the project row the ledger reads
+            // titles from and a machine registration requires.
+            yield* sql`
+              INSERT INTO projection_projects (
+                project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at
+              ) VALUES (
+                ${projectId}, 'J5 disposable A2A seed', ${workspaceRoot}, '[]', ${now}, ${now}, NULL
+              )
+            `;
+          } else {
+            const existing = yield* sql<{ readonly workspaceRoot: string }>`
+              SELECT workspace_root AS "workspaceRoot" FROM projection_projects
+              WHERE project_id = ${projectId} AND deleted_at IS NULL
+            `;
+            if (existing[0]?.workspaceRoot !== workspaceRoot) {
+              return yield* Effect.die(
+                `Project ${projectId} is not registered at ${workspaceRoot} in this home.`,
+              );
+            }
+          }
           yield* threads.dispatch({
             type: "thread.create",
             commandId: CommandId.make(seededId(runId, "bootstrap:sender-thread")),
@@ -566,7 +605,7 @@ export const runDevDeliverySeed = (requestedBaseDir: string) =>
             runtimeMode: "full-access",
             interactionMode: "default",
             branch: null,
-            worktreePath: process.cwd(),
+            worktreePath: workspaceRoot,
             createdBy: "system",
             creationSource: "server",
           });
@@ -580,7 +619,7 @@ export const runDevDeliverySeed = (requestedBaseDir: string) =>
             runtimeMode: "full-access",
             interactionMode: "default",
             branch: null,
-            worktreePath: process.cwd(),
+            worktreePath: workspaceRoot,
             createdBy: "system",
             creationSource: "server",
           });

@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ProjectId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -134,5 +135,89 @@ it.effect("requires an explicit isolated base and emits a provider-safe receipt"
     } finally {
       yield* fileSystem.remove(baseDir, { recursive: true, force: true }).pipe(Effect.ignore);
     }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "accepts a linked worktree's own .j5code below the shared home, and nothing else there",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const fakeHome = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "j5-a2a-home-" }),
+      );
+      const originalHome = process.env.HOME;
+      const originalUserProfile = process.env.USERPROFILE;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (originalHome === undefined) delete process.env.HOME;
+          else process.env.HOME = originalHome;
+          if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+          else process.env.USERPROFILE = originalUserProfile;
+        }),
+      );
+      process.env.HOME = fakeHome;
+      process.env.USERPROFILE = fakeHome;
+      const sharedHome = `${fakeHome}/.j5code`;
+      const worktree = `${sharedHome}/worktrees/project/feature`;
+      yield* fileSystem.makeDirectory(`${sharedHome}/userdata`, { recursive: true });
+      yield* fileSystem.makeDirectory(`${worktree}/.j5code`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${worktree}/.git`,
+        "gitdir: /somewhere/project/.git/worktrees/feature\n",
+      );
+
+      const testHome = `${worktree}/.j5code/live-test/home`;
+      assert.equal(yield* validateIsolatedBaseDir(testHome), testHome);
+
+      const rejected = (baseDir: string) =>
+        Effect.flip(validateIsolatedBaseDir(baseDir)).pipe(
+          Effect.map(isDevDeliverySeedArgumentError),
+        );
+      // The worktree's checkout is not its disposable state.
+      assert.isTrue(yield* rejected(`${worktree}/apps`));
+      // A directory below the shared home that is not a linked worktree.
+      yield* fileSystem.makeDirectory(`${sharedHome}/worktrees/plain/.j5code`, { recursive: true });
+      assert.isTrue(yield* rejected(`${sharedHome}/worktrees/plain/.j5code/home`));
+      // A link out of the worktree's .j5code into the shared state.
+      yield* fileSystem.symlink(`${sharedHome}/userdata`, `${worktree}/.j5code/escape`);
+      assert.isTrue(yield* rejected(`${worktree}/.j5code/escape`));
+      assert.isTrue(yield* rejected(`${worktree}/.j5code/escape/home`));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("seeds into an existing project instead of creating its own", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "j5-a2a-dev-delivery-seed-project-",
+    });
+    const seed = (project?: { readonly id: ProjectId; readonly workspaceRoot: string }) =>
+      runDevDeliverySeed(baseDir, project === undefined ? {} : { project }).pipe(
+        Effect.provide(Logger.layer([], { mergeWithExisting: false })),
+      );
+    const first = yield* seed();
+    const second = yield* seed({ id: first.project.id, workspaceRoot: process.cwd() });
+    assert.equal(second.project.id, first.project.id);
+
+    const database = new NodeSqlite.DatabaseSync(first.dbPath, { readOnly: true });
+    try {
+      assert.deepEqual(database.prepare("SELECT project_id FROM projection_projects").all(), [
+        { project_id: first.project.id },
+      ]);
+      assert.deepEqual(
+        database
+          .prepare("SELECT DISTINCT project_id FROM orchestration_v2_projection_threads")
+          .all(),
+        [{ project_id: first.project.id }],
+      );
+    } finally {
+      database.close();
+    }
+
+    const wrongRoot = yield* Effect.exit(
+      seed({ id: first.project.id, workspaceRoot: `${process.cwd()}/elsewhere` }),
+    );
+    assert.equal(wrongRoot._tag, "Failure");
   }).pipe(Effect.provide(NodeServices.layer)),
 );
