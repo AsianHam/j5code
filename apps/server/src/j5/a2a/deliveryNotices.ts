@@ -49,6 +49,8 @@ export const peerRefusalReason = (input: {
       return `${input.serverName} could not accept the message as it was sent.`;
     case "message_id_conflict":
       return `${input.serverName} already holds a different message with the same id.`;
+    case "landing_refused":
+      return `${input.serverName} refused the steer or restart: the recipient runs with broader permissions than you do. Send it again without mode, as an ordinary message.`;
   }
   const flat = input.message
     .replace(/[\s\p{Cc}\p{Cf}]+/gu, " ")

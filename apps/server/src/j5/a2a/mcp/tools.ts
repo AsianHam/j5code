@@ -47,6 +47,7 @@ import { A2ADeliveryWorker } from "../DeliveryWorker.ts";
 import { A2AHomeRegistrar } from "../HomeRegistrar.ts";
 import { A2ALedger } from "../LedgerService.ts";
 import { PeerDirectory } from "../PeerDirectory.ts";
+import { PeerRegistryService } from "../PeerRegistryService.ts";
 import { ParticipantPlacementService } from "../PlacementService.ts";
 import { A2ASendService } from "../SendService.ts";
 import { SpawnCompositionService } from "../SpawnCompositionService.ts";
@@ -591,6 +592,9 @@ const sendDependencies = [
   // Attachments are claimed into the receiver's thread before the message is committed.
   ServerConfig,
   FileSystem.FileSystem,
+  // A steer or restart to an agent on a peer server needs that server to support it.
+  PeerDirectory,
+  PeerRegistryService,
 ];
 
 const placementDependencies = [

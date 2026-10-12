@@ -318,7 +318,7 @@ it.effect(
       );
       assert.isFalse(handed.more);
       assert.equal(handed.label, "Work VM", "the poller learns the storing server's name");
-      assert.deepStrictEqual(handed.capabilities, { poll: true });
+      assert.deepStrictEqual(handed.capabilities, { poll: true, landing: true });
       // The body is exactly what a direct send would carry, intent included.
       assert.equal(handed.deliveries[0]!.intent, "first intent");
       assert.equal(handed.deliveries[0]!.exchangeRole, "ask");

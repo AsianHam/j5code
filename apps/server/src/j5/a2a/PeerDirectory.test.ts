@@ -1,5 +1,6 @@
 import { ThreadId } from "@t3tools/contracts";
 import {
+  type PeerCapabilities,
   J5_PEER_API_PATHS,
   PEER_PROTOCOL_VERSION,
   peerCredentialRejectedReason,
@@ -77,7 +78,14 @@ const makeTestLayer = (
   /** The protocol header the roster answers state. */
   answeredProtocol: string = String(PEER_PROTOCOL_VERSION),
   /** The name the roster answer reports for its server, and where recorded names go. */
-  naming?: { readonly answered: string; readonly recorded: Array<[string, string | undefined]> },
+  naming?: {
+    readonly answered: string;
+    readonly recorded: Array<[string, string | undefined]>;
+    /** What the peer says it can do, and what this server recorded of it. */
+    readonly capabilities?: Array<[string, PeerCapabilities]>;
+  },
+  /** Where recorded capabilities go when the roster answer names none. */
+  recordedCapabilities?: Array<[string, PeerCapabilities]>,
 ) => {
   const http = Layer.succeed(
     HttpClient.HttpClient,
@@ -97,7 +105,15 @@ const makeTestLayer = (
           request,
           new Response(
             encodeJson(
-              naming === undefined ? homeRoster : { ...homeRoster, label: naming.answered },
+              naming === undefined
+                ? homeRoster
+                : {
+                    ...homeRoster,
+                    label: naming.answered,
+                    ...(naming.capabilities === undefined
+                      ? {}
+                      : { capabilities: { poll: true, landing: true } }),
+                  },
             ),
             {
               status: 200,
@@ -121,6 +137,10 @@ const makeTestLayer = (
       Effect.sync(() => {
         naming?.recorded.push([environmentId, reported]);
         return reported ?? null;
+      }),
+    recordCapabilities: (environmentId, capabilities) =>
+      Effect.sync(() => {
+        (naming?.capabilities ?? recordedCapabilities)?.push([environmentId, capabilities]);
       }),
   });
   return peerDirectoryLayer.pipe(Layer.provide(http), Layer.provide(registry));
@@ -247,6 +267,35 @@ it.effect("refreshes a peer's name from each roster read, so a renamed server is
 );
 
 it.effect(
+  "refreshes what a peer can do from each roster read, so an updated server is believed",
+  () =>
+    Effect.gen(function* () {
+      const capabilities: Array<[string, PeerCapabilities]> = [];
+      yield* Effect.flatMap(PeerDirectory, (directory) => directory.listAgents()).pipe(
+        Effect.provide(
+          makeTestLayer([homePeer], [], undefined, {
+            answered: "Home",
+            recorded: [],
+            capabilities,
+          }),
+        ),
+      );
+      assert.deepStrictEqual(capabilities, [["environment-home", { poll: true, landing: true }]]);
+    }),
+);
+
+it.effect("forgets what a peer could do when its roster answer no longer says", () =>
+  Effect.gen(function* () {
+    // The answer of a build from before capabilities: valid, and silent about them.
+    const capabilities: Array<[string, PeerCapabilities]> = [];
+    yield* Effect.flatMap(PeerDirectory, (directory) => directory.listAgents()).pipe(
+      Effect.provide(makeTestLayer([homePeer], [], undefined, undefined, capabilities)),
+    );
+    assert.deepStrictEqual(capabilities, [["environment-home", {}]]);
+  }),
+);
+
+it.effect(
   "records that the peer ended the peering when its roster read rejects the credential",
   () =>
     Effect.gen(function* () {
@@ -266,6 +315,7 @@ it.effect(
         ),
       );
       const registry = Layer.mock(PeerRegistryService)({
+        recordCapabilities: () => Effect.void,
         connections: () => Effect.succeed([homePeer]),
         selfLabel: Effect.succeed("Work VM"),
         recordLastError: (_environmentId, error) =>
@@ -312,6 +362,7 @@ it.effect(
         ),
       );
       const registry = Layer.mock(PeerRegistryService)({
+        recordCapabilities: () => Effect.void,
         connections: () => Effect.succeed([homePeer]),
         selfLabel: Effect.succeed("Work VM"),
         recordLastError: (_environmentId, error) =>

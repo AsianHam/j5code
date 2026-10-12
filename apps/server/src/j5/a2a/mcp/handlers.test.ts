@@ -60,6 +60,7 @@ import {
 } from "../HomeRegistrar.ts";
 import { A2ALedger } from "../LedgerService.ts";
 import { PeerDirectory, noneLayer as peerDirectoryNoneLayer } from "../PeerDirectory.ts";
+import { PeerRegistryService } from "../PeerRegistryService.ts";
 import {
   ParticipantPlacementService,
   PlacementProjectNotFoundError,
@@ -216,6 +217,7 @@ const unusedLifecycleDependencies = Layer.mergeAll(
       ),
   }),
   serverConfigLayer,
+  Layer.mock(PeerRegistryService)({}),
   Layer.mock(ThreadRegistration)({}),
 );
 
@@ -404,6 +406,8 @@ it.effect(
       const targetThreadId = ThreadId.make("thread:j5:mcp-send-mode-target");
       const sends = yield* Ref.make<ReadonlyArray<SendMessageInput>>([]);
       const callerRuntimeMode = yield* Ref.make<RuntimeMode>("full-access");
+      const remoteParticipantId = ParticipantId.make("agent:j5:a2a:thread:send-mode-remote");
+      const peerLands = yield* Ref.make(false);
       const row = (
         participant: ParticipantDirectoryRow["participant"],
       ): ParticipantDirectoryRow => ({
@@ -465,7 +469,36 @@ it.effect(
         Layer.mock(ArchiveCrewService)({}),
         Layer.mock(CrewStopService)({}),
         Layer.mock(CrewProposalService)({}),
-        peerDirectoryNoneLayer,
+        // One agent lives on a peer server, which may or may not land a message as asked.
+        Layer.mock(PeerDirectory)({
+          resolveAgent: (participantId) =>
+            Effect.succeed({
+              agents:
+                participantId === remoteParticipantId
+                  ? [
+                      {
+                        environmentId: "environment-home",
+                        environmentLabel: "Home",
+                        projectId: LedgerProjectId.make("project:home"),
+                        projectTitle: "Home project",
+                        participantId,
+                        threadId: ThreadId.make("thread:send-mode-remote"),
+                        displayName: "Remote builder",
+                        archived: false,
+                        canReceiveMessage: true,
+                        available: null,
+                        lastAvailableAt: null,
+                      },
+                    ]
+                  : [],
+              unreadPeers: [],
+              selfName: "Work VM",
+            }),
+        }),
+        Layer.mock(PeerRegistryService)({
+          capabilities: () =>
+            Ref.get(peerLands).pipe(Effect.map((landing) => (landing ? { landing } : {}))),
+        }),
         Layer.mock(ProjectService)({}),
         serverConfigLayer,
         Layer.mock(ThreadRegistration)({}),
@@ -512,9 +545,25 @@ it.effect(
           assert.isTrue(refused.isFailure);
           assert.include(JSON.stringify(refused.encodedResult), "broader permissions than you do");
         }
+        // A peer server checks its own agent's modes, so the caller's limit travels with the
+        // message. A server too old to land a message as asked would queue it and say
+        // nothing, so the tool refuses instead.
+        const tooOld = yield* call({ to: remoteParticipantId, message, mode: "steer" });
+        assert.isTrue(tooOld.isFailure);
+        assert.include(JSON.stringify(tooOld.encodedResult), "Home runs a J5 version that cannot");
+        yield* Ref.set(peerLands, true);
+        assert.isFalse(
+          (yield* call({ to: remoteParticipantId, message, mode: "restart" })).isFailure,
+        );
+        const remoteSend = (yield* Ref.get(sends)).at(-1)!;
+        assert.equal(remoteSend.mode, "restart");
+        assert.deepStrictEqual(remoteSend.modeLimit, {
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+        });
         // The same narrower caller may still send the message to wait its turn.
         assert.isFalse((yield* call({ to: targetParticipantId, message })).isFailure);
-        assert.lengthOf(yield* Ref.get(sends), 3);
+        assert.lengthOf(yield* Ref.get(sends), 4);
       }).pipe(Effect.provide(layer));
     }),
 );

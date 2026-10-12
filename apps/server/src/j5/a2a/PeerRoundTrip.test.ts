@@ -33,13 +33,17 @@ import {
 } from "./DeliveryTransport.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { A2ALifecycleService, manualLayer as lifecycleLayer } from "./LifecycleService.ts";
+import { runMigrations } from "../../persistence/Migrations.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
 import { PeerDirectory, type RemoteAgent } from "./PeerDirectory.ts";
 import {
+  A2APeerLandingRefusedError,
   PeerInboundService,
   layer as peerInboundLayer,
+  peerDeliveryRefusal,
   type PeerInboundServiceShape,
 } from "./PeerInboundService.ts";
+import { peerRefusalReason } from "./deliveryNotices.ts";
 import { A2ASendService, layer as sendLayer } from "./SendService.ts";
 import { A2ASilenceDetector, manualLayer as silenceDetectorLayer } from "./SilenceDetector.ts";
 import {
@@ -427,6 +431,93 @@ it.effect(
         assert.equal(workInjected[0]!.message, "Resolved at 09:41.");
         assert.isNull(yield* workServer.worker.runOnce);
         assert.isNull(yield* homeServer.worker.runOnce);
+      }),
+    ),
+);
+
+it.effect(
+  "carries a steer across with its sender's limit, and refuses it for an agent above that limit",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { workServer, homeServer, homeDelivered, crossed } = yield* pairWithOpenAsk(
+          "command:roundtrip:landing-ask",
+        );
+        // Only Home knows its agent's modes; upstream keeps them on the thread's projection,
+        // in the schema upstream's own migrations create.
+        yield* runMigrations().pipe(Effect.provideService(SqlClient.SqlClient, homeServer.sql));
+        yield* homeServer.sql`
+          INSERT INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode,
+            interaction_mode, active_provider_thread_id, created_at, updated_at,
+            archived_at, deleted_at, payload_json
+          ) VALUES (
+            ${home.agent.threadId}, ${home.projectId}, 'Home agent', 'codex', 'approval-required',
+            'default', NULL, ${timestamp}, ${timestamp}, NULL, NULL, '{}'
+          )
+        `;
+        const limit = { runtimeMode: "approval-required", interactionMode: "default" } as const;
+        yield* workServer.send.send({
+          commandId: CommCommandId.make("command:roundtrip:steer"),
+          senderThreadId: work.agent.threadId,
+          to: home.agent.id,
+          message: "Stop the deploy, the migration is wrong.",
+          mode: "steer",
+          modeLimit: limit,
+          acceptedAt: timestamp,
+        });
+        assert.equal((yield* workServer.worker.runOnce)?.state, "delivered");
+        assert.deepStrictEqual((yield* Ref.get(crossed)).at(-1)?.body.landing, {
+          mode: "steer",
+          limit,
+        });
+        assert.equal((yield* homeServer.worker.runOnce)?.state, "delivered");
+        const steered = (yield* Ref.get(homeDelivered)).at(-1);
+        assert.equal(steered?.mode, "steer", "Home lands it as Work's agent asked");
+        assert.deepStrictEqual(steered?.modeLimit, limit);
+
+        // Home's agent is raised above what Work's agent may touch: the restart is refused,
+        // and nothing is recorded or delivered on Home.
+        yield* homeServer.sql`
+          UPDATE orchestration_v2_projection_threads SET runtime_mode = 'full-access'
+          WHERE thread_id = ${home.agent.threadId}
+        `;
+        const refused = yield* workServer.send.send({
+          commandId: CommCommandId.make("command:roundtrip:restart"),
+          senderThreadId: work.agent.threadId,
+          to: home.agent.id,
+          message: "Start over from the last good commit.",
+          mode: "restart",
+          modeLimit: limit,
+          acceptedAt: timestamp,
+        });
+        // This harness hands a refusal back as a plain failure; over HTTP it is the final
+        // `landing_refused` answer below, which the sender is told about and does not retry.
+        yield* workServer.worker.runOnce;
+        const failure = yield* workServer.sql<{ readonly last_error: string }>`
+          SELECT last_error FROM j5_a2a_delivery WHERE message_id = ${refused.messageId}
+        `;
+        assert.include(failure[0]?.last_error ?? "", "so the restart is refused");
+        assert.deepStrictEqual(
+          peerDeliveryRefusal(
+            new A2APeerLandingRefusedError({
+              participantId: home.agent.id,
+              mode: "restart",
+              exceeded: "runtime",
+            }),
+          ),
+          {
+            status: 403,
+            code: "landing_refused",
+            message: `${home.agent.id} runs with a broader permission mode than the sender, so the restart is refused.`,
+          },
+        );
+        assert.include(
+          peerRefusalReason({ serverName: "Home", code: "landing_refused", message: "" }),
+          "Send it again without mode",
+        );
+        assert.equal(yield* homeServer.worker.runOnce, null, "Home has nothing to deliver");
+        assert.lengthOf(yield* Ref.get(homeDelivered), 2, "the ask and the steer, and no restart");
       }),
     ),
 );

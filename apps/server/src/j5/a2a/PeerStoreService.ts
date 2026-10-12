@@ -1,4 +1,5 @@
 import type { PeerPollRequest, PeerPollResponse } from "@t3tools/contracts/j5";
+import { ownPeerCapabilities } from "./peerProtocol.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -115,7 +116,7 @@ export const layer: Layer.Layer<
                 rosterHash,
                 more: batch.more,
                 label,
-                capabilities: { poll: true },
+                capabilities: ownPeerCapabilities,
               })),
             ),
           ),

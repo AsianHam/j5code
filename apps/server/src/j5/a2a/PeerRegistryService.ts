@@ -243,6 +243,13 @@ export interface PeerRegistryServiceShape {
     environmentId: string,
     reported: string | undefined,
   ) => Effect.Effect<string | null, SqlError>;
+  /** What a peer said it can do when this server last heard from it, kept for `capabilities`. */
+  readonly recordCapabilities: (
+    environmentId: string,
+    capabilities: PeerCapabilities,
+  ) => Effect.Effect<void, SqlError>;
+  /** What a recorded peer last said it can do; nothing for a peer from before capabilities. */
+  readonly capabilities: (environmentId: string) => Effect.Effect<PeerCapabilities, SqlError>;
   /**
    * The reachability check: fetch the public identity at an origin, bounded,
    * and say who answered or the error it got. It reads that one fixed path and
@@ -325,6 +332,7 @@ const encodeRosterSnapshot = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(PeerRosterAgent)),
 );
 const encodeCapabilities = Schema.encodeSync(Schema.fromJsonString(PeerCapabilities));
+const decodeCapabilities = Schema.decodeUnknownOption(Schema.fromJsonString(PeerCapabilities));
 
 const decodeHello = Schema.decodeUnknownEffect(PeerHelloResponse);
 
@@ -798,6 +806,26 @@ export const layer: Layer.Layer<
         return (yield* readRow(environmentId))?.label ?? null;
       });
 
+    const recordCapabilities: PeerRegistryServiceShape["recordCapabilities"] = (
+      environmentId,
+      capabilities,
+    ) =>
+      sql`
+        UPDATE j5_a2a_peer SET peer_capabilities = ${encodeCapabilities(capabilities)}
+        WHERE environment_id = ${environmentId}
+      `.pipe(Effect.asVoid);
+
+    const capabilities: PeerRegistryServiceShape["capabilities"] = (environmentId) =>
+      sql<{ readonly peer_capabilities: string | null }>`
+        SELECT peer_capabilities FROM j5_a2a_peer WHERE environment_id = ${environmentId} LIMIT 1
+      `.pipe(
+        Effect.map((rows) =>
+          rows[0]?.peer_capabilities == null
+            ? {}
+            : Option.getOrElse(decodeCapabilities(rows[0].peer_capabilities), () => ({})),
+        ),
+      );
+
     return PeerRegistryService.of({
       subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
       selfEnvironmentId: identity.getEnvironmentId,
@@ -814,6 +842,8 @@ export const layer: Layer.Layer<
       list,
       remove,
       recordLabel,
+      recordCapabilities,
+      capabilities,
       probe,
       grantStore,
       adoptStorePeer,

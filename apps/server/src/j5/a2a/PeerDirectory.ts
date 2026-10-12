@@ -225,6 +225,10 @@ const readPeerRoster = Effect.fn("j5.a2a.peer.directory.roster")(function* (
     roster.label === undefined
       ? peer.label
       : ((yield* peers.recordLabel(peer.environmentId, roster.label)) ?? peer.label);
+  // And what it can do, so a peer updated since it was added is not treated as its old self.
+  // An answer that names no capabilities is a build from before them, and is recorded as one:
+  // a peer rolled back to an older build must not keep what its newer build claimed.
+  yield* peers.recordCapabilities(peer.environmentId, roster.capabilities ?? {});
   return remoteAgents(peer, roster.agents, { available: null, lastAvailableAt: null }, label);
 });
 

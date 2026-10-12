@@ -348,7 +348,11 @@ it("answers hello with this environment and the credential's subject, and comple
     assert.isString((body.server as { version: string }).version);
     assert.equal(body.label, "Work VM", "the answering server names itself");
     assert.equal(body.peerProtocolVersion, PEER_PROTOCOL_VERSION);
-    assert.deepStrictEqual(body.capabilities, { poll: true }, "this server stores for a poller");
+    assert.deepStrictEqual(
+      body.capabilities,
+      { poll: true, landing: true },
+      "this server stores for a poller, and lands a message as its sender asked",
+    );
     assert.deepStrictEqual(
       revoked,
       ["auth-session:old-home"],
@@ -703,6 +707,7 @@ it("shows a recorded peer only the agents it could address, and nobody else the 
     assert.equal(response.status, 200);
     assert.deepStrictEqual(await response.json(), {
       label: "Work VM",
+      capabilities: { poll: true, landing: true },
       agents: [
         {
           participantId: "agent:j5:a2a:thread:local-triage",

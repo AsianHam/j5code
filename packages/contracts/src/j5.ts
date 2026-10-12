@@ -10,6 +10,7 @@ import { ModelSelection } from "./modelSelection.ts";
 import {
   ProviderApprovalDecision,
   ProviderApprovalOption,
+  ProviderInteractionMode,
   ProviderRequestKind,
   RuntimeMode,
 } from "./providerPolicy.ts";
@@ -722,6 +723,8 @@ export const PEER_PROTOCOL_HEADER = "x-j5-peer-protocol";
 export const PeerCapabilities = Schema.Struct({
   /** This server stores messages for a peer that polls for them. */
   poll: Schema.optionalKey(Schema.Boolean),
+  /** This server lands a message as its sender asked: a delivery's `landing` is read, not dropped. */
+  landing: Schema.optionalKey(Schema.Boolean),
 });
 export type PeerCapabilities = typeof PeerCapabilities.Type;
 
@@ -772,8 +775,22 @@ export const PeerSenderLabel = Schema.String.check(
   Schema.isMaxLength(PEER_SENDER_LABEL_MAX_CHARS),
 );
 
+/**
+ * How a sender asked for its message to land on an agent that is mid-turn, with the broadest
+ * modes the sender could touch when it asked. The receiving server refuses the delivery when its
+ * agent runs above that limit. Sent only to a server that advertises the `landing` capability;
+ * a server from before it would queue the message without saying so.
+ */
+export const PeerDeliveryLanding = Schema.Struct({
+  mode: Schema.Literals(["steer", "restart"]),
+  limit: Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+});
+export type PeerDeliveryLanding = typeof PeerDeliveryLanding.Type;
+
 export const PeerDeliveryRequest = Schema.Struct({
   messageId: Schema.String.check(Schema.isNonEmpty()),
+  /** Absent for a message that waits its turn, which is every message from an older server. */
+  landing: Schema.optional(PeerDeliveryLanding),
   senderId: Schema.String.check(Schema.isNonEmpty()),
   receiverId: Schema.String.check(Schema.isNonEmpty()),
   exchangeId: Schema.NullOr(Schema.String.check(Schema.isNonEmpty())),
@@ -825,6 +842,8 @@ export const PeerRosterResponse = Schema.Struct({
   agents: Schema.Array(PeerRosterAgent),
   /** The answering server's own name, so a peer that reads the roster keeps its name current. */
   label: Schema.optional(Schema.String),
+  /** What the answering server can do now, so a peer that reads the roster learns of an update. */
+  capabilities: Schema.optional(PeerCapabilities),
 });
 export type PeerRosterResponse = typeof PeerRosterResponse.Type;
 export const PeerDeliveryResponse = Schema.Struct({

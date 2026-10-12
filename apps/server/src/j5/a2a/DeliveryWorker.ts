@@ -37,6 +37,7 @@ import {
   isHumanParticipantId,
   isMachineParticipantId,
   LedgerMessageId,
+  MessageReceivedPayload,
   MessageSentPayload,
   ParticipantId,
   type DeliveryAlarm,
@@ -60,6 +61,9 @@ export { PEER_POLL_BATCH_COUNT };
 export const PEER_POLL_BATCH_BYTES = 1_000_000;
 
 const decodeSentPayload = Schema.decodeUnknownEffect(Schema.fromJsonString(MessageSentPayload));
+const decodeReceivedPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(MessageReceivedPayload),
+);
 const encodeDeliveryBody = Schema.encodeSync(Schema.fromJsonString(PeerDeliveryRequest));
 
 interface DeliveryRow {
@@ -327,6 +331,18 @@ const makeLayer = (daemon: boolean) =>
                   ),
                 )
               : undefined;
+          // How the sender asked for it to land: on the sent fact for a message from this
+          // server, and on the received fact for one a peer server handed over.
+          const landing =
+            payload ??
+            (sent[0]?.kind === "message.received"
+              ? yield* decodeReceivedPayload(sent[0].payload).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new A2ADeliveryTransportError({ operation: "read delivery landing", cause }),
+                  ),
+                )
+              : undefined);
           // A message received from a peer server names that server in its
           // envelope, by the name the peer last reported for itself.
           const senderServerName =
@@ -347,8 +363,8 @@ const makeLayer = (daemon: boolean) =>
             exchangeRole: row.exchange_role,
             message: row.message_text,
             ...(payload?.attachments === undefined ? {} : { attachments: payload.attachments }),
-            ...(payload?.mode === undefined ? {} : { mode: payload.mode }),
-            ...(payload?.modeLimit === undefined ? {} : { modeLimit: payload.modeLimit }),
+            ...(landing?.mode === undefined ? {} : { mode: landing.mode }),
+            ...(landing?.modeLimit === undefined ? {} : { modeLimit: landing.modeLimit }),
             envelopeChannel: row.envelope_channel,
             ...(senderServerName === undefined ? {} : { senderServerName }),
           });

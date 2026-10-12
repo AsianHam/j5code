@@ -56,10 +56,29 @@ export const buildPeerDeliveryBody = Effect.fn("j5.a2a.peer.deliveryBody")(funct
     envelopeChannel: row.envelope_channel,
     text: row.message_text,
     originProjectId: row.origin_project_id ?? row.project_id,
+    ...(yield* landing(sql, row)),
     ...(yield* exchangeFacts(sql, row)),
     ...(senderLabel.length === 0 ? {} : { senderLabel }),
     createdAt: row.created_at,
   } satisfies PeerDeliveryRequest;
+});
+
+/** The steer or restart its sender asked for, with the sender's limit, read back from the sent row. */
+const landing = Effect.fn("j5.a2a.peer.deliveryBody.landing")(function* (
+  sql: SqlClient.SqlClient,
+  row: PeerBodyRow,
+) {
+  if (row.envelope_channel !== "peer") return {};
+  const sent = yield* sql<{ readonly kind: string; readonly payload: string }>`
+    SELECT kind, payload FROM j5_a2a_comm_event
+    WHERE project_id = ${row.project_id} AND seq = ${row.sent_seq}
+    LIMIT 1
+  `;
+  if (sent[0]?.kind !== "message.sent") return {};
+  const payload = yield* decodeSentPayload(sent[0].payload);
+  return payload.mode === undefined || payload.mode === "queue" || payload.modeLimit === undefined
+    ? {}
+    : { landing: { mode: payload.mode, limit: payload.modeLimit } };
 });
 
 const exchangeFacts = Effect.fn("j5.a2a.peer.deliveryBody.exchangeFacts")(function* (

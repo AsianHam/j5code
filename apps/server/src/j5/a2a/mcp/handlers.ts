@@ -59,6 +59,7 @@ import { A2ADeliveryWorker } from "../DeliveryWorker.ts";
 import { A2AHomeRegistrar, participantIdForThread } from "../HomeRegistrar.ts";
 import { A2ALedger } from "../LedgerService.ts";
 import { PeerDirectory } from "../PeerDirectory.ts";
+import { PeerRegistryService } from "../PeerRegistryService.ts";
 import { ParticipantPlacementService } from "../PlacementService.ts";
 import { withDeliveryNotice } from "../receiverBacklog.ts";
 import { A2ASendService } from "../SendService.ts";
@@ -508,24 +509,53 @@ const handlers = {
       const attachments = input.attachments ?? [];
       // A plain queued message needs nothing read first. A steer, a restart or a file acts on
       // the receiver's own thread, so the receiver must be an agent on this server.
-      const receiverThreadId =
+      // A plain queued message needs nothing read first. A file is claimed into the receiver's
+      // thread, so its receiver must be an agent on this server. A steer or a restart acts on
+      // the receiver's turn: here this server checks it, and on a peer server that server does.
+      const receiver =
         mode === "queue" && attachments.length === 0
           ? undefined
-          : yield* Effect.gen(function* () {
-              const receiver = (yield* service.listParticipants(scope.thread.threadId)).find(
-                (row) => row.participantId === input.to,
-              );
-              if (receiver === undefined || receiver.participant.kind !== "agent") {
-                return yield* stateError(
-                  `${mode === "queue" ? "attachments reach" : `mode=${mode} reaches`} only an agent on this server, and ${input.to} is not one.`,
-                  // A machine takes no message at all and a person takes only an ask, so the
-                  // retry is not promised to work: the listing says what the recipient accepts.
-                  `Call j5_list_participants to see what ${input.to} accepts; if it takes messages, retry j5_send_message without ${mode === "queue" ? "attachments" : "mode"}.`,
-                );
-              }
-              return receiver.participant.threadId;
-            });
+          : (yield* service.listParticipants(scope.thread.threadId)).find(
+              (row) => row.participantId === input.to,
+            );
+      const receiverThreadId =
+        receiver?.participant.kind === "agent" ? receiver.participant.threadId : undefined;
       let modeLimit: CallerLimits | undefined;
+      if (receiverThreadId === undefined && (mode !== "queue" || attachments.length > 0)) {
+        const refusal = (what: string) =>
+          stateError(
+            `${what} only an agent on this server, and ${input.to} is not one.`,
+            // A machine takes no message at all and a person takes only an ask, so the
+            // retry is not promised to work: the listing says what the recipient accepts.
+            `Call j5_list_participants to see what ${input.to} accepts; if it takes messages, retry j5_send_message without ${attachments.length > 0 ? "attachments" : "mode"}.`,
+          );
+        if (attachments.length > 0) return yield* refusal("attachments reach");
+        // Not a participant of this server: an agent on a peer server, if it is anyone.
+        const remote =
+          receiver !== undefined
+            ? []
+            : (yield* (yield* PeerDirectory).resolveAgent(input.to)).agents.filter(
+                (agent) => !agent.archived,
+              );
+        const peer = remote.length === 1 ? remote[0] : undefined;
+        if (peer === undefined) {
+          return yield* stateError(
+            `mode=${mode} reaches only an agent, on this server or a peer server, and ${input.to} is not one.`,
+            `Call j5_list_participants to see what ${input.to} accepts; if it takes messages, retry j5_send_message without mode.`,
+          );
+        }
+        // An older server would queue the message and say nothing, so it is refused here.
+        if (
+          (yield* (yield* PeerRegistryService).capabilities(peer.environmentId)).landing !== true
+        ) {
+          return yield* stateError(
+            `${peer.environmentLabel} runs a J5 version that cannot ${mode} a message, so mode=${mode} is refused for ${input.to}.`,
+            `Retry j5_send_message without mode, or ask the user to update J5 on ${peer.environmentLabel}.`,
+          );
+        }
+        // That server knows its agent's modes and checks this limit when the message arrives.
+        modeLimit = (yield* loadCaller()).limits;
+      }
       if (receiverThreadId !== undefined && mode !== "queue") {
         // Steering or restarting another agent's turn is a write to its thread, so upstream's
         // rule applies: the target must run within the caller's modes. A queued send has none.

@@ -1,3 +1,4 @@
+import type { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
 import type { PeerDeliveryRequest } from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -7,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { exceededDispatchModeLimit } from "../../orchestration-v2/DispatchModeLimit.ts";
 import { A2ALedgerTransactionWriter, type A2ALedgerError } from "./LedgerService.ts";
 import { stablePart } from "./spawnIds.ts";
 import { findPeerCounterparty, isRoutedElsewhere } from "./peerCounterparty.ts";
@@ -51,6 +53,7 @@ export const PeerDeliveryRefusalCode = Schema.Literals([
   "policy_refused",
   "invalid_request",
   "message_id_conflict",
+  "landing_refused",
 ]);
 export type PeerDeliveryRefusalCode = typeof PeerDeliveryRefusalCode.Type;
 
@@ -80,12 +83,31 @@ export const peerDeliveryRefusal = (
       return { status: 403, code: "policy_refused", message, reason: tag };
     case "A2APeerAskIntentRequiredError":
       return { status: 400, code: "invalid_request", message };
+    case "A2APeerLandingRefusedError":
+      return { status: 403, code: "landing_refused", message };
     case "CommCommandConflictError":
       return { status: 409, code: "message_id_conflict", message };
     default:
       return null;
   }
 };
+
+/**
+ * The sender asked for a steer or a restart, and the receiver runs with broader modes than the
+ * sender could touch: upstream's rule for a write to another thread, applied to a peer's agent.
+ */
+export class A2APeerLandingRefusedError extends Schema.TaggedError<A2APeerLandingRefusedError>()(
+  "A2APeerLandingRefusedError",
+  {
+    participantId: Schema.String,
+    mode: Schema.Literals(["steer", "restart"]),
+    exceeded: Schema.Literals(["runtime", "interaction"]),
+  },
+) {
+  override get message(): string {
+    return `${this.participantId} runs with a broader ${this.exceeded === "runtime" ? "permission" : "interaction"} mode than the sender, so the ${this.mode} is refused.`;
+  }
+}
 
 export class A2APeerReceiverNotFoundError extends Schema.TaggedError<A2APeerReceiverNotFoundError>()(
   "A2APeerReceiverNotFoundError",
@@ -181,7 +203,8 @@ export type PeerInboundError =
   | A2APeerReceiverNotDeliverableError
   | A2APeerAskIntentRequiredError
   | A2APeerSenderNotAllowedError
-  | A2APeerSenderNotOwnedError;
+  | A2APeerSenderNotOwnedError
+  | A2APeerLandingRefusedError;
 
 export interface PeerInboundServiceShape {
   readonly receive: (input: PeerInboundInput) => Effect.Effect<PeerInboundResult, PeerInboundError>;
@@ -365,6 +388,31 @@ export const layer: Layer.Layer<PeerInboundService, never, PeerInboundServiceReq
             yield* assertSenderOwnedByOrigin(senderId, input.originEnvironmentId);
           const receiverId = ParticipantId.make(input.receiverId);
           const receiver = yield* localReceiver(receiverId);
+          if (input.landing !== undefined) {
+            // The sender's own server could not check this: only this one knows the receiver's
+            // modes. Upstream checks the limit again when the message is dispatched.
+            const modes = yield* sql<{
+              readonly runtime_mode: RuntimeMode;
+              readonly interaction_mode: ProviderInteractionMode;
+            }>`
+              SELECT runtime_mode, interaction_mode FROM orchestration_v2_projection_threads
+              WHERE thread_id = ${receiver.participant.threadId}
+            `;
+            const exceeded =
+              modes[0] === undefined
+                ? undefined
+                : exceededDispatchModeLimit(input.landing.limit, {
+                    runtimeMode: modes[0].runtime_mode,
+                    interactionMode: modes[0].interaction_mode,
+                  });
+            if (exceeded !== undefined) {
+              return yield* new A2APeerLandingRefusedError({
+                participantId: receiverId,
+                mode: input.landing.mode,
+                exceeded,
+              });
+            }
+          }
           const exchangeId = input.exchangeId === null ? null : ExchangeId.make(input.exchangeId);
           const correlationId = CorrelationId.make(input.correlationId);
           const messageId = localMessageIdFor(input);
@@ -411,6 +459,9 @@ export const layer: Layer.Layer<PeerInboundService, never, PeerInboundServiceReq
               // A withdrawal closes the debt here as it does at the origin: silently.
               ...(input.terminal?.kind === "sender-cleared" ? { injection: "none" as const } : {}),
               ...(input.senderLabel === undefined ? {} : { senderLabel: input.senderLabel }),
+              ...(input.landing === undefined
+                ? {}
+                : { mode: input.landing.mode, modeLimit: input.landing.limit }),
               message: {
                 messageId,
                 text: input.text,

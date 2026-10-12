@@ -28,6 +28,7 @@ import { PeerRegistryService } from "./PeerRegistryService.ts";
 import { PEER_POLL_HOLD } from "./PeerStoreService.ts";
 import { RosterService } from "./RosterService.ts";
 import {
+  ownPeerCapabilities,
   peerProtocolHeaders,
   responseProtocolMismatch,
   statedPeerProtocol,
@@ -216,7 +217,7 @@ const make = (daemon: boolean) =>
           acks: state.acks,
           rosterHash,
           label: yield* peers.selfLabel,
-          capabilities: { poll: true },
+          capabilities: ownPeerCapabilities,
           ...(rosterHash === state.heldRosterHash ? {} : { roster: agents }),
         } satisfies PeerPollRequest;
         const request = yield* HttpClientRequest.bodyJson(

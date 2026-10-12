@@ -178,6 +178,9 @@ export const MessageReceivedPayload = Schema.Struct({
   injection: Schema.optional(Schema.Literal("none")),
   /** From a peer delivery: the sender's display name its server sent, read by the client identity lookup and nothing else. */
   senderLabel: Schema.optional(PeerSenderLabel),
+  /** From a peer delivery whose sender asked for a steer or a restart, with the sender's limit. */
+  mode: Schema.optional(SendMode),
+  modeLimit: Schema.optional(SendModeLimit),
   message: Schema.Json,
 });
 export type MessageReceivedPayload = typeof MessageReceivedPayload.Type;

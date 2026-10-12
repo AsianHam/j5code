@@ -1,4 +1,11 @@
-import { PEER_PROTOCOL_HEADER, PEER_PROTOCOL_VERSION } from "@t3tools/contracts/j5";
+import {
+  PEER_PROTOCOL_HEADER,
+  PEER_PROTOCOL_VERSION,
+  type PeerCapabilities,
+} from "@t3tools/contracts/j5";
+
+/** What this server tells every peer it can do, in a hello and in both directions of a poll. */
+export const ownPeerCapabilities = { poll: true, landing: true } satisfies PeerCapabilities;
 
 /**
  * The one compare for both directions of peering. A server states its peer

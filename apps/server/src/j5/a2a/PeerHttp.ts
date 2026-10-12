@@ -39,7 +39,12 @@ import { PeerRegistryService } from "./PeerRegistryService.ts";
 import { PeerStoreService } from "./PeerStoreService.ts";
 import { RosterService } from "./RosterService.ts";
 import { toPeerRoster } from "./peerRoster.ts";
-import { peerProtocolHeaders, peerProtocolMismatch, statedPeerProtocol } from "./peerProtocol.ts";
+import {
+  ownPeerCapabilities,
+  peerProtocolHeaders,
+  peerProtocolMismatch,
+  statedPeerProtocol,
+} from "./peerProtocol.ts";
 import {
   authenticate,
   jsonError,
@@ -197,7 +202,7 @@ export const peerHttpRouteLayer = Layer.unwrap(
           server: { version: packageJson.version },
           label,
           peerProtocolVersion: PEER_PROTOCOL_VERSION,
-          capabilities: { poll: true },
+          capabilities: ownPeerCapabilities,
         } satisfies PeerHelloResponse);
       }).pipe(Effect.catchTags(respondableTags), statingPeerProtocol),
     );
@@ -338,6 +343,7 @@ export const peerHttpRouteLayer = Layer.unwrap(
         }
         return HttpServerResponse.jsonUnsafe({
           label: yield* peers.selfLabel,
+          capabilities: ownPeerCapabilities,
           agents: toPeerRoster(listed.success),
         } satisfies PeerRosterResponse);
       }).pipe(Effect.catchTags(respondableTags), statingPeerProtocol),
