@@ -410,6 +410,8 @@ migrations after upstream migrations.
 
 65. Server shard weights are recorded from J5's suite (Jackson's 2026-10-11 go-ahead). `apps/server/src/testUtils/shardWeights.json` holds the recorded duration of each server test file, which `weightedShardSequencer.ts` uses to split the suite into CI shards of equal length. Upstream records it from its own suite, so it held no J5 test file and every one counted as a fast file. J5 regenerates it with upstream's script, `node apps/server/scripts/update-test-shard-weights.ts`, unchanged. The file is data, not code: on a pin advance take either side of a conflict, then rerun the script and commit what it writes.
 
+66. Another worktree's install doesn't restart a dev server ([#544](https://github.com/Jacksondr5/j5code/issues/544), Jackson's 2026-10-11 approval). The `dev` script in `apps/server/package.json` is `node --watch --watch-path=src --watch-path=../../packages src/bin.ts`; upstream's is `node --watch src/bin.ts`. Without a path, Node on Linux watches every file the server has loaded, including about 1,200 under `node_modules/.pnpm`. pnpm hardlinks those from its shared store, so another worktree's install or removal changes their link count, inotify reports it, and the server restarts. With the two paths, Node watches `apps/server/src` and `packages` as directory trees: it enters each package's own `node_modules` but stops at the symlinks, so no store file is watched. Two things follow. A file outside those trees no longer restarts the server: of the files the server loads, that is `scripts/lib/j5-branding.ts` and `apps/server/package.json`. And every file inside them does, loaded or not: a test file, or `packages/client-runtime`, which the server doesn't import. `dev:desktop` is not affected, because it runs the built `apps/server/dist/bin.mjs` under its own watcher. This is a candidate to offer upstream ([#276](https://github.com/Jacksondr5/j5code/issues/276)). On a pin advance, keep the two `--watch-path` flags if upstream still runs a bare `--watch`, and drop the case if upstream narrows the watch itself.
+
 ## Pin and upstream advance runbook
 
 Current pin: `29980a31409234b676f97bd477c4e46fdb61a929`, from upstream `main` (frozen 2026-10-08). The previous pin was `67a2be0fdbee7afb64b691f147ed286a108c706b`, from upstream's V2 branch `t3code/codex-turn-mapping`.
@@ -639,6 +641,7 @@ explicitly marked.
 | `apps/mobile/src/features/review/shikiReviewHighlighter.test.ts`      | N       | T                                              |
 | `apps/mobile/src/widgets/AgentActivity.test.ts`                       | R       | B                                              |
 | `apps/mobile/src/widgets/AgentActivity.tsx`                           | R       | B                                              |
+| `apps/server/package.json`                                            | N       | 66                                             |
 | `apps/server/scripts/migrate-dev-db.test.ts`                          | R       | H                                              |
 | `apps/server/scripts/migrate-dev-db.ts`                               | A       | H                                              |
 | `apps/server/scripts/t3-sqlite-state.test.ts`                         | R       | H                                              |
