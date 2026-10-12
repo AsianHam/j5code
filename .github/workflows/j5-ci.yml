@@ -3,6 +3,9 @@ name: J5 CI
 # Pull request branches are covered by `pull_request`, so `push` lists only the
 # branches that are tested without a PR: `j5/main`, and the release and preview
 # branches the packaging runbook publishes from before any PR exists.
+# `pull_request` has no base filter, so every layer of a chain of PRs is tested
+# whatever its base branch is named, and whether or not GitHub knows the chain
+# as a stack.
 on:
   push:
     branches:
@@ -10,9 +13,6 @@ on:
       - "j5/release-[0-9]*"
       - "j5/preview-[0-9]*"
   pull_request:
-    branches:
-      - "j5/**"
-      - "codex/agent-led-pb-*"
 
 permissions:
   contents: read
