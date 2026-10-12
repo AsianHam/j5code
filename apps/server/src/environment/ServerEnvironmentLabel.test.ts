@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -49,9 +50,13 @@ const withHostPlatform = <ROut, E, RIn>(
   layer: Layer.Layer<ROut, E, RIn>,
   platform: NodeJS.Platform,
   hostname: string,
+  env: Readonly<Record<string, string>> = {},
 ) =>
   Layer.mergeAll(
     layer,
+    // The server's own environment reaches the agents it runs, so a named server's
+    // J5CODE_SERVER_NAME must not leak into these tests.
+    ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
     Layer.succeed(HostProcessPlatform, platform),
     Layer.succeed(HostProcessHostname, hostname),
   );
@@ -284,6 +289,39 @@ describe("resolveServerEnvironmentLabel", () => {
       }).pipe(Effect.provide(withHostPlatform(layerTest, "linux", "   ")));
 
       expect(result).toBe("t3code");
+    }),
+  );
+
+  it.effect("uses J5CODE_SERVER_NAME ahead of the host's friendly name", () =>
+    Effect.gen(function* () {
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "t3code",
+      }).pipe(
+        Effect.provide(
+          withHostPlatform(layerLinuxMachineInfo, "linux", "buildbox", {
+            J5CODE_SERVER_NAME: " Remote ",
+          }),
+        ),
+      );
+
+      expect(result).toBe("Remote");
+      expect(runMock).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("ignores a blank J5CODE_SERVER_NAME", () =>
+    Effect.gen(function* () {
+      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
+        cwdBaseName: "t3code",
+      }).pipe(
+        Effect.provide(
+          withHostPlatform(layerLinuxMachineInfo, "linux", "buildbox", {
+            J5CODE_SERVER_NAME: "   ",
+          }),
+        ),
+      );
+
+      expect(result).toBe("Build Agent 01");
     }),
   );
 });

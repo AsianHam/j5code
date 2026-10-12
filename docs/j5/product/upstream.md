@@ -345,6 +345,18 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths. The 
 
 **Decided:** Jackson, 2026-10-11. Recorded in FORK.md's temporary patches.
 
+#### D32. A server's name can be set with `J5CODE_SERVER_NAME`
+
+**Upstream:** a server names itself after its machine: the host's friendly name, then its hostname, then the folder it was started in. Nothing overrides that, so two servers on one machine report the same name.
+
+**J5:** when `J5CODE_SERVER_NAME` is set and not blank, it is the server's name. Unset or blank, the server names itself as upstream's does.
+
+**Why:** in a two-server peering test on one host both servers were `openclaw`, so neither agents nor people could tell which participant lived on which server. Giving the second server its own hostname namespace was rejected: the process looks like root inside one, which provider CLIs and the browser sandbox may react to. We need agents to be able to reliably test these scenarios.
+
+**Consequences:** one import and one early return in `ServerEnvironmentLabel.ts` (`FORK.md` case 67). The name is read once, when the server starts. Processes a server starts inherit its environment, so a server an agent starts from a named server takes the same name unless the variable is unset or set again. There is no setting or flag, only the environment variable. Upstream has the same clash, so this is a candidate to offer back ([#276](https://github.com/Jacksondr5/j5code/issues/276)).
+
+**Decided:** Jackson, 2026-10-11 ([#545](https://github.com/Jacksondr5/j5code/issues/545)). Recorded in FORK.md case 67.
+
 ### Awaiting a decision
 
 These already diverge on `j5/main`, but no human ruling is on record. Each landed as an implementer's call inside a merged PR. The person rules on each one; an approved entry moves up into its section, and a rejected one becomes a fix.
@@ -422,3 +434,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-08 — the advance onto upstream `main`: D5, D7 and D23 retired, D15 recorded as retired, D8's retired text corrected, and D1, D2, D3, D4, D6, D14, D19, D25 and D28 rewritten for what upstream now ships (Jackson's decisions of that day).
 - 2026-10-09 — D30 added: a message from another participant holds a merged thread open (Jackson).
 - 2026-10-09 — D1 rewritten: J5's instruction text lives in upstream's shared provider package and reaches Pi (Jackson).
+- 2026-10-11 — D32 added: a server's name can be set with `J5CODE_SERVER_NAME` (Jackson, [#545](https://github.com/Jacksondr5/j5code/issues/545)).
