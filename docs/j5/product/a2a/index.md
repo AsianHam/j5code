@@ -69,7 +69,7 @@ Delivery is **log-first**: the ledger row is the act, and delivery is an attempt
 
 Two policies govern what happens when a message reaches an agent whose turn is running, and they are independent of each other.
 
-The **agent-side policy** is J5's: a message from an agent **queues** behind the running turn and starts when it ends. **Steering** — injecting into the running turn — is a controller's act, and in J5 the only controller of an agent's turn is the person, so no agent's message steers. There is one exception, ruled for one provider: a peer's message to an already-running Codex GPT 6 turn (Astra, Luna, Sol and their point releases) is delivered into the turn as an ordinary envelope, because the GPT 6 models are built to take messages during work. What the agent does with it is the agent's judgment, exactly as with any other message; the platform adds no guidance about whose instructions win. Platform notices always queue.
+The **agent-side policy** is J5's default: a message from an agent **queues** behind the running turn and starts when it ends. **Steering** injects it into the running turn, and **restarting** interrupts the turn and restarts it with the message. Both are upstream's own choices for a send into a thread, and a sending agent may ask for either on `j5_send_message`, under upstream's rule that the receiver may not run with broader permissions than the sender (Jackson, 2026-10-11, [#519](https://github.com/Jacksondr5/j5code/issues/519)). An agent that does not ask gets the queue: upstream's own default steers whenever it can, which aborts a running turn on some providers ([divergence D4](../upstream.md)). Unasked, one provider's turns are steered: a peer's message to an already-running Codex GPT 6 turn (Astra, Luna, Sol and their point releases) is delivered into the turn as an ordinary envelope, because the GPT 6 models are built to take messages during work. What the agent does with it is the agent's judgment, exactly as with any other message; the platform adds no guidance about whose instructions win. Platform notices always queue.
 
 A queued message costs its receiver a whole turn, so a stream of small updates becomes a stream of turns. When a sender's message will wait behind the receiver's running turn, the platform tells the sender at once, with the measured backlog, and advises one message in place of many. It advises; it never refuses or holds a send.
 
@@ -95,7 +95,7 @@ Every delivered message is wrapped in an **envelope**: the platform's wrapper th
 
 ## Vocabulary this definition owns
 
-message, ask, reply, plain message, Exchange, intent, urgency, obligation, envelope, communication ledger, projection, delivery receipt, delivery alarm, silence notice, queue and steer, machine participant. The [glossary](../glossary.md) points here for each of them. Provenance and placement are organization, not communication, and are defined with the [Fleet page](../features/fleet-page.md).
+message, ask, reply, plain message, Exchange, intent, urgency, obligation, envelope, communication ledger, projection, delivery receipt, delivery alarm, silence notice, queue, steer and restart, machine participant. The [glossary](../glossary.md) points here for each of them. Provenance and placement are organization, not communication, and are defined with the [Fleet page](../features/fleet-page.md).
 
 ## Acceptance criteria
 
@@ -119,8 +119,8 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 ### Delivery
 
 12. Every delivery attempt is recorded; a delivery that fails past the retry limit is shown as an alarm attributed to the sender and is never marked repaired by time passing or by a different message succeeding.
-13. A message to an agent whose turn is running is queued and delivered when the turn ends; no agent-originated delivery steers a running turn, except a peer message into a running Codex GPT 6 turn, which is delivered into the turn as an ordinary envelope with nothing added.
-14. Only a person can steer a running turn. How the person's steer is offered, labeled and sent — in the composer and on a queued row, including whether a send steers or queues by default — follows upstream.
+13. A message to an agent whose turn is running is queued and delivered when the turn ends, unless its sender asked for a steer or a restart, or it is a peer message into a running Codex GPT 6 turn, which is delivered into the turn as an ordinary envelope with nothing added.
+14. How the person's steer is offered, labeled and sent — in the composer and on a queued row, including whether a send steers or queues by default — follows upstream. An agent's steer or restart is asked for on `j5_send_message` and is defined with that tool ([agent tools](agent-tools.md)).
 15. Platform notices are always queued, never steered.
 
 ### The person
@@ -179,3 +179,4 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 - 2026-10-02 — a receiver on a peer server is no longer hidden: the address book names its server, the envelope of a message from a peer server names that server (AC22), and a message to a peer server that polls is stored until it polls; refused and cancelled deliveries reach the sender as not-delivered notices. Peering itself, and poll mode, are defined in cross-device ([record](../../worklog/2026-10-02-peering-poll-mode-session.md)).
 - 2026-10-03 — a sender whose message will wait behind a busy receiver is told the measured backlog when it sends; AC29 (issue #424). Merging queued messages and refusing past a limit were rejected; receivers on peer servers are issue #425.
 - 2026-10-07 — Squadrons retired: a thread's home is its project, which upstream fixes when the thread is created, and the ledger is keyed by project (Jackson, 2026-10-05; [#412](https://github.com/Jacksondr5/j5code/issues/412)).
+- 2026-10-11 — a sending agent may ask for a steer or a restart; the queue stays the default and the GPT 6 exception stands. AC13 and AC14 rewritten: AC14 no longer says only a person steers (Jackson, [#519](https://github.com/Jacksondr5/j5code/issues/519)).

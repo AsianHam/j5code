@@ -1,4 +1,4 @@
-import { ChatAttachment, ThreadId } from "@t3tools/contracts";
+import { ChatAttachment, ProviderInteractionMode, RuntimeMode, ThreadId } from "@t3tools/contracts";
 import { PeerSenderLabel } from "@t3tools/contracts/j5";
 import * as Schema from "effect/Schema";
 
@@ -29,6 +29,25 @@ export type LedgerMessageId = typeof LedgerMessageId.Type;
 
 export const Urgency = Schema.Literals(["blocking", "soon", "fyi"]);
 export type Urgency = typeof Urgency.Type;
+
+/**
+ * How a sender asks for its message to land on an agent, in upstream's words: `queue` is J5's
+ * ordinary delivery (after the receiver's turn ends, or into it for the models D4 excepts),
+ * `steer` joins the running turn, and `restart` interrupts the turn and restarts it with the
+ * message. Upstream's `auto` is left out: it steers whenever it can.
+ */
+export const SendMode = Schema.Literals(["queue", "steer", "restart"]);
+export type SendMode = typeof SendMode.Type;
+
+/**
+ * The broadest modes a sender could touch when it asked for a steer or a restart. Delivery is
+ * later than the send, and the receiver's modes can be raised in between, so the limit is kept
+ * with the message and upstream checks it again when the message is dispatched.
+ */
+export const SendModeLimit = Schema.Struct({
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+});
 
 export const DeliveryEnvelopeChannel = Schema.Literals([
   "peer",
@@ -264,6 +283,9 @@ export type TerminalFact = typeof TerminalFact.Type;
 
 export const MessageSentPayload = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  /** How the sender asked for the message to land; absent means `queue`. */
+  mode: Schema.optional(SendMode),
+  modeLimit: Schema.optional(SendModeLimit),
   /** Present on a terminal notice headed to a peer server: the fact it carries, fixed when the notice is written. */
   terminal: Schema.optional(TerminalFact),
   messageId: LedgerMessageId,
@@ -344,6 +366,8 @@ export type ClearOwnAskResult = typeof ClearOwnAskResult.Type;
 
 export const SendMessageInput = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  mode: Schema.optional(SendMode),
+  modeLimit: Schema.optional(SendModeLimit),
   commandId: CommCommandId,
   senderThreadId: ThreadId,
   to: ParticipantId,

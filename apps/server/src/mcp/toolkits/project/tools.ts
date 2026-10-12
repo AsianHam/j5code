@@ -90,7 +90,7 @@ const ProjectDeleteTool = Tool.make("t3_project_delete", {
 const ProjectCloneTool = Tool.make("t3_project_clone", {
   ...shared,
   description:
-    "Clone a repository using the app's source-control service. This only clones; the returned cwd becomes a project when a person adds it in the app. An existing destination is not adopted or removed on failure.",
+    "Clone a repository using the app's source-control service. This only clones; register the returned cwd with t3_project_create. An existing destination is not adopted or removed on failure.",
   parameters: SourceControlCloneRepositoryInput,
   success: SourceControlCloneRepositoryResult,
   dependencies: [

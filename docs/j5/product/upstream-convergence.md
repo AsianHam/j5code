@@ -38,7 +38,7 @@ Two different things share the word "handoff". J5 docs call upstream's history t
 ## Steering and queues
 
 - **Upstream:** a queue-or-steer follow-up setting, a shared composer dispatch, editing, reordering and promoting queued messages, and held queues after a restart. Stop and a provider failure now hold the queue too. Scheduled tasks bound to a thread queue instead of steering. A delegated task's completion steers its parent only when the session says steering doesn't interrupt tools (`activeSteeringInterruptsTools`).
-- **J5:** follows upstream's steering and queues. Agent-to-agent deliveries still queue behind a running turn, with the GPT 6 exception ([divergence D4](upstream.md)). A delivery to a thread whose queue is held waits for a resume (#272). The remaining UX gaps are in the give-back backlog (#276).
+- **J5:** follows upstream's steering and queues. Agent-to-agent deliveries queue behind a running turn by default, with the GPT 6 exception, and a sender may ask for upstream's `steer` or `restart` ([divergence D4](upstream.md)); upstream's `auto` is not offered, and the default is revisited in #538. A delivery to a thread whose queue is held waits for a resume (#272). The remaining UX gaps are in the give-back backlog (#276).
 - **Watch for:** `activeSteeringInterruptsTools` is upstream's first admission that a steer can be harmful. If upstream stops steering where it would abort or restart a turn, D4 can go.
 
 ## Long-running autonomy

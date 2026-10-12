@@ -206,10 +206,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       expect(toolNames).toContain("task_cancel");
       for (const excluded of [
         "t3_thread_launch",
-        "t3_project_create",
-        "t3_project_update",
         "t3_project_delete",
-        "t3_environment_preferences_update",
         "t3_queue_edit",
         "t3_queue_cancel",
         "t3_queue_reorder",
@@ -217,6 +214,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "create_threads",
         "t3_thread_start",
         "t3_thread_send",
+        // An agent attaches files with j5_send_message.
+        "t3_thread_send_attachments",
         "t3_thread_interrupt",
       ]) {
         expect(toolNames).not.toContain(excluded);
@@ -287,6 +286,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "schedule_task",
         "t3_attachment_discard",
         "t3_attachment_prepare_upload",
+        "t3_environment_preferences_update",
         "t3_environment_read",
         "t3_pending_request_list",
         "t3_pending_request_read",
@@ -294,8 +294,10 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "t3_preview_close",
         "t3_preview_list",
         "t3_project_clone",
+        "t3_project_create",
         "t3_project_list",
         "t3_project_read",
+        "t3_project_update",
         "t3_queue_list",
         "t3_queue_read",
         "t3_thread_configuration",
@@ -306,7 +308,6 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "t3_thread_organize",
         "t3_thread_read",
         "t3_thread_search",
-        "t3_thread_send_attachments",
         "t3_thread_transfers",
         "t3_thread_update",
         "t3_worktree_handoff",
@@ -371,10 +372,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       });
       for (const [index, name] of [
         "t3_thread_launch",
-        "t3_project_create",
-        "t3_project_update",
         "t3_project_delete",
-        "t3_environment_preferences_update",
         "t3_queue_edit",
         "t3_queue_cancel",
         "t3_queue_reorder",
@@ -437,6 +435,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       expect(allowedDirectory.result.isError).not.toBe(true);
       expect(decodeJson(allowedDirectory.result.content[0]!.text)).toEqual({
         participants: [],
+        next_cursor: null,
+        total: 0,
         unread_peer_count: 0,
       });
 

@@ -1,7 +1,6 @@
 import { type Tool, Toolkit } from "effect/ai";
 
 import type { HandlersLayer } from "../../../mcp/McpToolAccess.ts";
-import { AttachmentToolkit } from "../../../mcp/toolkits/attachment/tools.ts";
 import { EnvironmentToolkit } from "../../../mcp/toolkits/environment/tools.ts";
 import { OrchestratorToolkit } from "../../../mcp/toolkits/orchestrator/tools.ts";
 import { ProjectToolkit } from "../../../mcp/toolkits/project/tools.ts";
@@ -22,17 +21,22 @@ export const handlersFor = <Part extends Record<string, Tool.Any>, Tools extends
   handlers: HandlersLayer<Tools, EX, RX>,
 ) => handlers as unknown as HandlersLayer<Part, EX, RX>;
 
-export const J5EnvironmentToolkit = Toolkit.make(EnvironmentToolkit.tools.t3_environment_read);
+export const J5EnvironmentToolkit = Toolkit.make(
+  EnvironmentToolkit.tools.t3_environment_read,
+  EnvironmentToolkit.tools.t3_environment_preferences_update,
+);
 
+/**
+ * `t3_project_delete` stays out until J5 settles what deleting a project does to the state it
+ * keeps for each project (#552). `t3_thread_launch` is in this toolkit too; `j5_spawn_agent` is
+ * the door for it.
+ */
 export const J5ProjectToolkit = Toolkit.make(
   ProjectToolkit.tools.t3_project_list,
   ProjectToolkit.tools.t3_project_read,
+  ProjectToolkit.tools.t3_project_create,
+  ProjectToolkit.tools.t3_project_update,
   ProjectToolkit.tools.t3_project_clone,
-);
-
-export const J5AttachmentUploadToolkit = Toolkit.make(
-  AttachmentToolkit.tools.t3_attachment_prepare_upload,
-  AttachmentToolkit.tools.t3_attachment_discard,
 );
 
 /**

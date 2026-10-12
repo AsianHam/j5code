@@ -9,6 +9,7 @@ import {
   EnvironmentId,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
+  type RuntimeMode,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -21,6 +22,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -38,9 +40,10 @@ import {
   OrchestratorProjectionError,
   OrchestratorV2,
 } from "../../../orchestration-v2/Orchestrator.ts";
+import { DispatchModeLimit } from "../../../orchestration-v2/DispatchModeLimit.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
-import { AgentCrewInstanceService } from "../AgentCrewInstanceService.ts";
+import { type AgentCrewInstance, AgentCrewInstanceService } from "../AgentCrewInstanceService.ts";
 import {
   ArchiveCrewConfirmationRequiredError,
   ArchiveCrewService,
@@ -57,7 +60,11 @@ import {
 } from "../HomeRegistrar.ts";
 import { A2ALedger } from "../LedgerService.ts";
 import { PeerDirectory, noneLayer as peerDirectoryNoneLayer } from "../PeerDirectory.ts";
-import { ParticipantPlacementService, PlacementStorageError } from "../PlacementService.ts";
+import {
+  ParticipantPlacementService,
+  PlacementProjectNotFoundError,
+  PlacementStorageError,
+} from "../PlacementService.ts";
 import { A2AHomeMembershipStateError, A2ASendService } from "../SendService.ts";
 import { SpawnCompositionService } from "../SpawnCompositionService.ts";
 import { ThreadRegistration } from "../ThreadRegistration.ts";
@@ -75,6 +82,7 @@ import { ProjectService } from "../../../project/ProjectService.ts";
 import { fakeSpawnWorkspaceLayer, noRepository } from "../test-support/spawnWorkspaceFakes.ts";
 import { J5ToolkitHandlersLive } from "./handlers.ts";
 import {
+  type J5ListParticipantsInput,
   J5ListParticipantsResult,
   J5Toolkit,
   type J5ArchiveCrewInput,
@@ -159,6 +167,11 @@ const projection = (threadId: ThreadId): OrchestrationV2ThreadProjection =>
     },
   }) as unknown as OrchestrationV2ThreadProjection;
 
+const missingProjectId = ProjectId.make("project:j5:mcp-directory:gone");
+/** The send tool claims attachments into the server's attachment store; none of these tests send one. */
+const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+  prefix: "j5-mcp-handlers-",
+}).pipe(Layer.provide(NodeServices.layer));
 const unusedLifecycleDependencies = Layer.mergeAll(
   Layer.mock(A2AHomeRegistrar)({
     getHomeForThread: (threadId) => Effect.fail(new A2AHomeNotFoundError({ threadId })),
@@ -184,6 +197,24 @@ const unusedLifecycleDependencies = Layer.mergeAll(
   Layer.mock(CrewStopService)({}),
   Layer.mock(CrewProposalService)({}),
   peerDirectoryNoneLayer,
+  Layer.mock(ProjectService)({
+    getById: (id) =>
+      Effect.succeed(
+        id === missingProjectId
+          ? Option.none()
+          : Option.some({
+              id,
+              title: "Directory project",
+              workspaceRoot: "/tmp/j5-mcp-directory",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: DateTime.formatIso(createdAt),
+              updatedAt: DateTime.formatIso(createdAt),
+              deletedAt: null,
+            }),
+      ),
+  }),
+  serverConfigLayer,
   Layer.mock(ThreadRegistration)({}),
 );
 
@@ -361,6 +392,132 @@ it.effect("namespaces mutating-tool idempotency and sender identity from authent
     }).pipe(Effect.provide(layer));
   }),
 );
+it.effect(
+  "checks a steer or restart against the caller's modes and a queued send against nothing",
+  () =>
+    Effect.gen(function* () {
+      const ledgerProjectId = LedgerProjectId.make("project:j5:mcp-send-mode");
+      const callerParticipantId = ParticipantId.make("agent:j5:mcp-send-mode-caller");
+      const targetParticipantId = ParticipantId.make("agent:j5:mcp-send-mode-target");
+      const personParticipantId = ParticipantId.make("human:mcp-send-mode");
+      const targetThreadId = ThreadId.make("thread:j5:mcp-send-mode-target");
+      const sends = yield* Ref.make<ReadonlyArray<SendMessageInput>>([]);
+      const callerRuntimeMode = yield* Ref.make<RuntimeMode>("full-access");
+      const row = (
+        participant: ParticipantDirectoryRow["participant"],
+      ): ParticipantDirectoryRow => ({
+        projectId: ledgerProjectId,
+        participantId: participant.id,
+        participant,
+        archived: false,
+        canReceiveMessage: participant.kind === "agent",
+        canOpenExchange: true,
+        acceptsUrgency: participant.kind === "human",
+      });
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(
+          A2ASendService,
+          A2ASendService.of({
+            send: (input) =>
+              Ref.update(sends, (items) => [...items, input]).pipe(
+                Effect.as({
+                  messageId: LedgerMessageId.make("message:j5:mcp-send-mode"),
+                  exchangeId: null,
+                  exchangeState: "none" as const,
+                  joinedExistingExchange: false,
+                  durableAtSeq: 1,
+                }),
+              ),
+            sendAsMachine: () => Effect.die("unused"),
+            clearOwnAsk: () => Effect.die("unused"),
+            listParticipants: () =>
+              Effect.succeed([
+                row({ kind: "agent", id: callerParticipantId, threadId: invocation.threadId }),
+                row({ kind: "agent", id: targetParticipantId, threadId: targetThreadId }),
+                row({ kind: "human", id: personParticipantId }),
+              ]),
+          }),
+        ),
+        Layer.mock(ParticipantPlacementService)({}),
+        Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
+        Layer.mock(OrchestratorV2)({}),
+        // The target runs in full access; the caller's mode is the variable.
+        threadManagementMock({
+          getThreadShell: (threadId) =>
+            Ref.get(callerRuntimeMode).pipe(
+              Effect.map((runtimeMode) =>
+                threadId === invocation.threadId
+                  ? liveThreadShell(threadId, { runtimeMode })
+                  : threadId === targetThreadId
+                    ? liveThreadShell(threadId)
+                    : null,
+              ),
+            ),
+        }),
+        Layer.mock(A2AHomeRegistrar)({
+          getHomeForThread: (threadId) => Effect.fail(new A2AHomeNotFoundError({ threadId })),
+        }),
+        Layer.mock(A2ALedger)({}),
+        Layer.mock(SpawnCompositionService)({}),
+        Layer.mock(OrchestratorMcpService)({}),
+        Layer.mock(AgentCrewInstanceService)({}),
+        Layer.mock(ArchiveCrewService)({}),
+        Layer.mock(CrewStopService)({}),
+        Layer.mock(CrewProposalService)({}),
+        peerDirectoryNoneLayer,
+        Layer.mock(ProjectService)({}),
+        serverConfigLayer,
+        Layer.mock(ThreadRegistration)({}),
+        NodeServices.layer,
+        SqlitePersistence.layerMemory,
+      );
+      const layer = J5ToolkitHandlersLive.pipe(
+        Layer.provideMerge(fakeSpawnWorkspaceLayer({ checkout: noRepository })),
+        Layer.provideMerge(dependencies),
+      );
+
+      yield* Effect.gen(function* () {
+        const toolkit = yield* J5Toolkit;
+        const call = (args: J5SendMessageInput) =>
+          toolkit
+            .handle("j5_send_message", args)
+            .pipe(
+              Stream.unwrap,
+              Stream.run(Sink.last()),
+              Effect.flatMap(Effect.fromOption),
+              Effect.provideService(McpInvocationContext, scope),
+            );
+        const message = "Land this the way I asked.";
+
+        assert.isFalse(
+          (yield* call({ to: targetParticipantId, message, mode: "steer" })).isFailure,
+        );
+        assert.isFalse(
+          (yield* call({ to: targetParticipantId, message, mode: "queue" })).isFailure,
+        );
+        assert.deepStrictEqual(
+          (yield* Ref.get(sends)).map((send) => send.mode),
+          ["steer", undefined],
+          "queue is the default and is not recorded",
+        );
+
+        const toPerson = yield* call({ to: personParticipantId, message, mode: "steer" });
+        assert.isTrue(toPerson.isFailure);
+        assert.include(JSON.stringify(toPerson.encodedResult), "reaches only an agent");
+
+        yield* Ref.set(callerRuntimeMode, "approval-required");
+        for (const mode of ["steer", "restart"] as const) {
+          const refused = yield* call({ to: targetParticipantId, message, mode });
+          assert.isTrue(refused.isFailure);
+          assert.include(JSON.stringify(refused.encodedResult), "broader permissions than you do");
+        }
+        // The same narrower caller may still send the message to wait its turn.
+        assert.isFalse((yield* call({ to: targetParticipantId, message })).isFailure);
+        assert.lengthOf(yield* Ref.get(sends), 3);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
 it.effect("keeps participant listing placement-read-only", () =>
   Effect.gen(function* () {
     const ledgerProjectId = LedgerProjectId.make("project:j5:mcp-placement-handler");
@@ -485,15 +642,20 @@ it.effect("keeps participant listing placement-read-only", () =>
       assert.equal(listedRows[0]?.can_receive_message, false);
       assert.equal(listedRows[0]?.can_open_exchange, false);
       assert.equal(listedRows[0]?.placement_parent_id, displayParentId);
-      assert.deepStrictEqual(listedRows[1]?.provenance, {
+      // The caller, then the people, then the project's other agents.
+      assert.deepStrictEqual(
+        listedRows.map((row) => row.participant_id),
+        [callerParticipantId, personParticipantId, forkedParticipantId],
+      );
+      assert.deepStrictEqual(listedRows[1]?.provenance, { kind: "not-applicable" });
+      assert.equal(listedRows[1]?.placement_parent_id, null);
+      assert.equal(listedRows[1]?.self, false);
+      assert.deepStrictEqual(listedRows[2]?.provenance, {
         kind: "forked-from",
         source_participant_id: forkSourceId,
         source: "upstream_lineage",
       });
-      assert.equal(listedRows[1]?.placement_parent_id, callerParticipantId);
-      assert.equal(listedRows[1]?.self, false);
-      assert.deepStrictEqual(listedRows[2]?.provenance, { kind: "not-applicable" });
-      assert.equal(listedRows[2]?.placement_parent_id, null);
+      assert.equal(listedRows[2]?.placement_parent_id, callerParticipantId);
       assert.equal(listedRows[2]?.self, false);
       for (const camelCaseKey of forbiddenCamelCaseKeys) {
         assert.isFalse(hasKey(listed.encodedResult, camelCaseKey));
@@ -522,11 +684,22 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
       canOpenExchange: true,
       acceptsUrgency: participant.kind === "human",
     });
+    const callerParticipantId = ParticipantId.make("agent:j5:mcp-directory:caller");
+    const otherLedgerProjectId = LedgerProjectId.make("ledger:j5:mcp-directory:other");
+    const emptyLedgerProjectId = LedgerProjectId.make("ledger:j5:mcp-directory:empty");
+    const elsewhereParticipantId = ParticipantId.make("agent:j5:mcp-directory:elsewhere");
+    const elsewhereThreadId = ThreadId.make("thread:j5:mcp-directory:elsewhere");
     const rows = [
+      row({ kind: "agent", id: callerParticipantId, threadId: invocation.threadId }),
       row({ kind: "agent", id: activeParticipantId, threadId: activeThreadId }),
       row({ kind: "agent", id: archivedParticipantId, threadId: archivedThreadId }),
       row({ kind: "agent", id: missingParticipantId, threadId: missingThreadId }),
       row({ kind: "human", id: humanParticipantId }),
+      // Another project's agent: listed only when that project is named.
+      {
+        ...row({ kind: "agent", id: elsewhereParticipantId, threadId: elsewhereThreadId }),
+        projectId: otherLedgerProjectId,
+      },
     ];
     const now = DateTime.makeUnsafe("2026-08-29T12:00:00.000Z");
     const modelSelection = {
@@ -538,6 +711,7 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
       readonly id: ThreadId;
       readonly title: string;
       readonly archivedAt: DateTime.Utc | null;
+      readonly settled?: boolean;
     }): OrchestrationV2ThreadShell => ({
       createdBy: "agent",
       creationSource: "mcp",
@@ -567,10 +741,11 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
       itemCount: 0,
       visibleItemCount: 0,
       createdAt: now,
-      updatedAt: now,
+      // The settled thread is the one touched last, so it lists first among the agents.
+      updatedAt: input.settled === true ? DateTime.add(now, { minutes: 1 }) : now,
       archivedAt: input.archivedAt,
-      settledOverride: null,
-      settledAt: null,
+      settledOverride: input.settled === true ? "settled" : null,
+      settledAt: input.settled === true ? now : null,
       deletedAt: null,
     });
     const activeShell = shell({
@@ -582,6 +757,7 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
       id: archivedThreadId,
       title: "Archived researcher",
       archivedAt: now,
+      settled: true,
     });
     const sendService = Layer.succeed(
       A2ASendService,
@@ -610,7 +786,11 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
           sendService,
           orchestrator,
           Layer.mock(ParticipantPlacementService)({
-            listParticipants: () => Effect.succeed([]),
+            // A project nobody has worked in yet has no ledger to place anything in.
+            listParticipants: (projectId) =>
+              projectId === emptyLedgerProjectId
+                ? Effect.fail(new PlacementProjectNotFoundError({ projectId }))
+                : Effect.succeed([]),
           }),
           Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
           unusedLifecycleDependencies,
@@ -619,62 +799,42 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
       ),
     );
 
-    const result = yield* Effect.gen(function* () {
-      const toolkit = yield* J5Toolkit;
-      return yield* toolkit
-        .handle("j5_list_participants", {})
-        .pipe(
-          Stream.unwrap,
-          Stream.run(Sink.last()),
-          Effect.flatMap(Effect.fromOption),
-          Effect.provideService(McpInvocationContext, scope),
-        );
-    }).pipe(Effect.provide(layer));
+    const call = (input: J5ListParticipantsInput) =>
+      Effect.gen(function* () {
+        const toolkit = yield* J5Toolkit;
+        return yield* toolkit
+          .handle("j5_list_participants", input)
+          .pipe(
+            Stream.unwrap,
+            Stream.run(Sink.last()),
+            Effect.flatMap(Effect.fromOption),
+            Effect.provideService(McpInvocationContext, scope),
+          );
+      }).pipe(Effect.provide(layer));
+    const list = (input: J5ListParticipantsInput) =>
+      call(input).pipe(
+        Effect.flatMap((response) => decodeJ5ListParticipantsResult(response.encodedResult)),
+      );
+    const ids = (listing: typeof J5ListParticipantsResult.Type) =>
+      listing.participants.map((participant) => participant.participant_id);
+    const result = yield* call({});
     const directory = yield* decodeJ5ListParticipantsResult(result.encodedResult);
     assert.equal(yield* Ref.get(shellSnapshotCalls), 1);
+    assert.equal(directory.total, 5);
+    assert.equal(directory.next_cursor, null);
 
     assert.deepStrictEqual(directory.participants, [
       {
         project_id: ledgerProjectId,
         project_title: "Directory project",
-        participant_id: activeParticipantId,
-        participant: { kind: "agent", id: activeParticipantId, thread_id: activeThreadId },
-        self: false,
+        participant_id: callerParticipantId,
+        participant: { kind: "agent", id: callerParticipantId, thread_id: invocation.threadId },
+        self: true,
         archived: false,
-        can_receive_message: true,
-        can_open_exchange: true,
+        can_receive_message: false,
+        can_open_exchange: false,
         accepts_urgency: false,
-        thread_id: activeThreadId,
-        provenance: { kind: "unrecorded" },
-        placement_parent_id: null,
-        display_name: "Release reviewer",
-      },
-      {
-        project_id: ledgerProjectId,
-        project_title: "Directory project",
-        participant_id: archivedParticipantId,
-        participant: { kind: "agent", id: archivedParticipantId, thread_id: archivedThreadId },
-        self: false,
-        archived: false,
-        can_receive_message: true,
-        can_open_exchange: true,
-        accepts_urgency: false,
-        thread_id: archivedThreadId,
-        provenance: { kind: "unrecorded" },
-        placement_parent_id: null,
-        display_name: "Archived researcher",
-      },
-      {
-        project_id: ledgerProjectId,
-        project_title: "Directory project",
-        participant_id: missingParticipantId,
-        participant: { kind: "agent", id: missingParticipantId, thread_id: missingThreadId },
-        self: false,
-        archived: false,
-        can_receive_message: true,
-        can_open_exchange: true,
-        accepts_urgency: false,
-        thread_id: missingThreadId,
+        thread_id: invocation.threadId,
         provenance: { kind: "unrecorded" },
         placement_parent_id: null,
         display_name: null,
@@ -694,10 +854,100 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
         placement_parent_id: null,
         display_name: null,
       },
+      {
+        project_id: ledgerProjectId,
+        project_title: "Directory project",
+        participant_id: archivedParticipantId,
+        participant: { kind: "agent", id: archivedParticipantId, thread_id: archivedThreadId },
+        self: false,
+        archived: false,
+        can_receive_message: true,
+        can_open_exchange: true,
+        accepts_urgency: false,
+        thread_id: archivedThreadId,
+        provenance: { kind: "unrecorded" },
+        placement_parent_id: null,
+        display_name: "Archived researcher",
+      },
+      {
+        project_id: ledgerProjectId,
+        project_title: "Directory project",
+        participant_id: activeParticipantId,
+        participant: { kind: "agent", id: activeParticipantId, thread_id: activeThreadId },
+        self: false,
+        archived: false,
+        can_receive_message: true,
+        can_open_exchange: true,
+        accepts_urgency: false,
+        thread_id: activeThreadId,
+        provenance: { kind: "unrecorded" },
+        placement_parent_id: null,
+        display_name: "Release reviewer",
+      },
+      {
+        project_id: ledgerProjectId,
+        project_title: "Directory project",
+        participant_id: missingParticipantId,
+        participant: { kind: "agent", id: missingParticipantId, thread_id: missingThreadId },
+        self: false,
+        archived: false,
+        can_receive_message: true,
+        can_open_exchange: true,
+        accepts_urgency: false,
+        thread_id: missingThreadId,
+        provenance: { kind: "unrecorded" },
+        placement_parent_id: null,
+        display_name: null,
+      },
     ]);
     for (const camelCaseKey of forbiddenCamelCaseKeys) {
       assert.isFalse(hasKey(result.encodedResult, camelCaseKey));
     }
+
+    const firstPage = yield* list({ limit: 2 });
+    assert.deepStrictEqual(ids(firstPage), [callerParticipantId, humanParticipantId]);
+    assert.equal(firstPage.next_cursor, 2);
+    assert.equal(firstPage.total, 5);
+    const lastPage = yield* list({ limit: 2, cursor: 4 });
+    assert.deepStrictEqual(ids(lastPage), [missingParticipantId]);
+    assert.equal(lastPage.next_cursor, null);
+
+    assert.deepStrictEqual(
+      ids(yield* list({ name_contains: "RELEASE" })),
+      [callerParticipantId, humanParticipantId, activeParticipantId],
+      "the name filter ignores case, and keeps the caller and the people",
+    );
+    assert.deepStrictEqual(ids(yield* list({ settled: true })), [
+      callerParticipantId,
+      humanParticipantId,
+      archivedParticipantId,
+    ]);
+    assert.deepStrictEqual(ids(yield* list({ settled: false })), [
+      callerParticipantId,
+      humanParticipantId,
+      activeParticipantId,
+      missingParticipantId,
+    ]);
+
+    const elsewhere = yield* list({ project_id: otherLedgerProjectId });
+    assert.deepStrictEqual(
+      ids(elsewhere),
+      [humanParticipantId, elsewhereParticipantId],
+      "another project lists its own agents, and the people",
+    );
+    assert.deepStrictEqual(
+      elsewhere.participants.map((row) => row.project_id),
+      [otherLedgerProjectId, otherLedgerProjectId],
+      "a person's row carries the project being listed, not the caller's",
+    );
+    assert.deepStrictEqual(
+      ids(yield* list({ project_id: emptyLedgerProjectId })),
+      [humanParticipantId],
+      "a project with no agents yet lists the people",
+    );
+    const gone = yield* call({ project_id: LedgerProjectId.make(missingProjectId) });
+    assert.isTrue(gone.isFailure);
+    assert.include(JSON.stringify(gone.encodedResult), `no project ${missingProjectId}`);
   }),
 );
 
@@ -713,7 +963,7 @@ it.effect("returns null display names when the ambient shell snapshot fails", ()
         participant: {
           kind: "agent",
           id: agentParticipantId,
-          threadId: ThreadId.make("thread:j5:mcp-directory:snapshot-failure"),
+          threadId: invocation.threadId,
         },
         archived: false,
         canReceiveMessage: true,
@@ -1978,190 +2228,242 @@ it.effect("routes crew proposals through a captain that is not itself a crew mem
   }),
 );
 
-it.effect("stops exactly one placed agent as upstream's Stop, never its placed descendants", () =>
-  Effect.gen(function* () {
-    const ledgerProjectId = LedgerProjectId.make("project:j5:mcp-stop");
-    const callerParticipantId = ParticipantId.make("agent:j5:mcp-stop-caller");
-    const targetParticipantId = ParticipantId.make("agent:j5:mcp-stop-target");
-    const siblingParticipantId = ParticipantId.make("agent:j5:mcp-stop-sibling");
-    const childParticipantId = ParticipantId.make("agent:j5:mcp-stop-child");
-    const targetThreadId = ThreadId.make("thread:j5:mcp-stop-target");
-    const siblingThreadId = ThreadId.make("thread:j5:mcp-stop-sibling");
-    const childThreadId = ThreadId.make("thread:j5:mcp-stop-child");
-    const targetProjectId = ProjectId.make("project:j5:mcp-stop-target");
-    const stopped = yield* Ref.make<
-      ReadonlyArray<{
-        readonly via: "thread.stop" | "stopDelegatedTasks";
-        readonly commandId: string;
-        readonly threadId: ThreadId;
-      }>
-    >([]);
-    const targetRunning = yield* Ref.make(true);
-    const callerRow = {
-      projectId: ledgerProjectId,
-      participantId: callerParticipantId,
-      participant: {
-        kind: "agent" as const,
-        id: callerParticipantId,
-        threadId: invocation.threadId,
-      },
-      archived: false,
-      canReceiveMessage: true,
-      canOpenExchange: true,
-      acceptsUrgency: false,
-    } satisfies ParticipantDirectoryRow;
-    const agentRow = (participantId: ParticipantId, threadId: ThreadId, parent: ParticipantId) => ({
-      projectId: ledgerProjectId,
-      participantId,
-      participant: { kind: "agent" as const, id: participantId, threadId },
-      threadId,
-      provenance: {
-        kind: "spawned-by" as const,
-        spawnedByParticipantId: parent,
-        source: "j5_spawn" as const,
-      },
-      placementParentId: parent,
-    });
-    const dependencies = Layer.mergeAll(
-      Layer.succeed(
-        A2ASendService,
-        A2ASendService.of({
-          send: () => Effect.die("j5_send_message is outside this stop test"),
-          clearOwnAsk: () => Effect.die("j5_clear_own_ask is outside this stop test"),
-          sendAsMachine: () => Effect.die("unused"),
-          listParticipants: () => Effect.succeed([callerRow]),
+it.effect(
+  "stops exactly one agent as upstream's Stop, in any project, within the caller's modes",
+  () =>
+    Effect.gen(function* () {
+      const ledgerProjectId = LedgerProjectId.make("project:j5:mcp-stop");
+      const callerParticipantId = ParticipantId.make("agent:j5:mcp-stop-caller");
+      const targetParticipantId = ParticipantId.make("agent:j5:mcp-stop-target");
+      const siblingParticipantId = ParticipantId.make("agent:j5:mcp-stop-sibling");
+      const childParticipantId = ParticipantId.make("agent:j5:mcp-stop-child");
+      const targetThreadId = ThreadId.make("thread:j5:mcp-stop-target");
+      const siblingThreadId = ThreadId.make("thread:j5:mcp-stop-sibling");
+      const childThreadId = ThreadId.make("thread:j5:mcp-stop-child");
+      const targetProjectId = ProjectId.make("project:j5:mcp-stop-target");
+      const stopped = yield* Ref.make<
+        ReadonlyArray<{
+          readonly via: "thread.stop" | "stopDelegatedTasks";
+          readonly commandId: string;
+          readonly threadId: ThreadId;
+        }>
+      >([]);
+      const targetRunning = yield* Ref.make(true);
+      const callerRuntimeMode = yield* Ref.make<RuntimeMode>("full-access");
+      const targetIsCallersSeat = yield* Ref.make(false);
+      const stopLimits = yield* Ref.make<ReadonlyArray<RuntimeMode | undefined>>([]);
+      const callerRow = {
+        projectId: ledgerProjectId,
+        participantId: callerParticipantId,
+        participant: {
+          kind: "agent" as const,
+          id: callerParticipantId,
+          threadId: invocation.threadId,
+        },
+        archived: false,
+        canReceiveMessage: true,
+        canOpenExchange: true,
+        acceptsUrgency: false,
+      } satisfies ParticipantDirectoryRow;
+      // The target lives in another project: a stop reaches any agent on this server.
+      const agentRow = (participantId: ParticipantId, threadId: ThreadId) =>
+        ({
+          projectId: LedgerProjectId.make("project:j5:mcp-stop-elsewhere"),
+          participantId,
+          participant: { kind: "agent" as const, id: participantId, threadId },
+          archived: false,
+          canReceiveMessage: true,
+          canOpenExchange: true,
+          acceptsUrgency: false,
+        }) satisfies ParticipantDirectoryRow;
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(
+          A2ASendService,
+          A2ASendService.of({
+            send: () => Effect.die("j5_send_message is outside this stop test"),
+            clearOwnAsk: () => Effect.die("j5_clear_own_ask is outside this stop test"),
+            sendAsMachine: () => Effect.die("unused"),
+            listParticipants: () =>
+              Effect.succeed([
+                callerRow,
+                agentRow(targetParticipantId, targetThreadId),
+                agentRow(siblingParticipantId, siblingThreadId),
+                agentRow(childParticipantId, childThreadId),
+              ]),
+          }),
+        ),
+        Layer.mock(ParticipantPlacementService)({
+          listParticipants: () => Effect.die("j5_stop_agent finds its target in the directory"),
+          listSubtree: () => Effect.die("j5_stop_agent must never resolve placement descendants"),
         }),
-      ),
-      Layer.mock(ParticipantPlacementService)({
-        listParticipants: () =>
-          Effect.succeed([
-            agentRow(targetParticipantId, targetThreadId, callerParticipantId),
-            agentRow(siblingParticipantId, siblingThreadId, callerParticipantId),
-            agentRow(childParticipantId, childThreadId, targetParticipantId),
-          ]),
-        listSubtree: () => Effect.die("j5_stop_agent must never resolve placement descendants"),
-      }),
-      threadManagementMock({
-        getThreadProjection: (threadId) =>
-          Ref.get(targetRunning).pipe(
-            Effect.map((running) => ({
-              ...projection(threadId),
-              thread: {
-                ...projection(threadId).thread,
-                projectId: threadId === targetThreadId ? targetProjectId : projectId,
-              },
-              runs: running ? [{ status: "running" } as OrchestrationV2Run] : [],
-            })),
-          ),
-        dispatch: (command) =>
-          command.type === "thread.stop"
-            ? Ref.update(stopped, (items) => [
-                ...items,
-                {
-                  via: "thread.stop" as const,
-                  commandId: command.commandId,
-                  threadId: command.threadId,
+        threadManagementMock({
+          getThreadShell: (threadId) =>
+            Ref.get(callerRuntimeMode).pipe(
+              Effect.map((runtimeMode) =>
+                threadId === invocation.threadId
+                  ? liveThreadShell(threadId, { runtimeMode })
+                  : null,
+              ),
+            ),
+          getThreadProjection: (threadId) =>
+            Ref.get(targetRunning).pipe(
+              Effect.map((running) => ({
+                ...projection(threadId),
+                thread: {
+                  ...projection(threadId).thread,
+                  projectId: threadId === targetThreadId ? targetProjectId : projectId,
                 },
-              ]).pipe(Effect.as({ sequence: 1, storedEvents: [] }))
-            : Effect.die(`j5_stop_agent must only dispatch thread.stop, not ${command.type}`),
-        stopDelegatedTasks: (input) =>
-          Ref.update(stopped, (items) => [
-            ...items,
-            {
-              via: "stopDelegatedTasks" as const,
-              commandId: input.commandId,
-              threadId: input.threadId,
-            },
-          ]),
-        interruptThread: () => Effect.die("j5_stop_agent sends upstream's Stop, not an interrupt"),
-      }),
-      Layer.mock(A2AHomeRegistrar)({}),
-      Layer.mock(A2ALedger)({}),
-      Layer.mock(SpawnCompositionService)({}),
-      Layer.mock(OrchestratorMcpService)({}),
-      peerDirectoryNoneLayer,
-      Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
-      Layer.mock(AgentCrewInstanceService)({
-        findMembership: () => Effect.succeed(null),
-        listForCaptain: () => Effect.succeed([]),
-      }),
-      Layer.mock(ArchiveCrewService)({}),
-      Layer.mock(CrewStopService)({}),
-      Layer.mock(CrewProposalService)({}),
+                runs: running ? [{ status: "running" } as OrchestrationV2Run] : [],
+              })),
+            ),
+          dispatch: (command) =>
+            command.type === "thread.stop"
+              ? Ref.update(stopped, (items) => [
+                  ...items,
+                  {
+                    via: "thread.stop" as const,
+                    commandId: command.commandId,
+                    threadId: command.threadId,
+                  },
+                ]).pipe(
+                  // The limit upstream re-checks under the target's lock rides with the Stop.
+                  Effect.andThen(
+                    Effect.gen(function* () {
+                      return yield* DispatchModeLimit;
+                    }),
+                  ),
+                  Effect.tap((limit) =>
+                    Ref.update(stopLimits, (items) => [...items, limit?.runtimeMode]),
+                  ),
+                  Effect.as({ sequence: 1, storedEvents: [] }),
+                )
+              : Effect.die(`j5_stop_agent must only dispatch thread.stop, not ${command.type}`),
+          stopDelegatedTasks: (input) =>
+            Ref.update(stopped, (items) => [
+              ...items,
+              {
+                via: "stopDelegatedTasks" as const,
+                commandId: input.commandId,
+                threadId: input.threadId,
+              },
+            ]),
+          interruptThread: () =>
+            Effect.die("j5_stop_agent sends upstream's Stop, not an interrupt"),
+        }),
+        Layer.mock(A2AHomeRegistrar)({}),
+        Layer.mock(A2ALedger)({}),
+        Layer.mock(SpawnCompositionService)({}),
+        Layer.mock(OrchestratorMcpService)({}),
+        peerDirectoryNoneLayer,
+        Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
+        Layer.mock(AgentCrewInstanceService)({
+          findMembership: () =>
+            Ref.get(targetIsCallersSeat).pipe(
+              Effect.map((seat) =>
+                seat ? { crewInstanceId: "crew:stop", seatName: "builder" } : null,
+              ),
+            ),
+          read: () =>
+            Effect.succeed({ captainParticipantId: callerParticipantId } as AgentCrewInstance),
+          listForCaptain: () => Effect.succeed([]),
+        }),
+        Layer.mock(ArchiveCrewService)({}),
+        Layer.mock(CrewStopService)({}),
+        Layer.mock(CrewProposalService)({}),
 
-      Layer.mock(ThreadRegistration)({}),
-      NodeServices.layer,
-    );
-    const layer = J5ToolkitHandlersLive.pipe(
-      Layer.provideMerge(fakeSpawnWorkspaceLayer({ checkout: noRepository })),
-      Layer.provideMerge(dependencies),
-    );
+        Layer.mock(ThreadRegistration)({}),
+        NodeServices.layer,
+      );
+      const layer = J5ToolkitHandlersLive.pipe(
+        Layer.provideMerge(fakeSpawnWorkspaceLayer({ checkout: noRepository })),
+        Layer.provideMerge(dependencies),
+      );
 
-    yield* Effect.gen(function* () {
-      const toolkit = yield* J5Toolkit;
-      const call = (args: J5StopAgentInput) =>
-        toolkit
-          .handle("j5_stop_agent", args)
-          .pipe(
-            Stream.unwrap,
-            Stream.run(Sink.last()),
-            Effect.flatMap(Effect.fromOption),
-            Effect.provideService(McpInvocationContext, scope),
-          );
-      const args = {
-        participant_id: targetParticipantId,
-        client_request_id: "stop-one-1",
-      } satisfies J5StopAgentInput;
-      const first = yield* call(args);
-      const replay = yield* call(args);
-      assert.equal(first.result, "interrupt_requested");
-      assert.deepStrictEqual(replay.result, first.result);
-      // An idle target is still stopped: Stop also holds its queue and ends its watches.
-      yield* Ref.set(targetRunning, false);
-      const idle = yield* call({
-        ...args,
-        client_request_id: "stop-idle-1",
-      });
-      assert.equal(idle.result, "already_idle");
-      const calls = yield* Ref.get(stopped);
-      assert.deepStrictEqual(
-        calls.map((call) => call.via),
-        [
-          "thread.stop",
-          "stopDelegatedTasks",
-          "thread.stop",
-          "stopDelegatedTasks",
-          "thread.stop",
-          "stopDelegatedTasks",
-        ],
-      );
-      assert.isTrue(calls.every((call) => call.threadId === targetThreadId));
-      // A replay reuses the command id, and the delegated-task stops derive theirs from it.
-      assert.deepStrictEqual(
-        calls.slice(0, 4).map((call) => call.commandId),
-        Array.from({ length: 4 }, () => calls[0]!.commandId),
-      );
-      assert.notEqual(calls[4]?.commandId, calls[0]?.commandId);
-      assert.notInclude(
-        calls.map((call) => call.threadId),
-        siblingThreadId,
-      );
-      assert.notInclude(
-        calls.map((call) => call.threadId),
-        childThreadId,
-      );
-    }).pipe(Effect.provide(layer));
-  }),
+      yield* Effect.gen(function* () {
+        const toolkit = yield* J5Toolkit;
+        const call = (args: J5StopAgentInput) =>
+          toolkit
+            .handle("j5_stop_agent", args)
+            .pipe(
+              Stream.unwrap,
+              Stream.run(Sink.last()),
+              Effect.flatMap(Effect.fromOption),
+              Effect.provideService(McpInvocationContext, scope),
+            );
+        const args = {
+          participant_id: targetParticipantId,
+          client_request_id: "stop-one-1",
+        } satisfies J5StopAgentInput;
+        const first = yield* call(args);
+        const replay = yield* call(args);
+        assert.equal(first.result, "interrupt_requested");
+        assert.deepStrictEqual(replay.result, first.result);
+        // An idle target is still stopped: Stop also holds its queue and ends its watches.
+        yield* Ref.set(targetRunning, false);
+        const idle = yield* call({
+          ...args,
+          client_request_id: "stop-idle-1",
+        });
+        assert.equal(idle.result, "already_idle");
+        const calls = yield* Ref.get(stopped);
+        assert.deepStrictEqual(
+          calls.map((call) => call.via),
+          [
+            "thread.stop",
+            "stopDelegatedTasks",
+            "thread.stop",
+            "stopDelegatedTasks",
+            "thread.stop",
+            "stopDelegatedTasks",
+          ],
+        );
+        assert.isTrue(calls.every((call) => call.threadId === targetThreadId));
+        // A replay reuses the command id, and the delegated-task stops derive theirs from it.
+        assert.deepStrictEqual(
+          calls.slice(0, 4).map((call) => call.commandId),
+          Array.from({ length: 4 }, () => calls[0]!.commandId),
+        );
+        assert.notEqual(calls[4]?.commandId, calls[0]?.commandId);
+        assert.notInclude(
+          calls.map((call) => call.threadId),
+          siblingThreadId,
+        );
+        assert.notInclude(
+          calls.map((call) => call.threadId),
+          childThreadId,
+        );
+
+        // The target runs in full access. A caller in a narrower mode may not stop it.
+        yield* Ref.set(callerRuntimeMode, "approval-required");
+        const refused = yield* call({ ...args, client_request_id: "stop-narrow-1" });
+        assert.isTrue(refused.isFailure);
+        assert.include(JSON.stringify(refused.encodedResult), "broader permissions than you do");
+        assert.lengthOf(yield* Ref.get(stopped), calls.length, "a refused stop dispatches nothing");
+        // Unless the target is a seat of a Crew the caller commands.
+        yield* Ref.set(targetIsCallersSeat, true);
+        const commanded = yield* call({ ...args, client_request_id: "stop-seat-1" });
+        assert.equal(commanded.result, "already_idle");
+        assert.lengthOf(yield* Ref.get(stopped), calls.length + 2);
+        // Each Stop carries its caller's limit, except the Captain's, which has none.
+        assert.deepStrictEqual(yield* Ref.get(stopLimits), [
+          "full-access",
+          "full-access",
+          "full-access",
+          undefined,
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
 );
 
 it.effect(
-  "lists agents homed on peer servers beside local ones and reports the peers it could not read",
+  "lists a peer server's agents when it is named and reports the peers it could not read",
   () =>
     Effect.gen(function* () {
       const ledgerProjectId = LedgerProjectId.make("project:j5:mcp-peer-list");
       const callerParticipantId = ParticipantId.make("agent:j5:mcp-peer-caller");
       const remoteParticipantId = ParticipantId.make("agent:j5:a2a:thread:support");
       const archivedRemoteId = ParticipantId.make("agent:j5:a2a:thread:retired");
+      const twinParticipantId = ParticipantId.make("agent:j5:a2a:thread:twin");
       const callerRow = {
         projectId: ledgerProjectId,
         participantId: callerParticipantId,
@@ -2217,6 +2519,15 @@ it.effect(
                     available: false,
                     lastAvailableAt: "2026-10-02T09:00:00.000Z",
                   },
+                  // A peer may carry the same name as this server; names are not unique.
+                  {
+                    ...remoteAgent,
+                    environmentId: "environment-twin",
+                    environmentLabel: "Work VM",
+                    participantId: twinParticipantId,
+                    threadId: ThreadId.make("thread:twin"),
+                    displayName: "Twin",
+                  },
                 ],
                 unreadPeers: [
                   { environmentId: "environment-mac", label: "Mac", reason: "ECONNREFUSED" },
@@ -2245,6 +2556,7 @@ it.effect(
         Layer.mock(ArchiveCrewService)({}),
         Layer.mock(CrewStopService)({}),
         Layer.mock(CrewProposalService)({}),
+        Layer.mock(ProjectService)({}),
         Layer.mock(ThreadRegistration)({}),
         NodeServices.layer,
       );
@@ -2255,27 +2567,49 @@ it.effect(
 
       yield* Effect.gen(function* () {
         const toolkit = yield* J5Toolkit;
-        const callList = (include_archived: boolean) =>
-          toolkit.handle("j5_list_participants", { include_archived }).pipe(
-            Stream.unwrap,
-            Stream.run(Sink.last()),
-            Effect.flatMap(Effect.fromOption),
-            Effect.provideService(McpInvocationContext, scope),
+        const callList = (input: J5ListParticipantsInput) =>
+          toolkit
+            .handle("j5_list_participants", input)
+            .pipe(
+              Stream.unwrap,
+              Stream.run(Sink.last()),
+              Effect.flatMap(Effect.fromOption),
+              Effect.provideService(McpInvocationContext, scope),
+            );
+        const list = (input: J5ListParticipantsInput) =>
+          callList(input).pipe(
             Effect.flatMap((response) => decodeJ5ListParticipantsResult(response.encodedResult)),
           );
-        const listed = yield* callList(false);
+        const local = yield* list({});
+        assert.deepStrictEqual(
+          local.participants.map((row) => [row.participant_id, row.project_id]),
+          [[callerParticipantId, ledgerProjectId]],
+          "this server's agents only, until a peer server is named",
+        );
+        assert.equal(local.participants[0]!.project_title, null);
+        assert.deepStrictEqual(local.participants[0]!.server, { name: "Work VM", local: true });
+        assert.deepStrictEqual(
+          local.servers,
+          [
+            { name: "Work VM", local: true },
+            { name: "Home", local: false },
+            { name: "Mac", local: false },
+            { name: "Work VM", local: false },
+          ],
+          "every server is named, the one that did not answer included",
+        );
+        assert.equal(local.unread_peer_count, 1, "an unread peer is counted");
+        assert.isFalse(hasKey(local, "unread_peers"));
+
+        const listed = yield* list({ server: "Home" });
         assert.deepStrictEqual(
           listed.participants.map((row) => [row.participant_id, row.project_id]),
-          [
-            [callerParticipantId, ledgerProjectId],
-            [remoteParticipantId, "project:home-support"],
-          ],
+          [[remoteParticipantId, "project:home-support"]],
           "an archived remote agent is hidden until asked for, like a local one",
         );
-        const remoteRow = listed.participants[1]!;
+        const remoteRow = listed.participants[0]!;
         assert.equal(remoteRow.display_name, "Support triage");
         assert.equal(remoteRow.project_title, "L2 Support Rotation");
-        assert.equal(listed.participants[0]!.project_title, null);
         assert.equal(remoteRow.can_receive_message, true);
         assert.equal(remoteRow.can_open_exchange, true);
         assert.equal(remoteRow.self, false);
@@ -2287,22 +2621,18 @@ it.effect(
           { name: "Home", local: false },
           "nothing measures a peer this server sends to, so the row claims nothing",
         );
-        assert.deepStrictEqual(listed.participants[0]!.server, { name: "Work VM", local: true });
-        assert.equal(listed.unread_peer_count, 1, "an unread peer is counted");
-        assert.isFalse(hasKey(listed, "unread_peers"));
 
-        const withArchived = yield* callList(true);
+        const withArchived = yield* list({ server: "Home", include_archived: true });
         assert.deepStrictEqual(
           withArchived.participants.map((row) => [row.participant_id, row.archived]),
           [
-            [callerParticipantId, false],
             [remoteParticipantId, false],
             [archivedRemoteId, true],
           ],
         );
-        assert.equal(withArchived.participants[2]!.can_receive_message, false);
+        assert.equal(withArchived.participants[1]!.can_receive_message, false);
         assert.deepStrictEqual(
-          withArchived.participants[2]!.server,
+          withArchived.participants[1]!.server,
           {
             name: "Home",
             local: false,
@@ -2311,6 +2641,23 @@ it.effect(
           },
           "an agent on a peer that polls, and is offline, says so, and since when",
         );
+        assert.deepStrictEqual(
+          (yield* list({ server: "Home", project_id: ledgerProjectId })).participants,
+          [],
+          "a project filter applies to the named server's agents",
+        );
+
+        // A peer that shares this server's name is still reachable by that name; this
+        // server's own agents are the listing with no name.
+        assert.deepStrictEqual(
+          (yield* list({ server: "Work VM" })).participants.map((row) => row.participant_id),
+          [twinParticipantId],
+        );
+        const unknown = yield* callList({ server: "Elsewhere" });
+        assert.isTrue(unknown.isFailure);
+        assert.include(JSON.stringify(unknown.encodedResult), "no peer server named Elsewhere");
+        const settledRemote = yield* callList({ server: "Home", settled: true });
+        assert.isTrue(settledRemote.isFailure);
       }).pipe(Effect.provide(layer));
     }),
 );

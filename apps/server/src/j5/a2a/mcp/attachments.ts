@@ -1,157 +1,75 @@
-import { OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
+import { type ChatAttachment, OrchestratorMcpFailure, type ThreadId } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
-import * as SqlClient from "effect/sql/SqlClient";
 
+import { ServerSecretStore } from "../../../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../../../config.ts";
-import { McpInvocationContext, requireThreadScope } from "../../../mcp/McpInvocationContext.ts";
-import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
-import { readThread, unavailable } from "../../../mcp/threadAccess.ts";
+import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
+import { readThread } from "../../../mcp/threadAccess.ts";
 import { resolveAttachmentReferences } from "../../../mcp/toolkits/attachment/handlers.ts";
-import { McpAttachmentInput } from "../../../mcp/toolkits/attachment/input.ts";
+import type { McpAttachmentInput } from "../../../mcp/toolkits/attachment/input.ts";
+import { AttachmentToolkit } from "../../../mcp/toolkits/attachment/tools.ts";
 import {
   claimPendingAttachments,
   releaseClaimedAttachments,
 } from "../../../orchestration-v2/AttachmentClaims.ts";
-import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
-import { A2ADeliveryWorker } from "../DeliveryWorker.ts";
-import {
-  A2ASendService,
-  A2ASenderNotJoinedError,
-  A2ASenderRetiredError,
-  A2AHomeMembershipStateError,
-  A2AParticipantNotFoundError,
-  A2AAmbiguousParticipantError,
-  A2AParticipantArchivedError,
-  A2AHumanAskOrReplyRequiredError,
-} from "../SendService.ts";
-import { CommCommandId, SendMessageResult } from "../contracts.ts";
-import { withDeliveryNotice } from "../receiverBacklog.ts";
+import { isSendRefusal } from "../SendService.ts";
 
-export const J5AttachmentSendToolkit = Toolkit.make(
-  Tool.make("t3_thread_send_attachments", {
+/**
+ * Upstream's upload tools on upstream's handlers. `t3_attachment_prepare_upload` is re-declared
+ * for one sentence: upstream's description sends the upload to `t3_thread_send_attachments`,
+ * which J5 does not register. An agent attaches a file with `j5_send_message`.
+ */
+export const J5AttachmentUploadToolkit = Toolkit.make(
+  Tool.make("t3_attachment_prepare_upload", {
     description:
-      "Send uploaded attachments to another registered agent in the calling project through durable J5 messaging. Specify the target threadId from j5_list_participants. Each call creates a new message. Success means accepted for delivery, not that the agent has received or processed it. Provider attachment support still applies.",
-    parameters: Schema.Struct({
-      threadId: ThreadId,
-      message: Schema.optional(Schema.String.check(Schema.isMaxLength(120000))),
-      attachments: Schema.Array(McpAttachmentInput).check(
-        Schema.isMinLength(1),
-        Schema.isMaxLength(8),
-      ),
-    }),
-    success: Schema.Struct({ threadId: ThreadId, ...SendMessageResult.fields }),
+      "Create the app's signed upload URL. POST the exact bytes to relativeUrl on this MCP server's HTTP origin, then pass the attachment metadata and returned ID in j5_send_message's attachments. Upload is separate from sending; provider attachment support is decided by its adapter.",
+    parameters: AttachmentToolkit.tools.t3_attachment_prepare_upload.parametersSchema,
+    success: AttachmentToolkit.tools.t3_attachment_prepare_upload.successSchema,
     failure: OrchestratorMcpFailure,
     failureMode: "return",
     dependencies: [
       McpInvocationContext,
       ThreadManagementService,
-      A2ASendService,
-      A2ADeliveryWorker,
-      // The receiver backlog read behind the result's deliveryNotice.
-      OrchestratorV2,
-      SqlClient.SqlClient,
       ServerConfig,
+      ServerSecretStore,
       FileSystem.FileSystem,
       Crypto.Crypto,
     ],
-  })
-    .annotate(Tool.Destructive, true)
-    .annotate(Tool.OpenWorld, true),
+  }).annotate(Tool.Destructive, true),
+  AttachmentToolkit.tools.t3_attachment_discard,
 );
 
-const isMcpFailure = Schema.is(OrchestratorMcpFailure);
-// These plain-send refusals are raised inside the ledger transaction, before commit.
-const isSendRefusal = Schema.is(
-  Schema.Union([
-    A2ASenderNotJoinedError,
-    A2ASenderRetiredError,
-    A2AHomeMembershipStateError,
-    A2AParticipantNotFoundError,
-    A2AAmbiguousParticipantError,
-    A2AParticipantArchivedError,
-    A2AHumanAskOrReplyRequiredError,
-  ]),
-);
-
-/** What `/mcp` registers. The sender is the calling thread, so the tool acts as its caller. */
-export const layer = McpToolAccess.toLayer(J5AttachmentSendToolkit, {
-  t3_thread_send_attachments: McpToolAccess.actsAsCaller((input) =>
-    Effect.gen(function* () {
-      const { scope, projection } = yield* readThread(input.threadId, ["messages"]);
-      const callerThreadId = (yield* requireThreadScope(scope, "t3_thread_send_attachments")).thread
-        .threadId;
-      if (input.threadId === callerThreadId)
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message:
-            "Self-messaging is not supported. Choose another agent from j5_list_participants.",
-        });
-      const send = yield* A2ASendService;
-      const directory = yield* send.listParticipants(callerThreadId);
-      const target = directory.find(
-        (row) =>
-          row.participant.kind === "agent" &&
-          row.participant.threadId === input.threadId &&
-          row.canReceiveMessage,
-      );
-      if (target === undefined || projection.thread.archivedAt !== null)
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message:
-            "The target is not an addressable agent. Call j5_list_participants before retrying.",
-        });
-      const references = yield* resolveAttachmentReferences(
-        input.attachments,
-        projection.messages.flatMap((message) => message.attachments),
-      );
-      const claimed = yield* claimPendingAttachments({
-        threadId: input.threadId,
-        attachments: references,
-      });
-      const crypto = yield* Crypto.Crypto;
-      const result = yield* send
-        .send({
-          commandId: CommCommandId.make(`command:j5:a2a:attachments:${yield* crypto.randomUUIDv4}`),
-          senderThreadId: callerThreadId,
-          to: target.participantId,
-          message:
-            input.message?.trim() ||
-            `Attached: ${claimed.attachments.map((attachment) => attachment.name).join(", ")}`,
-          attachments: claimed.attachments,
-          acceptedAt: yield* DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-        })
-        .pipe(
-          Effect.tapError((error) =>
-            isSendRefusal(error) ? releaseClaimedAttachments(claimed.claimedPaths) : Effect.void,
-          ),
-        );
-      // Storage errors and defects leave acceptance uncertain; retain their claims.
-      yield* (yield* A2ADeliveryWorker).notify;
-      return {
-        threadId: input.threadId,
-        ...(yield* withDeliveryNotice(result, {
-          receiverId: target.participantId,
-          callerThreadId: callerThreadId,
-        })),
-      };
-    }).pipe(
-      Effect.mapError((cause) =>
-        isMcpFailure(cause)
-          ? cause
-          : isSendRefusal(cause)
-            ? new OrchestratorMcpFailure({ code: "orchestration_error", message: cause.message })
-            : unavailable(),
-      ),
-      Effect.catchDefect(() => Effect.fail(unavailable())),
+/**
+ * Sends a message with files for an agent on this server. Each attachment is a pending upload,
+ * or one the receiver's thread already holds, and is claimed into that thread before `send`
+ * commits the message. A send the ledger refuses committed nothing, so its claims are released;
+ * any other failure leaves acceptance uncertain, and the claims stay.
+ */
+export const sendClaimingAttachments = Effect.fn("j5.a2a.mcp.sendClaimingAttachments")(function* <
+  A,
+  E,
+  R,
+>(
+  receiverThreadId: ThreadId,
+  attachments: ReadonlyArray<typeof McpAttachmentInput.Type>,
+  send: (claimed: ReadonlyArray<ChatAttachment>) => Effect.Effect<A, E, R>,
+) {
+  const { projection } = yield* readThread(receiverThreadId, ["messages"]);
+  const references = yield* resolveAttachmentReferences(
+    attachments,
+    projection.messages.flatMap((message) => message.attachments),
+  );
+  const claimed = yield* claimPendingAttachments({
+    threadId: receiverThreadId,
+    attachments: references,
+  });
+  return yield* send(claimed.attachments).pipe(
+    Effect.tapError((error) =>
+      isSendRefusal(error) ? releaseClaimedAttachments(claimed.claimedPaths) : Effect.void,
     ),
-  ),
+  );
 });
-
-/** The same handler as a plain layer, for tests that call the tool without registering it. */
-export const J5AttachmentSendHandlersLive = McpToolAccess.HandlersLayer.layer(layer);

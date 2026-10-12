@@ -317,6 +317,36 @@ export type A2ASendError =
   | A2AClearOwnAskUnknownExchangeError
   | A2AClearOwnAskCommandConflictError;
 
+/**
+ * A send the service refused before it committed anything: the sender, the receiver or the
+ * request itself was not acceptable. Storage and decoding failures are not here, because after
+ * one of those nobody knows whether the message was committed. A caller that prepared something
+ * for the message, such as claimed attachments, undoes it only for these.
+ */
+export const isSendRefusal = Schema.is(
+  Schema.Union([
+    A2AMachineCannotReceiveError,
+    A2AMachineSenderNotRegisteredError,
+    A2ASenderNotJoinedError,
+    A2ASenderRetiredError,
+    A2AHomeMembershipStateError,
+    A2AParticipantNotFoundError,
+    A2AAmbiguousParticipantError,
+    A2APeersUnreadError,
+    A2AParticipantArchivedError,
+    A2AMessageTooLongError,
+    A2AIntentRequiredError,
+    A2AUrgencyRequiredError,
+    A2AUrgencyNotAcceptedError,
+    A2AUrgencyRequiresExchangeError,
+    A2AHumanAskOrReplyRequiredError,
+    A2AHumanFollowupNotAllowedError,
+    A2AExchangeNotOpenError,
+    A2AExchangeAlreadyAnsweredError,
+    A2AExchangeParticipantMismatchError,
+  ]),
+);
+
 interface MembershipRow {
   readonly project_id: string;
   readonly participant_id: string;
@@ -983,6 +1013,12 @@ const rawLayer: Layer.Layer<
               messageId,
               text: input.message,
               ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
+              ...(input.mode === undefined || input.mode === "queue"
+                ? {}
+                : {
+                    mode: input.mode,
+                    ...(input.modeLimit === undefined ? {} : { modeLimit: input.modeLimit }),
+                  }),
               originProjectId: sender.projectId,
               receiverProjectId: receiver.projectId,
               ...(receiver.environmentId === null

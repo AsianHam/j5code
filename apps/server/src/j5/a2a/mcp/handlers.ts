@@ -1,4 +1,9 @@
-import { isAgentPersonaReasoningOptionId, type ModelSelection } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  isAgentPersonaReasoningOptionId,
+  type ModelSelection,
+  ProjectId,
+} from "@t3tools/contracts";
 import { playbookHandlers } from "../../playbooks/mcp.ts";
 import { playbookWorkspaceRoot } from "../../playbooks/workspace.ts";
 import * as Crypto from "effect/Crypto";
@@ -14,12 +19,18 @@ import {
   requireThreadScope,
 } from "../../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
+import {
+  assertTargetWithinLimits,
+  type CallerLimits,
+  loadCaller,
+} from "../../../mcp/threadAccess.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import {
   ThreadManagementService,
   latestActiveRun,
 } from "../../../orchestration-v2/ThreadManagementService.ts";
+import { ProjectService } from "../../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { makeAgentPersonaLibrary } from "../../agents/agentPersonaLibrary.ts";
 import { buildAgentPersonaCatalog } from "../../agents/agentPersonaRouting.ts";
@@ -48,6 +59,7 @@ import { ParticipantPlacementService } from "../PlacementService.ts";
 import { withDeliveryNotice } from "../receiverBacklog.ts";
 import { A2ASendService } from "../SendService.ts";
 import { stopThread } from "../stopThread.ts";
+import { sendClaimingAttachments } from "./attachments.ts";
 import { SpawnCompositionService } from "../SpawnCompositionService.ts";
 import {
   SpawnWorkspaceService,
@@ -72,6 +84,7 @@ import {
 import { CommCommandId, type ParticipantDirectoryRow } from "../contracts.ts";
 import type { ParticipantProvenanceView } from "../placementContracts.ts";
 import {
+  J5_LIST_PARTICIPANTS_DEFAULT_LIMIT,
   J5Toolkit,
   type J5ArchiveCrewFailure,
   type J5McpFailure,
@@ -487,27 +500,80 @@ const handlers = {
       const crypto = yield* Crypto.Crypto;
       const service = yield* A2ASendService;
       const worker = yield* A2ADeliveryWorker;
+      const mode = input.mode ?? "queue";
+      const attachments = input.attachments ?? [];
+      // A plain queued message needs nothing read first. A steer, a restart or a file acts on
+      // the receiver's own thread, so the receiver must be an agent on this server.
+      const receiverThreadId =
+        mode === "queue" && attachments.length === 0
+          ? undefined
+          : yield* Effect.gen(function* () {
+              const receiver = (yield* service.listParticipants(scope.thread.threadId)).find(
+                (row) => row.participantId === input.to,
+              );
+              if (receiver === undefined || receiver.participant.kind !== "agent") {
+                return yield* stateError(
+                  `${mode === "queue" ? "attachments reach" : `mode=${mode} reaches`} only an agent on this server, and ${input.to} is not one.`,
+                  // A machine takes no message at all and a person takes only an ask, so the
+                  // retry is not promised to work: the listing says what the recipient accepts.
+                  `Call j5_list_participants to see what ${input.to} accepts; if it takes messages, retry j5_send_message without ${mode === "queue" ? "attachments" : "mode"}.`,
+                );
+              }
+              return receiver.participant.threadId;
+            });
+      let modeLimit: CallerLimits | undefined;
+      if (receiverThreadId !== undefined && mode !== "queue") {
+        // Steering or restarting another agent's turn is a write to its thread, so upstream's
+        // rule applies: the target must run within the caller's modes. A queued send has none.
+        const target = yield* (yield* ThreadManagementService)
+          .getThreadShell(receiverThreadId)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (target === null) {
+          return yield* stateError(
+            `The thread of ${input.to} cannot be read to check mode=${mode}.`,
+            "Retry j5_send_message, or send without mode.",
+          );
+        }
+        modeLimit = (yield* loadCaller()).limits;
+        yield* assertTargetWithinLimits(modeLimit, target).pipe(
+          Effect.mapError((error) =>
+            stateError(
+              `mode=${mode} is refused: ${input.to} runs with broader permissions than you do: ${error.message}`,
+              "Retry j5_send_message without mode; an ordinary message needs no permission check.",
+            ),
+          ),
+        );
+      }
       const acceptedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
       const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
-      const result = yield* service.send({
-        commandId: commandIdForRequest({
-          toolName: "send_message",
-          providerSessionId: scope.thread.providerSessionId,
-          requestKey,
-        }),
-        senderThreadId: scope.thread.threadId,
-        to: input.to,
-        message: input.message,
-        ...(input.expect_reply == null ? {} : { expectReply: input.expect_reply }),
-        ...(input.exchange_id == null ? {} : { exchangeId: input.exchange_id }),
-        ...(input.intent == null ? {} : { intent: input.intent }),
-        ...(input.urgency == null ? {} : { urgency: input.urgency }),
-        acceptedAt,
-      });
+      const send = (claimed?: ReadonlyArray<ChatAttachment>) =>
+        service.send({
+          commandId: commandIdForRequest({
+            toolName: "send_message",
+            providerSessionId: scope.thread.providerSessionId,
+            requestKey,
+          }),
+          senderThreadId: scope.thread.threadId,
+          to: input.to,
+          message: input.message,
+          ...(input.expect_reply == null ? {} : { expectReply: input.expect_reply }),
+          ...(input.exchange_id == null ? {} : { exchangeId: input.exchange_id }),
+          ...(input.intent == null ? {} : { intent: input.intent }),
+          ...(input.urgency == null ? {} : { urgency: input.urgency }),
+          ...(mode === "queue" ? {} : { mode }),
+          ...(modeLimit === undefined ? {} : { modeLimit }),
+          ...(claimed === undefined ? {} : { attachments: claimed }),
+          acceptedAt,
+        });
+      const result =
+        receiverThreadId === undefined || attachments.length === 0
+          ? yield* send()
+          : yield* sendClaimingAttachments(receiverThreadId, attachments, send);
       yield* worker.notify;
       return yield* withDeliveryNotice(result, {
         receiverId: input.to,
         callerThreadId: scope.thread.threadId,
+        mode,
       });
     }).pipe(Effect.mapError(failure)),
   ),
@@ -547,71 +613,172 @@ const handlers = {
           (project) => [project.id, project.name] as const,
         ),
       );
-      // Agents on peer servers sit beside local ones. Once this server has
-      // a peer, every row names the server it lives on; with none, no row does.
-      // A peer that did not answer is reported, never omitted.
+      // Agents on peer servers are listed by naming their server. Once this server has a peer,
+      // every row names the server it lives on; with none, no row does. A peer that did not
+      // answer is reported, never omitted.
       const remote = yield* (yield* PeerDirectory).listAgents();
-      const localServer =
-        remote.selfName === null ? {} : { server: { name: remote.selfName, local: true } };
-      const placements = yield* ParticipantPlacementService;
-      const projectIds = [...new Set(directory.map((row) => row.projectId))];
-      const placementRows = (yield* Effect.forEach(
-        projectIds,
-        (projectId) => placements.listParticipants(projectId),
-        { concurrency: 1 },
-      )).flat();
-      const placementByParticipant = new Map(
-        placementRows.map((row) => [`${row.projectId}\u0000${row.participantId}`, row] as const),
+      const servers =
+        remote.selfName === null
+          ? {}
+          : {
+              servers: [
+                { name: remote.selfName, local: true },
+                ...[
+                  ...new Set([
+                    ...remote.agents.map((agent) => agent.environmentLabel),
+                    ...remote.unreadPeers.map((peer) => peer.label),
+                  ]),
+                ]
+                  .toSorted()
+                  .map((name) => ({ name, local: false })),
+              ],
+            };
+      const self = directory.find(
+        (row) =>
+          row.participant.kind === "agent" && row.participant.threadId === scope.thread.threadId,
       );
+      const people = directory.filter((row) => row.participant.kind === "human");
+      // People belong to no project, so their rows carry the project being listed.
+      const personRowsIn = (listed: ParticipantDirectoryRow["projectId"] | undefined) =>
+        people.map((row) => ({
+          project_id: listed ?? row.projectId,
+          project_title: projectTitles.get(listed ?? row.projectId) ?? null,
+          participant_id: row.participantId,
+          participant: { kind: "human" as const, id: row.participantId },
+          self: false,
+          archived: row.archived,
+          can_receive_message: row.canReceiveMessage,
+          can_open_exchange: row.canOpenExchange,
+          accepts_urgency: row.acceptsUrgency,
+          thread_id: null,
+          provenance: projectProvenance({ kind: "not-applicable" } as const),
+          placement_parent_id: null,
+          display_name: null,
+          ...(remote.selfName === null ? {} : { server: { name: remote.selfName, local: true } }),
+        }));
+      const nameContains = input.name_contains?.toLocaleLowerCase();
+      const named = (displayName: string | null) =>
+        nameContains === undefined ||
+        (displayName !== null && displayName.toLocaleLowerCase().includes(nameContains));
+      const page = <Row>(rows: ReadonlyArray<Row>) => {
+        const cursor = input.cursor ?? 0;
+        const participants = rows.slice(
+          cursor,
+          cursor + (input.limit ?? J5_LIST_PARTICIPANTS_DEFAULT_LIMIT),
+        );
+        return {
+          unread_peer_count: remote.unreadPeers.length,
+          participants,
+          next_cursor:
+            cursor + participants.length < rows.length ? cursor + participants.length : null,
+          total: rows.length,
+          ...servers,
+        };
+      };
+
+      // A name selects a peer server whenever one carries it, even this server's own name:
+      // peers name themselves, and this server's agents are the listing with no name at all.
+      const namesPeer =
+        input.server !== undefined &&
+        servers.servers?.some((server) => !server.local && server.name === input.server) === true;
+      if (input.server !== undefined && !namesPeer && input.server !== remote.selfName) {
+        return yield* stateError(
+          `This server has no peer server named ${input.server}.`,
+          "Call j5_list_participants without server and choose a name from the result's servers.",
+        );
+      }
+      if (namesPeer) {
+        if (input.settled !== undefined) {
+          return yield* stateError(
+            "Whether an agent is settled is known for this server's agents only.",
+            "Retry j5_list_participants without settled, or without server.",
+          );
+        }
+        const remoteRows = remote.agents
+          .filter((agent) => agent.environmentLabel === input.server)
+          .filter((agent) => input.project_id === undefined || agent.projectId === input.project_id)
+          .filter((agent) => includeArchived || !agent.archived)
+          .filter((agent) => named(agent.displayName))
+          .map((agent) => ({
+            project_id: agent.projectId,
+            project_title: agent.projectTitle,
+            participant_id: agent.participantId,
+            participant: {
+              kind: "agent" as const,
+              id: agent.participantId,
+              thread_id: agent.threadId,
+            },
+            self: false,
+            archived: agent.archived,
+            can_receive_message: !agent.archived && agent.canReceiveMessage,
+            can_open_exchange: !agent.archived && agent.canReceiveMessage,
+            accepts_urgency: false,
+            thread_id: agent.threadId,
+            provenance: projectProvenance({ kind: "unrecorded" } as const),
+            placement_parent_id: null,
+            display_name: agent.displayName,
+            server: {
+              name: agent.environmentLabel,
+              local: false,
+              // Only a server that polls this one has its availability measured.
+              ...(agent.available === null ? {} : { available: agent.available }),
+              ...(agent.available === null || agent.lastAvailableAt === null
+                ? {}
+                : { last_available_at: agent.lastAvailableAt }),
+            },
+          }));
+        return page([...personRowsIn(self?.projectId), ...remoteRows]);
+      }
+
+      // A caller's project is its own row's. Every thread joins its project's ledger when it is
+      // created, so only a caller the ledger has not seen yet lists no project at all.
+      const projectId = input.project_id ?? self?.projectId;
+      if (input.project_id !== undefined) {
+        const project = yield* (yield* ProjectService)
+          .getById(ProjectId.make(input.project_id))
+          .pipe(
+            Effect.mapError((error) =>
+              stateError(
+                `Project ${input.project_id} cannot be read now: ${error.message}.`,
+                "Retry j5_list_participants.",
+              ),
+            ),
+          );
+        if (Option.isNone(project)) {
+          return yield* stateError(
+            `This server has no project ${input.project_id}.`,
+            "Call t3_project_list and retry j5_list_participants with one of its project ids.",
+          );
+        }
+      }
       const snapshot = yield* Effect.option(orchestrator.getShellSnapshot());
-      const titleByThreadId = new Map(
+      const threads = new Map(
         Option.match(snapshot, {
           onNone: () => [],
           onSome: ({ archivedThreads, threads }) =>
-            [...threads, ...archivedThreads].map((thread) => [thread.id, thread.title] as const),
+            [...threads, ...archivedThreads].map((thread) => [thread.id, thread] as const),
         }),
       );
-      const remoteRows = remote.agents
-        .filter((agent) => includeArchived || !agent.archived)
-        .map((agent) => ({
-          project_id: agent.projectId,
-          project_title: agent.projectTitle,
-          participant_id: agent.participantId,
-          participant: {
-            kind: "agent" as const,
-            id: agent.participantId,
-            thread_id: agent.threadId,
-          },
-          self: false,
-          archived: agent.archived,
-          can_receive_message: !agent.archived && agent.canReceiveMessage,
-          can_open_exchange: !agent.archived && agent.canReceiveMessage,
-          accepts_urgency: false,
-          thread_id: agent.threadId,
-          provenance: projectProvenance({ kind: "unrecorded" } as const),
-          placement_parent_id: null,
-          display_name: agent.displayName,
-          server: {
-            name: agent.environmentLabel,
-            local: false,
-            // Only a server that polls this one has its availability measured.
-            ...(agent.available === null ? {} : { available: agent.available }),
-            ...(agent.available === null || agent.lastAvailableAt === null
-              ? {}
-              : { last_available_at: agent.lastAvailableAt }),
-          },
-        }));
-      return {
-        unread_peer_count: remote.unreadPeers.length,
-        participants: directory
-          .map((row) => {
-            const placement = placementByParticipant.get(
-              `${row.projectId}\u0000${row.participantId}`,
-            );
-            const self =
-              row.participant.kind === "agent" &&
-              row.participant.threadId === scope.thread.threadId;
-            return {
+      const placements = yield* ParticipantPlacementService;
+      const placementByParticipant = new Map(
+        (projectId === undefined
+          ? []
+          : // A project nobody has worked in yet has no ledger, so nothing is placed in it.
+            yield* placements
+              .listParticipants(projectId)
+              .pipe(Effect.catchTags({ PlacementProjectNotFoundError: () => Effect.succeed([]) }))
+        ).map((row) => [row.participantId, row] as const),
+      );
+      const localRows = directory
+        .filter((row) => row.participant.kind !== "human" && row.projectId === projectId)
+        .map((row) => {
+          const placement = placementByParticipant.get(row.participantId);
+          const thread =
+            row.participant.kind === "agent" ? threads.get(row.participant.threadId) : undefined;
+          const isSelf = row === self;
+          return {
+            thread,
+            row: {
               project_id: row.projectId,
               project_title: projectTitles.get(row.projectId) ?? null,
               participant_id: row.participantId,
@@ -623,10 +790,10 @@ const handlers = {
                       thread_id: row.participant.threadId,
                     }
                   : row.participant,
-              self,
+              self: isSelf,
               archived: row.archived,
-              can_receive_message: !self && row.canReceiveMessage,
-              can_open_exchange: !self && row.canOpenExchange,
+              can_receive_message: !isSelf && row.canReceiveMessage,
+              can_open_exchange: !isSelf && row.canOpenExchange,
               accepts_urgency: row.acceptsUrgency,
               thread_id: row.participant.kind === "agent" ? row.participant.threadId : null,
               provenance: projectProvenance(
@@ -638,15 +805,40 @@ const handlers = {
               placement_parent_id: placement?.placementParentId ?? null,
               display_name:
                 row.participant.kind === "agent"
-                  ? (titleByThreadId.get(row.participant.threadId) ?? null)
+                  ? (thread?.title ?? null)
                   : row.participant.kind === "machine"
                     ? row.participant.name
                     : null,
-              ...localServer,
-            };
-          })
-          .concat(remoteRows),
-      };
+              ...(remote.selfName === null
+                ? {}
+                : { server: { name: remote.selfName, local: true } }),
+            },
+          };
+        })
+        // Your own row is kept whatever the filters say, so a listing always shows who is asking.
+        .filter(
+          ({ row, thread }) =>
+            row.self ||
+            (named(row.display_name) &&
+              (input.settled === undefined ||
+                row.participant.kind !== "agent" ||
+                (thread?.settledOverride === "settled") === input.settled)),
+        )
+        // Yourself first, then newest first as upstream lists threads; machines have no thread.
+        .toSorted(
+          (left, right) =>
+            Number(right.row.self) - Number(left.row.self) ||
+            (right.thread === undefined ? 0 : DateTime.toEpochMillis(right.thread.updatedAt)) -
+              (left.thread === undefined ? 0 : DateTime.toEpochMillis(left.thread.updatedAt)) ||
+            right.row.participant_id.localeCompare(left.row.participant_id),
+        )
+        .map(({ row }) => row);
+      const [first, ...rest] = localRows;
+      return page(
+        first?.self === true
+          ? [first, ...personRowsIn(projectId), ...rest]
+          : [...personRowsIn(projectId), ...localRows],
+      );
     }).pipe(Effect.mapError(failure)),
   ),
   j5_spawn_agent: McpToolAccess.actsAsCaller((input) =>
@@ -961,20 +1153,26 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* callerScope;
       const crypto = yield* Crypto.Crypto;
-      // A participant id is looked up in the caller's project.
       const caller = yield* resolveCallerMembership(scope);
-      const placements = yield* ParticipantPlacementService;
-      const matches = (yield* placements.listParticipants(caller.projectId)).filter(
-        (row) => row.participantId === input.participant_id,
-      );
+      // Any agent on this server, archived ones included: archiving can leave a run executing.
+      const matches = (yield* (yield* A2ASendService)
+        .listParticipants(scope.thread.threadId, true)
+        .pipe(
+          Effect.mapError((error) =>
+            stateError(
+              `This server's participants cannot be read for j5_stop_agent: ${error.message}.`,
+              "Retry j5_stop_agent with the same client_request_id.",
+            ),
+          ),
+        )).filter((row) => row.participantId === input.participant_id);
       if (matches.length !== 1) {
         return yield* stateError(
-          `Your project has ${matches.length === 0 ? "no" : "an ambiguous"} participant ${input.participant_id}.`,
+          `This server has ${matches.length === 0 ? "no" : "an ambiguous"} participant ${input.participant_id}.`,
           "Call j5_list_participants and retry j5_stop_agent with exactly one listed agent participant_id.",
         );
       }
-      const target = matches[0]!;
-      if (target.participant.kind !== "agent" || target.threadId === null) {
+      const target = matches[0]!.participant;
+      if (target.kind !== "agent") {
         return yield* stateError(
           `Participant ${input.participant_id} is not an agent with a thread and cannot be stopped.`,
           "Call j5_list_participants and retry j5_stop_agent with an agent participant_id.",
@@ -991,14 +1189,35 @@ const handlers = {
             ),
           ),
         );
+      // Upstream's rule for a write to another thread: it must run within the caller's modes.
+      // A Captain commands its own seats whatever their modes.
+      const crews = yield* AgentCrewInstanceService;
+      const seat = yield* crews.findMembership(input.participant_id);
+      const crew = seat === null ? null : yield* crews.read(seat.crewInstanceId);
+      const limits =
+        crew !== null && crew.captainParticipantId === caller.participantId
+          ? undefined
+          : (yield* loadCaller()).limits;
+      if (limits !== undefined) {
+        yield* assertTargetWithinLimits(limits, targetProjection.thread).pipe(
+          Effect.mapError((error) =>
+            stateError(
+              `Peer Agent ${input.participant_id} runs with broader permissions than you do: ${error.message}`,
+              "Ask its Captain or the user to stop it; j5_stop_agent reaches only agents within your own permission modes.",
+            ),
+          ),
+        );
+      }
       const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
       const commandId = lifecycleCommandId({
         providerSessionId: scope.thread.providerSessionId,
         requestKey,
         operation: "stop-agent",
       });
-      // Upstream's Stop, delegated tasks included (see stopThread.ts).
-      yield* stopThread(threadManagement, { commandId, threadId: target.threadId }).pipe(
+      // Upstream's Stop, delegated tasks included (see stopThread.ts). The limit goes with it:
+      // the target's modes can be raised after the check above, and upstream checks again under
+      // the thread's lock.
+      yield* stopThread(threadManagement, { commandId, threadId: target.threadId }, limits).pipe(
         Effect.mapError((error) =>
           stateError(
             `Peer Agent ${input.participant_id} on thread ${target.threadId} could not be stopped: ${error.message}.`,

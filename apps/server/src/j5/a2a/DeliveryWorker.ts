@@ -347,6 +347,8 @@ const makeLayer = (daemon: boolean) =>
             exchangeRole: row.exchange_role,
             message: row.message_text,
             ...(payload?.attachments === undefined ? {} : { attachments: payload.attachments }),
+            ...(payload?.mode === undefined ? {} : { mode: payload.mode }),
+            ...(payload?.modeLimit === undefined ? {} : { modeLimit: payload.modeLimit }),
             envelopeChannel: row.envelope_channel,
             ...(senderServerName === undefined ? {} : { senderServerName }),
           });

@@ -12,8 +12,8 @@ import * as Sink from "effect/Sink";
 import * as Schema from "effect/Schema";
 import { createPendingAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { McpInvocationContext } from "../../mcp/McpInvocationContext.ts";
-import { J5AttachmentSendToolkit, J5AttachmentSendHandlersLive } from "./mcp/attachments.ts";
-import { SendMessageResult, MessageSentPayload } from "./contracts.ts";
+import { sendClaimingAttachments } from "./mcp/attachments.ts";
+import { MessageSentPayload } from "./contracts.ts";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as GitWorkflow from "../../git/GitWorkflowService.ts";
@@ -40,6 +40,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -152,7 +153,6 @@ import {
   type AgentParticipant,
 } from "./contracts.ts";
 
-const decodeSendResult = Schema.decodeUnknownEffect(SendMessageResult);
 const decodeSentFact = Schema.decodeUnknownEffect(Schema.fromJsonString(MessageSentPayload));
 const decodeToolFailure = Schema.decodeUnknownEffect(
   Schema.Struct({ code: Schema.String, message: Schema.String }),
@@ -927,6 +927,143 @@ const startBusyTurn = Effect.fn("A2AIntegration.startBusyTurn")(function* (targe
   yield* runWorkerUntil(worker, running);
 });
 
+it.effect("lands a message the way its sender asked, on any model", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const threads = yield* ThreadManagementService;
+      const transport = yield* A2ADeliveryTransport;
+      const worker = yield* OrchestrationEffectWorkerV2;
+      const runsFor = (threadId: ThreadId, messageId: LedgerMessageId) =>
+        threads
+          .getThreadProjection(threadId)
+          .pipe(
+            Effect.map((projection) =>
+              projection.runs.filter((run) => run.userMessageId === deliveryMessageId(messageId)),
+            ),
+          );
+
+      // An idle receiver has no turn to steer or restart: the message starts one.
+      const idle = yield* seedTarget("mode-idle");
+      yield* transport.deliverAgent({ ...idle.delivery, mode: "steer" });
+      assert.lengthOf(yield* runsFor(idle.threadId, idle.messageId), 1);
+      assert.lengthOf(yield* Ref.get(harness.steerInputs), 0);
+
+      const busy = yield* seedTarget("mode-busy");
+      yield* startBusyTurn(busy);
+      const running = (yield* threads.getThreadProjection(busy.threadId)).runs[0]!;
+
+      // The default still waits behind the running turn.
+      const queuedId = LedgerMessageId.make("message:mode-busy:queued");
+      yield* transport.deliverAgent({ ...busy.delivery, messageId: queuedId });
+      assert.deepStrictEqual(
+        (yield* runsFor(busy.threadId, queuedId)).map((run) => run.status),
+        ["queued"],
+      );
+
+      const steeredId = LedgerMessageId.make("message:mode-busy:steered");
+      const steered = yield* transport
+        .deliverAgent({ ...busy.delivery, messageId: steeredId, mode: "steer" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* runWorkerUntil(worker, steered);
+      const steers = yield* Ref.get(harness.steerInputs);
+      assert.deepStrictEqual(
+        steers.map((input) => [input.runId, input.message.messageId]),
+        [[running.id, deliveryMessageId(steeredId)]],
+      );
+      assert.lengthOf(
+        yield* runsFor(busy.threadId, steeredId),
+        0,
+        "a steer opens no turn of its own",
+      );
+
+      const restartedId = LedgerMessageId.make("message:mode-busy:restarted");
+      const restarted = { ...busy.delivery, messageId: restartedId, mode: "restart" } as const;
+      // A retry of the same delivery repeats nothing.
+      for (let attempt = 0; attempt < 2; attempt++) yield* transport.deliverAgent(restarted);
+      yield* worker.drain();
+      const after = yield* threads.getThreadProjection(busy.threadId);
+      assert.lengthOf(
+        after.messages.filter((message) => message.id === deliveryMessageId(restartedId)),
+        1,
+      );
+      // Upstream restarts the turn it interrupted: the same run, on a new attempt, now answering
+      // the restart message.
+      assert.deepStrictEqual(
+        (yield* runsFor(busy.threadId, restartedId)).map((run) => run.id),
+        [running.id],
+      );
+      assert.lengthOf(
+        after.attempts.filter((attempt) => attempt.runId === running.id),
+        2,
+      );
+      assert.lengthOf(
+        yield* Ref.get(harness.interruptInputs),
+        1,
+        "interrupted once, retry included",
+      );
+      assert.lengthOf(yield* Ref.get(harness.steerInputs), 1);
+
+      // The sender's limit travels with the message. A receiver raised above it before
+      // delivery is not steered: upstream refuses under the thread's lock, and the message
+      // waits its turn like any other.
+      const limited = yield* seedTarget("mode-limited");
+      yield* startBusyTurn(limited);
+      const limitedId = LedgerMessageId.make("message:mode-limited:steer");
+      for (let attempt = 0; attempt < 2; attempt++) {
+        yield* transport.deliverAgent({
+          ...limited.delivery,
+          messageId: limitedId,
+          mode: "steer",
+          modeLimit: { runtimeMode: "approval-required", interactionMode: "default" },
+        });
+      }
+      assert.deepStrictEqual(
+        (yield* runsFor(limited.threadId, limitedId)).map((run) => run.status),
+        ["queued"],
+      );
+      assert.lengthOf(yield* Ref.get(harness.steerInputs), 1);
+
+      // A restart aimed at a turn that ends before the dispatch is refused by upstream, and a
+      // refused command stays refused. The message must still arrive, once.
+      const raced = yield* seedTarget("mode-raced");
+      yield* startBusyTurn(raced);
+      const sink = yield* EventSinkV2;
+      const stale = yield* threads.getThreadProjection(raced.threadId);
+      const ended = yield* sink.stream({ threadId: raced.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "provider-turn.updated" &&
+            stored.event.payload.status === "completed",
+        ),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* PubSub.publish((yield* Ref.get(harness.activeTurns)).get(raced.threadId)!.events, {
+        type: "provider_turn.updated",
+        driver,
+        providerTurn: {
+          ...stale.providerTurns[0]!,
+          status: "completed",
+          completedAt: yield* DateTime.now,
+        },
+      });
+      yield* Fiber.join(ended);
+      const racedId = LedgerMessageId.make("message:mode-raced:restart");
+      yield* Ref.set(harness.staleProjection, stale);
+      yield* transport.deliverAgent({ ...raced.delivery, messageId: racedId, mode: "restart" });
+      yield* Ref.set(harness.staleProjection, undefined);
+      yield* transport.deliverAgent({ ...raced.delivery, messageId: racedId, mode: "restart" });
+      const afterRace = yield* threads.getThreadProjection(raced.threadId);
+      assert.lengthOf(
+        afterRace.messages.filter((message) => message.id === deliveryMessageId(racedId)),
+        1,
+      );
+      assert.lengthOf(yield* runsFor(raced.threadId, racedId), 1);
+    }).pipe(Effect.provide(makeTestLayer(harness)));
+  }),
+);
+
 it.effect("measures the backlog a send waits behind on a busy receiver", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
@@ -1475,9 +1612,14 @@ it.effect("routes real archive and delete commands through lifecycle closure exa
   }),
 );
 
-it.effect.each(["completed", "interrupted", "failed"] as const)(
-  "settles a committed Astra steer truthfully after %s before execution",
-  (terminal) =>
+it.effect.each(
+  (["completed", "interrupted", "failed"] as const).flatMap((terminal) =>
+    // A steer Astra takes unasked, and one a sender asked for on another model.
+    ([false, true] as const).map((asked) => ({ terminal, asked })),
+  ),
+)(
+  "settles a committed steer truthfully after $terminal before execution (asked for: $asked)",
+  ({ terminal, asked }) =>
     Effect.gen(function* () {
       const harness = yield* makeHarness;
       yield* Effect.gen(function* () {
@@ -1485,7 +1627,12 @@ it.effect.each(["completed", "interrupted", "failed"] as const)(
         const transport = yield* A2ADeliveryTransport;
         const worker = yield* OrchestrationEffectWorkerV2;
         const sink = yield* EventSinkV2;
-        const target = yield* seedTarget(`post-commit-race-${terminal}`, "gpt-6-astra");
+        const model = asked ? modelSelection.model : "gpt-6-astra";
+        const seeded = yield* seedTarget(`post-commit-race-${terminal}-${String(asked)}`, model);
+        const target = {
+          ...seeded,
+          delivery: asked ? { ...seeded.delivery, mode: "steer" as const } : seeded.delivery,
+        };
         const running = yield* sink.stream({ threadId: target.threadId }).pipe(
           Stream.filter(
             (stored) =>
@@ -1566,10 +1713,21 @@ it.effect.each(["completed", "interrupted", "failed"] as const)(
         assert.lengthOf(messages, 1);
         if (terminal === "completed") {
           const followUp = after.runs.find((run) => run.userMessageId === messages[0]!.id);
-          assert.equal(followUp?.modelSelection.model, "gpt-6-astra");
+          assert.equal(followUp?.modelSelection.model, model);
         }
         assert.lengthOf(yield* Ref.get(harness.steerInputs), 0);
         assert.lengthOf(yield* Ref.get(harness.interruptInputs), 0);
+        // Cancelling reads the steer's outcome, whichever command it was dispatched under: a
+        // steer no provider took was never delivered, though its message sits in the thread.
+        if (terminal !== "completed") {
+          assert.equal(
+            yield* transport.cancelAgent({
+              receiverId: target.delivery.receiverId,
+              messageId: target.messageId,
+            }),
+            "cancelled",
+          );
+        }
       }).pipe(Effect.provide(makeTestLayer(harness)));
     }),
 );
@@ -2585,64 +2743,67 @@ it.effect(
     }),
 );
 
-it.effect("delivers attachment-tool claims from the ledger after the pending upload is gone", () =>
-  Effect.gen(function* () {
-    const harness = yield* makeHarness;
-    const base = makeMessageLifecycleLayer(harness).pipe(
-      Layer.provideMerge(serverConfigLayer),
-      Layer.provideMerge(NodeServices.layer),
-    );
-    const layer = J5AttachmentSendHandlersLive.pipe(Layer.provideMerge(base));
-    yield* Effect.gen(function* () {
-      const registrar = yield* A2AHomeRegistrar;
-      const sender = yield* seedTarget("attachment-sender", modelSelection.model, registrar);
-      const target = yield* seedTarget(
-        "attachment-target",
-        modelSelection.model,
-        registrar,
-        sender.ledgerProjectId,
-        sender.projectId,
+it.effect(
+  "delivers a message's claimed attachments from the ledger after the pending upload is gone",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      const base = makeMessageLifecycleLayer(harness).pipe(
+        Layer.provideMerge(serverConfigLayer),
+        Layer.provideMerge(NodeServices.layer),
       );
-      const threads = yield* ThreadManagementService;
-      yield* threads.sendToThread({
-        commandId: CommandId.make("command:attachment:sender-start"),
-        projectId: sender.projectId,
-        threadId: sender.threadId,
-        messageId: MessageId.make("message:attachment:sender-start"),
-        text: "Send a file to the other agent.",
-        attachments: [],
-        mode: "queue",
-        createdBy: "user",
-        creationSource: "web",
-      });
-      yield* startPendingTestTurn(sender.threadId);
-      const config = yield* ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      const attachment = {
-        type: "image" as const,
-        id: ChatAttachmentId.make(createPendingAttachmentId()!),
-        name: "screen.png",
-        mimeType: "image/png",
-        sizeBytes: 3,
-      };
-      const pendingPath = resolveAttachmentPath({
-        attachmentsDir: config.attachmentsDir,
-        attachment,
-      });
-      assert.isNotNull(pendingPath);
-      yield* fs.writeFile(pendingPath!, new Uint8Array([1, 2, 3]));
-      const toolkit = yield* J5AttachmentSendToolkit;
-      const call = (threadId: ThreadId) =>
-        toolkit
-          .handle("t3_thread_send_attachments", {
-            threadId,
-            message: "Inspect this screenshot.",
-            attachments: [attachment],
-          })
-          .pipe(
-            Stream.unwrap,
-            Stream.run(Sink.last()),
-            Effect.flatMap(Effect.fromOption),
+      const layer = base;
+      yield* Effect.gen(function* () {
+        const registrar = yield* A2AHomeRegistrar;
+        const sender = yield* seedTarget("attachment-sender", modelSelection.model, registrar);
+        const target = yield* seedTarget(
+          "attachment-target",
+          modelSelection.model,
+          registrar,
+          sender.ledgerProjectId,
+          sender.projectId,
+        );
+        const threads = yield* ThreadManagementService;
+        yield* threads.sendToThread({
+          commandId: CommandId.make("command:attachment:sender-start"),
+          projectId: sender.projectId,
+          threadId: sender.threadId,
+          messageId: MessageId.make("message:attachment:sender-start"),
+          text: "Send a file to the other agent.",
+          attachments: [],
+          mode: "queue",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* startPendingTestTurn(sender.threadId);
+        const config = yield* ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const attachment = {
+          type: "image" as const,
+          id: ChatAttachmentId.make(createPendingAttachmentId()!),
+          name: "screen.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+        };
+        const pendingPath = resolveAttachmentPath({
+          attachmentsDir: config.attachmentsDir,
+          attachment,
+        });
+        assert.isNotNull(pendingPath);
+        yield* fs.writeFile(pendingPath!, new Uint8Array([1, 2, 3]));
+        const send = yield* A2ASendService;
+        // The handler's own steps: claim into the receiver's thread, then commit the message.
+        const call = (service: A2ASendService["Service"], commandSuffix: string) =>
+          sendClaimingAttachments(target.threadId, [attachment], (claimed) =>
+            service.send({
+              commandId: CommCommandId.make(`command:j5:a2a:attachments:${commandSuffix}`),
+              senderThreadId: sender.threadId,
+              to: target.receiverId,
+              message: "Inspect this screenshot.",
+              attachments: claimed,
+              acceptedAt: "2026-08-17T12:00:00.000Z",
+            }),
+          ).pipe(
             Effect.provideService(McpInvocationContext, {
               environmentId: EnvironmentId.make("environment:attachment-test"),
               requestNamespace: "attachment-test",
@@ -2656,69 +2817,66 @@ it.effect("delivers attachment-tool claims from the ledger after the pending upl
               issuedAt: 1,
             }),
           );
-      assert.isTrue((yield* call(sender.threadId)).isFailure);
-      const send = yield* A2ASendService;
-      const filesBefore = yield* fs.readDirectory(config.attachmentsDir);
-      const refused = yield* call(target.threadId).pipe(
-        Effect.provideService(A2ASendService, {
-          ...send,
-          send: (input) =>
-            Effect.gen(function* () {
-              assert.lengthOf(
-                yield* fs.readDirectory(config.attachmentsDir),
-                filesBefore.length + 1,
-              );
-              return yield* send.send({
-                ...input,
-                senderThreadId: ThreadId.make("native-unjoined-sender"),
-              });
-            }),
-        }),
-      );
-      assert.isTrue(refused.isFailure);
-      assert.deepEqual(
-        (yield* fs.readDirectory(config.attachmentsDir)).sort(),
-        [...filesBefore].sort(),
-      );
-      assert.isTrue(yield* fs.exists(pendingPath!));
-      const outcome = yield* call(target.threadId);
-      assert.isFalse(outcome.isFailure);
-      assert.notProperty(outcome.result, "runId");
-      const accepted = yield* decodeSendResult(outcome.result);
-      const sql = yield* SqlClient.SqlClient;
-      const facts = yield* sql<{
-        readonly payload: string;
-      }>`SELECT payload FROM j5_a2a_comm_event WHERE seq = ${accepted.durableAtSeq}`;
-      const sent = yield* decodeSentFact(facts[0]!.payload);
-      assert.lengthOf(sent.attachments ?? [], 1);
-      const canonical = sent.attachments![0]!;
-      assert.notEqual(canonical.id, attachment.id);
-      yield* fs.remove(pendingPath!);
-      const delivery = yield* A2ADeliveryWorker;
-      assert.deepEqual(
-        (yield* delivery.drain).map(({ messageId, state }) => ({ messageId, state })),
-        [{ messageId: accepted.messageId, state: "delivered" }],
-      );
-      const projection = yield* threads.getThreadProjection(target.threadId);
-      const delivered = projection.messages.filter(
-        (message) => message.id === deliveryMessageId(accepted.messageId),
-      );
-      assert.lengthOf(delivered, 1);
-      assert.deepEqual(delivered[0]!.attachments, [canonical]);
-      const storedPath = resolveAttachmentPath({
-        attachmentsDir: config.attachmentsDir,
-        attachment: canonical,
-      });
-      assert.deepEqual(yield* fs.readFile(storedPath!), new Uint8Array([1, 2, 3]));
-      assert.deepEqual(yield* delivery.drain, []);
-      yield* startPendingTestTurn(target.threadId);
-      const targetInput = (yield* Ref.get(harness.startedInputs)).find(
-        (input) => input.threadId === target.threadId,
-      );
-      assert.isDefined(targetInput);
-      assert.deepEqual(targetInput!.message.attachments, [canonical]);
-    }).pipe(Effect.provide(layer));
-  }),
+        const filesBefore = yield* fs.readDirectory(config.attachmentsDir);
+        // A send the ledger refuses gives its claimed files back.
+        const refused = yield* Effect.exit(
+          call(
+            {
+              ...send,
+              send: (input) =>
+                Effect.gen(function* () {
+                  assert.lengthOf(
+                    yield* fs.readDirectory(config.attachmentsDir).pipe(Effect.orDie),
+                    filesBefore.length + 1,
+                  );
+                  // An ask without an intent: a refusal a full send adds to the old tool's.
+                  return yield* send.send({ ...input, expectReply: true });
+                }),
+            },
+            "refused",
+          ),
+        );
+        assert.isTrue(Exit.isFailure(refused));
+        assert.deepEqual(
+          (yield* fs.readDirectory(config.attachmentsDir)).sort(),
+          [...filesBefore].sort(),
+        );
+        assert.isTrue(yield* fs.exists(pendingPath!));
+        const accepted = yield* call(send, "accepted");
+        const sql = yield* SqlClient.SqlClient;
+        const facts = yield* sql<{
+          readonly payload: string;
+        }>`SELECT payload FROM j5_a2a_comm_event WHERE seq = ${accepted.durableAtSeq}`;
+        const sent = yield* decodeSentFact(facts[0]!.payload);
+        assert.lengthOf(sent.attachments ?? [], 1);
+        const canonical = sent.attachments![0]!;
+        assert.notEqual(canonical.id, attachment.id);
+        yield* fs.remove(pendingPath!);
+        const delivery = yield* A2ADeliveryWorker;
+        assert.deepEqual(
+          (yield* delivery.drain).map(({ messageId, state }) => ({ messageId, state })),
+          [{ messageId: accepted.messageId, state: "delivered" }],
+        );
+        const projection = yield* threads.getThreadProjection(target.threadId);
+        const delivered = projection.messages.filter(
+          (message) => message.id === deliveryMessageId(accepted.messageId),
+        );
+        assert.lengthOf(delivered, 1);
+        assert.deepEqual(delivered[0]!.attachments, [canonical]);
+        const storedPath = resolveAttachmentPath({
+          attachmentsDir: config.attachmentsDir,
+          attachment: canonical,
+        });
+        assert.deepEqual(yield* fs.readFile(storedPath!), new Uint8Array([1, 2, 3]));
+        assert.deepEqual(yield* delivery.drain, []);
+        yield* startPendingTestTurn(target.threadId);
+        const targetInput = (yield* Ref.get(harness.startedInputs)).find(
+          (input) => input.threadId === target.threadId,
+        );
+        assert.isDefined(targetInput);
+        assert.deepEqual(targetInput!.message.attachments, [canonical]);
+      }).pipe(Effect.provide(layer));
+    }),
 );
 
 it.effect(

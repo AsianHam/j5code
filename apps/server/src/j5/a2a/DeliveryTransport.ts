@@ -22,6 +22,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import { DispatchModeLimit, type DispatchModes } from "../../orchestration-v2/DispatchModeLimit.ts";
 import { EffectOutboxV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import {
@@ -35,6 +36,7 @@ import { PeerRegistryService } from "./PeerRegistryService.ts";
 import { peerProtocolHeaders, responseProtocolMismatch } from "./peerProtocol.ts";
 import {
   type DeliveryEnvelopeChannel,
+  type SendMode,
   LedgerProjectId,
   ExchangeId,
   isHumanParticipantId,
@@ -111,6 +113,10 @@ export interface AgentDeliveryInput {
   readonly exchangeRole: "none" | "ask" | "followup" | "reply" | "terminal_notice";
   readonly message: string;
   readonly attachments?: ReadonlyArray<ChatAttachment>;
+  /** How the sender asked for the message to land; absent means `queue`. */
+  readonly mode?: SendMode;
+  /** The broadest modes the sender could touch when it asked for a steer or a restart. */
+  readonly modeLimit?: DispatchModes;
   readonly envelopeChannel: DeliveryEnvelopeChannel;
   /** The peer server a received message came from, named in its envelope; absent for a local sender. */
   readonly senderServerName?: string;
@@ -160,6 +166,24 @@ const stablePart = (value: string) => encodeURIComponent(value);
  */
 export const deliveryCommandId = (messageId: LedgerMessageId) =>
   CommandId.make(`command:j5:a2a:delivery:${stablePart(messageId)}`);
+
+/**
+ * The command an asked-for steer or restart is dispatched under. It is not the delivery's own:
+ * upstream records a rejected command for good, and a restart is rejected when the turn it was
+ * aimed at has just ended, so the plain delivery that follows must keep a command id that nothing
+ * has refused.
+ */
+export const askedDeliveryCommandId = (
+  messageId: LedgerMessageId,
+  mode: Exclude<SendMode, "queue">,
+) => CommandId.make(`${deliveryCommandId(messageId)}:${mode}`);
+
+/** Every command one message's delivery may have been dispatched under. */
+const deliveryCommandIds = (messageId: LedgerMessageId) => [
+  deliveryCommandId(messageId),
+  askedDeliveryCommandId(messageId, "steer"),
+  askedDeliveryCommandId(messageId, "restart"),
+];
 
 const DELIVERY_MESSAGE_ID_PREFIX = "message:j5:a2a:delivery:";
 
@@ -229,6 +253,34 @@ export const gpt6PeerSteeringRun = (
     isGpt6Model(normalizeModelSlug(run.modelSelection.model, providerThread.driver))
     ? run
     : undefined;
+};
+
+/**
+ * The running turn a `steer` or `restart` lands on, by upstream's own steering policy: a steer
+ * needs a provider that steers a turn directly or by interrupting and restarting it, and a restart
+ * needs the second. Undefined when the receiver has no such turn, and the message is then
+ * delivered as any other: it starts a turn on an idle agent, or waits behind a busy one.
+ */
+export const requestedSteeringRun = (
+  target: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "providerTurns" | "providerThreads" | "providerSessions"
+  >,
+  channel: DeliveryEnvelopeChannel,
+  mode: Exclude<SendMode, "queue">,
+) => {
+  if (channel !== "peer" || target.thread.archivedAt !== null) return undefined;
+  const run = ThreadManagement.latestSteerableRun(target);
+  if (run === undefined) return undefined;
+  const providerThread = target.providerThreads.find(
+    (thread) => thread.id === run.providerThreadId,
+  );
+  const turns = target.providerSessions.find(
+    (candidate) => candidate.id === providerThread?.providerSessionId,
+  )?.capabilities.turns;
+  if (turns === undefined) return undefined;
+  const restarts = turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart;
+  return (mode === "steer" ? turns.supportsActiveSteering || restarts : restarts) ? run : undefined;
 };
 
 export const formatAgentDeliveryEnvelope = (
@@ -337,7 +389,11 @@ export const live: Layer.Layer<
               participantId: input.receiverId,
               state: "not an agent",
             });
-          const priorEffects = yield* outbox.listByCommandId(deliveryCommandId(input.messageId));
+          // A steer may sit under the delivery's own command (Astra) or the one its sender asked
+          // for; its outcome, not the message in the thread, says whether the provider took it.
+          const priorEffects = (yield* Effect.forEach(deliveryCommandIds(input.messageId), (id) =>
+            outbox.listByCommandId(id),
+          )).flat();
           const steer = priorEffects.find(
             (effect) => effect.request.type === "provider-turn.steer",
           );
@@ -471,6 +527,68 @@ export const live: Layer.Layer<
                   new A2ADeliveryHeldError({ participantId: input.receiverId, runId: run.id }),
                 )
               : Effect.void;
+          const mode = input.mode ?? "queue";
+          if (mode !== "queue") {
+            // The sender asked for a steer or a restart (see `askedDeliveryCommandId`).
+            const askedCommandId = askedDeliveryCommandId(input.messageId, mode);
+            const landed = Effect.fn("j5.a2a.delivery.landedAsAsked")(function* () {
+              const steer = (yield* outbox.listByCommandId(askedCommandId)).find(
+                (effect) => effect.request.type === "provider-turn.steer",
+              );
+              if (steer !== undefined) {
+                yield* awaitSteeringOutcome(steer.id);
+                return true;
+              }
+              // A restart, and a steer the provider takes by interrupting and restarting, leave
+              // no steer effect: the message in the thread is the proof.
+              const accepted = yield* orchestrator.getThreadProjection(participant.threadId);
+              if (!accepted.messages.some((message) => message.id === sendInput.messageId)) {
+                return false;
+              }
+              yield* heldRun(
+                accepted.runs.find((run) => run.userMessageId === sendInput.messageId),
+              );
+              return true;
+            });
+            if (yield* landed()) return;
+            const askedRun = requestedSteeringRun(target, input.envelopeChannel, mode);
+            if (askedRun !== undefined) {
+              yield* orchestrator
+                .dispatch({
+                  type: "message.dispatch",
+                  commandId: askedCommandId,
+                  threadId: sendInput.threadId,
+                  messageId: sendInput.messageId,
+                  text: sendInput.text,
+                  attachments: sendInput.attachments,
+                  ...(sendInput.senderThreadId === undefined
+                    ? {}
+                    : { senderThreadId: sendInput.senderThreadId }),
+                  createdBy: sendInput.createdBy,
+                  creationSource: sendInput.creationSource,
+                  modelSelection: askedRun.modelSelection,
+                  dispatchMode: {
+                    type: mode === "restart" ? "restart_active" : "steer_active",
+                    targetRunId: askedRun.id,
+                  },
+                })
+                .pipe(
+                  // The sender's limit when it sent. The receiver's user can raise its modes
+                  // before delivery, and upstream checks again under the thread's lock.
+                  Effect.provideService(DispatchModeLimit, input.modeLimit),
+                  // Refused or too late: the message is delivered as any other, below.
+                  Effect.catch((cause) =>
+                    Effect.logInfo("J5 A2A delivery could not land as its sender asked", {
+                      messageId: input.messageId,
+                      mode,
+                      cause,
+                    }),
+                  ),
+                );
+              if (yield* landed()) return;
+            }
+            return yield* heldRun((yield* threads.sendToThread(sendInput)).run);
+          }
           if (steeringRun === undefined) {
             yield* heldRun((yield* threads.sendToThread(sendInput)).run);
           } else {

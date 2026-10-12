@@ -9,9 +9,10 @@ import {
   gpt6PeerSteeringRun,
   deliveryMessageId,
   isDeliveryMessageId,
+  requestedSteeringRun,
 } from "./DeliveryTransport.ts";
 import { formatReceiverBacklogNotice } from "./EnvelopeFormatter.ts";
-import { LedgerMessageId, Participant, type ParticipantId } from "./contracts.ts";
+import { LedgerMessageId, Participant, type ParticipantId, type SendMode } from "./contracts.ts";
 
 export interface ReceiverBacklog {
   /** Messages that will each start their own turn once the receiver's current turn ends. */
@@ -26,7 +27,7 @@ const decodeParticipant = Schema.decodeUnknownEffect(Schema.fromJsonString(Parti
  * What a just-sent message is waiting behind: the receiver's running turn and the
  * A2A messages after it, both those already queued as runs and those the delivery
  * worker has not handed over yet. Undefined when the message will not wait: the
- * receiver is idle, takes it mid-turn (a GPT 6 model), holds its queue, is not an agent on
+ * receiver is idle, takes it mid-turn (a GPT 6 model, or a steer or restart), holds its queue, is not an agent on
  * this server, or the message has already run or will never run. Measured when
  * called and never stored, so it is advice to the sender, not a delivery fact. A
  * failed read is logged and reads as undefined: the message is already committed,
@@ -37,6 +38,8 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
     readonly receiverId: ParticipantId;
     readonly callerThreadId: ThreadId;
     readonly sentMessageId: LedgerMessageId;
+    /** How the sender asked for the message to land; absent means `queue`. */
+    readonly mode?: SendMode | undefined;
   }) {
     const sql = yield* SqlClient.SqlClient;
     const orchestrator = yield* OrchestratorV2;
@@ -77,9 +80,16 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
     const sentRun = runByMessage.get(deliveryMessageId(input.sentMessageId));
     // Already started or finished (a replay reports the current state, not the first one).
     if (sentRun !== undefined && sentRun.status !== "queued") return undefined;
-    // Not yet handed over, so a running GPT 6 turn will take it mid-turn. Once queued,
-    // it stays queued even if the receiver's turn later becomes steerable.
-    if (sentRun === undefined && gpt6PeerSteeringRun(target, "peer") !== undefined)
+    // Not yet handed over, so a running GPT 6 turn, or the turn a steer or restart lands on,
+    // will take it mid-turn. Once queued, it stays queued even if the receiver's turn later
+    // becomes steerable.
+    const mode = input.mode ?? "queue";
+    if (
+      sentRun === undefined &&
+      (mode === "queue"
+        ? gpt6PeerSteeringRun(target, "peer")
+        : requestedSteeringRun(target, "peer", mode)) !== undefined
+    )
       return undefined;
 
     const pending = pendingRows.filter(
@@ -122,7 +132,14 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
 /** Adds the backlog notice to a send result when the message will wait behind the receiver's turn. */
 export const withDeliveryNotice = Effect.fn("j5.a2a.withDeliveryNotice")(function* <
   R extends { readonly messageId: LedgerMessageId },
->(result: R, input: { readonly receiverId: ParticipantId; readonly callerThreadId: ThreadId }) {
+>(
+  result: R,
+  input: {
+    readonly receiverId: ParticipantId;
+    readonly callerThreadId: ThreadId;
+    readonly mode?: SendMode | undefined;
+  },
+) {
   const backlog = yield* readReceiverBacklog({ ...input, sentMessageId: result.messageId });
   return backlog === undefined
     ? result

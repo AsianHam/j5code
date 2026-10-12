@@ -12,14 +12,13 @@ import * as EnvironmentHandlers from "../../../mcp/toolkits/environment/handlers
 import * as OrchestratorHandlers from "../../../mcp/toolkits/orchestrator/handlers.ts";
 import * as ProjectHandlers from "../../../mcp/toolkits/project/handlers.ts";
 import * as ThreadHandlers from "../../../mcp/toolkits/thread/handlers.ts";
-import * as J5AttachmentSend from "./attachments.ts";
+import { J5AttachmentUploadToolkit } from "./attachments.ts";
 import * as J5Handlers from "./handlers.ts";
 import { J5OrchestratorSurface } from "./orchestratorSurface.ts";
 import * as J5OrchestratorSurfaceHandlers from "./orchestratorSurfaceHandlers.ts";
 import * as J5AdaptedThread from "./threadTools.ts";
 import { J5Toolkit } from "./tools.ts";
 import {
-  J5AttachmentUploadToolkit,
   J5EnvironmentToolkit,
   J5OrchestratorToolkit,
   J5ProjectToolkit,
@@ -53,7 +52,6 @@ export const layerJ5Toolkits = (register: typeof toolkitRegistration) =>
       J5AttachmentUploadToolkit,
       handlersFor(J5AttachmentUploadToolkit, AttachmentHandlers.layer),
     ),
-    register(J5AttachmentSend.J5AttachmentSendToolkit, J5AttachmentSend.layer),
     register(J5ProjectToolkit, handlersFor(J5ProjectToolkit, ProjectHandlers.layer)),
     register(J5EnvironmentToolkit, handlersFor(J5EnvironmentToolkit, EnvironmentHandlers.layer)),
     register(ArtifactToolkit, ArtifactHandlers.layer).pipe(
