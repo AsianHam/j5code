@@ -33,7 +33,11 @@ import { PlaybookStore } from "./playbooks/PlaybookStore.ts";
 import { makePlaybookRpcHandlers } from "./playbooks/playbookRpc.ts";
 import { OpenLinks } from "./sharing/OpenLinks.ts";
 import { People } from "./sharing/People.ts";
-import { PersonAccess, type SessionIdentity } from "./sharing/PersonAccess.ts";
+import {
+  GUEST_SESSION_SUBJECT,
+  PersonAccess,
+  type SessionIdentity,
+} from "./sharing/PersonAccess.ts";
 import { sharedConversation } from "./sharing/SharedConversation.ts";
 import { makeSharingRpcHandlers } from "./sharing/sharingRpc.ts";
 import { makeSkillCatalogRpcHandlers } from "./skills/skillCatalogRpc.ts";
@@ -109,8 +113,11 @@ export const layerJ5WsRpc = (
         }),
         ...(yield* makeClientActionRpcHandlers({
           rosterDecider: (proposalId) => conversation.rosterDecider(session, proposalId),
+          forGuest: session.subject === GUEST_SESSION_SUBJECT,
         })),
-        ...(yield* makeClientReadRpcHandlers()),
+        ...(yield* makeClientReadRpcHandlers({
+          forGuest: session.subject === GUEST_SESSION_SUBJECT,
+        })),
         ...(yield* makeAgentPersonaRpcHandlers({
           providers: providerRegistry.getProviders,
         })),

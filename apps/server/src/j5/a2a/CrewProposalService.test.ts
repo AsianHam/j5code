@@ -68,6 +68,7 @@ import {
   CrewProposalService,
   layer as crewProposalLayer,
   type ResolveCrewProposalInput,
+  withoutHostPaths,
 } from "./CrewProposalService.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { participantIdForThread } from "./HomeRegistrar.ts";
@@ -1263,6 +1264,29 @@ it.effect(
         const first = yield* gate.preview({ proposalId: open.proposal.id });
         // Every preview carries what the card offers: the Captain's branch, where it works, worktrees.
         assert.deepStrictEqual(first.workspaceOptions, fakeWorkspaceOptions);
+        // A guest's connection is shown the same seats and the same approval token, with none
+        // of the host's folders and branches.
+        const forGuest = yield* gate.preview({ proposalId: open.proposal.id }, { forGuest: true });
+        assert.isFalse("workspaceOptions" in forGuest);
+        assert.strictEqual(forGuest.approvalToken, first.approvalToken);
+        assert.deepStrictEqual(
+          forGuest.seats.map((seat) => seat.seat),
+          first.seats.map((seat) => seat.seat),
+        );
+        assert.deepStrictEqual(
+          withoutHostPaths({
+            seat: "builder",
+            workspace: {
+              type: "existing_worktree",
+              worktreePath: "/home/owner/repo-wt",
+              branch: "fix",
+            },
+          }),
+          {
+            seat: "builder",
+            workspace: { type: "existing_worktree", worktreePath: "/", branch: "fix" },
+          },
+        );
         assert.deepStrictEqual(first.seats[0]?.workspace, {
           type: "worktree",
           baseRef: "release",

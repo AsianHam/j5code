@@ -432,12 +432,7 @@ const make = <E>(
     }
     // An edit matters here only on a thread that is, or has been, a shared conversation: a
     // message queued while it was one keeps its author line and any note it carries.
-    if (!(yield* isSharedConversation(sql, command.threadId))) {
-      const everShared = yield* sql<{ readonly found: number }>`
-        SELECT 1 AS found FROM j5_a2a_shared_thread_told WHERE thread_id = ${command.threadId}
-      `;
-      if (everShared.length === 0) return command;
-    }
+    if (!(yield* everShared(command.threadId))) return command;
     const author = yield* sessionAuthor(session);
     if (author === null) return command;
     // A queued message no person is recorded for (one sent before the thread was shared, or a
@@ -515,12 +510,49 @@ const make = <E>(
   > => command.type === "runtime-request.respond" || command.type === "thread.user-input.dismiss";
 
   /**
-   * Records who is answering a prompt in a shared conversation (AC9). It is written as the
-   * answer is taken in (`claimed`), before upstream settles the prompt, so that every client
-   * that sees the prompt settle on the thread's own feed finds who answered already there, with
-   * no second signal to wait for. Upstream takes one answer and refuses the rest; the first
-   * written stands unless upstream took another's (`accepted`), and a refused answer's row is
-   * taken back by `refused`. A failure to record is logged and does not stop the answer.
+   * Whether upstream's own log shows that this command settled this prompt. Upstream answers
+   * "accepted" again for any command id it has already taken on the thread, whatever the
+   * command was, so its saying so is not proof: a replayed id settles nothing. The event that
+   * settles a prompt carries the id of the command that did it.
+   */
+  const settledBy = (
+    command: Extract<
+      OrchestrationV2Command,
+      { readonly type: "runtime-request.respond" | "thread.user-input.dismiss" }
+    >,
+  ) =>
+    sql<{ readonly found: number }>`
+      SELECT 1 AS found FROM orchestration_v2_events
+      WHERE command_id = ${command.commandId}
+        AND thread_id = ${command.threadId}
+        AND event_type = 'runtime-request.updated'
+        AND instr(payload_json, ${command.requestId}) > 0
+      LIMIT 1
+    `.pipe(Effect.map((rows) => rows.length > 0));
+
+  /** A thread that is a shared conversation now, or was one: its prompts say who answered them. */
+  const everShared = Effect.fn("j5.sharing.sharedConversation.everShared")(function* (
+    threadId: ThreadId,
+  ) {
+    if (yield* isSharedConversation(sql, threadId)) return true;
+    const told = yield* sql<{ readonly found: number }>`
+      SELECT 1 AS found FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}
+    `;
+    return told.length > 0;
+  });
+
+  /**
+   * Records who answered a prompt (AC9), on a thread that is or has been a shared conversation,
+   * so that a prompt a member answers after the last guest has gone still says who answered.
+   *
+   * It is written as the answer is taken in (`claimed`), before upstream settles the prompt, so
+   * that every client that sees the prompt settle on the thread's own feed finds who answered
+   * already there. A claim never replaces a record. When upstream has finished (`accepted`),
+   * the claim is kept only if upstream's log shows this very command settled the prompt, and
+   * then it stands for good, over a claim another person wrote first; otherwise it is taken
+   * back, as it is when upstream refuses the answer or it is interrupted. So a command id
+   * replayed against a prompt, pending or settled, records no one and changes no record. A
+   * failure to record is logged and does not stop the answer.
    */
   const recordAnswer = (
     session: SessionIdentity,
@@ -530,7 +562,16 @@ const make = <E>(
     !isAnswer(command)
       ? Effect.void
       : Effect.gen(function* () {
-          if (!(yield* isSharedConversation(sql, command.threadId))) return;
+          if (!(yield* everShared(command.threadId))) return;
+          if (when === "accepted" && !(yield* settledBy(command))) {
+            yield* sql`
+              DELETE FROM j5_a2a_prompt_answer
+              WHERE thread_id = ${command.threadId}
+                AND request_id = ${command.requestId}
+                AND command_id = ${command.commandId}
+            `;
+            return;
+          }
           const author = yield* sessionAuthor(session);
           if (author === null) return;
           const answeredAt = DateTime.formatIso(yield* DateTime.now);

@@ -49,6 +49,7 @@ export class ClientActionsService extends Context.Service<
     /** Resolve the runtime settings the roster card shows, and the token an approval must carry. */
     readonly previewCrewProposal: (
       input: CrewProposalPreviewRequest,
+      options?: { readonly forGuest?: boolean },
     ) => Effect.Effect<
       CrewProposalPreviewResponse,
       Failure<CrewProposalService["Service"]["preview"]>
@@ -117,7 +118,7 @@ const make = Effect.gen(function* () {
   const projectProposal = projectCrewProposal(yield* PlaybookStore);
 
   return ClientActionsService.of({
-    previewCrewProposal: (input) => proposals.preview(input),
+    previewCrewProposal: (input, options) => proposals.preview(input, options),
     resolveCrewProposal: (input, decidedBy) =>
       proposals.resolve({ ...input, decidedBy }).pipe(
         Effect.flatMap((result) =>

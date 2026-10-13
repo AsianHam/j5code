@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
 import { ClientReadsService } from "./ClientReadsService.ts";
+import { withoutHostPaths } from "./CrewProposalService.ts";
 import { ParticipantId } from "./contracts.ts";
 import { PeerAdminService } from "./PeerAdminService.ts";
 import { ReadChanges } from "./ReadChanges.ts";
@@ -65,56 +66,72 @@ const optionalPerson = (personId: string | undefined) =>
     : participantIds([personId]).pipe(Effect.map(([id]) => id));
 
 /** Handlers for `J5ClientReadRpcGroup`: each calls one service method and maps its failure. */
-export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers")(function* () {
-  const reads = yield* ClientReadsService;
-  const peers = yield* PeerAdminService;
-  const changes = yield* ReadChanges;
-  return {
-    [METHODS.listHumanInbox]: (input: HumanInboxListRequest) =>
-      optionalPerson(input.personId).pipe(
-        Effect.flatMap((personId) =>
-          reads
-            .humanInbox({ status: input.status, ...(personId === undefined ? {} : { personId }) })
-            .pipe(Effect.catch(inboxFailure)),
+export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers")(
+  function* (options?: {
+    /** The connection is a guest's: a roster is shown without the host's folders. */
+    readonly forGuest?: boolean;
+  }) {
+    const reads = yield* ClientReadsService;
+    const peers = yield* PeerAdminService;
+    const changes = yield* ReadChanges;
+    return {
+      [METHODS.listHumanInbox]: (input: HumanInboxListRequest) =>
+        optionalPerson(input.personId).pipe(
+          Effect.flatMap((personId) =>
+            reads
+              .humanInbox({ status: input.status, ...(personId === undefined ? {} : { personId }) })
+              .pipe(Effect.catch(inboxFailure)),
+          ),
         ),
-      ),
-    [METHODS.readOpenInboxCount]: (input: OpenInboxCountRequest) =>
-      optionalPerson(input.personId).pipe(
-        Effect.flatMap((personId) =>
-          reads.openInboxCount(personId).pipe(Effect.catch(inboxFailure)),
+      [METHODS.readOpenInboxCount]: (input: OpenInboxCountRequest) =>
+        optionalPerson(input.personId).pipe(
+          Effect.flatMap((personId) =>
+            reads.openInboxCount(personId).pipe(Effect.catch(inboxFailure)),
+          ),
         ),
-      ),
-    [METHODS.listCrewProposals]: () =>
-      reads.crewProposals.pipe(Effect.catch(failed("Reading crew proposals failed."))),
-    [METHODS.listThreadRosters]: (input: { readonly threadId: ThreadId }) =>
-      reads
-        .threadRosters(input.threadId)
-        .pipe(Effect.catch(failed("Reading crew proposals failed."))),
-    [METHODS.listCrewRuntimeRequests]: () =>
-      reads.crewRuntimeRequests.pipe(Effect.catch(failed("Reading crew requests failed."))),
-    [METHODS.listCrewMemberships]: (input: ThreadHomesRequest) =>
-      reads
-        .crewMemberships(input.threadIds)
-        .pipe(Effect.catch(failed("Crew membership read failed."))),
-    [METHODS.readFleet]: (input: FleetReadRequest) =>
-      reads.fleet(input.includeRetired === true).pipe(Effect.catch(failed("Fleet read failed."))),
-    [METHODS.listSpawnedChildren]: (input: ThreadHomesRequest) =>
-      reads
-        .spawnedChildren(input.threadIds)
-        .pipe(Effect.catch(failed("Spawned children read failed."))),
-    [METHODS.readPreArchiveFacts]: (input: PreArchiveFactsRequest) =>
-      reads
-        .preArchiveFacts(input.threadId)
-        .pipe(Effect.catch(failed("Pre-archive fact lookup failed."))),
-    [METHODS.readParticipantIdentities]: (input: ParticipantIdentitiesRequest) =>
-      participantIds(input.participantIds).pipe(
-        Effect.flatMap((ids) =>
-          reads
-            .participantIdentities({ participantIds: ids })
-            .pipe(Effect.catch(failed("Client read failed."))),
+      [METHODS.listCrewProposals]: () =>
+        reads.crewProposals.pipe(Effect.catch(failed("Reading crew proposals failed."))),
+      [METHODS.listThreadRosters]: (input: { readonly threadId: ThreadId }) =>
+        reads.threadRosters(input.threadId).pipe(
+          Effect.map(({ proposals }) =>
+            options?.forGuest === true
+              ? {
+                  proposals: proposals.map((proposal) => ({
+                    ...proposal,
+                    requestedSeats: proposal.requestedSeats.map(withoutHostPaths),
+                    approvedSeats: proposal.approvedSeats?.map(withoutHostPaths) ?? null,
+                  })),
+                }
+              : { proposals },
+          ),
+          Effect.catch(failed("Reading crew proposals failed.")),
         ),
-      ),
-    [METHODS.listPeers]: () => peers.list.pipe(Effect.catch(failed("Listing peers failed."))),
-    [METHODS.subscribeReadChanges]: () => changes.changes,
-  };
-});
+      [METHODS.listCrewRuntimeRequests]: () =>
+        reads.crewRuntimeRequests.pipe(Effect.catch(failed("Reading crew requests failed."))),
+      [METHODS.listCrewMemberships]: (input: ThreadHomesRequest) =>
+        reads
+          .crewMemberships(input.threadIds)
+          .pipe(Effect.catch(failed("Crew membership read failed."))),
+      [METHODS.readFleet]: (input: FleetReadRequest) =>
+        reads.fleet(input.includeRetired === true).pipe(Effect.catch(failed("Fleet read failed."))),
+      [METHODS.listSpawnedChildren]: (input: ThreadHomesRequest) =>
+        reads
+          .spawnedChildren(input.threadIds)
+          .pipe(Effect.catch(failed("Spawned children read failed."))),
+      [METHODS.readPreArchiveFacts]: (input: PreArchiveFactsRequest) =>
+        reads
+          .preArchiveFacts(input.threadId)
+          .pipe(Effect.catch(failed("Pre-archive fact lookup failed."))),
+      [METHODS.readParticipantIdentities]: (input: ParticipantIdentitiesRequest) =>
+        participantIds(input.participantIds).pipe(
+          Effect.flatMap((ids) =>
+            reads
+              .participantIdentities({ participantIds: ids })
+              .pipe(Effect.catch(failed("Client read failed."))),
+          ),
+        ),
+      [METHODS.listPeers]: () => peers.list.pipe(Effect.catch(failed("Listing peers failed."))),
+      [METHODS.subscribeReadChanges]: () => changes.changes,
+    };
+  },
+);

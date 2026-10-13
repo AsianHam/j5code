@@ -166,6 +166,24 @@ const queued = Effect.fn("test.queued")(function* (
   return RunId.make(runId);
 });
 
+/** Upstream's log of a command settling a prompt, as its event store records it. */
+const upstreamSettled = Effect.fn("test.upstreamSettled")(function* (command: {
+  readonly commandId: string;
+  readonly threadId: string;
+  readonly requestId: string;
+}) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    INSERT INTO orchestration_v2_events (
+      event_id, command_id, thread_id, event_type, occurred_at, payload_json
+    ) VALUES (
+      ${`event:${command.commandId}:${command.requestId}`}, ${command.commandId},
+      ${command.threadId}, 'runtime-request.updated', ${AT},
+      ${JSON.stringify({ payload: { id: command.requestId, status: "resolved" } })}
+    )
+  `;
+});
+
 /**
  * A command as `ws.ts` takes it from a client: through the gate of that connection, then through
  * `admit`. Gives the command upstream would be handed, or the refusal.
@@ -951,6 +969,7 @@ const each = <A, E>(
       assert.deepStrictEqual(yield* told(SAM, threadId), [
         ["request:approval", "Priya", "guest", false],
       ]);
+      yield* upstreamSettled(first);
       yield* conversation.accepted(PRIYA, first);
       // A late answer is refused by upstream: the first stands, on its being taken in and on
       // its being refused.
@@ -975,6 +994,7 @@ const each = <A, E>(
       const winning = respond(threadId, "request:race", "command:jackson-race");
       yield* send(PRIYA, losing);
       yield* send(MEMBER, winning);
+      yield* upstreamSettled(winning);
       yield* conversation.accepted(MEMBER, winning);
       yield* conversation.refused(losing);
       assert.deepStrictEqual(
@@ -1003,9 +1023,10 @@ const each = <A, E>(
       );
       // And an accepted one, settled the same way, stays.
       const kept = respond(threadId, "request:kept", "command:priya-kept");
-      yield* conversation
-        .admit(PRIYA, kept)
-        .pipe(Effect.onExit((exit) => conversation.settled(PRIYA, kept, exit)));
+      yield* conversation.admit(PRIYA, kept).pipe(
+        Effect.tap(() => upstreamSettled(kept)),
+        Effect.onExit((exit) => conversation.settled(PRIYA, kept, exit)),
+      );
       assert.isTrue(
         (yield* told(MEMBER, threadId)).some(([requestId]) => requestId === "request:kept"),
       );
@@ -1507,6 +1528,70 @@ const each = <A, E>(
       // A thread only one person can write to: the answer is the very one sent.
       const unshared = answer(alone, "alone", { q1: "Yes." });
       assert.strictEqual(yield* send(MEMBER, unshared), unshared as unknown);
+    }),
+  );
+  each("a replayed command id records no one and changes no record of who answered", () =>
+    Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const conversation = yield* sharedConversation;
+      const threadId = yield* thread("thread:replay");
+      yield* access.setOperatorName("Jackson");
+      const priya = yield* guest(PRIYA, "Priya", threadId, "collaborate");
+      const told = conversation
+        .threadAnswers(MEMBER, threadId)
+        .pipe(Effect.map((answers) => answers.map((a) => [a.requestId, a.displayName, a.kind])));
+      const respond = (request: string, commandId: string) =>
+        ({
+          type: "runtime-request.respond",
+          commandId: CommandId.make(commandId),
+          threadId,
+          requestId: RuntimeRequestId.make(request),
+          decision: "accept",
+        }) as const;
+      // What `ws.ts` does around upstream, with upstream saying "accepted" each time: for a
+      // real answer it logs the prompt settling; for a replayed id it logs nothing new.
+      const through = (
+        who: EnvironmentAuth.AuthenticatedSession,
+        command: ReturnType<typeof respond>,
+        real: boolean,
+      ) =>
+        conversation.admit(who, command).pipe(
+          Effect.tap(() => (real ? upstreamSettled(command) : Effect.void)),
+          Effect.onExit((exit) => conversation.settled(who, command, exit)),
+        );
+
+      // The guest sends an ordinary message; upstream now has a receipt for its command id.
+      const earlier = message(threadId, "Hello.");
+      yield* send(PRIYA, earlier);
+      // A member really answers a prompt.
+      yield* through(MEMBER, respond("request:approved", "command:member-real"), true);
+      assert.deepStrictEqual(yield* told, [["request:approved", "Jackson", "member"]]);
+
+      // The guest replays its earlier id as an answer to that settled prompt. Upstream replays
+      // the old receipt as success. The record still names the member.
+      yield* through(PRIYA, respond("request:approved", earlier.commandId), false);
+      assert.deepStrictEqual(yield* told, [["request:approved", "Jackson", "member"]]);
+      // And against a prompt still pending, which stays pending: no one is recorded.
+      yield* through(PRIYA, respond("request:pending", earlier.commandId), false);
+      assert.deepStrictEqual(yield* told, [["request:approved", "Jackson", "member"]]);
+      // The member's own id replayed by the guest against another prompt records no one either.
+      yield* through(PRIYA, respond("request:pending", "command:member-real"), false);
+      assert.deepStrictEqual(yield* told, [["request:approved", "Jackson", "member"]]);
+      // When the pending prompt is really answered, by the member, it is the member's.
+      yield* through(MEMBER, respond("request:pending", "command:member-second"), true);
+      assert.deepStrictEqual(yield* told, [
+        ["request:approved", "Jackson", "member"],
+        ["request:pending", "Jackson", "member"],
+      ]);
+
+      // After the last guest collaborator has gone, a prompt a member answers still says so.
+      yield* access.putGrant({
+        personId: priya.personId,
+        target: { kind: "thread", threadId },
+        level: "view",
+      });
+      yield* through(MEMBER, respond("request:after", "command:member-after"), true);
+      assert.isTrue((yield* told).some(([requestId]) => requestId === "request:after"));
     }),
   );
 }

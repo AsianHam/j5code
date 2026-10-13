@@ -1,4 +1,5 @@
 import type {
+  CrewSeatWorkspace,
   CrewPersonaSwap,
   CrewProposalPreviewRequest,
   CrewProposalPreviewResponse,
@@ -154,9 +155,29 @@ export interface CrewProposalOutcome {
   readonly playbook?: CrewProposalPlaybookOutcome | null | undefined;
 }
 
+/** Stands in for a folder on the host wherever a guest is shown a seat's workspace. */
+const GUEST_PLACEHOLDER_PATH = "/";
+
+/**
+ * A seat as a guest is shown it: the same seat, with a worktree's folder on the host replaced.
+ * Its branch, model and access are the roster's own and stay.
+ */
+export const withoutHostPaths = <S extends { readonly workspace?: CrewSeatWorkspace | undefined }>(
+  seat: S,
+): S =>
+  seat.workspace?.type === "existing_worktree"
+    ? { ...seat, workspace: { ...seat.workspace, worktreePath: GUEST_PLACEHOLDER_PATH } }
+    : seat;
+
 export interface CrewProposalServiceShape {
   readonly preview: (
     input: CrewProposalPreviewRequest,
+    /**
+     * For a guest's connection: the host's folders and branches are left out, and git is not
+     * asked for them. A guest approves a roster as proposed and has no use for where a seat
+     * could be moved to.
+     */
+    options?: { readonly forGuest?: boolean },
   ) => Effect.Effect<CrewProposalPreviewResponse, CrewProposalError>;
   readonly propose: (
     input: ProposeCrewInput,
@@ -790,7 +811,8 @@ export const layer = Layer.effect(
     });
 
     const preview: CrewProposalServiceShape["preview"] = Effect.fn("j5.a2a.crewProposal.preview")(
-      function* (input) {
+      function* (input, options) {
+        const forGuest = options?.forGuest === true;
         const proposal = yield* proposals
           .read(input.proposalId)
           .pipe(Effect.mapError(operationError("reading the proposal")));
@@ -807,7 +829,7 @@ export const layer = Layer.effect(
         const resolved = yield* resolveRuntime(captain, seats);
         return {
           proposalId: proposal.id,
-          workspaceOptions: yield* launcher.workspaceOptions(captain),
+          ...(forGuest ? {} : { workspaceOptions: yield* launcher.workspaceOptions(captain) }),
           approvalToken: crewApprovalToken(
             proposal,
             captain,
@@ -816,7 +838,8 @@ export const layer = Layer.effect(
           ),
           seats: resolved.map((entry) => {
             const swaps = plan.swapsBySeat.get(entry.runtime.seat);
-            return swaps === undefined ? entry.runtime : { ...entry.runtime, personaSwaps: swaps };
+            const runtime = forGuest ? withoutHostPaths(entry.runtime) : entry.runtime;
+            return swaps === undefined ? runtime : { ...runtime, personaSwaps: swaps };
           }),
           ...(plan.summary === null
             ? {}
