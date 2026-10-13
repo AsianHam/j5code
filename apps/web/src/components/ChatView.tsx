@@ -41,6 +41,7 @@ import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { CrewRosterGate } from "../j5/crew/CrewRosterGate";
 import { useCanOperateThread } from "../j5/sharing/guestAccess";
 import { useMayInterruptThread } from "../j5/sharing/guestComposer";
+import { sharedMessageTypedText } from "../j5/sharing/sharedTimeline";
 import { expandPlaybookPrompt } from "@t3tools/client-runtime/j5/playbooks";
 import { PlaybookBoard } from "../j5/playbooks/PlaybookBoard";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -8485,7 +8486,8 @@ export default function ChatView(props: ChatViewProps) {
           if (result._tag === "Failure") throw squashAtomCommandFailure(result);
         });
         const currentPrompt = store.getComposerDraft(composerDraftTarget)?.prompt ?? "";
-        const restoredPrompt = recallableComposerPrompt(message.text);
+        // J5: a reverted message of a shared conversation comes back without the agent's author line.
+        const restoredPrompt = recallableComposerPrompt(sharedMessageTypedText(message));
         const nextPrompt =
           restoredPrompt.length === 0
             ? currentPrompt
