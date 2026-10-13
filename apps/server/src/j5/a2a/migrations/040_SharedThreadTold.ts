@@ -1,26 +1,18 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Who the agent of a shared conversation was last told can write to its thread
-// (#533). When the people who can write differ from this record, a platform
-// note goes at the top of the next message a person sends, and that message is
-// recorded here as the note's carrier. If the carrier is withdrawn before it
-// runs, the agent was never told: the record falls back to `previous_json`, what
-// it had been told before. A thread that was never shared has no row.
-//
-// The note a message carries is kept with the message's author, so a client
-// can show the message without it and an edit of the message keeps it.
+// What the agent of a shared conversation has been told about who can write to
+// its thread (#533). When the people who can write differ from what it was last
+// told, a platform note goes at the top of the next message a person sends.
+// That message is the note's carrier, and both are kept with the message's
+// author: `note` is the text, so a client can show the message without it and
+// an edit of the message keeps it; `told_json` is who the note said can write,
+// and the carrier it was worked out against. What the agent was last told is
+// the newest carrier that reached it, so a carrier withdrawn before it ran, or
+// rewound past, is one the agent was never told by.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  yield* sql`
-    CREATE TABLE j5_a2a_shared_thread_told (
-      thread_id TEXT PRIMARY KEY,
-      writers_json TEXT NOT NULL,
-      previous_json TEXT,
-      carrier_message_id TEXT NOT NULL,
-      told_at TEXT NOT NULL
-    )
-  `;
   yield* sql`ALTER TABLE j5_a2a_message_author ADD COLUMN note TEXT`;
+  yield* sql`ALTER TABLE j5_a2a_message_author ADD COLUMN told_json TEXT`;
 });

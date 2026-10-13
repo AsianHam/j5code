@@ -926,6 +926,82 @@ const each = <A, E>(
     }),
   );
 
+  each("a note that was rewound past, or built on one that never ran, is told again", () =>
+    Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const conversation = yield* sharedConversation;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* thread("thread:rewound");
+      yield* access.setOperatorName("Jackson");
+      yield* guest(PRIYA, "Priya", threadId, "collaborate");
+      const ended = (runId: string, status: string) => sql`
+        UPDATE orchestration_v2_projection_runs
+        SET status = ${status},
+          payload_json = json_set(payload_json, '$.startedAt', ${status === "cancelled" ? null : AT})
+        WHERE run_id = ${runId}
+      `;
+      const approve = Effect.fn("test.approve")(function* (key: string) {
+        const command = {
+          type: "runtime-request.respond",
+          commandId: CommandId.make(`command:rewound:${key}`),
+          threadId,
+          requestId: RuntimeRequestId.make(`request:rewound:${key}`),
+          decision: "accept",
+        } as const;
+        yield* conversation.admit(PRIYA, command);
+        yield* upstreamSettled(command);
+      });
+      const first = "This thread is now a shared conversation";
+      const approved =
+        "Approval prompts answered since you were last told: Priya (guest) approved 1.";
+
+      // The first note and an approval reach the agent on a message that runs.
+      yield* approve("one");
+      const carrier = message(threadId, "Hello.");
+      yield* send(PRIYA, carrier);
+      yield* queued(threadId, "run:rewound:1", carrier.messageId);
+      yield* ended("run:rewound:1", "completed");
+      assert.isTrue(notes[0]!.text.includes(first) && notes[0]!.text.includes(approved));
+      yield* send(MEMBER, message(threadId, "Carry on."));
+      assert.strictEqual(notes.length, 1);
+
+      // A member rewinds the conversation to before that message. Upstream marks its run rolled
+      // back and keeps the message; the agent no longer has the note, so the next message
+      // carries both again.
+      yield* ended("run:rewound:1", "rolled_back");
+      const again = message(threadId, "Hello again.");
+      yield* send(MEMBER, again);
+      assert.isTrue(notes[1]!.text.includes(first) && notes[1]!.text.includes(approved));
+
+      // That message waits in the queue. A second guest is added, and the next message says so
+      // against a note the agent has not yet read.
+      yield* queued(threadId, "run:rewound:2", again.messageId);
+      yield* guest(SAM, "Sam", threadId, "collaborate");
+      yield* approve("two");
+      const change = message(threadId, "Welcome, Sam.");
+      yield* send(MEMBER, change);
+      assert.isTrue(notes[2]!.text.includes("Sam (guest) can now write to this thread."));
+      assert.isTrue(notes[2]!.text.includes(approved));
+      assert.isFalse(notes[2]!.text.includes(first));
+      yield* queued(threadId, "run:rewound:3", change.messageId);
+
+      // The first of the two is withdrawn and the second runs: the agent has read that Sam was
+      // added to a shared conversation it was never told of. The next message tells it in full,
+      // once. The approval the second message carried did reach it and is not told again.
+      yield* ended("run:rewound:2", "cancelled");
+      yield* ended("run:rewound:3", "completed");
+      yield* send(PRIYA, message(threadId, "Where were we?"));
+      assert.isTrue(notes[3]!.text.includes(first));
+      assert.isTrue(
+        notes[3]!.text.includes("Who can write: Jackson (member), Priya (guest), Sam (guest)."),
+        notes[3]!.text,
+      );
+      assert.isTrue(notes[3]!.text.includes(approved));
+      assert.isFalse(notes[3]!.text.includes("approved 2"));
+      yield* send(MEMBER, message(threadId, "Good."));
+      assert.strictEqual(notes.length, 4);
+    }),
+  );
   each("a refused command tells the agent nothing", () =>
     Effect.gen(function* () {
       const threadId = yield* thread("thread:quiet");
@@ -964,74 +1040,42 @@ const each = <A, E>(
             ),
           );
 
-      // The guest's answer is taken in. Upstream has not yet settled the prompt, so no client
-      // has yet been told it settled; a second connection watching the thread, a viewer's here,
-      // already reads who answered, and so will when the thread's feed says it settled.
+      // The guest's answer is taken in and written down before upstream has it. Nobody is
+      // named until upstream's log shows that answer settled the prompt, which is when the
+      // thread's own feed tells every client it settled: a second connection watching the
+      // thread, a viewer's here, reads who answered from then.
       const first = respond(threadId, "request:approval", "command:priya");
       assert.isFalse(refused(yield* send(PRIYA, first)));
+      assert.deepStrictEqual(yield* told(SAM, threadId), []);
+      yield* upstreamSettled(first);
       assert.deepStrictEqual(yield* told(SAM, threadId), [
         ["request:approval", "Priya", "guest", false],
       ]);
-      yield* upstreamSettled(first);
-      yield* conversation.accepted(PRIYA, first);
-      // A late answer is refused by upstream: the first stands, on its being taken in and on
-      // its being refused.
-      const late = respond(threadId, "request:approval", "command:jackson-late");
-      yield* send(MEMBER, late);
-      assert.deepStrictEqual(yield* told(MEMBER, threadId), [
-        ["request:approval", "Priya", "guest", false],
-      ]);
-      yield* conversation.refused(late);
+      // A late answer, which upstream refuses, changes nothing.
+      yield* send(MEMBER, respond(threadId, "request:approval", "command:jackson-late"));
       assert.deepStrictEqual(yield* told(MEMBER, threadId), [
         ["request:approval", "Priya", "guest", false],
       ]);
 
-      // An answer upstream refuses for any other reason leaves nothing behind.
-      const stale = respond(threadId, "request:gone", "command:priya-stale");
-      yield* send(PRIYA, stale);
-      yield* conversation.refused(stale);
+      // An answer upstream refuses for any other reason, or never finishes with, names no one.
+      yield* send(PRIYA, respond(threadId, "request:gone", "command:priya-stale"));
       assert.strictEqual((yield* told(MEMBER, threadId)).length, 1);
 
       // Two answers at once: the guest's is written first and upstream takes the member's.
-      const losing = respond(threadId, "request:race", "command:priya-race");
       const winning = respond(threadId, "request:race", "command:jackson-race");
-      yield* send(PRIYA, losing);
+      yield* send(PRIYA, respond(threadId, "request:race", "command:priya-race"));
       yield* send(MEMBER, winning);
       yield* upstreamSettled(winning);
-      yield* conversation.accepted(MEMBER, winning);
-      yield* conversation.refused(losing);
       assert.deepStrictEqual(
-        (yield* told(MEMBER, threadId)).find(([requestId]) => requestId === "request:race"),
-        ["request:race", "Jackson", "member", true],
+        (yield* told(MEMBER, threadId)).filter(([requestId]) => requestId === "request:race"),
+        [["request:race", "Jackson", "member", true]],
       );
-
-      // An answer interrupted while upstream had it (the connection dropped, say) leaves
-      // nothing behind, as `ws.ts` settles it: the same wrap, with upstream never returning.
-      const dropped = respond(threadId, "request:dropped", "command:priya-dropped");
-      const reached = yield* Deferred.make<void>();
-      const inFlight = yield* conversation.admit(PRIYA, dropped).pipe(
-        Effect.flatMap(() =>
-          Deferred.succeed(reached, undefined).pipe(Effect.andThen(Effect.never)),
-        ),
-        Effect.onExit((exit) => conversation.settled(PRIYA, dropped, exit)),
-        Effect.forkChild,
-      );
-      yield* Deferred.await(reached);
-      assert.isTrue(
-        (yield* told(MEMBER, threadId)).some(([requestId]) => requestId === "request:dropped"),
-      );
-      yield* Fiber.interrupt(inFlight);
-      assert.isFalse(
-        (yield* told(MEMBER, threadId)).some(([requestId]) => requestId === "request:dropped"),
-      );
-      // And an accepted one, settled the same way, stays.
-      const kept = respond(threadId, "request:kept", "command:priya-kept");
-      yield* conversation.admit(PRIYA, kept).pipe(
-        Effect.tap(() => upstreamSettled(kept)),
-        Effect.onExit((exit) => conversation.settled(PRIYA, kept, exit)),
-      );
-      assert.isTrue(
-        (yield* told(MEMBER, threadId)).some(([requestId]) => requestId === "request:kept"),
+      // A guest who sends the member's own command id again takes nothing over: the first
+      // record for a command stands.
+      yield* send(PRIYA, winning);
+      assert.deepStrictEqual(
+        (yield* told(MEMBER, threadId)).filter(([requestId]) => requestId === "request:race"),
+        [["request:race", "Jackson", "member", true]],
       );
 
       // A question a member dismisses is theirs.
@@ -1042,6 +1086,7 @@ const each = <A, E>(
         requestId: RuntimeRequestId.make("request:question"),
       } as const;
       yield* send(MEMBER, dismiss);
+      yield* upstreamSettled(dismiss);
       assert.deepStrictEqual(
         (yield* told(PRIYA, threadId)).find(([requestId]) => requestId === "request:question"),
         ["request:question", "Jackson", "member", false],
@@ -1049,11 +1094,11 @@ const each = <A, E>(
 
       // A viewer cannot answer, and nothing is written for one who tries.
       assert.isTrue(refused(yield* send(SAM, respond(threadId, "request:another", "command:sam"))));
-      assert.strictEqual((yield* told(MEMBER, threadId)).length, 4);
+      assert.strictEqual((yield* told(MEMBER, threadId)).length, 3);
       // A thread only one person can write to records nothing, and a guest reads nothing of it.
       const unshared = respond(alone, "request:alone", "command:alone");
       assert.strictEqual(yield* send(MEMBER, unshared), unshared);
-      yield* conversation.accepted(MEMBER, unshared);
+      yield* upstreamSettled(unshared);
       assert.deepStrictEqual(yield* told(MEMBER, alone), []);
       assert.deepStrictEqual(yield* told(PRIYA, alone), []);
     }),
@@ -1551,17 +1596,16 @@ const each = <A, E>(
           requestId: RuntimeRequestId.make(request),
           decision: "accept",
         }) as const;
-      // What `ws.ts` does around upstream, with upstream saying "accepted" each time: for a
-      // real answer it logs the prompt settling; for a replayed id it logs nothing new.
+      // An answer as it goes through upstream, which says "accepted" each time: for a real
+      // answer it logs the prompt settling; for a replayed id it logs nothing new.
       const through = (
         who: EnvironmentAuth.AuthenticatedSession,
         command: ReturnType<typeof respond>,
         real: boolean,
       ) =>
-        conversation.admit(who, command).pipe(
-          Effect.tap(() => (real ? upstreamSettled(command) : Effect.void)),
-          Effect.onExit((exit) => conversation.settled(who, command, exit)),
-        );
+        conversation
+          .admit(who, command)
+          .pipe(Effect.tap(() => (real ? upstreamSettled(command) : Effect.void)));
 
       // The guest sends an ordinary message; upstream now has a receipt for its command id.
       const earlier = message(threadId, "Hello.");
@@ -1622,10 +1666,9 @@ const each = <A, E>(
           requestId: RuntimeRequestId.make(`request:approval:${answered}`),
           ...body,
         } as const;
-        return conversation.admit(who, command).pipe(
-          Effect.tap(() => (replayed ? Effect.void : upstreamSettled(command))),
-          Effect.onExit((exit) => conversation.settled(who, command, exit)),
-        );
+        return conversation
+          .admit(who, command)
+          .pipe(Effect.tap(() => (replayed ? Effect.void : upstreamSettled(command))));
       };
       const line = (text: string) =>
         ["<j5_shared_conversation>", text, "</j5_shared_conversation>"].join("\n");
@@ -1727,10 +1770,7 @@ const each = <A, E>(
         requestId: RuntimeRequestId.make("request:approval:alone"),
         decision: "accept",
       } as const;
-      yield* conversation.admit(MEMBER, unshared).pipe(
-        Effect.tap(() => upstreamSettled(unshared)),
-        Effect.onExit((exit) => conversation.settled(MEMBER, unshared, exit)),
-      );
+      yield* conversation.admit(MEMBER, unshared).pipe(Effect.tap(() => upstreamSettled(unshared)));
       const toAlone = message(alone, "Hello.");
       assert.strictEqual(yield* send(MEMBER, toAlone), toAlone);
       assert.strictEqual(

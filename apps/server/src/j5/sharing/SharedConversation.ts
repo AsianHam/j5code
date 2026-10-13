@@ -4,6 +4,7 @@ import {
   EnvironmentAuthorizationError,
   type MessageId,
   type OrchestrationV2Command,
+  type OrchestrationV2StoredEvent,
   type RunId,
   type ThreadId,
   authScopeRequiredResponse,
@@ -11,7 +12,6 @@ import {
 import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -136,9 +136,41 @@ const toAuthor = (row: AuthorRow): Author & { readonly note: string | null } => 
   note: row.note,
 });
 
-const ToldWriters = Schema.fromJsonString(Schema.Array(Writer));
-const decodeTold = Schema.decodeEffect(ToldWriters);
-const encodeTold = Schema.encodeEffect(ToldWriters);
+/**
+ * What a message that carries a note told the agent: who can write, and `after`, the carrier
+ * that note was worked out against. A change note says only what changed since `after`, so it
+ * tells the agent the truth only if `after` reached the agent too.
+ */
+const Told = Schema.fromJsonString(
+  Schema.Struct({ writers: Schema.Array(Writer), after: Schema.NullOr(Schema.String) }),
+);
+const decodeTold = Schema.decodeEffect(Told);
+const encodeTold = Schema.encodeEffect(Told);
+
+/**
+ * The event upstream logs when a prompt is answered. Typed against upstream's own event union,
+ * so a rename there fails to compile here.
+ */
+const PROMPT_SETTLED_EVENT =
+  "runtime-request.updated" satisfies OrchestrationV2StoredEvent["event"]["type"];
+
+/** A message's run as upstream records it, read beside a message that carried a note. */
+interface CarrierRun {
+  /** `null` when upstream has no such message. */
+  readonly carried: string | null;
+  readonly status: string | null;
+  readonly started_at: string | null;
+}
+
+/**
+ * Whether what a message carried never reached the agent, or no longer counts as having: upstream
+ * never took the message in, it was queued and withdrawn or cancelled before it ran, or its run
+ * was rolled back, which takes the agent's conversation back to before it.
+ */
+const lost = (run: CarrierRun) =>
+  run.carried === null ||
+  run.status === "rolled_back" ||
+  (run.status === "cancelled" && run.started_at === null);
 
 const NEAREST = { thread: 0, ancestor: 1, project: 2 } as const;
 
@@ -243,76 +275,64 @@ const make = <E>(
   });
 
   /**
-   * Whether the note a message carried ever reached the agent. It did not if upstream never
-   * took the message in, or if the message was queued and then withdrawn before it ran. Read
-   * from upstream's own records by SQL: a message's `run_id`, a run's `status` and the
-   * `startedAt` in its payload (`SharedConversation.integration.test.ts` fails if upstream
-   * reshapes them).
+   * Whether upstream's own log shows that the command an answer was written for settled its
+   * prompt, as a condition on `j5_a2a_prompt_answer AS answer`. Upstream answers "accepted"
+   * again for any command id it has already taken on the thread, whatever the command was, so
+   * its saying so is not proof. The event that settles a prompt carries the id of the command
+   * that did it: `orchestration_events` is upstream's log, a thread's events are its stream,
+   * and this event's payload is the request itself.
    */
-  const carrierState = (messageId: string) =>
-    sql<{ readonly status: string | null; readonly started_at: string | null }>`
-      SELECT run.status AS status, json_extract(run.payload_json, '$.startedAt') AS started_at
-      FROM orchestration_v2_projection_messages AS message
-      LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = message.run_id
-      WHERE message.message_id = ${messageId}
-    `.pipe(
-      Effect.map((rows): "lost" | "pending" | "delivered" =>
-        rows[0] === undefined || (rows[0].status === "cancelled" && rows[0].started_at === null)
-          ? "lost"
-          : rows[0].status === "queued"
-            ? "pending"
-            : "delivered",
-      ),
-    );
-  const carrierLost = (messageId: string) =>
-    carrierState(messageId).pipe(Effect.map((state) => state === "lost"));
+  const settledItsPrompt = sql`EXISTS (
+    SELECT 1 FROM orchestration_events AS event
+    WHERE event.command_id = answer.command_id
+      AND event.aggregate_kind = 'thread'
+      AND event.stream_id = answer.thread_id
+      AND event.event_type = ${PROMPT_SETTLED_EVENT}
+      AND json_extract(event.payload_json, '$.id') = answer.request_id
+  )`;
 
   /**
    * The approvals answered on a thread that its agent has not been told of (AC9), marked as
-   * told by the message now being taken in. A telling whose message was withdrawn before it
-   * ran is undone first, so those approvals are told again; one whose message is known to have
-   * reached the agent is closed and not looked at again. An approval answered while the thread
-   * was not shared is never waiting: it was closed when it was recorded.
+   * told by the message now being taken in. One whose telling was lost is told again. An
+   * approval answered while the thread was not shared is never told. Read on every message to
+   * a shared conversation: one pass over the thread's approvals, each a lookup by key.
    */
   const untoldApprovals = Effect.fn("j5.sharing.sharedConversation.untoldApprovals")(function* (
     threadId: ThreadId,
     carrier: MessageId,
   ) {
-    const open = yield* sql<{ readonly told_message_id: string }>`
-      SELECT DISTINCT told_message_id FROM j5_a2a_prompt_answer
-      WHERE thread_id = ${threadId} AND told_message_id IS NOT NULL AND told_delivered = 0
-    `;
-    for (const { told_message_id } of open) {
-      const state = yield* carrierState(told_message_id);
-      if (state === "lost") {
-        yield* sql`
-          UPDATE j5_a2a_prompt_answer SET told_message_id = NULL
-          WHERE thread_id = ${threadId} AND told_message_id = ${told_message_id}
-        `;
-      } else if (state === "delivered") {
-        yield* sql`
-          UPDATE j5_a2a_prompt_answer SET told_delivered = 1
-          WHERE thread_id = ${threadId} AND told_message_id = ${told_message_id}
-        `;
+    const answered = yield* sql<
+      CarrierRun & {
+        readonly request_id: string;
+        readonly command_id: string;
+        readonly told_message_id: string | null;
+        readonly person_kind: PersonKind;
+        readonly display_name: string | null;
+        readonly decision: string;
       }
-    }
-    const waiting = yield* sql<{
-      readonly person_kind: PersonKind;
-      readonly display_name: string | null;
-      readonly decision: string;
-    }>`
-      SELECT person_kind, display_name, decision FROM j5_a2a_prompt_answer
-      WHERE thread_id = ${threadId} AND settled = 1 AND decision IS NOT NULL
-        AND told_message_id IS NULL AND told_delivered = 0
-      ORDER BY answered_at, request_id
+    >`
+      SELECT answer.request_id, answer.command_id, answer.told_message_id, answer.person_kind,
+        answer.display_name, answer.decision, message.message_id AS carried,
+        run.status AS status, json_extract(run.payload_json, '$.startedAt') AS started_at
+      FROM j5_a2a_prompt_answer AS answer
+      LEFT JOIN orchestration_v2_projection_messages AS message
+        ON message.message_id = answer.told_message_id
+      LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = message.run_id
+      WHERE answer.thread_id = ${threadId} AND answer.decision IS NOT NULL
+        AND answer.silent = 0 AND ${settledItsPrompt}
+      ORDER BY answer.answered_at, answer.request_id
     `;
+    const waiting = answered.filter((row) => row.told_message_id === null || lost(row));
     if (waiting.length === 0) return null;
-    yield* sql`
-      UPDATE j5_a2a_prompt_answer
-      SET told_message_id = ${carrier}
-      WHERE thread_id = ${threadId} AND settled = 1 AND decision IS NOT NULL
-        AND told_message_id IS NULL AND told_delivered = 0
-    `;
+    yield* Effect.forEach(
+      waiting,
+      (row) => sql`
+        UPDATE j5_a2a_prompt_answer SET told_message_id = ${carrier}
+        WHERE thread_id = ${threadId} AND request_id = ${row.request_id}
+          AND command_id = ${row.command_id}
+      `,
+      { discard: true },
+    );
     return approvalsLine(
       waiting.map((row) => ({
         label: authorLabel({ kind: row.person_kind, displayName: row.display_name }),
@@ -322,71 +342,77 @@ const make = <E>(
   });
 
   /**
+   * Who the agent was last told can write to a thread, and by which message: the newest message
+   * that carried a note which reached the agent, as did every note it was worked out against.
+   * `null` for an agent that has been told nothing that still stands.
+   *
+   * Read from upstream's own records by SQL: a message's `run_id`, a run's `status` and the
+   * `startedAt` in its payload (`SharedConversation.integration.test.ts` fails if upstream
+   * reshapes them). It is asked when the next message arrives, so every way a message can be
+   * lost is covered without a hook on any of them. A thread has one row here for each time who
+   * can write changed.
+   */
+  const lastTold = Effect.fn("j5.sharing.sharedConversation.lastTold")(function* (
+    threadId: ThreadId,
+  ) {
+    const rows = yield* sql<
+      CarrierRun & { readonly message_id: string; readonly told_json: string }
+    >`
+      SELECT author.message_id, author.told_json, message.message_id AS carried,
+        run.status AS status, json_extract(run.payload_json, '$.startedAt') AS started_at
+      FROM j5_a2a_message_author AS author
+      LEFT JOIN orchestration_v2_projection_messages AS message
+        ON message.message_id = author.message_id
+      LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = message.run_id
+      WHERE author.thread_id = ${threadId} AND author.told_json IS NOT NULL
+      ORDER BY author.rowid DESC
+    `;
+    const carriers = yield* Effect.forEach(rows, (row) =>
+      decodeTold(row.told_json).pipe(
+        Effect.map((told) => ({ ...told, messageId: row.message_id, lost: lost(row) })),
+      ),
+    );
+    const byId = new Map(carriers.map((carrier) => [carrier.messageId, carrier]));
+    const stands = (carrier: (typeof carriers)[number]): boolean => {
+      if (carrier.lost) return false;
+      if (carrier.after === null) return true;
+      const after = byId.get(carrier.after);
+      return after !== undefined && stands(after);
+    };
+    return carriers.find(stands) ?? null;
+  });
+
+  /**
    * Works out what the agent must be told about who can write to its thread (AC3, AC4), as a
    * person's message is taken in, and reports whether the thread is a shared conversation. When
    * that differs from what the agent was last told, the note is returned to go at the top of
-   * this message, and this message is recorded as its carrier. A change to a grant therefore
-   * wakes no agent and costs no turn of its own.
+   * this message, with `told` to keep on the message's author record: this message is now the
+   * note's carrier. A change to a grant therefore wakes no agent and costs no turn of its own.
    *
-   * What the agent "was last told" is only what reached it: if the last carrier was withdrawn
-   * before it ran, the record falls back to what came before, and this message carries the
-   * note instead. That is checked here, when the next message arrives, so every way a queued
-   * message can be withdrawn is covered without a hook on any of them.
-   *
-   * A thread that was never shared costs one lookup by key and one for any Collaborate grant on
-   * the server.
+   * A thread that was never shared costs one lookup for any Collaborate grant on the server and
+   * one by key for a carrier.
    */
   const announce = Effect.fn("j5.sharing.sharedConversation.announce")(function* (
     threadId: ThreadId,
     carrier: MessageId,
   ) {
-    const rows = yield* sql<{
-      readonly writers_json: string;
-      readonly previous_json: string | null;
-      readonly carrier_message_id: string;
-    }>`
-      SELECT writers_json, previous_json, carrier_message_id
-      FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}
-    `;
-    const row = rows[0];
     const shared = yield* isSharedConversation(sql, threadId);
-    if (row === undefined && !shared) return { shared, note: null };
-    const told =
-      row === undefined
-        ? null
-        : (yield* carrierLost(row.carrier_message_id))
-          ? row.previous_json === null
-            ? null
-            : yield* decodeTold(row.previous_json)
-          : yield* decodeTold(row.writers_json);
+    const last = yield* lastTold(threadId);
+    if (last === null && !shared) return { shared, note: null, told: null };
     const now = shared ? yield* writers(threadId) : [];
     // A thread shared again after it stopped being one is told as a thread newly shared.
-    const wasShared = told !== null && told.some((writer) => writer.kind === "guest");
-    const note = wasShared ? changeNote(told, now) : shared ? firstNote(now) : null;
+    const wasShared = last !== null && last.writers.some((writer) => writer.kind === "guest");
+    const note = wasShared ? changeNote(last.writers, now) : shared ? firstNote(now) : null;
     // The agent is told who answered its approval prompts while its thread was shared, on the
     // same block: the first note carries any answered before a person's first message, and
     // the last note of a thread that has stopped being shared carries what is left.
     const approvals = wasShared || shared ? yield* untoldApprovals(threadId, carrier) : null;
-    if (note === null) {
-      // Never told and nothing to tell: shared and unshared with no message in between.
-      if (told === null && row !== undefined) {
-        yield* sql`DELETE FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}`;
-      }
-      return { shared, note: withApprovals(null, approvals) };
-    }
-    const toldAt = DateTime.formatIso(yield* DateTime.now);
-    const previous = told === null ? null : yield* encodeTold(told);
-    yield* sql`
-      INSERT INTO j5_a2a_shared_thread_told (
-        thread_id, writers_json, previous_json, carrier_message_id, told_at
-      ) VALUES (${threadId}, ${yield* encodeTold(now)}, ${previous}, ${carrier}, ${toldAt})
-      ON CONFLICT (thread_id) DO UPDATE SET
-        writers_json = excluded.writers_json,
-        previous_json = excluded.previous_json,
-        carrier_message_id = excluded.carrier_message_id,
-        told_at = excluded.told_at
-    `;
-    return { shared, note: withApprovals(note, approvals) };
+    return {
+      shared,
+      note: withApprovals(note, approvals),
+      told:
+        note === null ? null : yield* encodeTold({ writers: now, after: last?.messageId ?? null }),
+    };
   });
 
   /** The person a connection writes as: its guest, or the server's owner for any other. */
@@ -418,16 +444,17 @@ const make = <E>(
     threadId: ThreadId,
     messageId: MessageId,
     author: Author,
-    note: string | null,
+    carried: { readonly note: string | null; readonly told: string | null },
   ) {
     const createdAt = DateTime.formatIso(yield* DateTime.now);
     // The first record of a message stands: a later send cannot take a message over.
     yield* sql`
       INSERT INTO j5_a2a_message_author (
-        thread_id, message_id, person_id, person_kind, display_name, note, created_at
+        thread_id, message_id, person_id, person_kind, display_name, note, told_json,
+        created_at
       ) VALUES (
         ${threadId}, ${messageId}, ${author.personId}, ${author.kind}, ${author.displayName},
-        ${note}, ${createdAt}
+        ${carried.note}, ${carried.told}, ${createdAt}
       )
       ON CONFLICT (thread_id, message_id) DO NOTHING
     `;
@@ -477,13 +504,13 @@ const make = <E>(
     }
     if (command.type !== "message.dispatch" && command.type !== "queued-run.edit") return command;
     if (command.type === "message.dispatch") {
-      const { shared, note } = yield* announce(command.threadId, command.messageId);
+      const carried = yield* announce(command.threadId, command.messageId);
       // A thread that has just stopped being shared says so on this one message more.
-      if (!shared && note === null) return command;
+      if (!carried.shared && carried.note === null) return command;
       const author = yield* sessionAuthor(session);
       if (author === null) return command;
-      yield* recordAuthor(command.threadId, command.messageId, author, note);
-      return { ...command, text: stamped(command.text, author, note) };
+      yield* recordAuthor(command.threadId, command.messageId, author, carried);
+      return { ...command, text: stamped(command.text, author, carried.note) };
     }
     // An edit matters here only on a thread that is, or has been, a shared conversation: a
     // message queued while it was one keeps its author line and any note it carries.
@@ -532,9 +559,9 @@ const make = <E>(
           WHERE message_id = ${command.messageId}
         `;
         if (existing.length > 0) return yield* refused("This message was already sent.");
-        const { note } = yield* announce(command.threadId, command.messageId);
-        yield* recordAuthor(command.threadId, command.messageId, author, note);
-        return { ...command, text: stamped(command.text, author, note) };
+        const carried = yield* announce(command.threadId, command.messageId);
+        yield* recordAuthor(command.threadId, command.messageId, author, carried);
+        return { ...command, text: stamped(command.text, author, carried.note) };
       }
       case "queued-run.edit":
       case "queued-run.cancel": {
@@ -557,108 +584,55 @@ const make = <E>(
     }
   });
 
-  const isAnswer = (
-    command: OrchestrationV2Command,
-  ): command is Extract<
-    OrchestrationV2Command,
-    { readonly type: "runtime-request.respond" | "thread.user-input.dismiss" }
-  > => command.type === "runtime-request.respond" || command.type === "thread.user-input.dismiss";
-
-  /**
-   * Whether upstream's own log shows that this command settled this prompt. Upstream answers
-   * "accepted" again for any command id it has already taken on the thread, whatever the
-   * command was, so its saying so is not proof: a replayed id settles nothing. The event that
-   * settles a prompt carries the id of the command that did it.
-   */
-  const settledBy = (
-    command: Extract<
-      OrchestrationV2Command,
-      { readonly type: "runtime-request.respond" | "thread.user-input.dismiss" }
-    >,
-  ) =>
-    // Upstream's event log is `orchestration_events`: a thread's events are its stream, the
-    // payload of this event is the request itself, and `command_id` is the command that caused
-    // it (`SharedConversation.integration.test.ts` fails if upstream stops writing these).
+  /** Whether a person's message was taken in on a thread while it was a shared conversation. */
+  const writtenWhileShared = (threadId: ThreadId) =>
     sql<{ readonly found: number }>`
-      SELECT 1 AS found FROM orchestration_events
-      WHERE command_id = ${command.commandId}
-        AND aggregate_kind = 'thread'
-        AND stream_id = ${command.threadId}
-        AND event_type = 'runtime-request.updated'
-        AND json_extract(payload_json, '$.id') = ${command.requestId}
-      LIMIT 1
+      SELECT 1 AS found FROM j5_a2a_message_author WHERE thread_id = ${threadId} LIMIT 1
     `.pipe(Effect.map((rows) => rows.length > 0));
 
-  /** A thread that is a shared conversation now, or was one: its prompts say who answered them. */
+  /** A thread that is a shared conversation now, or was one: what was queued then keeps its lines. */
   const everShared = Effect.fn("j5.sharing.sharedConversation.everShared")(function* (
     threadId: ThreadId,
   ) {
-    if (yield* isSharedConversation(sql, threadId)) return true;
-    const told = yield* sql<{ readonly found: number }>`
-      SELECT 1 AS found FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}
-    `;
-    return told.length > 0;
+    return (yield* isSharedConversation(sql, threadId)) || (yield* writtenWhileShared(threadId));
   });
 
   /**
-   * Records who answered a prompt (AC9), on a thread that is or has been a shared conversation,
-   * so that a prompt a member answers after the last guest has gone still says who answered.
+   * Writes down who is answering a prompt (AC9), on a thread that is or has been a shared
+   * conversation, so that a prompt a member answers after the last guest has gone still says
+   * who answered.
    *
-   * It is written as the answer is taken in (`claimed`), before upstream settles the prompt, so
-   * that every client that sees the prompt settle on the thread's own feed finds who answered
-   * already there. A claim never replaces a record. When upstream has finished (`accepted`),
-   * the claim is kept only if upstream's log shows this very command settled the prompt, and
-   * then it stands for good, over a claim another person wrote first; otherwise it is taken
-   * back, as it is when upstream refuses the answer or it is interrupted. So a command id
-   * replayed against a prompt, pending or settled, records no one and changes no record. A
-   * failure to record is logged and does not stop the answer.
+   * It is written as the answer is taken in, before upstream settles the prompt, so that every
+   * client that sees the prompt settle on the thread's own feed finds who answered already
+   * there. It is a claim, kept for each command that answers: who answered is read as the claim
+   * whose command upstream's log shows settled the prompt (`settledItsPrompt`). So an answer
+   * upstream refuses, one that loses to an earlier answer, and a command id replayed against a
+   * prompt all name no one, and nothing is done when upstream has finished. The first claim
+   * for a command stands. A failure to record is logged and does not stop the answer.
    */
-  const recordAnswer = (
-    session: SessionIdentity,
-    command: OrchestrationV2Command,
-    when: "claimed" | "accepted",
-  ) =>
-    !isAnswer(command)
+  const recordAnswer = (session: SessionIdentity, command: OrchestrationV2Command) =>
+    command.type !== "runtime-request.respond" && command.type !== "thread.user-input.dismiss"
       ? Effect.void
       : Effect.gen(function* () {
-          if (!(yield* everShared(command.threadId))) return;
-          if (when === "accepted" && !(yield* settledBy(command))) {
-            yield* sql`
-              DELETE FROM j5_a2a_prompt_answer
-              WHERE thread_id = ${command.threadId}
-                AND request_id = ${command.requestId}
-                AND command_id = ${command.commandId}
-            `;
-            return;
-          }
+          const shared = yield* isSharedConversation(sql, command.threadId);
+          if (!shared && !(yield* writtenWhileShared(command.threadId))) return;
           const author = yield* sessionAuthor(session);
           if (author === null) return;
           const answeredAt = DateTime.formatIso(yield* DateTime.now);
-          const keepFirst = when === "claimed" ? 1 : 0;
           // What an approval was answered with; a question's answer and a dismissal have none.
           const decision =
             command.type === "runtime-request.respond" ? (command.decision ?? null) : null;
           // The agent is told only of what was answered while its thread was shared.
-          const untold = (yield* isSharedConversation(sql, command.threadId)) ? 0 : 1;
           yield* sql`
             INSERT INTO j5_a2a_prompt_answer (
-              thread_id, request_id, person_id, person_kind, display_name, command_id,
-              answered_at, decision, settled, told_delivered
+              thread_id, request_id, command_id, person_id, person_kind, display_name,
+              answered_at, decision, silent
             ) VALUES (
-              ${command.threadId}, ${command.requestId}, ${author.personId}, ${author.kind},
-              ${author.displayName}, ${command.commandId}, ${answeredAt}, ${decision},
-              ${keepFirst === 1 ? 0 : 1}, ${untold}
+              ${command.threadId}, ${command.requestId}, ${command.commandId},
+              ${author.personId}, ${author.kind}, ${author.displayName}, ${answeredAt},
+              ${decision}, ${shared ? 0 : 1}
             )
-            ON CONFLICT (thread_id, request_id) DO UPDATE SET
-              person_id = excluded.person_id,
-              person_kind = excluded.person_kind,
-              display_name = excluded.display_name,
-              command_id = excluded.command_id,
-              answered_at = excluded.answered_at,
-              decision = excluded.decision,
-              settled = 1,
-              told_delivered = excluded.told_delivered
-            WHERE ${keepFirst} = 0
+            ON CONFLICT (thread_id, request_id, command_id) DO NOTHING
           `;
         }).pipe(
           Effect.catch((cause) =>
@@ -682,29 +656,6 @@ const make = <E>(
           Effect.logError("J5 shared conversation could not read who left", { cause }),
         ),
       ),
-    /**
-     * After upstream has accepted a client's command: the person whose answer upstream took is
-     * the one recorded for the prompt, whoever was written down first.
-     */
-    accepted: (session: SessionIdentity, command: OrchestrationV2Command) =>
-      recordAnswer(session, command, "accepted"),
-    /** After upstream has refused a client's command, or it was interrupted: what was written for that answer is taken back. */
-    refused: (command: OrchestrationV2Command) =>
-      !isAnswer(command)
-        ? Effect.void
-        : sql`
-            DELETE FROM j5_a2a_prompt_answer
-            WHERE thread_id = ${command.threadId}
-              AND request_id = ${command.requestId}
-              AND command_id = ${command.commandId}
-          `.pipe(
-            Effect.asVoid,
-            Effect.catch((cause) =>
-              Effect.logError("J5 shared conversation could not take back a refused answer", {
-                cause,
-              }),
-            ),
-          ),
     /**
      * How the person on a connection is named to a Captain whose roster they are answering, when
      * the Captain's thread is a shared conversation; `null` anywhere else, where the Captain is
@@ -740,10 +691,10 @@ const make = <E>(
         readonly person_kind: PersonKind;
         readonly display_name: string | null;
       }>`
-        SELECT request_id, person_id, person_kind, display_name
-        FROM j5_a2a_prompt_answer
-        WHERE thread_id = ${threadId}
-        ORDER BY answered_at, request_id
+        SELECT answer.request_id, answer.person_id, answer.person_kind, answer.display_name
+        FROM j5_a2a_prompt_answer AS answer
+        WHERE answer.thread_id = ${threadId} AND ${settledItsPrompt}
+        ORDER BY answer.answered_at, answer.request_id
       `;
       return rows.map((row): SharingPromptAnswer => ({
         requestId: row.request_id,
@@ -802,7 +753,7 @@ const make = <E>(
               ),
             ),
           )
-      ).pipe(Effect.tap((admitted) => recordAnswer(session, admitted, "claimed"))),
+      ).pipe(Effect.tap((admitted) => recordAnswer(session, admitted))),
     /**
      * Who wrote each message a person sent while the thread was shared, for a connection that
      * can read the thread. It says a name and whether they are a member or a guest, no more.
@@ -830,23 +781,7 @@ const make = <E>(
       }));
     }),
   };
-  return {
-    ...conversation,
-    /**
-     * When upstream has finished with a client's command, however it ended. Accepted, the
-     * person whose answer upstream took is the one recorded; refused or interrupted, what was
-     * written for that answer is taken back, so a prompt later settled some other way never
-     * reads as answered by someone whose answer did not land.
-     */
-    settled: (
-      session: SessionIdentity,
-      command: OrchestrationV2Command,
-      exit: Exit.Exit<unknown, unknown>,
-    ) =>
-      Exit.isSuccess(exit)
-        ? conversation.accepted(session, command)
-        : conversation.refused(command),
-  };
+  return conversation;
 };
 
 export type SharedConversation = ReturnType<typeof make<unknown>>;
