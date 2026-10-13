@@ -3,7 +3,7 @@ import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contrac
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 
 import { useThreadAuthors } from "./sharedConversation";
-import { authorRecordSignal, withoutAuthorLine } from "./sharedConversation.logic";
+import { settledPromptSignal, withoutAuthorLine } from "./sharedConversation.logic";
 
 interface MessageEntry {
   readonly id: string;
@@ -48,15 +48,15 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
   threadRef: ScopedThreadRef | null,
   entries: ReadonlyArray<Entry>,
 ): ReadonlyArray<Entry> {
-  const texts = useMemo(
-    () => entries.flatMap((entry) => (entry.message?.role === "user" ? [entry.message.text] : [])),
+  const messages = useMemo(
+    () => entries.flatMap((entry) => (entry.message?.role === "user" ? [entry.message] : [])),
     [entries],
   );
   const record = useThreadAuthors(
     threadRef?.environmentId ?? null,
     threadRef?.threadId ?? null,
-    texts,
-    authorRecordSignal(entries),
+    messages,
+    settledPromptSignal(entries),
   );
   useEffect(() => {
     answers = record.answers;

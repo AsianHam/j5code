@@ -2,12 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   authorName,
-  authorRecordSignal,
+  authoredMessageIds,
   authorsByMessage,
   isSettledPrompt,
+  messagesToAskAgainAbout,
   mayHaveAuthorLine,
   queuedMessageRules,
   queuedMessageText,
+  settledPromptSignal,
   sharedConversationNote,
   withoutAuthorLine,
 } from "./sharedConversation.logic";
@@ -94,30 +96,38 @@ describe("a queued message in a shared conversation", () => {
 });
 
 describe("what tells the client to ask the server's record again", () => {
-  const message = (id: string, role: string) => ({ id, kind: "message", message: { role } });
   const prompt = (id: string, completedAt: string | null) => ({
     id,
     kind: "work",
     entry: { toolData: { type: "approval_request", requestId: `request-${id}`, completedAt } },
   });
+  const authoredText = "[Message from Priya (guest)]\n\nrun the tests";
 
-  it("moves when a person's message arrives or a prompt settles", () => {
-    const before = authorRecordSignal([message("m1", "user"), prompt("p1", null)]);
-    expect(
-      authorRecordSignal([message("m1", "user"), prompt("p1", "2026-10-13T06:40:00Z")]),
-    ).not.toBe(before);
-    expect(
-      authorRecordSignal([message("m1", "user"), prompt("p1", null), message("m2", "user")]),
-    ).not.toBe(before);
+  it("counts a person's message once the server's copy, with its author line, has arrived", () => {
+    // Their own message is first drawn from what they typed; its id is not yet a reason to ask.
+    expect(authoredMessageIds([{ id: "m1", text: "run the tests" }])).toEqual([]);
+    expect(authoredMessageIds([{ id: "m1", text: authoredText }])).toEqual(["m1"]);
+    expect(authoredMessageIds([{ id: null, text: authoredText }])).toEqual([]);
   });
 
-  it("stays as it was for a prompt still open, and while the agent writes and works", () => {
-    const before = authorRecordSignal([message("m1", "user")]);
+  it("asks once more about a message a read missed, and never a third time", () => {
+    const recorded = new Set(["m1"]);
     expect(
-      authorRecordSignal([
-        message("m1", "user"),
-        message("a1", "assistant"),
+      messagesToAskAgainAbout({ authored: ["m1", "m2"], recorded, askedAgain: new Set() }),
+    ).toEqual(["m2"]);
+    // Still unrecorded after that: a line someone typed before the thread was shared.
+    expect(
+      messagesToAskAgainAbout({ authored: ["m1", "m2"], recorded, askedAgain: new Set(["m2"]) }),
+    ).toEqual([]);
+  });
+
+  it("moves when a prompt settles, and not for one still open or for the agent's own work", () => {
+    const before = settledPromptSignal([prompt("p1", null)]);
+    expect(settledPromptSignal([prompt("p1", "2026-10-13T06:40:00Z")])).not.toBe(before);
+    expect(
+      settledPromptSignal([
         prompt("p1", null),
+        { id: "a1", kind: "message" },
         { id: "w1", kind: "work", entry: { toolData: { type: "tool_call" } } },
       ]),
     ).toBe(before);

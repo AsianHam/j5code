@@ -103,25 +103,48 @@ export function isSettledPrompt(toolData: unknown): toolData is {
 }
 
 /**
- * What moves when the server's record can have gained a row this client should read: a person's
- * message arriving, or a prompt of the agent's settling. The server records who is answering
- * before a prompt settles, so the name is there by then; a prompt still open is never a reason
- * to read, since an answer the provider goes on to refuse would show a name on it. The agent's
- * own text and work leave the signal as it was.
+ * The messages whose text begins as an authored one does: the ones the server's record is asked
+ * about. A person's own message is first drawn from what they typed, with no such line, and gains
+ * it when the server's copy arrives, which is when its author row can be read; so the list moves
+ * at the right moment, where the message's id alone appears too early.
  */
-export function authorRecordSignal(
+export function authoredMessageIds(
+  messages: ReadonlyArray<{ readonly id: string | null; readonly text: string }>,
+): ReadonlyArray<string> {
+  return messages.flatMap((message) =>
+    message.id !== null && mayHaveAuthorLine(message.text) ? [message.id] : [],
+  );
+}
+
+/**
+ * The authored-looking messages the record just read does not hold and that have not been asked
+ * about before. Each is asked about once more, since a read can cross the message on its way;
+ * after that it is a line someone typed, and stays as it is.
+ */
+export function messagesToAskAgainAbout(input: {
+  readonly authored: ReadonlyArray<string>;
+  readonly recorded: { has(messageId: string): boolean };
+  readonly askedAgain: { has(messageId: string): boolean };
+}): ReadonlyArray<string> {
+  return input.authored.filter((id) => !input.recorded.has(id) && !input.askedAgain.has(id));
+}
+
+/**
+ * The agent's prompts that have settled, as one value that moves when another does. The server
+ * records who is answering before a prompt settles, so the name is there by then; a prompt still
+ * open is never a reason to read, since an answer the provider goes on to refuse would show a
+ * name on it.
+ */
+export function settledPromptSignal(
   entries: ReadonlyArray<{
     readonly id: string;
     readonly kind: string;
-    readonly message?: { readonly role: string } | undefined;
     readonly entry?: { readonly toolData?: unknown } | undefined;
   }>,
 ): string {
-  const parts: Array<string> = [];
-  for (const entry of entries) {
-    if (entry.kind === "message") {
-      if (entry.message?.role === "user") parts.push(entry.id);
-    } else if (isSettledPrompt(entry.entry?.toolData)) parts.push(entry.id);
-  }
-  return parts.join("|");
+  return entries
+    .flatMap((entry) =>
+      entry.kind !== "message" && isSettledPrompt(entry.entry?.toolData) ? [entry.id] : [],
+    )
+    .join("|");
 }
