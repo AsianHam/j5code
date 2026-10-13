@@ -5,6 +5,7 @@ import {
   authoredMessageIds,
   authorsByMessage,
   isSettledPrompt,
+  messageStanding,
   messagesToAskAgainAbout,
   mayHaveAuthorLine,
   queuedMessageRules,
@@ -137,6 +138,33 @@ describe("what tells the client to ask the server's record again", () => {
     expect(isSettledPrompt(prompt("p1", "2026-10-13T06:40:00Z").entry.toolData)).toBe(true);
     expect(isSettledPrompt(prompt("p1", null).entry.toolData)).toBe(false);
     expect(isSettledPrompt({ type: "tool_call", completedAt: "2026-10-13T06:40:00Z" })).toBe(false);
+  });
+});
+
+describe("a message before the server has said whose it is", () => {
+  const asked = { looksAuthored: true, recorded: false, unrecorded: false };
+
+  it("keeps the agent's line off the screen while it waits", () => {
+    // The reader's own message, first drawn from what they typed, stays their own bubble.
+    expect(messageStanding({ ...asked, typedHere: true })).toBe("waiting-own");
+    // Anyone else's, and history on first open, is a card with no name yet.
+    expect(messageStanding({ ...asked, typedHere: false })).toBe("waiting-unknown");
+  });
+
+  it("is whose the record says once it answers", () => {
+    expect(messageStanding({ ...asked, recorded: true, typedHere: false })).toBe("recorded");
+  });
+
+  it("is shown as typed when the record does not hold it, or it never looked authored", () => {
+    expect(messageStanding({ ...asked, unrecorded: true, typedHere: false })).toBe("plain");
+    expect(
+      messageStanding({
+        looksAuthored: false,
+        recorded: false,
+        unrecorded: false,
+        typedHere: true,
+      }),
+    ).toBe("plain");
   });
 });
 

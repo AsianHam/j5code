@@ -130,6 +130,27 @@ export function messagesToAskAgainAbout(input: {
 }
 
 /**
+ * How a message stands with the server's record, which decides whose it is. "recorded": the
+ * record names its author. "plain": it does not begin as an authored message does, or the record
+ * has been read for it and does not hold it, so it is a line someone typed. "waiting": it begins
+ * as an authored one does and the record has not answered for it yet, a moment in which the line
+ * is kept off the screen: "own" when this client first drew the message from what its person
+ * typed, "unknown" otherwise.
+ */
+export function messageStanding(input: {
+  readonly looksAuthored: boolean;
+  readonly recorded: boolean;
+  /** The record was read for this message and does not hold it. */
+  readonly unrecorded: boolean;
+  /** This client drew the message before the server's copy, without an author line. */
+  readonly typedHere: boolean;
+}): "recorded" | "plain" | "waiting-own" | "waiting-unknown" {
+  if (input.recorded) return "recorded";
+  if (!input.looksAuthored || input.unrecorded) return "plain";
+  return input.typedHere ? "waiting-own" : "waiting-unknown";
+}
+
+/**
  * The agent's prompts that have settled, as one value that moves when another does. The server
  * records who is answering before a prompt settles, so the name is there by then; a prompt still
  * open is never a reason to read, since an answer the provider goes on to refuse would show a

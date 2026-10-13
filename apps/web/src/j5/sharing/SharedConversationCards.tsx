@@ -32,8 +32,9 @@ export function renderSharedConversationMessage(props: SharedMessageInput): Reac
     );
   }
   const author = sharedAuthorOf(props.message);
-  if (author === undefined || author.you) return null;
-  const name = authorName(author);
+  if (author === undefined || (author !== "waiting" && author.you)) return null;
+  // For the moment before the server says whose it is, the card is drawn without a name.
+  const name = author === "waiting" ? null : authorName(author);
   return (
     <section className="rounded-lg bg-accent px-3 py-2.5" data-j5-shared-conversation="message">
       <div className="flex items-center gap-2 text-xs">
@@ -41,12 +42,14 @@ export function renderSharedConversationMessage(props: SharedMessageInput): Reac
           aria-hidden
           className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-4xs font-semibold text-foreground"
         >
-          {initialsOf(name)}
+          {name === null ? "" : initialsOf(name)}
         </span>
-        <p className="min-w-0 truncate font-medium text-foreground">{name}</p>
-        <span className="rounded-md border border-border/70 px-1.5 py-0.5 text-2xs font-semibold text-muted-foreground">
-          {author.kind}
-        </span>
+        <p className="min-w-0 truncate font-medium text-foreground">{name ?? "\u00a0"}</p>
+        {author === "waiting" ? null : (
+          <span className="rounded-md border border-border/70 px-1.5 py-0.5 text-2xs font-semibold text-muted-foreground">
+            {author.kind}
+          </span>
+        )}
         {props.timestampLabel ? (
           <span className="ml-auto shrink-0 text-muted-foreground">{props.timestampLabel}</span>
         ) : null}

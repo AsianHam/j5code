@@ -1,7 +1,7 @@
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { J5_SHARING_WS_METHODS, type SharingPromptAnswer } from "@t3tools/contracts/j5";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentQuery } from "../../state/query";
@@ -11,7 +11,8 @@ import {
   authorsByMessage,
   messagesToAskAgainAbout,
   queuedMessageRules,
-  queuedMessageTexts,
+  queuedMessageText,
+  withoutAuthorLine,
   type AuthorsByMessage,
 } from "./sharedConversation.logic";
 
@@ -22,6 +23,7 @@ const threadAuthors = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime,
 });
 
 const NO_AUTHORS: AuthorsByMessage = new Map();
+const NO_IDS: ReadonlySet<string> = new Set();
 const NO_ANSWERS: ReadonlyMap<string, SharingPromptAnswer> = new Map();
 
 /**
@@ -58,20 +60,33 @@ export function useThreadAuthors(
           },
     [record],
   );
-  // A read can cross a message on its way in; what it missed is asked about once more.
-  const askedAgain = useRef(new Set<string>());
+  // A read can cross a message on its way in; what it missed is asked about once more. What a
+  // second read still does not hold is a line someone typed, and is said to be so.
+  const askedAgain = useRef(new Map<string, unknown>());
+  const [unrecorded, setUnrecorded] = useState<ReadonlySet<string>>(NO_IDS);
   useEffect(() => {
     if (record === null || record === undefined) return;
+    const authoredIds = authoredKey === "" ? [] : authoredKey.split("|");
     const missed = messagesToAskAgainAbout({
-      authored: authoredKey === "" ? [] : authoredKey.split("|"),
+      authored: authoredIds,
       recorded: result.authors,
       askedAgain: askedAgain.current,
     });
-    if (missed.length === 0) return;
-    for (const id of missed) askedAgain.current.add(id);
-    refresh();
+    for (const id of missed) askedAgain.current.set(id, record);
+    if (missed.length > 0) refresh();
+    const settledAsTyped = authoredIds.filter(
+      (id) =>
+        !result.authors.has(id) &&
+        askedAgain.current.has(id) &&
+        askedAgain.current.get(id) !== record,
+    );
+    setUnrecorded((current) =>
+      settledAsTyped.every((id) => current.has(id))
+        ? current
+        : new Set([...current, ...settledAsTyped]),
+    );
   }, [authoredKey, record, refresh, result.authors]);
-  return result;
+  return useMemo(() => ({ ...result, unrecorded }), [result, unrecorded]);
 }
 
 /**
@@ -84,7 +99,7 @@ export function useSharedQueue<
   Item extends { readonly messageId: string | null; readonly text: string },
 >(environmentId: EnvironmentId, threadId: ThreadId, queued: ReadonlyArray<Item>) {
   const isGuest = useIsGuest(environmentId);
-  const { authors } = useThreadAuthors(
+  const { authors, unrecorded } = useThreadAuthors(
     environmentId,
     threadId,
     queued.map((item) => ({ id: item.messageId, text: item.text })),
@@ -92,9 +107,15 @@ export function useSharedQueue<
   );
   const items = queued.map((item) => {
     const author = item.messageId === null ? undefined : authors.get(item.messageId);
-    const { typed, shown } = queuedMessageTexts(item.text, author);
-    // `text` goes to the editor and back to the server; `preview` is only ever drawn.
-    return { ...item, text: typed, preview: shown, ...queuedMessageRules({ isGuest, author }) };
+    return {
+      ...item,
+      // Until the record answers for a message, its line for the agent is kept off the queue.
+      text:
+        author === undefined && item.messageId !== null && !unrecorded.has(item.messageId)
+          ? withoutAuthorLine(item.text)
+          : queuedMessageText(item.text, author),
+      ...queuedMessageRules({ isGuest, author }),
+    };
   });
   return { items, mayReorder: !isGuest };
 }

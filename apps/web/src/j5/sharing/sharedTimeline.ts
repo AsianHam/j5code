@@ -1,9 +1,14 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
 import { useThreadAuthors } from "./sharedConversation";
-import { settledPromptSignal, withoutAuthorLine } from "./sharedConversation.logic";
+import {
+  mayHaveAuthorLine,
+  messageStanding,
+  settledPromptSignal,
+  withoutAuthorLine,
+} from "./sharedConversation.logic";
 
 interface MessageEntry {
   readonly id: string;
@@ -13,9 +18,12 @@ interface MessageEntry {
 
 // Whose each drawn message is, for the card that draws another person's. Keyed by the message
 // object the timeline holds, so nothing is kept for a thread that is no longer on screen.
-const authorOfMessage = new WeakMap<object, SharingMessageAuthor>();
+const authorOfMessage = new WeakMap<object, SharingMessageAuthor | "waiting">();
 
-/** Who the server records as having written this message, or nothing for any other message. */
+/**
+ * Who the server records as having written this message; "waiting" for one whose answer has not
+ * come yet and that this client did not draw from its own person's typing; nothing otherwise.
+ */
 export const sharedAuthorOf = (message: object) => authorOfMessage.get(message);
 
 // Who answered each prompt of the thread on screen, for the line a settled prompt carries.
@@ -62,14 +70,29 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
     answers = record.answers;
     for (const listener of listeners) listener();
   }, [record.answers]);
+  // The messages this client drew from what its person typed, before the server's copy came.
+  const typedHere = useRef(new Set<string>());
+  for (const message of messages) {
+    if (!mayHaveAuthorLine(message.text)) typedHere.current.add(message.id);
+  }
   return useMemo(() => {
-    if (record.authors.size === 0) return entries;
+    if (!messages.some((message) => mayHaveAuthorLine(message.text))) return entries;
     return entries.map((entry) => {
-      const author = entry.message === undefined ? undefined : record.authors.get(entry.message.id);
-      if (entry.message === undefined || author === undefined) return entry;
+      if (entry.message === undefined || entry.message.role !== "user") return entry;
+      const author = record.authors.get(entry.message.id);
+      const standing = messageStanding({
+        looksAuthored: mayHaveAuthorLine(entry.message.text),
+        recorded: author !== undefined,
+        unrecorded: record.unrecorded.has(entry.message.id),
+        typedHere: typedHere.current.has(entry.message.id),
+      });
+      if (standing === "plain") return entry;
       const message = { ...entry.message, text: withoutAuthorLine(entry.message.text) };
-      authorOfMessage.set(message, author);
+      // Until the record answers, the reader's own message stays their own bubble and anyone
+      // else's is a card with no name yet; neither shows the line meant for the agent.
+      if (author !== undefined) authorOfMessage.set(message, author);
+      else if (standing === "waiting-unknown") authorOfMessage.set(message, "waiting");
       return { ...entry, message };
     });
-  }, [entries, record.authors]);
+  }, [entries, messages, record.authors, record.unrecorded]);
 }
