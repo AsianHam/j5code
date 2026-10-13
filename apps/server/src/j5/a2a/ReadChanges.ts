@@ -41,6 +41,7 @@ const make = Effect.gen(function* () {
     fleet: startedAt,
     runtimeRequests: startedAt,
     peers: startedAt,
+    sharing: startedAt,
   });
   return ReadChanges.of({
     notify: (...keys) =>

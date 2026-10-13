@@ -29,6 +29,7 @@ import { runJ5A2AMigrations } from "../a2a/Migrations.ts";
 import { artifactHttpRouteLayer } from "../artifacts/ArtifactHttp.ts";
 import * as ArtifactWorkspace from "../artifacts/ArtifactWorkspace.ts";
 import * as GuestGate from "./GuestGate.ts";
+import * as GuestPairing from "./GuestPairing.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 
 /**
@@ -74,7 +75,9 @@ const database = Layer.effectDiscard(
 ).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 const testLayer = Layer.mergeAll(
-  GuestGate.gateEnvironmentAuth(upstreamAuth.pipe(Layer.provideMerge(database))),
+  GuestGate.gateEnvironmentAuth(
+    upstreamAuth.pipe(Layer.provideMerge(GuestPairing.layer), Layer.provideMerge(database)),
+  ),
   ArtifactWorkspace.layer.pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-guest-artifacts-" })),
     Layer.provideMerge(NodeServices.layer),

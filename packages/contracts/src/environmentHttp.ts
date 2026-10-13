@@ -152,6 +152,8 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
     reason: EnvironmentAuthInvalidReason,
     // Older servers do not send a DPoP failure category.
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
+    // J5: why a pairing link was refused when the token itself was good (FORK.md case 70).
+    pairingRefusal: Schema.optionalKey(Schema.Literal("guest_link_for_member")),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },

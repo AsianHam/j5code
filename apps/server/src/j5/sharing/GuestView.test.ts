@@ -143,7 +143,11 @@ const project = Effect.fn("test.project")(function* (id: string) {
   return projectId;
 });
 
-const renameProject = Effect.fn("test.renameProject")(function* (id: ProjectId, title: string) {
+const renameProject = Effect.fn("test.renameProject")(function* (
+  id: ProjectId,
+  title: string,
+  icon: { readonly projectIcon?: unknown; readonly faviconPath?: string } = {},
+) {
   const sink = yield* EventSink.EventSinkV2;
   yield* sink.commitProjectCommand({
     commandId: CommandId.make(`rename:${id}:${title}`),
@@ -160,7 +164,7 @@ const renameProject = Effect.fn("test.renameProject")(function* (id: ProjectId, 
       correlationId: null,
       metadata: {},
       type: "project.meta-updated",
-      payload: { projectId: id, title, updatedAt: AT },
+      payload: { projectId: id, title, updatedAt: AT, ...icon } as never,
     },
   });
 });
@@ -449,7 +453,7 @@ const assertNothingOfTheHost = (sent: unknown) => {
     "2026-10-11T08:09:10.000Z",
     "claude-off",
     "host-prefix",
-    "jackson-workstation",
+    // The server's own name is not in this list: its public descriptor gives it to anyone.
     "github.example.com",
     "host-theme",
     "host-source",
@@ -499,8 +503,8 @@ it.effect("a guest's configuration holds nothing of the host, and still decodes"
     assert.deepStrictEqual(reduced.settings, DEFAULT_SERVER_SETTINGS);
     assert.deepStrictEqual(reduced.environment, {
       environmentId: fullConfig.environment.environmentId,
-      label: "Shared server",
-      platform: { os: "unknown", arch: "other" },
+      label: "jackson-workstation",
+      platform: { os: "linux", arch: "x64" },
       serverVersion: "0.0.48",
       orchestrationProtocolVersion: 2,
       capabilities: { repositoryIdentity: false },
@@ -589,8 +593,8 @@ it.effect("a guest's lifecycle feed is a welcome that names nothing of the host"
         payload: {
           environment: {
             environmentId: fullConfig.environment.environmentId,
-            label: "Shared server",
-            platform: { os: "unknown", arch: "other" },
+            label: "jackson-workstation",
+            platform: { os: "linux", arch: "x64" },
             serverVersion: "0.0.48",
             orchestrationProtocolVersion: 2,
             capabilities: { repositoryIdentity: false },
@@ -703,7 +707,11 @@ live(
       projectId: shared,
       parent: granted,
     });
-    yield* renameProject(shared, "Shared renamed");
+    // Its icon is chosen, and it has a favicon file somewhere on the host.
+    yield* renameProject(shared, "Shared renamed", {
+      projectIcon: { kind: "emoji", emoji: "🚀" },
+      faviconPath: "/srv/host-favicon/icon.png",
+    });
     const last = yield* write("thread.metadata-updated", {
       id: granted,
       projectId: shared,
@@ -734,11 +742,15 @@ live(
       id: shared,
       title: "Shared renamed",
       workspaceRoot: "/",
+      // The icon a person chose is plain data and is shown; the favicon's path is the host's.
+      projectIcon: { kind: "emoji", emoji: "🚀" },
       defaultModelSelection: null,
       scripts: [],
       createdAt: AT,
       updatedAt: AT,
     });
+    assert.notInclude(JSON.stringify(guestLive), "host-favicon");
+    assert.include(JSON.stringify(memberLive), "host-favicon");
     for (const item of guestLive) {
       if (item.kind === "thread.updated") assert.strictEqual(item.thread.worktreePath, "/");
     }

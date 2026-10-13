@@ -31,6 +31,7 @@ import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import { GUEST_LINK_FOR_MEMBER, isMemberOpenedGuestLink } from "../j5/sharing/GuestPairing.ts";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -96,6 +97,7 @@ export function annotateEnvironmentRequest(endpoint: string) {
 export function failEnvironmentAuthInvalid(
   reason: EnvironmentAuthInvalidReason,
   dpopFailureReason?: DpopFailureReason,
+  pairingRefusal?: typeof GUEST_LINK_FOR_MEMBER,
 ) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
@@ -104,6 +106,7 @@ export function failEnvironmentAuthInvalid(
           code: "auth_invalid",
           reason,
           ...(dpopFailureReason === undefined ? {} : { dpopFailureReason }),
+          ...(pairingRefusal === undefined ? {} : { pairingRefusal }),
           traceId,
         }),
       ),
@@ -343,6 +346,8 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
+              // J5: a member's browser opening a guest's link is told why (FORK.md case 70).
+              isMemberOpenedGuestLink(error) ? GUEST_LINK_FOR_MEMBER : undefined,
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>

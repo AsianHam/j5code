@@ -449,6 +449,8 @@ export const ParticipantDirectoryRow = Schema.Struct({
   canReceiveMessage: Schema.Boolean,
   canOpenExchange: Schema.Boolean,
   acceptsUrgency: Schema.Boolean,
+  /** A person's name, once the server has recorded one for them. */
+  displayName: Schema.optionalKey(Schema.String),
 });
 export type ParticipantDirectoryRow = typeof ParticipantDirectoryRow.Type;
 

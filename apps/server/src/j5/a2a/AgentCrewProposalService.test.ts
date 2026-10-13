@@ -287,6 +287,7 @@ it.effect(
         fleet: 0,
         runtimeRequests: 0,
         peers: 0,
+        sharing: 0,
       });
     }).pipe(
       Effect.provide(

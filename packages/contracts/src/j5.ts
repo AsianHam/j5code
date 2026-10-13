@@ -1141,6 +1141,11 @@ export const J5ReadRevisions = Schema.Struct({
   runtimeRequests: Schema.Int,
   /** The peer list: each peer's link, heartbeat, last error, session and waiting messages. */
   peers: Schema.Int,
+  /**
+   * The people this server is shared with: a person, a name (the owner's too), a grant, a
+   * device, a share link.
+   */
+  sharing: Schema.Int,
 });
 export type J5ReadRevisions = typeof J5ReadRevisions.Type;
 export type J5ReadRevisionKey = keyof J5ReadRevisions;

@@ -40,8 +40,11 @@ const reduceEnvironment = (
   environment: ExecutionEnvironmentDescriptor,
 ): ExecutionEnvironmentDescriptor => ({
   environmentId: environment.environmentId,
-  label: "Shared server",
-  platform: { os: "unknown", arch: "other" },
+  // The server's own name and platform, which its public descriptor
+  // (`/.well-known/t3/environment`) gives anyone who can reach it. A person who is a guest of
+  // two servers tells them apart by name.
+  label: environment.label,
+  platform: environment.platform,
   serverVersion: environment.serverVersion,
   ...(environment.orchestrationProtocolVersion === undefined
     ? {}
@@ -126,10 +129,18 @@ export const reduceServerConfig = (config: ServerConfig): ServerConfig => ({
   ),
 });
 
+/**
+ * A project as a guest's client is told of it: enough to draw the thread under its project's name
+ * and chosen icon. The icon a person chose (`projectIcon`: a named glyph, an emoji or a monogram)
+ * is plain data and passes. A favicon file does not: upstream's client asks for one by the
+ * project's folder, which a guest is not told, and the signed link it would get names that folder
+ * in the clear. A guest sees upstream's default icon for a project with no chosen one.
+ */
 const reduceProject = (project: OrchestrationProjectShell): OrchestrationProjectShell => ({
   id: project.id,
   title: project.title,
   workspaceRoot: PLACEHOLDER_PATH,
+  ...(project.projectIcon == null ? {} : { projectIcon: project.projectIcon }),
   defaultModelSelection: null,
   scripts: [],
   createdAt: project.createdAt,

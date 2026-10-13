@@ -620,6 +620,8 @@ it.effect("keeps participant listing placement-read-only", () =>
       canReceiveMessage: true,
       canOpenExchange: true,
       acceptsUrgency: true,
+      // The server's owner, who has set their name.
+      displayName: "Jackson Miller",
     } satisfies ParticipantDirectoryRow;
     const sendService = Layer.succeed(
       A2ASendService,
@@ -710,6 +712,17 @@ it.effect("keeps participant listing placement-read-only", () =>
       assert.deepStrictEqual(listedRows[1]?.provenance, { kind: "not-applicable" });
       assert.equal(listedRows[1]?.placement_parent_id, null);
       assert.equal(listedRows[1]?.self, false);
+      // An agent reads the owner's name where a person's row had none, and the row is otherwise
+      // the one it always was: the same fields as any other row.
+      assert.equal(listedRows[1]?.display_name, "Jackson Miller");
+      assert.deepStrictEqual(listedRows[1]?.participant, {
+        kind: "human",
+        id: personParticipantId,
+      });
+      assert.deepStrictEqual(
+        Object.keys(listedRows[1] ?? {}).toSorted(),
+        Object.keys(listedRows[2] ?? {}).toSorted(),
+      );
       assert.deepStrictEqual(listedRows[2]?.provenance, {
         kind: "forked-from",
         source_participant_id: forkSourceId,

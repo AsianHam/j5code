@@ -13,6 +13,8 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { ParticipantId } from "../a2a/contracts.ts";
+import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
+import { ReadChanges, layer as readChangesLayer } from "../a2a/ReadChanges.ts";
 
 /**
  * Shared server's people and grants (docs/j5/product/features/shared-server.md). A member reaches
@@ -45,6 +47,16 @@ export interface PersonGrant {
   readonly personId: ParticipantId;
   readonly target: GrantTarget;
   readonly level: GrantLevel;
+  /** The line the member wrote when sharing, saying what the guest is there for. */
+  readonly note: string | null;
+}
+
+/** A person as the people list shows them: what they hold and the sessions paired as them. */
+export interface PersonRecord {
+  readonly person: Person;
+  readonly createdAt: string;
+  readonly grants: ReadonlyArray<PersonGrant>;
+  readonly sessionIds: ReadonlyArray<AuthSessionId>;
 }
 
 /**
@@ -83,22 +95,76 @@ export class GrantOnMemberError extends Schema.TaggedError<GrantOnMemberError>()
   }
 }
 
+export class MemberNotRemovableError extends Schema.TaggedError<MemberNotRemovableError>()(
+  "MemberNotRemovableError",
+  { personId: Schema.String },
+) {
+  override get message(): string {
+    return `${this.personId} is a member of this server; only a guest can be removed.`;
+  }
+}
+
+export class PersonNameTakenError extends Schema.TaggedError<PersonNameTakenError>()(
+  "PersonNameTakenError",
+  {},
+) {
+  override get message(): string {
+    return "That name is already in use on this server. Choose another.";
+  }
+}
+
+/**
+ * A name folded for comparing, so that near-copies are one name: compatibility-normalised,
+ * lower-cased, trimmed, with runs of whitespace made one space. "jackson", " Jackson ", "JACKSON"
+ * and fullwidth letters fold alike; look-alike letters across scripts do not. The name itself is
+ * stored and shown as typed.
+ */
+export const personNameKey = (name: string) =>
+  name.normalize("NFKC").toLowerCase().normalize("NFKC").trim().replace(/\s+/gu, " ");
+
+/** Whether a failed write broke the rule that no two people share a folded name. */
+const brokeNameRule = (cause: unknown): boolean => {
+  for (let seen: unknown = cause, depth = 0; depth < 6 && seen != null; depth += 1) {
+    const message = (seen as { readonly message?: unknown }).message;
+    if (typeof message === "string" && /UNIQUE constraint failed.*name_key/.test(message)) {
+      return true;
+    }
+    seen = (seen as { readonly cause?: unknown }).cause;
+  }
+  return false;
+};
+
 export interface SessionIdentity {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
 }
 
 export interface PersonAccessShape {
-  /** Records a guest under the name the member bringing them in gave them. */
+  /**
+   * Records a guest under the name the member bringing them in gave them. A name another person
+   * on the server already has, compared folded, is refused.
+   */
   readonly createGuest: (input: {
     readonly displayName: string;
-  }) => Effect.Effect<Person, PersonAccessStorageError>;
+  }) => Effect.Effect<Person, PersonAccessStorageError | PersonNameTakenError>;
+  /** The name of the person the server belongs to; `null` until one is set. */
+  readonly operatorName: Effect.Effect<string | null, PersonAccessStorageError>;
+  /**
+   * Names the person the server belongs to: the one member there is, whom every device that is
+   * not a guest's is taken to be. It is the name guests and agents know them by.
+   */
+  readonly setOperatorName: (
+    displayName: string,
+  ) => Effect.Effect<Person, PersonAccessStorageError | PersonNameTakenError>;
   readonly readPerson: (
     personId: ParticipantId,
   ) => Effect.Effect<Person | null, PersonAccessStorageError>;
-  /** Gives a guest a level on a project or thread, replacing any level they held on it. */
+  /**
+   * Gives a guest a level on a project or thread, replacing any level they held on it. A `note`
+   * left out keeps the one already recorded; `null` clears it.
+   */
   readonly putGrant: (
-    grant: PersonGrant,
+    grant: Omit<PersonGrant, "note"> & { readonly note?: string | null },
   ) => Effect.Effect<void, PersonAccessStorageError | PersonNotFoundError | GrantOnMemberError>;
   readonly removeGrant: (input: {
     readonly personId: ParticipantId;
@@ -107,7 +173,61 @@ export interface PersonAccessShape {
   readonly listGrants: (
     personId: ParticipantId,
   ) => Effect.Effect<ReadonlyArray<PersonGrant>, PersonAccessStorageError>;
-  /** Ties an auth session to the person it was paired as. */
+  /** Gives a guest a new name. Told to open feeds, as a change to who is on a thread. */
+  readonly setGuestName: (input: {
+    readonly personId: ParticipantId;
+    readonly displayName: string;
+  }) => Effect.Effect<void, PersonAccessStorageError | PersonNotFoundError | PersonNameTakenError>;
+  /**
+   * Every guest whose grants cover a thread, each with every grant that covers it: on the thread
+   * itself, on a thread above it, or on its project. Members reach every thread and are listed
+   * apart.
+   */
+  readonly threadPeople: (threadId: ThreadId) => Effect.Effect<
+    {
+      readonly members: ReadonlyArray<Person>;
+      readonly guests: ReadonlyArray<{
+        readonly person: Person;
+        readonly grants: ReadonlyArray<{
+          readonly via: "thread" | "ancestor" | "project";
+          readonly level: GrantLevel;
+        }>;
+      }>;
+    },
+    PersonAccessStorageError
+  >;
+  /** Every person recorded on this server, oldest first, with their grants and sessions. */
+  readonly listPeople: Effect.Effect<ReadonlyArray<PersonRecord>, PersonAccessStorageError>;
+  /**
+   * Removes a guest with everything recorded for them: their grants, the sessions paired as them
+   * and their unused links. Reports those sessions and links so the caller can end them upstream.
+   * From the moment it commits, a connection still open for them reaches nothing.
+   */
+  readonly removeGuest: (personId: ParticipantId) => Effect.Effect<
+    {
+      readonly sessionIds: ReadonlyArray<AuthSessionId>;
+      readonly pairingLinkIds: ReadonlyArray<string>;
+    },
+    PersonAccessStorageError | PersonNotFoundError | MemberNotRemovableError
+  >;
+  /**
+   * Cuts a session loose from the guest it was paired as, and reports who that was; `null` when
+   * the session is no guest's. A connection still open on it reaches nothing from then on.
+   */
+  readonly unbindSession: (
+    sessionId: AuthSessionId,
+  ) => Effect.Effect<ParticipantId | null, PersonAccessStorageError>;
+  /**
+   * The same for every guest's session but one, as when a member ends all other devices. Reports
+   * the guests it cut sessions loose from.
+   */
+  readonly unbindOtherSessions: (
+    exceptSessionId: AuthSessionId,
+  ) => Effect.Effect<ReadonlyArray<ParticipantId>, PersonAccessStorageError>;
+  /**
+   * Ties an auth session to a person. Only tests call it: a real session is tied as upstream
+   * issues it, by `GuestPairing.issueSession`.
+   */
   readonly bindSession: (input: {
     readonly sessionId: AuthSessionId;
     readonly personId: ParticipantId;
@@ -157,8 +277,9 @@ export interface PersonAccessShape {
     projectId: ProjectId,
   ) => Effect.Effect<Access, PersonAccessStorageError>;
   /**
-   * The guest whose grants just changed, each time `putGrant` or `removeGrant` commits. A feed
-   * already open for that guest subscribes so the change reaches them without reconnecting.
+   * The guest whose reach just changed, each time `putGrant`, `removeGrant`, `removeGuest` or
+   * `unbindSession` commits. A feed already open for that guest subscribes so the change reaches
+   * them without reconnecting.
    */
   readonly subscribeGrantChanges: Effect.Effect<
     PubSub.Subscription<ParticipantId>,
@@ -182,6 +303,7 @@ interface GrantRow {
   readonly target_kind: "project" | "thread";
   readonly target_id: string;
   readonly level: GrantLevel;
+  readonly note: string | null;
 }
 
 const toPerson = (row: PersonRow): Person => ({
@@ -202,20 +324,32 @@ const toGrant = (row: GrantRow): PersonGrant => ({
       ? { kind: "project", projectId: row.target_id as ProjectId }
       : { kind: "thread", threadId: row.target_id as ThreadId },
   level: row.level,
+  note: row.note,
 });
 
 const highest = (levels: ReadonlyArray<GrantLevel>): Access =>
   levels.includes("collaborate") ? "collaborate" : levels.includes("view") ? "view" : "none";
 
-type PersonAccessError = PersonAccessStorageError | PersonNotFoundError | GrantOnMemberError;
+type PersonAccessError =
+  | PersonAccessStorageError
+  | PersonNameTakenError
+  | PersonNotFoundError
+  | GrantOnMemberError
+  | MemberNotRemovableError;
 const isPersonAccessError = Schema.is(
-  Schema.Union([PersonAccessStorageError, PersonNotFoundError, GrantOnMemberError]),
+  Schema.Union([
+    PersonAccessStorageError,
+    PersonNameTakenError,
+    PersonNotFoundError,
+    GrantOnMemberError,
+    MemberNotRemovableError,
+  ]),
 );
 
 /** How far up a placement tree a thread grant is looked for; trees are a few levels deep. */
 const MAX_ANCESTOR_DEPTH = 64;
 
-export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Layer.effect(
+const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> = Layer.effect(
   PersonAccess,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -223,6 +357,13 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
       PubSub.sliding<ParticipantId>(256),
       (pubsub) => PubSub.shutdown(pubsub),
     );
+    const readChanges = yield* ReadChanges;
+    /**
+     * Said after every write that changes what a person holds or who they are: the open feeds
+     * of that person's connections re-check, and the People page re-reads.
+     */
+    const changed = (personId: ParticipantId) =>
+      PubSub.publish(grantChanges, personId).pipe(Effect.andThen(readChanges.notify("sharing")));
     // This module's own errors pass through; anything else is the database.
     const storage =
       (operation: string) =>
@@ -230,6 +371,14 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
         isPersonAccessError(cause)
           ? (cause as Extract<E, PersonAccessError>)
           : new PersonAccessStorageError({ operation, cause });
+    // A write of a name: the unique index on the folded name is what refuses a second holder,
+    // so two people writing one name at the same moment cannot both keep it.
+    const naming =
+      (operation: string) =>
+      <E>(
+        cause: E,
+      ): PersonAccessStorageError | PersonNameTakenError | Extract<E, PersonAccessError> =>
+        brokeNameRule(cause) ? new PersonNameTakenError({}) : storage(operation)(cause);
 
     const readPersonRow = (personId: ParticipantId) =>
       sql<PersonRow>`
@@ -348,12 +497,41 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
           const personId = ParticipantId.make(`human:${NodeCrypto.randomUUID()}`);
           const createdAt = DateTime.formatIso(yield* DateTime.now);
           yield* sql`
-          INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at, kind, display_name)
-          VALUES (${personId}, 0, ${createdAt}, 'guest', ${input.displayName})
+          INSERT INTO j5_a2a_human_person (
+            person_id, is_local_operator, created_at, kind, display_name, name_key
+          ) VALUES (
+            ${personId}, 0, ${createdAt}, 'guest', ${input.displayName},
+            ${personNameKey(input.displayName)}
+          )
         `;
+          // A guest with no grant yet is on no thread, so only the People page is told.
+          yield* readChanges.notify("sharing");
           return { personId, kind: "guest" as const, displayName: input.displayName };
         },
-        Effect.mapError(storage("record a guest")),
+        Effect.mapError(naming("record a guest")),
+      ),
+
+      operatorName: sql<{ readonly display_name: string | null }>`
+        SELECT display_name FROM j5_a2a_human_person WHERE is_local_operator = 1 LIMIT 1
+      `.pipe(
+        Effect.map((rows) => rows[0]?.display_name ?? null),
+        Effect.mapError(storage("read the owner's name")),
+        Effect.withSpan("j5.sharing.personAccess.operatorName"),
+      ),
+
+      setOperatorName: Effect.fn("j5.sharing.personAccess.setOperatorName")(
+        function* (displayName) {
+          const personId = yield* ensureLocalOperatorHumanPerson(sql);
+          yield* sql`
+            UPDATE j5_a2a_human_person
+            SET display_name = ${displayName}, name_key = ${personNameKey(displayName)}
+            WHERE person_id = ${personId}
+          `;
+          // Told as a change to who is on every thread: the member is on all of them.
+          yield* changed(personId);
+          return { personId, kind: "member" as const, displayName };
+        },
+        Effect.mapError(naming("record the owner's name")),
       ),
 
       readPerson: Effect.fn("j5.sharing.personAccess.readPerson")(
@@ -372,14 +550,21 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
           }
           const target = targetColumns(grant.target);
           const now = DateTime.formatIso(yield* DateTime.now);
+          const keepNote = grant.note === undefined ? 1 : 0;
           yield* sql`
           INSERT INTO j5_a2a_person_grant (
-            person_id, target_kind, target_id, level, created_at, updated_at
-          ) VALUES (${grant.personId}, ${target.kind}, ${target.id}, ${grant.level}, ${now}, ${now})
+            person_id, target_kind, target_id, level, created_at, updated_at, note
+          ) VALUES (
+            ${grant.personId}, ${target.kind}, ${target.id}, ${grant.level}, ${now}, ${now},
+            ${grant.note ?? null}
+          )
           ON CONFLICT (person_id, target_kind, target_id)
-          DO UPDATE SET level = excluded.level, updated_at = excluded.updated_at
+          DO UPDATE SET
+            level = excluded.level,
+            updated_at = excluded.updated_at,
+            note = CASE WHEN ${keepNote} = 1 THEN j5_a2a_person_grant.note ELSE excluded.note END
         `;
-          yield* PubSub.publish(grantChanges, grant.personId);
+          yield* changed(grant.personId);
         },
         Effect.mapError(storage("record a grant")),
       ),
@@ -393,7 +578,7 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
             AND target_kind = ${target.kind}
             AND target_id = ${target.id}
         `;
-          yield* PubSub.publish(grantChanges, input.personId);
+          yield* changed(input.personId);
         },
         Effect.mapError(storage("remove a grant")),
       ),
@@ -401,7 +586,7 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
       listGrants: Effect.fn("j5.sharing.personAccess.listGrants")(
         function* (personId) {
           const rows = yield* sql<GrantRow>`
-          SELECT person_id, target_kind, target_id, level
+          SELECT person_id, target_kind, target_id, level, note
           FROM j5_a2a_person_grant
           WHERE person_id = ${personId}
           ORDER BY target_kind, target_id
@@ -409,6 +594,190 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
           return rows.map(toGrant);
         },
         Effect.mapError(storage("list a person's grants")),
+      ),
+
+      setGuestName: Effect.fn("j5.sharing.personAccess.setGuestName")(
+        function* (input) {
+          const rows = yield* sql`
+            UPDATE j5_a2a_human_person
+            SET display_name = ${input.displayName}, name_key = ${personNameKey(input.displayName)}
+            WHERE person_id = ${input.personId} AND kind = 'guest'
+            RETURNING person_id
+          `;
+          if (rows.length === 0)
+            return yield* new PersonNotFoundError({ personId: input.personId });
+          yield* changed(input.personId);
+        },
+        Effect.mapError(naming("record a guest's name")),
+      ),
+
+      threadPeople: Effect.fn("j5.sharing.personAccess.threadPeople")(
+        function* (threadId) {
+          // The same walk up from the thread as `threadLevels`, for everyone at once.
+          const rows = yield* sql<PersonRow & GrantRow>`
+            WITH RECURSIVE chain(thread_id, depth) AS (
+              SELECT ${threadId}, 0
+              UNION ALL
+              SELECT
+                COALESCE(
+                  (
+                    SELECT json_extract(thread.payload_json, '$.lineage.parentThreadId')
+                    FROM orchestration_v2_projection_threads AS thread
+                    WHERE thread.thread_id = chain.thread_id
+                      AND json_extract(thread.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                  ),
+                  (
+                    SELECT parent.thread_id
+                    FROM j5_a2a_membership AS child
+                    JOIN j5_a2a_participant_placement AS placement
+                      ON placement.project_id = child.project_id
+                     AND placement.participant_id = child.participant_id
+                    JOIN j5_a2a_membership AS parent
+                      ON parent.project_id = placement.project_id
+                     AND parent.participant_id = placement.placement_parent_id
+                    WHERE child.thread_id = chain.thread_id
+                      AND placement.provenance_kind <> 'forked-from'
+                    LIMIT 1
+                  )
+                ),
+                chain.depth + 1
+              FROM chain
+              WHERE chain.thread_id IS NOT NULL AND chain.depth < ${MAX_ANCESTOR_DEPTH}
+            )
+            SELECT person.person_id, person.kind, person.display_name,
+              held.target_kind, held.target_id, held.level, held.note
+            FROM j5_a2a_person_grant AS held
+            JOIN j5_a2a_human_person AS person
+              ON person.person_id = held.person_id AND person.kind = 'guest'
+            WHERE (held.target_kind = 'thread' AND held.target_id IN (
+                SELECT thread_id FROM chain WHERE thread_id IS NOT NULL
+              ))
+              OR (held.target_kind = 'project' AND held.target_id = (
+                SELECT project_id FROM orchestration_v2_projection_threads
+                WHERE thread_id = ${threadId}
+              ))
+            ORDER BY person.created_at, person.person_id, held.target_kind DESC, held.target_id
+          `;
+          const members = yield* sql<PersonRow>`
+            SELECT person_id, kind, display_name
+            FROM j5_a2a_human_person
+            WHERE kind = 'member'
+            ORDER BY created_at, person_id
+          `;
+          const guests = new Map<
+            string,
+            {
+              person: Person;
+              grants: Array<{ via: "thread" | "ancestor" | "project"; level: GrantLevel }>;
+            }
+          >();
+          for (const row of rows) {
+            const entry = guests.get(row.person_id) ?? { person: toPerson(row), grants: [] };
+            entry.grants.push({
+              via:
+                row.target_kind === "project"
+                  ? "project"
+                  : row.target_id === threadId
+                    ? "thread"
+                    : "ancestor",
+              level: row.level,
+            });
+            guests.set(row.person_id, entry);
+          }
+          return { members: members.map(toPerson), guests: [...guests.values()] };
+        },
+        Effect.mapError(storage("read who can reach a thread")),
+      ),
+
+      listPeople: Effect.gen(function* () {
+        const people = yield* sql<PersonRow & { readonly created_at: string }>`
+          SELECT person_id, kind, display_name, created_at
+          FROM j5_a2a_human_person
+          ORDER BY created_at, person_id
+        `;
+        const grants = yield* sql<GrantRow>`
+          SELECT person_id, target_kind, target_id, level, note
+          FROM j5_a2a_person_grant
+          ORDER BY target_kind, target_id
+        `;
+        const sessions = yield* sql<{ readonly session_id: string; readonly person_id: string }>`
+          SELECT session_id, person_id FROM j5_a2a_person_session ORDER BY bound_at, session_id
+        `;
+        return people.map((row): PersonRecord => ({
+          person: toPerson(row),
+          createdAt: row.created_at,
+          grants: grants.filter((grant) => grant.person_id === row.person_id).map(toGrant),
+          sessionIds: sessions
+            .filter((session) => session.person_id === row.person_id)
+            .map((session) => session.session_id as AuthSessionId),
+        }));
+      }).pipe(
+        Effect.mapError(storage("list people")),
+        Effect.withSpan("j5.sharing.personAccess.listPeople"),
+      ),
+
+      removeGuest: Effect.fn("j5.sharing.personAccess.removeGuest")(
+        function* (personId) {
+          const removed = yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const person = yield* requirePerson(personId);
+              if (person.kind === "member") {
+                return yield* new MemberNotRemovableError({ personId });
+              }
+              const sessions = yield* sql<{ readonly session_id: string }>`
+                SELECT session_id FROM j5_a2a_person_session WHERE person_id = ${personId}
+              `;
+              const links = yield* sql<{ readonly pairing_link_id: string }>`
+                SELECT pairing_link_id FROM j5_a2a_guest_link WHERE person_id = ${personId}
+              `;
+              // Each by name, so nothing is left to reach if a connection has cascades off.
+              yield* sql`DELETE FROM j5_a2a_person_grant WHERE person_id = ${personId}`;
+              yield* sql`DELETE FROM j5_a2a_person_session WHERE person_id = ${personId}`;
+              yield* sql`DELETE FROM j5_a2a_guest_link WHERE person_id = ${personId}`;
+              yield* sql`
+                DELETE FROM j5_a2a_human_person WHERE person_id = ${personId} AND kind = 'guest'
+              `;
+              return {
+                sessionIds: sessions.map((row) => row.session_id as AuthSessionId),
+                pairingLinkIds: links.map((row) => row.pairing_link_id),
+              };
+            }),
+          );
+          yield* changed(personId);
+          return removed;
+        },
+        Effect.mapError(storage("remove a guest")),
+      ),
+
+      unbindSession: Effect.fn("j5.sharing.personAccess.unbindSession")(
+        function* (sessionId) {
+          const rows = yield* sql<{ readonly person_id: string }>`
+            DELETE FROM j5_a2a_person_session WHERE session_id = ${sessionId} RETURNING person_id
+          `;
+          if (rows[0] === undefined) return null;
+          const personId = ParticipantId.make(rows[0].person_id);
+          yield* changed(personId);
+          return personId;
+        },
+        Effect.mapError(storage("cut a session loose from its person")),
+      ),
+
+      unbindOtherSessions: Effect.fn("j5.sharing.personAccess.unbindOtherSessions")(
+        function* (exceptSessionId) {
+          const rows = yield* sql<{ readonly person_id: string }>`
+            DELETE FROM j5_a2a_person_session
+            WHERE session_id <> ${exceptSessionId}
+            RETURNING person_id
+          `;
+          const personIds = [...new Set(rows.map((row) => row.person_id))].map((id) =>
+            ParticipantId.make(id),
+          );
+          yield* Effect.forEach(personIds, changed, {
+            discard: true,
+          });
+          return personIds;
+        },
+        Effect.mapError(storage("cut sessions loose from their people")),
       ),
 
       bindSession: Effect.fn("j5.sharing.personAccess.bindSession")(
@@ -482,4 +851,10 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
       subscribeGrantChanges: PubSub.subscribe(grantChanges),
     });
   }),
+);
+
+// `readChangesLayer` is the one the rest of the server provides, so it is the same instance
+// (see `a2a/runtimeLayer.ts`): what is written here reaches the stream a client follows.
+export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = make.pipe(
+  Layer.provide(readChangesLayer),
 );

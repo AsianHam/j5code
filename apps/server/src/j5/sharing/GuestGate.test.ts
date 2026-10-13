@@ -24,6 +24,7 @@ import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { runJ5A2AMigrations } from "../a2a/Migrations.ts";
 import * as GuestGate from "./GuestGate.ts";
+import * as GuestPairing from "./GuestPairing.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 
 const AT = "2026-10-11T00:00:00.000Z";
@@ -65,7 +66,9 @@ const database = Layer.effectDiscard(
   }),
 ).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })));
 
-const testLayer = GuestGate.gateEnvironmentAuth(upstreamAuth.pipe(Layer.provideMerge(database)));
+const testLayer = GuestGate.gateEnvironmentAuth(
+  upstreamAuth.pipe(Layer.provideMerge(GuestPairing.layer), Layer.provideMerge(database)),
+);
 
 const request = (who: "member" | "guest", method: string, url: string) =>
   ({
@@ -300,6 +303,7 @@ it.layer(testLayer)("guest RPC authorization", (it) => {
         // Answered from the guest's own session by `PersonAccess`.
         J5_SHARING_WS_METHODS.getConnectionAccess,
         J5_SHARING_WS_METHODS.subscribeThreadAccess,
+        J5_SHARING_WS_METHODS.listOwnGrants,
       ]) {
         assert.strictEqual(yield* call(GUEST, method, {}), "ran", method);
         assert.strictEqual(yield* call(stray, method, {}), "ran", method);
@@ -317,6 +321,7 @@ it.layer(testLayer)("guest RPC authorization", (it) => {
           WS_METHODS.subscribeServerLifecycle,
           J5_SHARING_WS_METHODS.getConnectionAccess,
           J5_SHARING_WS_METHODS.subscribeThreadAccess,
+          J5_SHARING_WS_METHODS.listOwnGrants,
         ].toSorted(),
       );
     }),

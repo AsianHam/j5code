@@ -8,6 +8,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { noneLayer as peerDirectoryNoneLayer } from "./PeerDirectory.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
+import { ensureLocalOperatorHumanPerson } from "./HumanPersonRegistry.ts";
 import { A2ASendService, layer as sendLayer } from "./SendService.ts";
 import {
   type AgentParticipant,
@@ -149,6 +150,44 @@ it.effect("refuses an unregistered machine sender and any send addressed to a ma
       }),
     );
     assert.equal(toUnknownMachine._tag, "A2AParticipantNotFoundError");
+  }).pipe(Effect.provide(makeTestLayer())),
+);
+
+it.effect("lists the server's owner by the name they set, once they have set one", () =>
+  Effect.gen(function* () {
+    yield* setup();
+    const service = yield* A2ASendService;
+    const sql = yield* SqlClient.SqlClient;
+    const owner = yield* ensureLocalOperatorHumanPerson(sql);
+    const ownerRow = Effect.map(service.listParticipants(agent.threadId), (rows) =>
+      rows.find((row) => row.participantId === owner),
+    );
+    // Before a name is set the row is as it always was: it carries no name at all.
+    const before = {
+      projectId,
+      participantId: owner,
+      participant: { kind: "human" as const, id: owner },
+      archived: false,
+      canReceiveMessage: false,
+      canOpenExchange: true,
+      acceptsUrgency: true,
+    };
+    assert.deepStrictEqual(yield* ownerRow, before);
+    yield* sql`
+      UPDATE j5_a2a_human_person SET display_name = 'Jackson Miller' WHERE person_id = ${owner}
+    `;
+    // After, the same row with the name added, and nothing else changed.
+    assert.deepStrictEqual(yield* ownerRow, { ...before, displayName: "Jackson Miller" });
+    // A guest is a person with a name too, and is not in the address book at all.
+    yield* sql`
+      INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at, kind, display_name)
+      VALUES ('human:a-guest', 0, '2026-10-13T00:00:00.000Z', 'guest', 'Marco')
+    `;
+    assert.isUndefined(
+      (yield* service.listParticipants(agent.threadId)).find(
+        (row) => row.participantId === "human:a-guest",
+      ),
+    );
   }).pipe(Effect.provide(makeTestLayer())),
 );
 

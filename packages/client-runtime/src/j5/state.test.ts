@@ -50,6 +50,7 @@ const fixture = Effect.gen(function* () {
       fleet: 0,
       runtimeRequests: 0,
       peers: 0,
+      sharing: 0,
     });
     readRevisions.set(environmentId, readRevision);
     const answer =

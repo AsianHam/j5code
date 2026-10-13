@@ -31,6 +31,7 @@ import { makeArtifactRpcHandlers } from "./artifacts/artifactRpc.ts";
 import type { ArtifactWorkspace } from "./artifacts/ArtifactWorkspace.ts";
 import { PlaybookStore } from "./playbooks/PlaybookStore.ts";
 import { makePlaybookRpcHandlers } from "./playbooks/playbookRpc.ts";
+import { People } from "./sharing/People.ts";
 import { PersonAccess, type SessionIdentity } from "./sharing/PersonAccess.ts";
 import { makeSharingRpcHandlers } from "./sharing/sharingRpc.ts";
 import { makeSkillCatalogRpcHandlers } from "./skills/skillCatalogRpc.ts";
@@ -58,7 +59,8 @@ type J5WsRpcServices =
   | PeerAdminService
   | ReadChanges
   | ArtifactDeletion
-  | PersonAccess;
+  | PersonAccess
+  | People;
 
 /**
  * The server-lifetime J5 services the handlers call. `ws.ts` reads them once, where its route is
@@ -74,6 +76,7 @@ export const j5WsRpcServices = Effect.context<J5WsRpcServices>().pipe(
       ReadChanges,
       ArtifactDeletion,
       PersonAccess,
+      People,
     ),
   ),
 );
@@ -115,7 +118,11 @@ export const layerJ5WsRpc = (
             ),
         })),
         ...(yield* makePlaybookRpcHandlers({ store: yield* PlaybookStore })),
-        ...makeSharingRpcHandlers({ access: yield* PersonAccess, session }),
+        ...makeSharingRpcHandlers({
+          access: yield* PersonAccess,
+          people: yield* People,
+          session,
+        }),
       });
     }),
   ).pipe(Layer.provide(Layer.succeedContext(services)));

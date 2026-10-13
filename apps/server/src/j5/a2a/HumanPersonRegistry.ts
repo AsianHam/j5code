@@ -38,6 +38,18 @@ export const listRegisteredHumanPersonIds = Effect.fn(
   return rows.map((row) => ParticipantId.make(row.person_id));
 });
 
+/** The names the server has recorded for its members, by person id; none for one with no name. */
+export const listRegisteredHumanPersonNames = Effect.fn(
+  "j5.a2a.humanPersonRegistry.listRegisteredHumanPersonNames",
+)(function* (sql: SqlClient.SqlClient) {
+  const rows = yield* sql<{ readonly person_id: string; readonly display_name: string }>`
+    SELECT person_id, display_name
+    FROM j5_a2a_human_person
+    WHERE kind = 'member' AND display_name IS NOT NULL
+  `;
+  return new Map(rows.map((row) => [row.person_id, row.display_name]));
+});
+
 /** Whether the id is a member of this server; false for a guest, as for an unknown id. */
 export const isRegisteredHumanPerson = Effect.fn(
   "j5.a2a.humanPersonRegistry.isRegisteredHumanPerson",

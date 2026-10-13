@@ -43,6 +43,7 @@ import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { isGuestPairingGrant, makePairingSessionIssuer } from "../j5/sharing/GuestPairing.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -685,6 +686,8 @@ export const make = Effect.gen(function* () {
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
   const devAuth = resolveReusableDevAuth(config);
+  // J5: a session issued from a guest's share link is tied to its guest (FORK.md case 70).
+  const j5TiedToGuest = yield* makePairingSessionIssuer;
 
   const authenticateToken = (
     token: string,
@@ -838,7 +841,10 @@ export const make = Effect.gen(function* () {
           ...(grant.label ? { label: grant.label } : {}),
         },
       })
-      .pipe(Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })));
+      .pipe(
+        j5TiedToGuest(grant, credential),
+        Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })),
+      );
     return {
       response: {
         authenticated: true,
@@ -925,6 +931,7 @@ export const make = Effect.gen(function* () {
                 },
               })
               .pipe(
+                j5TiedToGuest(grant, credential),
                 Effect.mapError(
                   (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
                 ),
@@ -1263,7 +1270,9 @@ export const make = Effect.gen(function* () {
           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
       }),
       Effect.flatMap((grant) =>
-        grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
+        // J5: a guest's share link approves no MCP client (FORK.md case 70).
+        isGuestPairingGrant(grant) ||
+        (grant.method !== "one-time-token" && grant.method !== "reusable-dev-token")
           ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
           : mcpClientScopes(access).every((scope) => grant.scopes.includes(scope))
             ? Effect.void

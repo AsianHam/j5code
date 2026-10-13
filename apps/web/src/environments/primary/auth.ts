@@ -72,11 +72,15 @@ export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.Tag
   "PrimaryEnvironmentPairingCredentialRejectedError",
   {
     providedLength: Schema.Number,
+    // J5: the token was good, and is a guest's link opened by a signed-in member (FORK.md case 70).
+    guestLinkForMember: Schema.optional(Schema.Boolean),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "Invalid pairing token. Check the token and try again.";
+    return this.guestLinkForMember
+      ? "You are already signed in to this server as a member. This link is for a guest: send it to them rather than opening it."
+      : "Invalid pairing token. Check the token and try again.";
   }
 }
 
@@ -236,6 +240,7 @@ async function exchangeBootstrapCredential(credential: string): Promise<AuthBrow
       ) {
         throw new PrimaryEnvironmentPairingCredentialRejectedError({
           providedLength: credential.length,
+          ...(error.pairingRefusal === "guest_link_for_member" ? { guestLinkForMember: true } : {}),
           cause: error,
         });
       }

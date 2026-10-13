@@ -789,7 +789,7 @@ const handlers = {
           thread_id: null,
           provenance: projectProvenance({ kind: "not-applicable" } as const),
           placement_parent_id: null,
-          display_name: null,
+          display_name: row.displayName ?? null,
           ...(remote.selfName === null ? {} : { server: { name: remote.selfName, local: true } }),
         }));
       const nameContains = input.name_contains?.toLocaleLowerCase();
@@ -947,7 +947,7 @@ const handlers = {
                   ? (thread?.title ?? null)
                   : row.participant.kind === "machine"
                     ? row.participant.name
-                    : null,
+                    : (row.displayName ?? null),
               ...(remote.selfName === null
                 ? {}
                 : { server: { name: remote.selfName, local: true } }),

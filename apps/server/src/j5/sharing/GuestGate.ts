@@ -14,16 +14,22 @@ import {
 import { J5_SHARING_WS_METHODS } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
+import { GuestPairing, MEMBER_OPENED_GUEST_LINK } from "./GuestPairing.ts";
+import { layer as peopleLayer, sameTarget } from "./People.ts";
 import {
   GUEST_SESSION_SUBJECT,
   type GrantLevel,
+  type GrantTarget,
   type MessageAsset,
   PersonAccess,
+  type PersonAccessStorageError,
   layer as personAccessLayer,
 } from "./PersonAccess.ts";
 
@@ -40,7 +46,8 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * A request a guest may make. `thread`: for one thread, at the level named, with the thread read
  * from the payload. `project`: for one project the guest holds a grant on as a whole, read from
  * the payload; a grant on one of its threads does not count. `messageAsset`: for an attachment or a tool's image that a thread within the
- * guest's reach holds, by the server's own records. `narrowed`: for anything, because its handler answers a guest through
+ * guest's reach holds, by the server's own records. `ownGrant`: for one grant the guest holds
+ * itself, on exactly the project or thread the payload names. `narrowed`: for anything, because its handler answers a guest through
  * `GuestView` or `PersonAccess`, with a reduced or filtered answer in place of upstream's.
  */
 type GuestRpcRule =
@@ -55,6 +62,7 @@ type GuestRpcRule =
       readonly projectId: (payload: unknown) => string | undefined;
     }
   | { readonly kind: "narrowed" }
+  | { readonly kind: "ownGrant"; readonly target: (payload: unknown) => GrantTarget | undefined }
   | {
       readonly kind: "messageAsset";
       readonly asset: (payload: unknown) => MessageAsset | undefined;
@@ -98,6 +106,21 @@ const messageAssetOf = (payload: unknown): MessageAsset | undefined => {
   return undefined;
 };
 
+/** The project or thread a request names as a grant's target, and nothing looser. */
+const grantTargetOf = (payload: unknown): GrantTarget | undefined => {
+  const target = field(payload, "target");
+  const kind = field(target, "kind");
+  const projectId = field(target, "projectId");
+  const threadId = field(target, "threadId");
+  if (kind === "project" && typeof projectId === "string" && projectId.length > 0) {
+    return { kind: "project", projectId: ProjectId.make(projectId) };
+  }
+  if (kind === "thread" && typeof threadId === "string" && threadId.length > 0) {
+    return { kind: "thread", threadId: ThreadId.make(threadId) };
+  }
+  return undefined;
+};
+
 const viewThread: GuestRpcRule = { kind: "thread", level: "view", threadId: payloadThreadId };
 const viewProject: GuestRpcRule = { kind: "project", level: "view", projectId: payloadProjectId };
 const narrowed: GuestRpcRule = { kind: "narrowed" };
@@ -127,6 +150,12 @@ export const GUEST_RPC_RULES: Partial<Record<WsRpcMethod, GuestRpcRule>> = {
   // A guest asking what it holds: answered for its own session, `none` for a thread out of reach.
   [J5_SHARING_WS_METHODS.getConnectionAccess]: narrowed,
   [J5_SHARING_WS_METHODS.subscribeThreadAccess]: narrowed,
+  [J5_SHARING_WS_METHODS.listOwnGrants]: narrowed,
+  // Who else is on a thread the guest was granted: their names and levels, no more.
+  [J5_SHARING_WS_METHODS.listThreadPeople]: viewThread,
+  [J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges]: viewThread,
+  // The one thing a guest may change: giving up a grant it holds itself (AC25).
+  [J5_SHARING_WS_METHODS.leaveGrant]: { kind: "ownGrant", target: grantTargetOf },
 };
 
 /**
@@ -178,7 +207,7 @@ const requestPathname = (request: HttpServerRequest.HttpServerRequest) =>
 
 /**
  * Wraps upstream's `EnvironmentAuth`, through which every HTTP route and WebSocket upgrade signs a
- * request in. A guest's session comes back with its permissions only on a route `guestHttpRule`
+ * request in, and through which every session is ended. A guest's session comes back with its permissions only on a route `guestHttpRule`
  * allows, for a thread route only when a grant covers that thread, and for an artifact read only
  * when a grant is on the project its body names; anywhere else it comes back with none, so the route's own permission check refuses it the way it refuses any connection
  * that lacks the permission. If the grant cannot be read, the guest gets none.
@@ -188,6 +217,10 @@ export const layerGatedEnvironmentAuth = Layer.effect(
   Effect.gen(function* () {
     const inner = yield* EnvironmentAuth.EnvironmentAuth;
     const access = yield* PersonAccess;
+    const pairing = yield* GuestPairing;
+    // Upstream's own session store, to read whose browser is asking. A test that stands in for
+    // upstream's auth has none, and then no browser is taken for a member's.
+    const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
 
     const gate = Effect.fn("j5.sharing.guestGate.http")(function* <
       S extends EnvironmentAuth.AuthenticatedSession,
@@ -220,8 +253,118 @@ export const layerGatedEnvironmentAuth = Layer.effect(
       return allowed ? session : { ...session, scopes: [] };
     });
 
+    /**
+     * Before upstream ends a session, by any of its four ways, a guest's session is cut loose
+     * from its guest. Upstream leaves a revoked session's open socket open, and this is what
+     * empties it: from here its requests find no grants and its open feeds end. It costs a
+     * member's session one delete by primary key that matches nothing; ending every other
+     * session is one delete for all of them. If it cannot be done, nothing is revoked, so the
+     * member sees the failure and the device is not left half ended.
+     */
+    const unbound = <A, E, R>(
+      unbind: Effect.Effect<unknown, PersonAccessStorageError>,
+      revoke: Effect.Effect<A, E, R>,
+    ) =>
+      unbind.pipe(
+        Effect.mapError(
+          (cause): EnvironmentAuth.ServerAuthInternalError =>
+            new EnvironmentAuth.ServerAuthSessionRevocationError({ cause }),
+        ),
+        Effect.andThen(revoke),
+      );
+
+    /**
+     * What to do about the session a browser already holds when it pairs again. Upstream replaces
+     * that session with the new one, inside its session store and around the revoke methods
+     * wrapped below, which matters twice over.
+     *
+     * A member's browser opening a guest's share link would turn the member into the guest, so it
+     * is refused (`refuse`).
+     *
+     * A guest's browser is replaced as upstream has it, whatever link it opens. Once upstream
+     * has paired it, the old session is cut loose from its guest (`replaced`). Otherwise the old
+     * session is revoked and still recorded as the guest's, and a socket already open on it
+     * would keep reading as a device no member can see. It is done after upstream succeeds and
+     * not before, because upstream replaces the old session only then: a browser that tries a
+     * link that does not work keeps its session, its grants and its place on the People page.
+     *
+     * The cheap things are read first: a browser with no session costs nothing. One with a
+     * session costs a read of that session, and for a member's one read more of J5's record of
+     * guest links. If a read fails, pairing goes on as upstream has it.
+     */
+    const previousSession = Effect.fn("j5.sharing.guestGate.previousSession")(
+      function* (credential: string, previousSessionToken: string | undefined) {
+        const pair = { decision: "pair" as const, replaced: undefined };
+        if (previousSessionToken === undefined || Option.isNone(sessions)) return pair;
+        // A session that has expired or been revoked is no one's.
+        const previous = yield* Effect.option(sessions.value.verify(previousSessionToken));
+        if (Option.isNone(previous)) return pair;
+        if (previous.value.subject === GUEST_SESSION_SUBJECT) {
+          // Upstream replaces a browser's cookie session, and no other kind.
+          return previous.value.method === "browser-session-cookie"
+            ? { decision: "pair" as const, replaced: previous.value.sessionId }
+            : pair;
+        }
+        return (yield* pairing.isGuestLink(credential))
+          ? { decision: "refuse" as const, replaced: undefined }
+          : pair;
+      },
+      Effect.catch((cause) =>
+        Effect.logError(
+          "J5 guest gate could not read a browser's session; pairing as upstream does",
+          { cause },
+        ).pipe(Effect.as({ decision: "pair" as const, replaced: undefined })),
+      ),
+    );
+
     return EnvironmentAuth.EnvironmentAuth.of({
       ...inner,
+      createBrowserSession: (credential, requestMetadata, previousSessionToken) =>
+        previousSession(credential, previousSessionToken).pipe(
+          Effect.flatMap(({ decision, replaced }) =>
+            decision === "refuse"
+              ? // Refused before upstream is called, so the link is not used up.
+                Effect.fail(
+                  new EnvironmentAuth.ServerAuthInvalidCredentialError({
+                    diagnostic: MEMBER_OPENED_GUEST_LINK,
+                  }),
+                )
+              : inner.createBrowserSession(credential, requestMetadata, previousSessionToken).pipe(
+                  Effect.tap(() =>
+                    replaced === undefined
+                      ? Effect.void
+                      : access.unbindSession(replaced).pipe(
+                          // The browser is paired; the old session is revoked upstream either
+                          // way. This is logged so a session left recorded can be found.
+                          Effect.catch((cause) =>
+                            Effect.logError(
+                              "J5 guest gate could not cut a replaced session loose",
+                              {
+                                cause,
+                              },
+                            ),
+                          ),
+                        ),
+                  ),
+                ),
+          ),
+        ),
+      revokeSession: (sessionId) =>
+        unbound(access.unbindSession(sessionId), inner.revokeSession(sessionId)),
+      revokeOtherSessionsExcept: (sessionId) =>
+        unbound(access.unbindOtherSessions(sessionId), inner.revokeOtherSessionsExcept(sessionId)),
+      revokeClientSession: (currentSessionId, targetSessionId) =>
+        currentSessionId === targetSessionId
+          ? inner.revokeClientSession(currentSessionId, targetSessionId)
+          : unbound(
+              access.unbindSession(targetSessionId),
+              inner.revokeClientSession(currentSessionId, targetSessionId),
+            ),
+      revokeOtherClientSessions: (currentSessionId) =>
+        unbound(
+          access.unbindOtherSessions(currentSessionId),
+          inner.revokeOtherClientSessions(currentSessionId),
+        ),
       authenticateHttpRequest: (request) =>
         inner.authenticateHttpRequest(request).pipe(Effect.flatMap((s) => gate(request, s))),
       authenticateWebSocketUpgrade: (request) =>
@@ -230,11 +373,16 @@ export const layerGatedEnvironmentAuth = Layer.effect(
   }),
 );
 
-/** Upstream's auth layer with the guest gate in front of it, and `PersonAccess` beside it. */
+/**
+ * Upstream's auth layer with the guest gate in front of it, and beside it the two services that
+ * say who is a guest and manage them. `upstream` must also give `GuestPairing`, the same layer
+ * upstream's pairing code was built over, and the database.
+ */
 export const gateEnvironmentAuth = <A, E, R>(
   upstream: Layer.Layer<A | EnvironmentAuth.EnvironmentAuth, E, R>,
 ) =>
-  layerGatedEnvironmentAuth.pipe(
+  peopleLayer.pipe(
+    Layer.provideMerge(layerGatedEnvironmentAuth),
     Layer.provideMerge(personAccessLayer),
     Layer.provideMerge(upstream),
   );
@@ -294,6 +442,22 @@ export const layerRpcAuthorization = (
               );
             }
             if (rule === undefined) return Effect.fail(notSharedError());
+            if (rule.kind === "ownGrant") {
+              const target = rule.target(options.payload);
+              if (target === undefined) return Effect.fail(notSharedError());
+              return access.sessionPerson(session).pipe(
+                Effect.flatMap((person) =>
+                  person === null || person.personId === null
+                    ? Effect.succeed([])
+                    : access.listGrants(person.personId),
+                ),
+                Effect.map((held) => held.some((grant) => sameTarget(grant.target, target))),
+                Effect.catch(refuseUnreadable),
+                Effect.flatMap((allowed) =>
+                  allowed ? inner(effect, options) : Effect.fail(notSharedError()),
+                ),
+              );
+            }
             const named =
               rule.kind === "thread"
                 ? rule.threadId(options.payload)

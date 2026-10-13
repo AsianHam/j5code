@@ -38,7 +38,11 @@ import {
   selfContainedLayer as threadRegistrationLayer,
   ThreadRegistration,
 } from "./ThreadRegistration.ts";
-import { isRegisteredHumanPerson, listRegisteredHumanPersonIds } from "./HumanPersonRegistry.ts";
+import {
+  isRegisteredHumanPerson,
+  listRegisteredHumanPersonIds,
+  listRegisteredHumanPersonNames,
+} from "./HumanPersonRegistry.ts";
 import { A2ALedgerTransactionWriter, A2ALedger, type A2ALedgerError } from "./LedgerService.ts";
 import { recordOutsideAgentName } from "./outsideAgentNames.ts";
 import { PeerDirectory, type PeerDirectoryError } from "./PeerDirectory.ts";
@@ -827,21 +831,24 @@ const rawLayer: Layer.Layer<
     }) =>
       Effect.gen(function* () {
         const rows = yield* membershipRows();
+        const names =
+          peopleProjectId === undefined ? new Map() : yield* listRegisteredHumanPersonNames(sql);
         const people =
           peopleProjectId === undefined
             ? []
-            : (yield* listRegisteredHumanPersonIds(sql)).map(
-                (personId) =>
-                  ({
-                    projectId: peopleProjectId,
-                    participantId: personId,
-                    participant: { kind: "human", id: personId },
-                    archived: false,
-                    canReceiveMessage: false,
-                    canOpenExchange: true,
-                    acceptsUrgency: true,
-                  }) satisfies ParticipantDirectoryRow,
-              );
+            : (yield* listRegisteredHumanPersonIds(sql)).map((personId) => {
+                const displayName: string | undefined = names.get(personId);
+                return {
+                  projectId: peopleProjectId,
+                  participantId: personId,
+                  participant: { kind: "human", id: personId },
+                  archived: false,
+                  canReceiveMessage: false,
+                  canOpenExchange: true,
+                  acceptsUrgency: true,
+                  ...(displayName === undefined ? {} : { displayName }),
+                } satisfies ParticipantDirectoryRow;
+              });
         const membershipCounts = new Map<string, number>();
         for (const row of rows) {
           membershipCounts.set(
