@@ -1,4 +1,4 @@
-import type { SharingMessageAuthor } from "@t3tools/contracts/j5";
+import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
 
 // The line the server puts first on a person's message once a thread is a shared conversation
 // (`authorLine` in the server's `j5/sharing/SharedConversation.ts`): "[Message from Priya (guest)]",
@@ -63,4 +63,58 @@ export function queuedMessageTexts(
   if (author === undefined) return { typed: text, shown: text };
   const typed = withoutAuthorLine(text);
   return { typed, shown: author.you ? typed : `${authorName(author)}: ${typed}` };
+}
+
+const NOTE_OPEN = "<j5_shared_conversation>";
+const NOTE_CLOSE = "</j5_shared_conversation>";
+
+/**
+ * What the platform told the agent about who can write to the thread, without its tags, or
+ * `null` for any other message. Only the platform sends one: a person's message in a shared
+ * conversation begins with the author line.
+ */
+export function sharedConversationNote(message: {
+  readonly createdBy?: string | undefined;
+  readonly text: string;
+}): string | null {
+  if (message.createdBy !== "system" || !message.text.startsWith(NOTE_OPEN)) return null;
+  const body = message.text.slice(NOTE_OPEN.length).trim();
+  return (body.endsWith(NOTE_CLOSE) ? body.slice(0, -NOTE_CLOSE.length) : body).trim();
+}
+
+/** "Priya answered", "You answered", "A guest answered": who settled one of the agent's prompts. */
+export const answeredBy = (answer: Pick<SharingPromptAnswer, "displayName" | "kind" | "you">) =>
+  answer.you ? "You" : authorName(answer);
+
+/**
+ * What moves when the server's record of authors and answers can have gained a row: a person's
+ * message arriving, or a prompt of the agent's changing. Other entries, such as the agent's own
+ * streaming text, leave it as it was.
+ */
+export function authorRecordSignal(
+  entries: ReadonlyArray<{
+    readonly id: string;
+    readonly kind: string;
+    readonly message?: { readonly role: string } | undefined;
+    readonly entry?: { readonly toolData?: unknown; readonly questionAnswer?: unknown } | undefined;
+  }>,
+): string {
+  const parts: Array<string> = [];
+  for (const entry of entries) {
+    if (entry.kind === "message") {
+      if (entry.message?.role === "user") parts.push(entry.id);
+      continue;
+    }
+    const item = entry.entry?.toolData as
+      | { readonly type?: unknown; readonly status?: unknown; readonly decision?: unknown }
+      | undefined;
+    if (item?.type === "approval_request" || item?.type === "user_input_request") {
+      parts.push(
+        `${entry.id}:${String(item.status ?? "")}:${String(item.decision ?? "")}:${
+          entry.entry?.questionAnswer === undefined ? 0 : 1
+        }`,
+      );
+    }
+  }
+  return parts.join("|");
 }

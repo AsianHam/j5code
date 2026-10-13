@@ -1,6 +1,6 @@
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { J5_SHARING_WS_METHODS } from "@t3tools/contracts/j5";
+import { J5_SHARING_WS_METHODS, type SharingPromptAnswer } from "@t3tools/contracts/j5";
 import { useEffect, useMemo } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -21,19 +21,21 @@ const threadAuthors = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime,
 });
 
 const NO_AUTHORS: AuthorsByMessage = new Map();
+const NO_ANSWERS: ReadonlyMap<string, SharingPromptAnswer> = new Map();
 
 /**
- * Who wrote each message of a shared conversation, from the server's record. It is asked only
- * when the thread holds a text that begins as an authored one does, so a thread that was never
- * shared costs nothing, and asked again when `changes` does: the server has no feed for it, and
- * a new row only ever comes with a message or an answer the thread's own stream already brings.
+ * Who wrote each message of a shared conversation and who answered each of the agent's prompts,
+ * from the server's record. It is asked only when the thread holds a text that begins as an
+ * authored one does, so a thread that was never shared costs nothing, and asked again when
+ * `changes` does: the server has no feed for it, and a new row only ever comes with a message or
+ * an answer the thread's own stream already brings.
  */
 export function useThreadAuthors(
   environmentId: EnvironmentId | null,
   threadId: ThreadId | null,
   texts: ReadonlyArray<string>,
   changes: string,
-): AuthorsByMessage {
+) {
   const wanted = environmentId !== null && threadId !== null && texts.some(mayHaveAuthorLine);
   const query = useEnvironmentQuery(
     wanted ? threadAuthors({ environmentId, input: { threadId } }) : null,
@@ -42,8 +44,17 @@ export function useThreadAuthors(
   useEffect(() => {
     if (wanted) refresh();
   }, [changes, refresh, wanted]);
-  const authors = query.data?.authors;
-  return useMemo(() => (authors === undefined ? NO_AUTHORS : authorsByMessage(authors)), [authors]);
+  const record = query.data;
+  return useMemo(
+    () =>
+      record === null || record === undefined
+        ? { authors: NO_AUTHORS, answers: NO_ANSWERS }
+        : {
+            authors: authorsByMessage(record.authors),
+            answers: new Map(record.answers.map((answer) => [answer.requestId, answer])),
+          },
+    [record],
+  );
 }
 
 /**
@@ -56,7 +67,7 @@ export function useSharedQueue<
   Item extends { readonly messageId: string | null; readonly text: string },
 >(environmentId: EnvironmentId, threadId: ThreadId, queued: ReadonlyArray<Item>) {
   const isGuest = useIsGuest(environmentId);
-  const authors = useThreadAuthors(
+  const { authors } = useThreadAuthors(
     environmentId,
     threadId,
     queued.map((item) => item.text),

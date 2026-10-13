@@ -1,3 +1,4 @@
+import { renderSharedConversationMessage } from "../sharing/SharedConversationCards";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../../components/ui/tooltip";
 import type { ChatMessage } from "~/types";
 import { useNowMinute } from "~/hooks/useNowMinute";
@@ -594,6 +595,10 @@ export function renderThreadA2ADelivery(props: ThreadA2ADeliveryCompositionInput
   // as cards here, so the upstream row never shows their tagged blocks.
   const crewNotice = renderCrewNotice(props);
   if (crewNotice !== null) return crewNotice;
+  // A shared conversation's own two: the platform's note about who can write, and a message
+  // another person wrote. The reader's own messages stay upstream's.
+  const shared = renderSharedConversationMessage(props);
+  if (shared !== null) return shared;
   const presentation = presentThreadA2ADelivery(props);
   if (presentation === null) return null;
 
