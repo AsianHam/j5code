@@ -57,14 +57,15 @@ export function useThreadAuthors(
       ? sharingManage.threadPeople({ environmentId, input: { threadId } })
       : null,
   );
+  const knownShared =
+    isGuest || (people.data?.guests.some((guest) => guest.level === "collaborate") ?? false);
   const wanted =
     environmentId !== null &&
     threadId !== null &&
     authorRecordWanted({
       authoredMessages: authored.length,
       settledPrompts: settled !== "",
-      knownShared:
-        isGuest || (people.data?.guests.some((guest) => guest.level === "collaborate") ?? false),
+      knownShared,
     });
   const query = useEnvironmentQuery(
     wanted ? threadAuthors({ environmentId, input: { threadId } }) : null,
@@ -104,7 +105,9 @@ export function useThreadAuthors(
       typed.every((id) => current.has(id)) ? current : new Set([...current, ...typed]),
     );
   }, [authoredKey, record, result.authors]);
-  return useMemo(() => ({ ...result, unrecorded }), [result, unrecorded]);
+  // The record holding anyone is itself proof the thread is shared.
+  const shared = knownShared || result.authors.size > 0 || result.answers.size > 0;
+  return useMemo(() => ({ ...result, unrecorded, shared }), [result, unrecorded, shared]);
 }
 
 /**

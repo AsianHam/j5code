@@ -81,9 +81,10 @@ export function usePromptAnswer(requestId: string | null): SharingPromptAnswer |
  * A thread's timeline as a shared conversation shows it. A message the server records an author
  * for is shown as what its author typed: the note it carries becomes a notice just before it,
  * and the author line, which is there for the agent, is taken off; whose it is stays with the
- * message for J5's card. An answer to the agent's question that the record holds an answerer for
- * loses the line the server put on it. Every other entry, and every entry of a thread that was
- * never shared, is returned as it came.
+ * message for J5's card. An answer to the agent's question loses the line the server put on it,
+ * as soon as the thread is known to be shared: the record names its answerer a moment after the
+ * answer itself arrives. Every other entry, and every entry of a thread that was never shared, is
+ * returned as it came.
  */
 export function useSharedConversationEntries<Entry extends MessageEntry>(
   threadRef: ScopedThreadRef | null,
@@ -112,12 +113,12 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
     if (!mayHaveAuthorLine(message.text)) typedHere.current.add(message.id);
   }
   return useMemo(() => {
-    if (record.answers.size === 0 && !messages.some((message) => mayHaveAuthorLine(message.text))) {
+    if (!record.shared && !messages.some((message) => mayHaveAuthorLine(message.text))) {
       return entries;
     }
     return entries.flatMap((entry): ReadonlyArray<Entry> => {
       const answer = entry.entry?.questionAnswer;
-      if (answer !== undefined && record.answers.has(answer.requestId)) {
+      if (answer !== undefined && (record.shared || record.answers.has(answer.requestId))) {
         return [
           {
             ...entry,
@@ -152,5 +153,5 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
       marks.set(note, { kind: "note" });
       return [{ ...entry, id: `${entry.id}:shared-note`, message: note }, shown];
     });
-  }, [entries, messages, record.answers, record.authors, record.unrecorded]);
+  }, [entries, messages, record.answers, record.authors, record.shared, record.unrecorded]);
 }
