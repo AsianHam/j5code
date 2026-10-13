@@ -5,6 +5,7 @@ import {
   MessageId,
   EnvironmentAuthorizationError,
   type OrchestrationV2Command,
+  type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadLaunchInput,
@@ -167,6 +168,7 @@ const PROMPT_SETTLED_EVENT =
 
 /** The kind of prompt that is a question, answered in words; typed against upstream's kinds. */
 const QUESTION_KIND = "user_input" satisfies OrchestrationV2RuntimeRequest["kind"];
+const PENDING = "pending" satisfies OrchestrationV2RuntimeRequest["status"];
 
 /** A message's run as upstream records it, read beside a message that carried a note. */
 interface CarrierRun {
@@ -178,13 +180,19 @@ interface CarrierRun {
 
 /**
  * Whether what a message carried never reached the agent, or no longer counts as having: upstream
- * never took the message in, it was queued and withdrawn or cancelled before it ran, or its run
- * was rolled back, which takes the agent's conversation back to before it.
+ * never took the message in; its run ended without ever starting (withdrawn or cancelled while
+ * queued, failed while its workspace was prepared, or cut short by a crash); or its run was
+ * rolled back, which takes the agent's conversation back to before it.
  */
+const ENDED_UNFINISHED: ReadonlySet<string> = new Set([
+  "cancelled",
+  "failed",
+  "interrupted",
+] satisfies ReadonlyArray<OrchestrationV2Run["status"]>);
 const lost = (run: CarrierRun) =>
   run.carried === null ||
-  run.status === "rolled_back" ||
-  (run.status === "cancelled" && run.started_at === null);
+  run.status === ("rolled_back" satisfies OrchestrationV2Run["status"]) ||
+  (run.status !== null && ENDED_UNFINISHED.has(run.status) && run.started_at === null);
 
 const NEAREST = { thread: 0, ancestor: 1, project: 2 } as const;
 
@@ -600,19 +608,26 @@ const make = <E>(
           ? command
           : { ...command, text: stampEdit(command.text, original, author) };
       }
-      case "runtime-request.respond": {
-        // Upstream marks a prompt resolved by whatever it is sent, and an approval resolved by
-        // words is one the provider never hears of: its tool call waits for good. So a
-        // question is answered in words and anything else by a decision. A request upstream
-        // does not have is left for upstream to refuse.
-        const requests = yield* sql<{ readonly kind: string }>`
-          SELECT kind FROM orchestration_v2_projection_runtime_requests
+      case "runtime-request.respond":
+      case "thread.user-input.dismiss": {
+        // A guest answers only a prompt that is waiting for an answer. Upstream refuses any
+        // other too; refusing here means nothing is written down for an answer that cannot
+        // land, so a guest cannot fill the record of who answered.
+        const requests = yield* sql<{ readonly kind: string; readonly status: string }>`
+          SELECT kind, status FROM orchestration_v2_projection_runtime_requests
           WHERE runtime_request_id = ${command.requestId} AND thread_id = ${command.threadId}
         `;
-        const kind = requests[0]?.kind;
-        if (kind !== undefined && (kind === QUESTION_KIND) !== (command.answers !== undefined)) {
+        const request = requests[0];
+        if (request === undefined || request.status !== PENDING) {
+          return yield* refused("This prompt is not waiting for an answer.");
+        }
+        if (command.type === "thread.user-input.dismiss") return command;
+        // Upstream marks a prompt resolved by whatever it is sent, and an approval resolved by
+        // words is one the provider never hears of: its tool call waits for good. So a
+        // question is answered in words and anything else by a decision.
+        if ((request.kind === QUESTION_KIND) !== (command.answers !== undefined)) {
           return yield* refused(
-            kind === QUESTION_KIND
+            request.kind === QUESTION_KIND
               ? "A question is answered in words."
               : "This prompt is answered by approving or declining it.",
           );

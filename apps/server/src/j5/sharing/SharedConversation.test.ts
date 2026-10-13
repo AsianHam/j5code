@@ -190,6 +190,41 @@ const upstreamSettled = Effect.fn("test.upstreamSettled")(function* (taken: unkn
 });
 
 /**
+ * Upstream's record of a prompt waiting for an answer, written for any answer a test sends that
+ * has none yet: a question when the answer is in words or a dismissal, an approval otherwise.
+ */
+const raised = Effect.fn("test.raised")(function* (command: unknown) {
+  const answer = command as {
+    readonly type?: string;
+    readonly threadId: string;
+    readonly requestId: string;
+    readonly answers?: unknown;
+  };
+  if (answer.type !== "runtime-request.respond" && answer.type !== "thread.user-input.dismiss") {
+    return;
+  }
+  const sql = yield* SqlClient.SqlClient;
+  const question = answer.type === "thread.user-input.dismiss" || answer.answers !== undefined;
+  yield* sql`
+    INSERT OR IGNORE INTO orchestration_v2_projection_runtime_requests (
+      runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json
+    ) VALUES (
+      ${answer.requestId}, ${answer.threadId}, 'node:1',
+      ${question ? "user_input" : "command_execution_approval"}, 'pending', ${AT}, '{}'
+    )
+  `;
+});
+
+/** `admit`, for a command whose prompt upstream has waiting. */
+const admit = Effect.fn("test.admit")(function* (
+  who: EnvironmentAuth.AuthenticatedSession,
+  command: OrchestrationV2Command,
+) {
+  yield* raised(command);
+  return yield* (yield* sharedConversation).admit(who, command);
+});
+
+/**
  * A command as `ws.ts` takes it from a client: through the gate of that connection, then through
  * `admit`. Gives the command upstream would be handed, or the refusal.
  */
@@ -197,14 +232,14 @@ const send = Effect.fn("test.send")(function* (
   who: EnvironmentAuth.AuthenticatedSession,
   command: unknown,
 ) {
-  const conversation = yield* sharedConversation;
   const sql = yield* SqlClient.SqlClient;
+  yield* raised(command);
   const authorize = yield* RpcScopeAuthorization.pipe(
     Effect.provide(GuestGate.layerRpcAuthorization(who, RpcAuthorization.layer(who.scopes))),
   );
   type Handler = Parameters<typeof authorize>[0];
   const outcome = yield* authorize(
-    conversation.admit(who, command as OrchestrationV2Command) as unknown as Handler,
+    admit(who, command as OrchestrationV2Command) as unknown as Handler,
     {
       rpc: { _tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand },
       payload: command,
@@ -509,7 +544,9 @@ const each = <A, E>(
       for (const decision of ["accept", "decline", "cancel"]) {
         assert.isFalse(refused(yield* respond({ decision })), decision);
       }
-      assert.isFalse(refused(yield* respond({ answers: { q1: "Yes" } })));
+      assert.isFalse(
+        refused(yield* respond({ requestId: "request:words", answers: { q1: "Yes" } })),
+      );
       for (const decision of ["acceptForSession", "acceptAlways"]) {
         assert.isTrue(refused(yield* respond({ decision })), decision);
       }
@@ -542,6 +579,39 @@ const each = <A, E>(
       assert.isFalse(refused(yield* answer("request:approval", { decision: "accept" })));
       assert.isTrue(refused(yield* answer("request:question", { decision: "accept" })));
       assert.isFalse(refused(yield* answer("request:question", { answers: { q1: "Yes" } })));
+
+      // A prompt that is no longer waiting, or that upstream never raised, is not answered by
+      // a guest, and nothing is written down for the attempt.
+      yield* sql`
+        UPDATE orchestration_v2_projection_runtime_requests SET status = 'resolved'
+        WHERE runtime_request_id = 'request:approval'
+      `;
+      const conversation = yield* sharedConversation;
+      const direct = (requestId: string) =>
+        Effect.flip(
+          conversation.admit(PRIYA, {
+            type: "runtime-request.respond",
+            commandId: CommandId.make(`command:late:${requestId}`),
+            threadId,
+            requestId: RuntimeRequestId.make(requestId),
+            decision: "accept",
+          }),
+        ).pipe(Effect.map((error) => error.message));
+      assert.strictEqual(
+        yield* direct("request:approval"),
+        "This prompt is not waiting for an answer.",
+      );
+      assert.strictEqual(
+        yield* direct("request:never-raised"),
+        "This prompt is not waiting for an answer.",
+      );
+      assert.deepStrictEqual(
+        yield* sql`
+          SELECT request_id FROM j5_a2a_prompt_answer
+          WHERE command_id LIKE '%command:late:%'
+        `,
+        [],
+      );
     }),
   );
 
@@ -960,7 +1030,6 @@ const each = <A, E>(
   each("a note counts as told only once its message is known to have reached the agent", () =>
     Effect.gen(function* () {
       const access = yield* PersonAccess.PersonAccess;
-      const conversation = yield* sharedConversation;
       const sql = yield* SqlClient.SqlClient;
       const threadId = yield* thread("thread:rewound");
       yield* access.setOperatorName("Jackson");
@@ -979,7 +1048,7 @@ const each = <A, E>(
           requestId: RuntimeRequestId.make(`request:rewound:${key}`),
           decision: "accept",
         } as const;
-        yield* upstreamSettled(yield* conversation.admit(PRIYA, command));
+        yield* upstreamSettled(yield* admit(PRIYA, command));
       });
       const first = "This thread is now a shared conversation";
       const approved =
@@ -1058,6 +1127,15 @@ const each = <A, E>(
       assert.strictEqual(notes.length, 2);
       assert.isTrue(notes[1]!.text.includes("This thread is now a shared conversation"));
       assert.strictEqual(resent.text, "[Message from Jackson (member)]\n\nHello, again.");
+
+      // That message's run fails before it starts, while its workspace is prepared, say: the
+      // agent never read it, so the next message carries the note once more.
+      const failed = notes[1]!.on;
+      yield* queued(threadId, "run:first:3", failed);
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'failed' WHERE run_id = 'run:first:3'`;
+      yield* send(MEMBER, message(threadId, "Once more."));
+      assert.strictEqual(notes.length, 3);
+      assert.isTrue(notes[2]!.text.includes("This thread is now a shared conversation"));
     }),
   );
 
@@ -1441,14 +1519,14 @@ const each = <A, E>(
           type: "runtime-request.respond",
           commandId: CommandId.make(`command:respond:${threadId}:${counter}`),
           threadId,
-          requestId: RuntimeRequestId.make("request:1"),
+          requestId: RuntimeRequestId.make(`request:${threadId}`),
           decision: "accept",
         },
         {
           type: "thread.user-input.dismiss",
           commandId: CommandId.make(`command:dismiss:${threadId}:${counter}`),
           threadId,
-          requestId: RuntimeRequestId.make("request:1"),
+          requestId: RuntimeRequestId.make(`request:${threadId}`),
         },
       ];
       const outcomes = (threadId: ThreadId) =>
@@ -1697,9 +1775,9 @@ const each = <A, E>(
         command: ReturnType<typeof respond>,
         real: boolean,
       ) =>
-        conversation
-          .admit(who, command)
-          .pipe(Effect.tap((taken) => (real ? upstreamSettled(taken) : Effect.void)));
+        admit(who, command).pipe(
+          Effect.tap((taken) => (real ? upstreamSettled(taken) : Effect.void)),
+        );
 
       // The guest sends an ordinary message; upstream now has a receipt for its command id.
       const earlier = message(threadId, "Hello.");
@@ -1734,12 +1812,12 @@ const each = <A, E>(
         `command:runtime-reconcile:startup:${threadId}:2026-10-13T00:00:00.000Z`,
       );
       yield* upstreamSettled(recovery);
-      const taken = yield* conversation.admit(PRIYA, recovery);
+      const taken = yield* admit(PRIYA, recovery);
       assert.strictEqual(taken.commandId, guestCommandId(priya.personId, recovery.commandId));
       assert.isFalse((yield* told).some(([requestId]) => requestId === "request:expired"));
       // And the member's own id, sent by the guest for the prompt the member answered, which
       // upstream refuses: the record is neither taken over nor taken away.
-      yield* conversation.admit(PRIYA, respond("request:approved", "command:member-real"));
+      yield* admit(PRIYA, respond("request:approved", "command:member-real"));
       assert.deepStrictEqual(yield* told, [
         ["request:approved", "Jackson", "member"],
         ["request:pending", "Jackson", "member"],
@@ -1758,7 +1836,6 @@ const each = <A, E>(
   each("the agent is told who answered its approval prompts, on the next message", () =>
     Effect.gen(function* () {
       const access = yield* PersonAccess.PersonAccess;
-      const conversation = yield* sharedConversation;
       const sql = yield* SqlClient.SqlClient;
       const threadId = yield* thread("thread:approvals");
       yield* access.setOperatorName("Jackson");
@@ -1780,9 +1857,9 @@ const each = <A, E>(
           requestId: RuntimeRequestId.make(`request:approval:${answered}`),
           ...body,
         } as const;
-        return conversation
-          .admit(who, command)
-          .pipe(Effect.tap((taken) => (replayed ? Effect.void : upstreamSettled(taken))));
+        return admit(who, command).pipe(
+          Effect.tap((taken) => (replayed ? Effect.void : upstreamSettled(taken))),
+        );
       };
       const line = (text: string) =>
         ["<j5_shared_conversation>", text, "</j5_shared_conversation>"].join("\n");
@@ -1884,7 +1961,7 @@ const each = <A, E>(
         requestId: RuntimeRequestId.make("request:approval:alone"),
         decision: "accept",
       } as const;
-      yield* conversation.admit(MEMBER, unshared).pipe(Effect.tap(() => upstreamSettled(unshared)));
+      yield* admit(MEMBER, unshared).pipe(Effect.tap(() => upstreamSettled(unshared)));
       const toAlone = message(alone, "Hello.");
       assert.strictEqual(yield* send(MEMBER, toAlone), toAlone);
       assert.strictEqual(
