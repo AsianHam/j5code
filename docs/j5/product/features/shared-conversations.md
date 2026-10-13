@@ -33,7 +33,7 @@ This is guidance the agent is given, not a rule the platform enforces. An agent 
 
 ### Authors
 
-1. In a thread a guest holds a Collaborate grant on, every message a person sends reaches the agent with its author's name. The name is the one the server recorded for that person when a member brought them in; no message, request or client setting from the person changes it.
+1. In a thread a guest holds a Collaborate grant on, every message a person sends reaches the agent with its author's name. The name is the one the server recorded for that person when a member brought them in; no message, request or client setting from the person changes it. A person who joined by an open link gave their own name, and a member confirms or changes it before that person is given Collaborate.
 2. In a thread only one person can write to, a message reaches the agent as it does without this feature.
 3. When a thread gains its first guest collaborator, the agent receives one system note naming who can now write to it and saying that earlier unnamed messages came from a member.
 4. When a collaborator is added to a thread that is already shared, is removed from it, or leaves it, the agent receives one system note saying so.
@@ -87,3 +87,4 @@ This is guidance the agent is given, not a rule the platform enforces. An agent 
 ## History
 
 - 2026-10-11 — defined (Jackson; [record](../../worklog/2026-10-09-multi-player-session.md)). AC16 is tentative: if a guest managing only their own queued messages proves a mess to build, a guest gets either a member's rights over the queue or none.
+- 2026-10-12 — AC1: a name a person gave themselves, joining by an open link, is confirmed or changed by a member before that person is given Collaborate (Jackson, 2026-10-11; [#541](https://github.com/Jacksondr5/j5code/issues/541)).

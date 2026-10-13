@@ -45,6 +45,9 @@ import {
  * may call which. No agent tool reaches this service: an agent cannot share (AC17).
  */
 
+/** What goes before a self-given name wherever upstream shows a link's or a device's label. */
+export const UNCONFIRMED_NAME_LABEL = "Unconfirmed name: ";
+
 export class GrantTargetNotFoundError extends Schema.TaggedError<GrantTargetNotFoundError>()(
   "GrantTargetNotFoundError",
   { kind: Schema.Literals(["project", "thread"]), id: Schema.String },
@@ -114,6 +117,15 @@ export class OwnerNameRequiredError extends Schema.TaggedError<OwnerNameRequired
   }
 }
 
+export class NameNotConfirmedError extends Schema.TaggedError<NameNotConfirmedError>()(
+  "NameNotConfirmedError",
+  { personId: Schema.String },
+) {
+  override get message(): string {
+    return "This person gave their own name when they joined. Confirm or change their name first: with Collaborate it goes on their messages to the agent.";
+  }
+}
+
 export class NotAGuestError extends Schema.TaggedError<NotAGuestError>()("NotAGuestError", {}) {
   override get message(): string {
     return "Only a guest can leave what was shared with them; this connection is a member's.";
@@ -164,7 +176,11 @@ export interface PeopleShape {
     readonly note?: string | null;
   }) => Effect.Effect<
     SharingPerson,
-    StorageError | PersonNotFoundError | GrantOnMemberError | GrantTargetNotFoundError
+    | StorageError
+    | PersonNotFoundError
+    | GrantOnMemberError
+    | GrantTargetNotFoundError
+    | NameNotConfirmedError
   >;
   readonly removeGrant: (input: {
     readonly personId: string;
@@ -282,6 +298,8 @@ export const layer: Layer.Layer<
         // Only a member's connection is told of people, and every such connection is the one
         // member there is.
         you: record.person.kind === "member",
+        nameSelfGiven: record.person.nameSelfGiven,
+        joinedOpenLinkId: record.person.joinedOpenLinkId,
         createdAt: record.createdAt,
         grants: record.grants.map(toSharingGrant),
         // A recorded session upstream no longer lists has expired or been ended.
@@ -381,12 +399,16 @@ export const layer: Layer.Layer<
             personId: toGuest ? null : member.personId,
             displayName: member.displayName,
           })),
+          // Filled in by `OpenLinks`, which knows them; this service knows people and grants.
+          openLinks: [],
           guests: guests.map((guest) => ({
             personId: toGuest ? null : guest.person.personId,
             displayName: guest.person.displayName,
             level: higher(guest.grants.map((grant) => grant.level)),
             grants: guest.grants,
             you: caller !== null && caller.personId === guest.person.personId,
+            nameSelfGiven: guest.person.nameSelfGiven,
+            joinedByOpenLink: guest.person.joinedOpenLinkId !== null,
           })),
         };
       },
@@ -415,6 +437,12 @@ export const layer: Layer.Layer<
       putGrant: Effect.fn("j5.sharing.people.putGrant")(function* (input) {
         const personId = yield* personIdOf(input.personId);
         yield* requireTarget(input.target);
+        // A name no member has confirmed does not go on messages to an agent
+        // (Shared conversations AC1).
+        if (input.level === "collaborate") {
+          const person = yield* access.readPerson(personId);
+          if (person?.nameSelfGiven === true) return yield* new NameNotConfirmedError({ personId });
+        }
         yield* access.putGrant({
           personId,
           target: input.target,
@@ -466,7 +494,15 @@ export const layer: Layer.Layer<
             subject: GUEST_SESSION_SUBJECT,
             scopes: GUEST_LINK_SCOPES,
             ttl,
-            ...(person.displayName === null ? {} : { label: person.displayName }),
+            // Upstream shows this label in its own lists of links and devices, so a name no
+            // member has confirmed says so there too.
+            ...(person.displayName === null
+              ? {}
+              : {
+                  label: person.nameSelfGiven
+                    ? `${UNCONFIRMED_NAME_LABEL}${person.displayName}`
+                    : person.displayName,
+                }),
           })
           .pipe(upstream("make a share link"));
         // A link with no guest recorded pairs nothing, so one that cannot be recorded is revoked

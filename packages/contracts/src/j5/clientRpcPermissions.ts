@@ -57,4 +57,6 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_SHARING_WS_METHODS.renamePerson]: AuthAccessWriteScope,
   [J5_SHARING_WS_METHODS.setOwnerName]: AuthAccessWriteScope,
   [J5_SHARING_WS_METHODS.revokeLink]: AuthAccessWriteScope,
+  [J5_SHARING_WS_METHODS.createOpenLink]: AuthAccessWriteScope,
+  [J5_SHARING_WS_METHODS.revokeOpenLink]: AuthAccessWriteScope,
 } as const;

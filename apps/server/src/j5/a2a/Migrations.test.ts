@@ -89,6 +89,7 @@ it.effect("tracks J5 A2A migrations independently from upstream migrations", () 
       { migration_id: 33, name: "OutsideAgents" },
       { migration_id: 34, name: "PeopleAndGrants" },
       { migration_id: 35, name: "GuestLinks" },
+      { migration_id: 36, name: "OpenLinks" },
       { migration_id: 37, name: "PersonNames" },
     ]);
     assert.deepStrictEqual(
@@ -129,6 +130,7 @@ it.effect("tracks J5 A2A migrations independently from upstream migrations", () 
         [33, "OutsideAgents"],
         [34, "PeopleAndGrants"],
         [35, "GuestLinks"],
+        [36, "OpenLinks"],
         [37, "PersonNames"],
       ],
     );
@@ -1378,7 +1380,7 @@ it.effect("recreates earlier-shaped crews tables when 14 runs over them", () =>
       applied.map((row) => row.migration_id),
       [
         13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-        37,
+        36, 37,
       ],
     );
     const memberColumns = yield* sql<{ readonly name: string }>`

@@ -22,6 +22,7 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import { GuestPairing, MEMBER_OPENED_GUEST_LINK } from "./GuestPairing.ts";
+import { layer as openLinksLayer } from "./OpenLinks.ts";
 import { layer as peopleLayer, sameTarget } from "./People.ts";
 import {
   GUEST_SESSION_SUBJECT,
@@ -381,7 +382,8 @@ export const layerGatedEnvironmentAuth = Layer.effect(
 export const gateEnvironmentAuth = <A, E, R>(
   upstream: Layer.Layer<A | EnvironmentAuth.EnvironmentAuth, E, R>,
 ) =>
-  peopleLayer.pipe(
+  openLinksLayer.pipe(
+    Layer.provideMerge(peopleLayer),
     Layer.provideMerge(layerGatedEnvironmentAuth),
     Layer.provideMerge(personAccessLayer),
     Layer.provideMerge(upstream),

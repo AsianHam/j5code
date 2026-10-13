@@ -31,6 +31,7 @@ import { makeArtifactRpcHandlers } from "./artifacts/artifactRpc.ts";
 import type { ArtifactWorkspace } from "./artifacts/ArtifactWorkspace.ts";
 import { PlaybookStore } from "./playbooks/PlaybookStore.ts";
 import { makePlaybookRpcHandlers } from "./playbooks/playbookRpc.ts";
+import { OpenLinks } from "./sharing/OpenLinks.ts";
 import { People } from "./sharing/People.ts";
 import { PersonAccess, type SessionIdentity } from "./sharing/PersonAccess.ts";
 import { makeSharingRpcHandlers } from "./sharing/sharingRpc.ts";
@@ -60,7 +61,8 @@ type J5WsRpcServices =
   | ReadChanges
   | ArtifactDeletion
   | PersonAccess
-  | People;
+  | People
+  | OpenLinks;
 
 /**
  * The server-lifetime J5 services the handlers call. `ws.ts` reads them once, where its route is
@@ -77,6 +79,7 @@ export const j5WsRpcServices = Effect.context<J5WsRpcServices>().pipe(
       ArtifactDeletion,
       PersonAccess,
       People,
+      OpenLinks,
     ),
   ),
 );
@@ -121,6 +124,7 @@ export const layerJ5WsRpc = (
         ...makeSharingRpcHandlers({
           access: yield* PersonAccess,
           people: yield* People,
+          openLinks: yield* OpenLinks,
           session,
         }),
       });

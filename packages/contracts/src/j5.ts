@@ -1143,7 +1143,7 @@ export const J5ReadRevisions = Schema.Struct({
   peers: Schema.Int,
   /**
    * The people this server is shared with: a person, a name (the owner's too), a grant, a
-   * device, a share link.
+   * device, a share link, a join link.
    */
   sharing: Schema.Int,
 });

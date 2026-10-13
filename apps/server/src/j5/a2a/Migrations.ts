@@ -36,6 +36,7 @@ import Migration0032 from "./migrations/032_PeerRosterSaysProject.ts";
 import Migration0033 from "./migrations/033_OutsideAgents.ts";
 import Migration0034 from "./migrations/034_PeopleAndGrants.ts";
 import Migration0035 from "./migrations/035_GuestLinks.ts";
+import Migration0036 from "./migrations/036_OpenLinks.ts";
 import Migration0037 from "./migrations/037_PersonNames.ts";
 
 export const J5_A2A_MIGRATIONS_TABLE = "j5_a2a_migrations";
@@ -82,7 +83,8 @@ export const migrationEntries = [
   [33, "OutsideAgents", Migration0033],
   [34, "PeopleAndGrants", Migration0034],
   [35, "GuestLinks", Migration0035],
-  // 36 is the layer above this one in the stack that introduced both; ids are never renumbered.
+  [36, "OpenLinks", Migration0036],
+  // 37 sits in the layer below 36 in the stack that introduced both; ids are never renumbered.
   [37, "PersonNames", Migration0037],
 ] as const;
 

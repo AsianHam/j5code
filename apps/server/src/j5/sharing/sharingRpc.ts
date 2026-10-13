@@ -8,7 +8,9 @@ import {
   SharingAccessError,
   type SharingCreateGuestRequest,
   type SharingCreateLinkRequest,
+  type SharingCreateOpenLinkRequest,
   type SharingRenamePersonRequest,
+  type SharingOpenLinkRequest,
   type SharingDeviceRequest,
   type SharingGrantRequest,
   type SharingLeaveGrantRequest,
@@ -22,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
+import type { OpenLinks } from "./OpenLinks.ts";
 import type { People } from "./People.ts";
 import {
   type Access,
@@ -54,6 +57,9 @@ export const SHARING_RPC_SCOPES = {
   [J5_SHARING_WS_METHODS.listThreadPeople]: AuthOrchestrationReadScope,
   [J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges]: AuthOrchestrationReadScope,
   [J5_SHARING_WS_METHODS.revokeLink]: AuthAccessWriteScope,
+  [J5_SHARING_WS_METHODS.listOpenLinks]: AuthAccessReadScope,
+  [J5_SHARING_WS_METHODS.createOpenLink]: AuthAccessWriteScope,
+  [J5_SHARING_WS_METHODS.revokeOpenLink]: AuthAccessWriteScope,
 } as const;
 
 /** What the server refuses in words of its own; anything else is logged and told generally. */
@@ -73,6 +79,8 @@ const refused = failAsJ5ActionError({
     "LinkNotAGuestsError",
     "NotAGuestError",
     "GrantNotHeldError",
+    "OpenLinkNotFoundError",
+    "NameNotConfirmedError",
   ],
   failed: "Sharing could not be changed.",
 });
@@ -90,8 +98,18 @@ const toThreadAccess = (access: Access): SharingThreadAccess =>
 export const makeSharingRpcHandlers = (options: {
   readonly access: Pick<PersonAccess["Service"], "watchThreadAccess" | "operatorName">;
   readonly people: People["Service"];
+  readonly openLinks: OpenLinks["Service"];
   readonly session: SessionIdentity;
 }) => ({
+  [J5_SHARING_WS_METHODS.listOpenLinks]: () =>
+    options.openLinks.list.pipe(
+      Effect.map((links) => ({ links })),
+      Effect.catch(refused),
+    ),
+  [J5_SHARING_WS_METHODS.createOpenLink]: (input: SharingCreateOpenLinkRequest) =>
+    options.openLinks.create(input.threadId, input.lifetime).pipe(Effect.catch(refused)),
+  [J5_SHARING_WS_METHODS.revokeOpenLink]: (input: SharingOpenLinkRequest) =>
+    options.openLinks.revoke(input.linkId).pipe(Effect.as({}), Effect.catch(refused)),
   [J5_SHARING_WS_METHODS.listOwnGrants]: () =>
     options.people.ownGrants(options.session).pipe(
       Effect.map((grants) => ({ grants })),
@@ -123,9 +141,9 @@ export const makeSharingRpcHandlers = (options: {
   [J5_SHARING_WS_METHODS.renamePerson]: (input: SharingRenamePersonRequest) =>
     options.people.rename(input).pipe(Effect.catch(refused)),
   [J5_SHARING_WS_METHODS.listThreadPeople]: (input: SharingThreadAccessRequest) =>
-    options.people.threadPeople(options.session, input.threadId).pipe(Effect.catch(refused)),
+    options.openLinks.threadPeople(options.session, input.threadId).pipe(Effect.catch(refused)),
   [J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges]: (input: SharingThreadAccessRequest) =>
-    options.people.watchThreadPeople(options.session, input.threadId).pipe(
+    options.openLinks.watchThreadPeople(options.session, input.threadId).pipe(
       Stream.map((revision) => ({ revision })),
       Stream.catch((cause) => Stream.fromEffect(refused(cause))),
     ),

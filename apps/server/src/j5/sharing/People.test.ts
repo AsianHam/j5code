@@ -38,6 +38,7 @@ import { layer as readChangesLayer } from "../a2a/ReadChanges.ts";
 import { settledReadRevisions } from "../a2a/test-support/readRevisions.ts";
 import * as GuestGate from "./GuestGate.ts";
 import * as GuestPairing from "./GuestPairing.ts";
+import { OpenLinks } from "./OpenLinks.ts";
 import { People } from "./People.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 import { makeSharingRpcHandlers } from "./sharingRpc.ts";
@@ -1273,6 +1274,8 @@ it.layer(testLayer)("who is on a thread", (it) => {
           level: "view",
           grants: [{ via: "thread", level: "view" }],
           you: false,
+          nameSelfGiven: false,
+          joinedByOpenLink: false,
         },
         {
           personId: world.onProject.personId,
@@ -1280,6 +1283,8 @@ it.layer(testLayer)("who is on a thread", (it) => {
           level: "collaborate",
           grants: [{ via: "project", level: "collaborate" }],
           you: false,
+          nameSelfGiven: false,
+          joinedByOpenLink: false,
         },
       ]);
       // Members reach every thread. The server has recorded no name for one.
@@ -1328,6 +1333,7 @@ it.layer(testLayer)("who is on a thread", (it) => {
       // No ids, no notes, no devices, no links, no other grants: exactly this.
       assert.deepStrictEqual(answer, {
         members: [{ personId: null, displayName: OWNER }],
+        openLinks: [],
         guests: [
           {
             personId: null,
@@ -1335,6 +1341,8 @@ it.layer(testLayer)("who is on a thread", (it) => {
             level: "view",
             grants: [{ via: "thread", level: "view" }],
             you: true,
+            nameSelfGiven: false,
+            joinedByOpenLink: false,
           },
           {
             personId: null,
@@ -1342,6 +1350,8 @@ it.layer(testLayer)("who is on a thread", (it) => {
             level: "collaborate",
             grants: [{ via: "project", level: "collaborate" }],
             you: false,
+            nameSelfGiven: false,
+            joinedByOpenLink: false,
           },
         ],
       });
@@ -1638,6 +1648,7 @@ it.layer(testLayer)("who may ask for what", (it) => {
       const handlers = makeSharingRpcHandlers({
         access: yield* PersonAccess.PersonAccess,
         people: yield* People,
+        openLinks: yield* OpenLinks,
         session: guest.session,
       });
       const refused = yield* Effect.flip(

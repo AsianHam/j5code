@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { Rpc, RpcGroup } from "effect/rpc";
 import { AuthClientMetadata, EnvironmentAuthorizationError } from "../auth.ts";
 import { AuthSessionId, ProjectId, ThreadId, TrimmedNonEmptyString } from "../baseSchemas.ts";
+import { ProjectIconOverride } from "../project.ts";
 import { J5ActionError } from "./actionError.ts";
 
 /**
@@ -32,7 +33,14 @@ export const J5_SHARING_WS_METHODS = {
   listThreadPeople: "j5.sharing.listThreadPeople",
   subscribeThreadPeopleChanges: "j5.sharing.subscribeThreadPeopleChanges",
   revokeLink: "j5.sharing.revokeLink",
+  // A view-only link several people can join one thread with.
+  listOpenLinks: "j5.sharing.listOpenLinks",
+  createOpenLink: "j5.sharing.createOpenLink",
+  revokeOpenLink: "j5.sharing.revokeOpenLink",
 } as const;
+
+/** Where a person who opens an open link joins. It needs no sign-in, as pairing does not. */
+export const SHARING_JOIN_PATH = "/api/j5/sharing/join";
 
 export const SharingConnectionKind = Schema.Literals(["member", "guest"]);
 export type SharingConnectionKind = typeof SharingConnectionKind.Type;
@@ -159,6 +167,10 @@ export const SharingPerson = Schema.Struct({
    * member there is, and only such a connection is told of people, so this is the member's row.
    */
   you: Schema.Boolean,
+  /** The person typed this name themselves, joining by an open link; no member has confirmed it. */
+  nameSelfGiven: Schema.Boolean,
+  /** The open link the person joined through, when they did. */
+  joinedOpenLinkId: Schema.NullOr(Schema.String),
   createdAt: Schema.String,
   grants: Schema.Array(SharingGrant),
   devices: Schema.Array(SharingDevice),
@@ -235,6 +247,10 @@ export const SharingThreadGuest = Schema.Struct({
   grants: Schema.Array(Schema.Struct({ via: SharingReachVia, level: SharingGrantLevel })),
   /** The guest who is asking. */
   you: Schema.Boolean,
+  /** They typed this name themselves, joining by an open link; no member has confirmed it. */
+  nameSelfGiven: Schema.Boolean,
+  /** They joined by an open link. */
+  joinedByOpenLink: Schema.Boolean,
 });
 export type SharingThreadGuest = typeof SharingThreadGuest.Type;
 
@@ -252,6 +268,17 @@ export const SharingThreadPeople = Schema.Struct({
     }),
   ),
   guests: Schema.Array(SharingThreadGuest),
+  /**
+   * The thread's open links that can still be joined with, newest first. Told to a member's
+   * connection; a guest asking is told none.
+   */
+  openLinks: Schema.Array(
+    Schema.Struct({
+      linkId: Schema.String,
+      expiresAt: Schema.DateTimeUtc,
+      joined: Schema.Number,
+    }),
+  ),
 });
 export type SharingThreadPeople = typeof SharingThreadPeople.Type;
 
@@ -280,6 +307,87 @@ export const SharingLink = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
 });
 export type SharingLink = typeof SharingLink.Type;
+
+/** An open link as a member sees it. Its token is shown only when it is made. */
+export const SharingOpenLink = Schema.Struct({
+  linkId: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  createdAt: Schema.DateTimeUtc,
+  expiresAt: Schema.DateTimeUtc,
+  revoked: Schema.Boolean,
+  /** The people who joined through it, oldest first. */
+  joined: Schema.Array(Schema.String),
+});
+export type SharingOpenLink = typeof SharingOpenLink.Type;
+
+export const SharingOpenLinks = Schema.Struct({ links: Schema.Array(SharingOpenLink) });
+
+export const SharingCreatedOpenLink = Schema.Struct({
+  ...SharingOpenLink.fields,
+  token: TrimmedNonEmptyString,
+});
+export type SharingCreatedOpenLink = typeof SharingCreatedOpenLink.Type;
+
+export const SharingCreateOpenLinkRequest = Schema.Struct({
+  threadId: ThreadId,
+  /** Left out, the link lasts seven days. */
+  lifetime: Schema.optionalKey(SharingLinkLifetime),
+});
+export type SharingCreateOpenLinkRequest = typeof SharingCreateOpenLinkRequest.Type;
+
+export const SharingOpenLinkRequest = Schema.Struct({ linkId: TrimmedNonEmptyString });
+export type SharingOpenLinkRequest = typeof SharingOpenLinkRequest.Type;
+
+/** Where a client asks what a link opens before using it. It needs no sign-in and spends nothing. */
+export const SHARING_DESCRIBE_PATH = "/api/j5/sharing/describe";
+
+/** A share link's credential or an open link's token, sent in the body and never in a URL. */
+export const SharingDescribeRequest = Schema.Struct({
+  link: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+});
+export type SharingDescribeRequest = typeof SharingDescribeRequest.Type;
+
+/** One thing a link opens, by the names a person would know it by. */
+export const SharingLinkOpens = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("thread"),
+    threadTitle: Schema.String,
+    projectTitle: Schema.NullOr(Schema.String),
+    /** The icon a person chose for the thread's project, when they chose one. */
+    projectIcon: Schema.NullOr(ProjectIconOverride),
+    level: SharingGrantLevel,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("project"),
+    projectTitle: Schema.String,
+    projectIcon: Schema.NullOr(ProjectIconOverride),
+    level: SharingGrantLevel,
+  }),
+]);
+export type SharingLinkOpens = typeof SharingLinkOpens.Type;
+
+/**
+ * What a link that would work right now opens. A link for a named person says who it is for and
+ * what that person can reach, which may be nothing yet. An open link says the one thread it gives
+ * View on. It names no ids, no paths, no one who shared it and no one who has joined.
+ */
+export const SharingLinkDescription = Schema.Struct({
+  kind: Schema.Literals(["person", "open"]),
+  serverName: Schema.String,
+  /** The name the member gave the person a named link is for; `null` for an open link. */
+  personName: Schema.NullOr(Schema.String),
+  opens: Schema.Array(SharingLinkOpens),
+  /** When the link stops working if it is not used first. */
+  expiresAt: Schema.DateTimeUtc,
+});
+export type SharingLinkDescription = typeof SharingLinkDescription.Type;
+
+/** What a person sends to join: the link's token and the name they go by. */
+export const SharingJoinRequest = Schema.Struct({
+  token: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  displayName: SharingPersonName,
+});
+export type SharingJoinRequest = typeof SharingJoinRequest.Type;
 
 const ManageError = Schema.Union([J5ActionError, EnvironmentAuthorizationError]);
 const Done = Schema.Struct({});
@@ -353,6 +461,7 @@ export const J5SharingRpcGroup = RpcGroup.make(
     success: SharingPerson,
     error: ManageError,
   }),
+  // Renaming also confirms: a name a member typed is no longer one the guest gave themselves.
   Rpc.make(J5_SHARING_WS_METHODS.renamePerson, {
     payload: SharingRenamePersonRequest,
     success: SharingPerson,
@@ -374,6 +483,22 @@ export const J5SharingRpcGroup = RpcGroup.make(
   // Cancels a share link that has not been used yet.
   Rpc.make(J5_SHARING_WS_METHODS.revokeLink, {
     payload: SharingLinkRequest,
+    success: Done,
+    error: ManageError,
+  }),
+  Rpc.make(J5_SHARING_WS_METHODS.listOpenLinks, {
+    payload: Schema.Struct({}),
+    success: SharingOpenLinks,
+    error: ManageError,
+  }),
+  Rpc.make(J5_SHARING_WS_METHODS.createOpenLink, {
+    payload: SharingCreateOpenLinkRequest,
+    success: SharingCreatedOpenLink,
+    error: ManageError,
+  }),
+  // Stops new people joining; those who already joined are removed one at a time.
+  Rpc.make(J5_SHARING_WS_METHODS.revokeOpenLink, {
+    payload: SharingOpenLinkRequest,
     success: Done,
     error: ManageError,
   }),

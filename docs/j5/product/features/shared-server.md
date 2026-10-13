@@ -34,7 +34,7 @@ Two constraints are in force on everything built, because retrofitting multiple 
 
 **What a share promises.** A view grant is a boundary the server enforces: a guest who can view one thread can read nothing else. A collaborate grant is not a boundary. A person who can write to an agent can ask it to read any file, run any command or message any other agent, so the grant shapes what the guest sees and does not contain what they can cause. The product says this in plain words at the moment a share is made, and does not withhold useful things in order to look stricter than it is.
 
-**A share link** is how a new person first connects. A member who manages access makes it for a named person; opening it pairs one device as that person. A second device takes a second link for the same person. The link carries no access of its own: it says who is connecting, and the grants say what they reach. A link travels over the routes by which the server can already be reached; sharing opens no new route to the server.
+**A share link** is how a new person first connects. There are two kinds, and a member who manages access makes both. A link for a named person pairs one device as that person; a second device takes a second link for the same person. It carries no access of its own: it says who is connecting, and that person's grants say what they reach. **An open link** is made for one thread, and several people can join with it. It gives each person who uses it a View grant on that thread and nothing more. Each of them types a name and becomes a guest of their own; the name is marked as one they gave themselves until a member confirms or changes it, and they are not given Collaborate before then. An open link expires, and a member can revoke it, which stops new people joining and removes no one who already has. Either kind of link travels over the routes by which the server can already be reached; sharing opens no new route to the server.
 
 **A guest's view** of a server is the threads they were granted, and a project's artifacts when the grant is on the project. The server puts nothing in a guest's inbox or on their Fleet page. A guest cannot use the server's Personas or Playbooks directly, though the agents on the server can. A guest shares nothing onward, and can leave anything they were granted.
 
@@ -84,6 +84,12 @@ Doors deliberately left open and undesigned: addressing a _duty_ rather than a p
 24. A guest sees nothing from that server in their inbox or on their Fleet page, and is not offered its Personas or Playbooks; agents on the server use both as they do for a member.
 25. A guest can leave a grant they hold, from their own client: what it covered goes from their view, and the People page no longer lists it for them. Coming back takes a new grant from a member.
 
+### Open links
+
+26. An open link is made for one thread and gives View only. Each person who opens it gives a name and becomes a separate guest with a View grant on that thread; a member raises anyone to Collaborate as they would any guest.
+27. A name a person gave themselves is shown as such until a member confirms or changes it, and that person cannot be given Collaborate until then.
+28. An open link expires after the time the member chose, seven days unless they say otherwise, and a member can revoke it sooner. Either stops new people joining; people who already joined are removed one at a time. The People page shows who joined through it.
+
 ## Scenarios
 
 - **Shift handoff.** The on-shift engineer for Support Rotation goes home; the next engineer, also a member, opens the same server, sees the same project, the same agents, and the same open asks in their own inbox, and continues without a handover conversation. (AC1, AC3, AC5)
@@ -102,3 +108,4 @@ Doors deliberately left open and undesigned: addressing a _duty_ rather than a p
 - 2026-09-08 — rewritten into the definition shape. Former identifiers: R9 → AC2, AC4; R29 → AC1, AC3. The architecture session this capability needs before any build — how several authenticated people attach to one server, attribution and read state in shared surfaces, what "every person" delivery means for the inbox — is that session's agenda, not this definition's.
 - 2026-10-07 — Squadrons retired: what several people share on one server is its projects and agents, and the capability is renamed from "Shared Squadrons" to "Shared server" (Jackson, 2026-10-05; [#412](https://github.com/Jacksondr5/j5code/issues/412)).
 - 2026-10-10 — members and guests, grants at two levels, and share links defined; two people in one conversation moved out of the open doors and into [shared conversations](shared-conversations.md) (Jackson; [record](../../worklog/2026-10-09-multi-player-session.md)). AC3 now reads "member" where it read "person"; AC5 onward are new. Upstream's permissions were read at `2625327090`: they are per connection and server-wide, with no roles and nothing scoped to a project or thread, so a grant adds only the scope and keeps upstream's names.
+- 2026-10-12 — open links added: one view-only link several people can join a thread with, AC26 to AC28, numbered after AC25 so earlier numbers stand (Jackson, 2026-10-11; [#541](https://github.com/Jacksondr5/j5code/issues/541)).

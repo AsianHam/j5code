@@ -41,6 +41,10 @@ export interface Person {
   readonly personId: ParticipantId;
   readonly kind: PersonKind;
   readonly displayName: string | null;
+  /** The person typed this name themselves, joining by an open link; no member has confirmed it. */
+  readonly nameSelfGiven: boolean;
+  /** The open link the person joined through, when they did. */
+  readonly joinedOpenLinkId: string | null;
 }
 
 export interface PersonGrant {
@@ -141,11 +145,13 @@ export interface SessionIdentity {
 
 export interface PersonAccessShape {
   /**
-   * Records a guest under the name the member bringing them in gave them. A name another person
-   * on the server already has, compared folded, is refused.
+   * Records a guest under the name the member bringing them in gave them. `joinedOpenLinkId`
+   * marks one who joined by an open link instead, under a name they typed themselves. A name
+   * another person on the server already has, compared folded, is refused.
    */
   readonly createGuest: (input: {
     readonly displayName: string;
+    readonly joinedOpenLinkId?: string;
   }) => Effect.Effect<Person, PersonAccessStorageError | PersonNameTakenError>;
   /** The name of the person the server belongs to; `null` until one is set. */
   readonly operatorName: Effect.Effect<string | null, PersonAccessStorageError>;
@@ -173,7 +179,10 @@ export interface PersonAccessShape {
   readonly listGrants: (
     personId: ParticipantId,
   ) => Effect.Effect<ReadonlyArray<PersonGrant>, PersonAccessStorageError>;
-  /** Gives a guest a new name. Told to open feeds, as a change to who is on a thread. */
+  /**
+   * Gives a guest a new name, which is from then on a member's word for them and no longer one
+   * they gave themselves. Told to open feeds, as a change to who is on a thread.
+   */
   readonly setGuestName: (input: {
     readonly personId: ParticipantId;
     readonly displayName: string;
@@ -296,6 +305,8 @@ interface PersonRow {
   readonly person_id: string;
   readonly kind: PersonKind;
   readonly display_name: string | null;
+  readonly name_self_given: number;
+  readonly joined_open_link_id: string | null;
 }
 
 interface GrantRow {
@@ -310,6 +321,8 @@ const toPerson = (row: PersonRow): Person => ({
   personId: ParticipantId.make(row.person_id),
   kind: row.kind,
   displayName: row.display_name,
+  nameSelfGiven: row.name_self_given === 1,
+  joinedOpenLinkId: row.joined_open_link_id,
 });
 
 const targetColumns = (target: GrantTarget) =>
@@ -382,7 +395,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
 
     const readPersonRow = (personId: ParticipantId) =>
       sql<PersonRow>`
-        SELECT person_id, kind, display_name
+        SELECT person_id, kind, display_name, name_self_given, joined_open_link_id
         FROM j5_a2a_human_person
         WHERE person_id = ${personId}
       `.pipe(Effect.map((rows) => rows[0]));
@@ -401,7 +414,8 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
       function* (session) {
         if (session.subject !== GUEST_SESSION_SUBJECT) return null;
         const rows = yield* sql<PersonRow>`
-          SELECT person.person_id, person.kind, person.display_name
+          SELECT person.person_id, person.kind, person.display_name, person.name_self_given,
+            person.joined_open_link_id
           FROM j5_a2a_person_session AS bound
           JOIN j5_a2a_human_person AS person ON person.person_id = bound.person_id
           WHERE bound.session_id = ${session.sessionId} AND person.kind = 'guest'
@@ -496,17 +510,25 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         function* (input) {
           const personId = ParticipantId.make(`human:${NodeCrypto.randomUUID()}`);
           const createdAt = DateTime.formatIso(yield* DateTime.now);
+          const openLinkId = input.joinedOpenLinkId ?? null;
           yield* sql`
-          INSERT INTO j5_a2a_human_person (
-            person_id, is_local_operator, created_at, kind, display_name, name_key
-          ) VALUES (
-            ${personId}, 0, ${createdAt}, 'guest', ${input.displayName},
-            ${personNameKey(input.displayName)}
-          )
-        `;
+            INSERT INTO j5_a2a_human_person (
+              person_id, is_local_operator, created_at, kind, display_name, name_key,
+              name_self_given, joined_open_link_id
+            ) VALUES (
+              ${personId}, 0, ${createdAt}, 'guest', ${input.displayName},
+              ${personNameKey(input.displayName)}, ${openLinkId === null ? 0 : 1}, ${openLinkId}
+            )
+          `;
           // A guest with no grant yet is on no thread, so only the People page is told.
           yield* readChanges.notify("sharing");
-          return { personId, kind: "guest" as const, displayName: input.displayName };
+          return {
+            personId,
+            kind: "guest" as const,
+            displayName: input.displayName,
+            nameSelfGiven: openLinkId !== null,
+            joinedOpenLinkId: openLinkId,
+          };
         },
         Effect.mapError(naming("record a guest")),
       ),
@@ -529,7 +551,13 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           `;
           // Told as a change to who is on every thread: the member is on all of them.
           yield* changed(personId);
-          return { personId, kind: "member" as const, displayName };
+          return {
+            personId,
+            kind: "member" as const,
+            displayName,
+            nameSelfGiven: false,
+            joinedOpenLinkId: null,
+          };
         },
         Effect.mapError(naming("record the owner's name")),
       ),
@@ -600,7 +628,8 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         function* (input) {
           const rows = yield* sql`
             UPDATE j5_a2a_human_person
-            SET display_name = ${input.displayName}, name_key = ${personNameKey(input.displayName)}
+            SET display_name = ${input.displayName},
+              name_key = ${personNameKey(input.displayName)}, name_self_given = 0
             WHERE person_id = ${input.personId} AND kind = 'guest'
             RETURNING person_id
           `;
@@ -644,8 +673,8 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
               FROM chain
               WHERE chain.thread_id IS NOT NULL AND chain.depth < ${MAX_ANCESTOR_DEPTH}
             )
-            SELECT person.person_id, person.kind, person.display_name,
-              held.target_kind, held.target_id, held.level, held.note
+            SELECT person.person_id, person.kind, person.display_name, person.name_self_given,
+              person.joined_open_link_id, held.target_kind, held.target_id, held.level, held.note
             FROM j5_a2a_person_grant AS held
             JOIN j5_a2a_human_person AS person
               ON person.person_id = held.person_id AND person.kind = 'guest'
@@ -659,7 +688,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
             ORDER BY person.created_at, person.person_id, held.target_kind DESC, held.target_id
           `;
           const members = yield* sql<PersonRow>`
-            SELECT person_id, kind, display_name
+            SELECT person_id, kind, display_name, name_self_given, joined_open_link_id
             FROM j5_a2a_human_person
             WHERE kind = 'member'
             ORDER BY created_at, person_id
@@ -691,7 +720,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
 
       listPeople: Effect.gen(function* () {
         const people = yield* sql<PersonRow & { readonly created_at: string }>`
-          SELECT person_id, kind, display_name, created_at
+          SELECT person_id, kind, display_name, name_self_given, joined_open_link_id, created_at
           FROM j5_a2a_human_person
           ORDER BY created_at, person_id
         `;

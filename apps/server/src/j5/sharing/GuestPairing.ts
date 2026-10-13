@@ -115,6 +115,13 @@ export interface GuestPairingShape {
   }) => Effect.Effect<void, GuestPairingError>;
   /** Whether a credential is a share link made for a guest. Reading it uses nothing up. */
   readonly isGuestLink: (credential: string) => Effect.Effect<boolean, GuestPairingError>;
+  /** The link and guest a credential belongs to, read without using it; `null` for any other. */
+  readonly linkOf: (
+    credential: string,
+  ) => Effect.Effect<
+    { readonly pairingLinkId: string; readonly personId: ParticipantId } | null,
+    GuestPairingError
+  >;
   /** Forgets the guest a link was made for; `false` when the link is not a guest's. */
   readonly forgetLink: (pairingLinkId: string) => Effect.Effect<boolean, GuestPairingError>;
   /** The unused links recorded for guests, by upstream's link id. */
@@ -170,6 +177,23 @@ const make: Layer.Layer<GuestPairing, never, SqlClient.SqlClient | ReadChanges> 
           Effect.map((rows) => rows.length > 0),
           Effect.mapError(storage),
           Effect.withSpan("j5.sharing.guestPairing.isGuestLink"),
+        ),
+
+      linkOf: (credential) =>
+        sql<{ readonly pairing_link_id: string; readonly person_id: string }>`
+          SELECT pairing_link_id, person_id FROM j5_a2a_guest_link
+          WHERE credential_hash = ${hashCredential(credential)}
+        `.pipe(
+          Effect.map((rows) =>
+            rows[0] === undefined
+              ? null
+              : {
+                  pairingLinkId: rows[0].pairing_link_id,
+                  personId: rows[0].person_id as ParticipantId,
+                },
+          ),
+          Effect.mapError(storage),
+          Effect.withSpan("j5.sharing.guestPairing.linkOf"),
         ),
 
       forgetLink: (pairingLinkId) =>

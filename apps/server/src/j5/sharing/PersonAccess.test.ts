@@ -17,12 +17,14 @@ import {
 } from "../a2a/HumanPersonRegistry.ts";
 import { runJ5A2AMigrations } from "../a2a/Migrations.ts";
 import * as PersonAccess from "./PersonAccess.ts";
+import type { OpenLinks } from "./OpenLinks.ts";
 import type { People } from "./People.ts";
 import { makeSharingRpcHandlers } from "./sharingRpc.ts";
 
 const AT = "2026-10-11T00:00:00.000Z";
 /** The requests under test here answer from `PersonAccess` alone. */
 const noPeople = {} as People["Service"];
+const noOpenLinks = {} as OpenLinks["Service"];
 const PROJECT = ProjectId.make("project:billing-migration");
 const OTHER_PROJECT = ProjectId.make("project:website-redesign");
 
@@ -312,7 +314,12 @@ it.layer(testLayer)("PersonAccess", (it) => {
         target: { kind: "thread", threadId: writing },
         level: "collaborate",
       });
-      const handlers = makeSharingRpcHandlers({ access, people: noPeople, session });
+      const handlers = makeSharingRpcHandlers({
+        access,
+        people: noPeople,
+        openLinks: noOpenLinks,
+        session,
+      });
       const told = (threadId: ThreadId) =>
         handlers[J5_SHARING_WS_METHODS.subscribeThreadAccess]({ threadId }).pipe(Stream.runHead);
       assert.deepStrictEqual(yield* handlers[J5_SHARING_WS_METHODS.getConnectionAccess](), {
@@ -347,7 +354,12 @@ it.layer(testLayer)("PersonAccess", (it) => {
       const target = { kind: "thread" as const, threadId };
       yield* access.putGrant({ personId: guest.personId, target, level: "view" });
       const told = yield* Queue.unbounded<SharingThreadAccess>();
-      const handlers = makeSharingRpcHandlers({ access, people: noPeople, session });
+      const handlers = makeSharingRpcHandlers({
+        access,
+        people: noPeople,
+        openLinks: noOpenLinks,
+        session,
+      });
       yield* handlers[J5_SHARING_WS_METHODS.subscribeThreadAccess]({ threadId }).pipe(
         Stream.runForEach((item) => Queue.offer(told, item)),
         Effect.forkScoped,
@@ -368,7 +380,12 @@ it.layer(testLayer)("PersonAccess", (it) => {
       const access = yield* PersonAccess.PersonAccess;
       const threadId = yield* thread("thread:member-told-once");
       const session = { sessionId: AuthSessionId.make("session:desk"), subject: "one-time-token" };
-      const handlers = makeSharingRpcHandlers({ access, people: noPeople, session });
+      const handlers = makeSharingRpcHandlers({
+        access,
+        people: noPeople,
+        openLinks: noOpenLinks,
+        session,
+      });
       // A member's connection is told the owner's name, or that there is none yet.
       assert.deepStrictEqual(yield* handlers[J5_SHARING_WS_METHODS.getConnectionAccess](), {
         kind: "member",
@@ -383,6 +400,7 @@ it.layer(testLayer)("PersonAccess", (it) => {
       const guestHandlers = makeSharingRpcHandlers({
         access,
         people: noPeople,
+        openLinks: noOpenLinks,
         session: { sessionId: session.sessionId, subject: PersonAccess.GUEST_SESSION_SUBJECT },
       });
       assert.deepStrictEqual(yield* guestHandlers[J5_SHARING_WS_METHODS.getConnectionAccess](), {
