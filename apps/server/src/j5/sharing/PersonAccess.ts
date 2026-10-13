@@ -255,7 +255,9 @@ export interface PersonAccessShape {
     PersonAccessStorageError
   >;
   /**
-   * A connection's access to a thread. A guest's grant on a thread covers the agents beneath it:
+   * A connection's access to a thread, as the level it may act at. A guest writes only where a
+   * Collaborate grant names the thread or its project; a thread covered through one above it is
+   * read at View whatever that grant's level. A guest's grant on a thread covers the agents beneath it:
    * the Subagents it ran and the Peer Agents placed under it, Crew seats among them. A fork is a
    * thread of its own and is not covered by its source's grant. A grant on the thread's project
    * covers it too; the higher level applies.
@@ -373,6 +375,23 @@ const isPersonAccessError = Schema.is(
 const MAX_ANCESTOR_DEPTH = 64;
 
 /**
+ * Whether a grant lets its holder write to a thread at the grant's level: one on that thread
+ * itself, or on its project. A grant on a thread above gives reading only: a guest with
+ * Collaborate on a Captain's thread reads its seats and the agents beneath it and writes to
+ * none of them, so what reaches them goes through the thread the guest was given.
+ */
+export const grantWrites = (
+  grant: { readonly target_kind: "project" | "thread"; readonly target_id: string },
+  threadId: ThreadId,
+) => grant.target_kind === "project" || grant.target_id === threadId;
+
+/** Whether a thread is a Crew seat's. A guest answers no prompt on one (Shared conversations AC12). */
+export const isCrewSeatThread = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+  sql<{ readonly found: number }>`
+    SELECT 1 AS found FROM j5_agent_crew_member WHERE thread_id = ${threadId} LIMIT 1
+  `.pipe(Effect.map((rows) => rows.length > 0));
+
+/**
  * Every grant a guest holds that covers a thread: on the thread itself, on a thread above it, or
  * on its project. The same walk up from the thread as `threadLevels`, for everyone at once.
  */
@@ -436,7 +455,9 @@ export const isSharedConversation = Effect.fn("j5.sharing.isSharedConversation")
     SELECT 1 AS found FROM j5_a2a_person_grant WHERE level = 'collaborate' LIMIT 1
   `;
   if (any.length === 0) return false;
-  return (yield* guestGrantsOnThread(sql, threadId)).some((row) => row.level === "collaborate");
+  return (yield* guestGrantsOnThread(sql, threadId)).some(
+    (row) => row.level === "collaborate" && grantWrites(row, threadId),
+  );
 });
 
 const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> = Layer.effect(
@@ -508,6 +529,8 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
     // its upstream lineage parent; a Peer Agent's is its placement parent, unless it is a fork.
     const threadLevels = (personId: ParticipantId, threadId: ThreadId) => sql<{
       readonly level: GrantLevel;
+      readonly target_kind: "project" | "thread";
+      readonly target_id: string;
     }>`
       WITH RECURSIVE chain(thread_id, depth) AS (
         SELECT ${threadId}, 0
@@ -538,7 +561,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         FROM chain
         WHERE chain.thread_id IS NOT NULL AND chain.depth < ${MAX_ANCESTOR_DEPTH}
       )
-      SELECT level
+      SELECT level, target_kind, target_id
       FROM j5_a2a_person_grant
       WHERE person_id = ${personId}
         AND (
@@ -559,7 +582,11 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         const person = yield* sessionPerson(session);
         if (person === null) return "member";
         if (person.personId === null) return "none";
-        return highest((yield* threadLevels(person.personId, threadId)).map((row) => row.level));
+        return highest(
+          (yield* threadLevels(person.personId, threadId)).map((row) =>
+            grantWrites(row, threadId) ? row.level : "view",
+          ),
+        );
       },
       Effect.mapError(storage("read a person's access to a thread")),
     );

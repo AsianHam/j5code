@@ -21,6 +21,7 @@ import {
   type PersonAccessShape,
   type PersonKind,
   type SessionIdentity,
+  isCrewSeatThread,
   isSharedConversation,
 } from "./PersonAccess.ts";
 
@@ -41,14 +42,20 @@ export interface Author {
 
 // The name rule already refuses brackets and line breaks (`isPersonName`). They are taken out
 // here as well, so that a name which reached the record some other way cannot close the line
-// early or open what looks like a second one.
-const nameInLine = (name: string) => name.replace(/[[\]\s]+/g, " ").trim();
+// early or open what looks like a second one. A parenthesised "member" or "guest" in a name is
+// taken out too, so the only such word on the line is the platform's, at the end: a guest named
+// "Jackson (member)" is written `Jackson (guest)`.
+const nameInLine = (name: string) =>
+  name
+    .replace(/\(\s*(?:member|guest)\s*\)/gi, " ")
+    .replace(/[[\]\s]+/g, " ")
+    .trim();
 
 /** How an author is named to the agent: `Priya (guest)`, `Jackson (member)`, `a member`. */
-export const authorLabel = (author: Pick<Author, "kind" | "displayName">) =>
-  author.displayName === null
-    ? `a ${author.kind}`
-    : `${nameInLine(author.displayName)} (${author.kind})`;
+export const authorLabel = (author: Pick<Author, "kind" | "displayName">) => {
+  const name = author.displayName === null ? "" : nameInLine(author.displayName);
+  return name.length === 0 ? `a ${author.kind}` : `${name} (${author.kind})`;
+};
 
 /**
  * The line the platform puts first on a person's message in a shared conversation, in the shape
@@ -74,6 +81,8 @@ const refused = (message: string) =>
     message,
     ...authScopeRequiredResponse(AuthOrchestrationOperateScope),
   });
+
+const notAdmitted = refused("This could not be sent. Try again.");
 
 interface AuthorRow {
   readonly message_id: string;
@@ -177,6 +186,14 @@ const make = (sql: SqlClient.SqlClient, access: PersonAccessShape) => {
     if (author === null || author.kind !== "guest" || author.nameSelfGiven) {
       return yield* refused("A member has to confirm your name before you can write here.");
     }
+    // A seat's request for approval reaches members only (AC12), whatever grant covers its thread.
+    if (
+      (command.type === "runtime-request.respond" ||
+        command.type === "thread.user-input.dismiss") &&
+      (yield* isCrewSeatThread(sql, command.threadId))
+    ) {
+      return yield* refused("A Crew seat's prompts are answered by a member.");
+    }
     switch (command.type) {
       case "message.dispatch": {
         // Upstream keys a message by its id alone, across threads: a send that named an
@@ -217,21 +234,46 @@ const make = (sql: SqlClient.SqlClient, access: PersonAccessShape) => {
       session: SessionIdentity,
       command: OrchestrationV2Command,
     ): Effect.Effect<OrchestrationV2Command, EnvironmentAuthorizationError> =>
-      Effect.gen(function* () {
-        const admitted: OrchestrationV2Command =
-          session.subject === GUEST_SESSION_SUBJECT
-            ? yield* admitGuest(session, command)
-            : yield* admitMember(session, command);
-        return admitted;
-      }).pipe(
-        Effect.catch((cause) =>
-          cause._tag === "EnvironmentAuthorizationError"
-            ? Effect.fail(cause)
-            : Effect.logError("J5 shared conversation could not admit a command; refusing", {
-                cause,
-              }).pipe(Effect.andThen(Effect.fail(refused("This could not be sent. Try again.")))),
-        ),
-      ),
+      session.subject === GUEST_SESSION_SUBJECT
+        ? admitGuest(session, command).pipe(
+            Effect.map((admitted): OrchestrationV2Command => admitted),
+            // A guest's command goes nowhere when J5 cannot check it.
+            Effect.catch((cause) =>
+              cause._tag === "EnvironmentAuthorizationError"
+                ? Effect.fail(cause)
+                : Effect.logError("J5 shared conversation could not admit a command; refusing", {
+                    cause,
+                  }).pipe(Effect.andThen(Effect.fail(notAdmitted))),
+            ),
+          )
+        : admitMember(session, command).pipe(
+            Effect.map((admitted): OrchestrationV2Command => admitted),
+            // A fault of J5's own does not stop a member's command where no guest can write:
+            // it goes on as upstream has it. In a shared conversation it is refused, since a
+            // message sent on without its author's line would tell the agent the wrong thing
+            // about who is speaking. If even that cannot be read, the thread is taken as
+            // unshared, which nearly every thread is.
+            Effect.catch((cause) =>
+              ("threadId" in command
+                ? isSharedConversation(sql, command.threadId).pipe(
+                    Effect.orElseSucceed(() => false),
+                  )
+                : Effect.succeed(false)
+              ).pipe(
+                Effect.tap((shared) =>
+                  Effect.logError(
+                    shared
+                      ? "J5 shared conversation could not admit a member's command; refusing"
+                      : "J5 shared conversation failed on a member's command; sending it on as upstream does",
+                    { cause },
+                  ),
+                ),
+                Effect.flatMap((shared) =>
+                  shared ? Effect.fail(notAdmitted) : Effect.succeed(command),
+                ),
+              ),
+            ),
+          ),
     /**
      * Who wrote each message a person sent while the thread was shared, for a connection that
      * can read the thread. It says a name and whether they are a member or a guest, no more.
