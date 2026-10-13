@@ -333,6 +333,7 @@ function GuestRow({
   const { personId } = guest;
   const [confirmingName, setConfirmingName] = useState(false);
   const removeGrant = useAtomCommand(sharingManage.removeGrant, { reportFailure: false });
+  const putGrant = useAtomCommand(sharingManage.putGrant, { reportFailure: false });
 
   const remove = async () => {
     if (personId === null) return;
@@ -350,6 +351,22 @@ function GuestRow({
       toastManager.add({
         type: "error",
         title: `Could not remove ${name}`,
+        description: refusalMessage(result),
+      });
+    }
+    refreshSharing(environmentId);
+  };
+
+  const lower = async () => {
+    if (personId === null) return;
+    const result = await putGrant({
+      environmentId,
+      input: { personId, target: { kind: "thread", threadId }, level: "view" },
+    });
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: "Could not change the level",
         description: refusalMessage(result),
       });
     }
@@ -386,7 +403,18 @@ function GuestRow({
             <ChevronDownIcon className="size-3" />
           </MenuTrigger>
           <MenuPopup align="end">
-            <LevelItems current={guest.level} />
+            <LevelItems
+              current={guest.level}
+              onView={() => void lower()}
+              onCollaborate={() =>
+                openSharingDialog({
+                  kind: "promote",
+                  environmentId,
+                  person: { personId, name, nameSelfGiven: guest.nameSelfGiven },
+                  target: { kind: "thread", threadId },
+                })
+              }
+            />
             <MenuSeparator />
             <MenuItem
               onClick={() =>
@@ -411,16 +439,23 @@ function GuestRow({
   );
 }
 
-/** View and Collaborate as the level menu lists them. Collaborate cannot be chosen yet. */
-function LevelItems({ current }: { readonly current: SharingGrantLevel }) {
+/** View and Collaborate as the level menu lists them; the level held is ticked. */
+function LevelItems({
+  current,
+  onView,
+  onCollaborate,
+}: {
+  readonly current: SharingGrantLevel;
+  readonly onView: () => void;
+  readonly onCollaborate: () => void;
+}) {
   return (
     <>
-      <MenuItem disabled={current === "view"}>View{current === "view" ? " ✓" : ""}</MenuItem>
-      <MenuItem disabled>
-        Collaborate
-        <Badge variant="outline" size="sm">
-          coming soon
-        </Badge>
+      <MenuItem disabled={current === "view"} onClick={onView}>
+        View{current === "view" ? " ✓" : ""}
+      </MenuItem>
+      <MenuItem disabled={current === "collaborate"} onClick={onCollaborate}>
+        Collaborate{current === "collaborate" ? " ✓" : ""}
       </MenuItem>
     </>
   );

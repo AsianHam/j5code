@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { SharingThreadLevel } from "@t3tools/contracts/j5";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../../connection/catalog";
@@ -71,6 +72,22 @@ const NOT_A_GUEST = Atom.make(false);
 /** Whether the connection to one server is known to be a guest's; false until the server says so. */
 export function useIsGuest(environmentId: EnvironmentId | null): boolean {
   return useAtomValue(environmentId === null ? NOT_A_GUEST : j5Sharing.isGuest(environmentId));
+}
+
+const NO_GUEST_LEVEL = Atom.make<SharingThreadLevel | null>(null);
+
+/**
+ * What a guest holds on a thread: `null` for a member, else "view", "collaborate" or "none". For
+ * the places a collaborating guest is offered less than a member (no Stop, no steering, text
+ * only); whether the thread can be written to at all stays `useCanOperateThread`.
+ */
+export function useGuestThreadLevel(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+): SharingThreadLevel | null {
+  return useAtomValue(
+    environmentId === null ? NO_GUEST_LEVEL : j5Sharing.guestThreadLevel(environmentId, threadId),
+  );
 }
 
 /** What J5's Skills page says when every connected server is a guest one. */

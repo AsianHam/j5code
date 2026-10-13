@@ -188,6 +188,30 @@ describe("a guest's connection", () => {
     }),
   );
 
+  it.effect("tells a guest who collaborates from a member, thread by thread", () =>
+    Effect.gen(function* () {
+      const { layer, registry, viewedLevel } = yield* environments();
+      const sharing = createSharingEnvironmentAtoms(Atom.runtime(layer));
+      const viewed = sharing.guestThreadLevel(SHARED_SERVER, VIEWED);
+      const joined = sharing.guestThreadLevel(SHARED_SERVER, JOINED);
+      const draft = sharing.guestThreadLevel(SHARED_SERVER, null);
+      const own = sharing.guestThreadLevel(MEMBER_SERVER, VIEWED);
+      for (const atom of [viewed, joined, draft, own]) yield* AtomRegistry.mount(registry, atom);
+
+      expect(yield* settlesAt(registry, joined, "collaborate")).toBe(true);
+      expect(yield* settlesAt(registry, viewed, "view")).toBe(true);
+      expect(registry.get(draft)).toBe("none");
+      yield* SubscriptionRef.set(viewedLevel, "collaborate");
+      expect(yield* settlesAt(registry, viewed, "collaborate")).toBe(true);
+
+      // A member holds no level: nothing a member is offered depends on one.
+      expect(yield* settlesAt(registry, sharing.connectionKind(MEMBER_SERVER), "member")).toBe(
+        true,
+      );
+      expect(registry.get(own)).toBe(null);
+    }),
+  );
+
   it.effect("is offered a thread's actions only where it holds Collaborate", () =>
     Effect.gen(function* () {
       const { layer, registry } = yield* environments();

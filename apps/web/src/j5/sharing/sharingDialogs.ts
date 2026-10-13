@@ -33,6 +33,18 @@ export type SharingDialogRequest =
       readonly person: { readonly personId: string; readonly name: string };
     }
   | {
+      /** A member raises someone from View to Collaborate on one thread or project. */
+      readonly kind: "promote";
+      readonly environmentId: EnvironmentId;
+      readonly person: {
+        readonly personId: string;
+        readonly name: string;
+        /** They typed it when they joined; saving the dialog confirms it. */
+        readonly nameSelfGiven: boolean;
+      };
+      readonly target: SharingGrantTarget;
+    }
+  | {
       /** A guest gives up what a thread was shared with them through. */
       readonly kind: "leave";
       readonly environmentId: EnvironmentId;

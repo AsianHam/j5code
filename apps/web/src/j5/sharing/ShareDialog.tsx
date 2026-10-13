@@ -18,7 +18,6 @@ import {
   AutocompleteList,
   AutocompletePopup,
 } from "../../components/ui/autocomplete";
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -43,6 +42,7 @@ import {
   namedLinkMeta,
   type LinkLifetime,
 } from "./shareLink.logic";
+import { COLLABORATE_DESCRIPTION } from "./promote.logic";
 import { ShareLinkPanel } from "./ShareLinkPanel";
 import { TargetPicker } from "./TargetPicker";
 import {
@@ -52,13 +52,6 @@ import {
   rememberLinkSecret,
   sharingManage,
 } from "./sharingManage";
-
-/**
- * Whether a guest can be given Collaborate yet. Nothing lets a guest send to an agent today, so
- * the level is listed and cannot be chosen; the fields and the warning that go with it are built
- * and appear once it can.
- */
-const COLLABORATE_IS_OFFERED = false;
 
 const LEVELS: ReadonlyArray<{
   readonly level: SharingGrantLevel;
@@ -73,7 +66,8 @@ const LEVELS: ReadonlyArray<{
   },
   {
     level: "collaborate",
-    description: "Also message the agent, answer its prompts and drive the in-app browser.",
+    // The design's line also promised the in-app browser, which is not open to a guest.
+    description: COLLABORATE_DESCRIPTION,
   },
 ];
 
@@ -305,34 +299,19 @@ export function ShareDialog({
                 disabled={busy}
                 onValueChange={(value) => setLevel(value as SharingGrantLevel)}
               >
-                {LEVELS.map((option) => {
-                  const unavailable = option.level === "collaborate" && !COLLABORATE_IS_OFFERED;
-                  return (
-                    <label
-                      key={option.level}
-                      className={
-                        unavailable
-                          ? "flex items-start gap-3 opacity-64"
-                          : "flex cursor-pointer items-start gap-3"
-                      }
-                    >
-                      <Radio className="mt-0.5" value={option.level} disabled={unavailable} />
-                      <span className="min-w-0">
-                        <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                          {levelLabel(option.level)}
-                          {unavailable ? (
-                            <Badge variant="outline" size="sm">
-                              coming soon
-                            </Badge>
-                          ) : null}
-                        </span>
-                        <span className="block text-xs leading-snug text-muted-foreground">
-                          {option.description}
-                        </span>
+                {LEVELS.map((option) => (
+                  <label key={option.level} className="flex cursor-pointer items-start gap-3">
+                    <Radio className="mt-0.5" value={option.level} />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-foreground">
+                        {levelLabel(option.level)}
                       </span>
-                    </label>
-                  );
-                })}
+                      <span className="block text-xs leading-snug text-muted-foreground">
+                        {option.description}
+                      </span>
+                    </span>
+                  </label>
+                ))}
               </RadioGroup>
             </div>
           </section>

@@ -144,6 +144,25 @@ export function createSharingEnvironmentAtoms<R, E>(
     }).pipe(Atom.withLabel(`j5:sharing:thread-operable:${key}`));
   });
 
+  /**
+   * What a guest holds on a thread, for the parts of a client that differ between a guest who
+   * collaborates and a member: `null` for a connection not known to be a guest's, and "none"
+   * for a guest's until the server has sent the level. Whether the thread can be written to at
+   * all is `threadOperable`, the one answer upstream's files ask.
+   */
+  const guestThreadLevel = Atom.family((key: string) => {
+    const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId | null];
+    return Atom.make((get): SharingThreadLevel | null => {
+      if (get(connectionKind(environmentId)) !== "guest") return null;
+      if (threadId === null) return "none";
+      return (
+        Option.getOrNull(
+          AsyncResult.value(get(threadAccess({ environmentId, input: { threadId } }))),
+        )?.level ?? "none"
+      );
+    }).pipe(Atom.withLabel(`j5:sharing:guest-thread-level:${key}`));
+  });
+
   /** Whether the connection is known to be a guest's; false until the server has said so. */
   const isGuest = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(connectionKind(environmentId)) === "guest").pipe(
@@ -170,6 +189,8 @@ export function createSharingEnvironmentAtoms<R, E>(
     ): boolean =>
       input.permitted &&
       registry.get(threadOperable(threadKey(input.environmentId, input.threadId))),
+    guestThreadLevel: (environmentId: EnvironmentId, threadId: ThreadId | null) =>
+      guestThreadLevel(threadKey(environmentId, threadId)),
     /** Whether sharing lets this connection write to the thread; upstream's permission is separate. */
     threadOperable: (environmentId: EnvironmentId, threadId: ThreadId | null) =>
       threadOperable(threadKey(environmentId, threadId)),

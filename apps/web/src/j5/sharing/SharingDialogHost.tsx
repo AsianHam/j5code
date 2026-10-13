@@ -18,6 +18,7 @@ import {
 } from "./ownerName";
 import { ownerNameCheck, serverToAskOwnerNameFor } from "./ownerName.logic";
 import { OwnerNameDialog } from "./OwnerNameDialog";
+import { PromoteDialog } from "./PromoteDialog";
 import { ShareDialog } from "./ShareDialog";
 import { closeSharingDialog, sharingDialogStore } from "./sharingDialogs";
 import { sharingManage } from "./sharingManage";
@@ -71,6 +72,16 @@ function SharingDialogs() {
           key={opening}
           environmentId={request.environmentId}
           person={request.person}
+          onClose={closeSharingDialog}
+        />
+      );
+    case "promote":
+      return (
+        <PromoteDialog
+          key={opening}
+          environmentId={request.environmentId}
+          person={request.person}
+          target={request.target}
           onClose={closeSharingDialog}
         />
       );
