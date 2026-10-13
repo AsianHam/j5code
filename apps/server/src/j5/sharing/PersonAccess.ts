@@ -198,7 +198,7 @@ export interface PersonAccessShape {
       readonly guests: ReadonlyArray<{
         readonly person: Person;
         readonly grants: ReadonlyArray<{
-          readonly via: "thread" | "ancestor" | "project";
+          readonly via: GrantVia;
           readonly level: GrantLevel;
           /** The line the member wrote for the agent when sharing; not for the guest. */
           readonly note: string | null;
@@ -374,16 +374,32 @@ const isPersonAccessError = Schema.is(
 /** How far up a placement tree a thread grant is looked for; trees are a few levels deep. */
 const MAX_ANCESTOR_DEPTH = 64;
 
+/** How a grant comes to cover a thread: it names the thread, a thread above it, or its project. */
+export type GrantVia = "thread" | "ancestor" | "project";
+
+export const grantVia = (
+  grant: { readonly target_kind: "project" | "thread"; readonly target_id: string },
+  threadId: ThreadId,
+): GrantVia =>
+  grant.target_kind === "project"
+    ? "project"
+    : grant.target_id === threadId
+      ? "thread"
+      : "ancestor";
+
 /**
- * Whether a grant lets its holder write to a thread at the grant's level: one on that thread
- * itself, or on its project. A grant on a thread above gives reading only: a guest with
- * Collaborate on a Captain's thread reads its seats and the agents beneath it and writes to
- * none of them, so what reaches them goes through the thread the guest was given.
+ * The one rule for where a grant lets its holder write, at the grant's level: on the thread it
+ * names, or anywhere in the project it names. A grant on a thread above gives reading only: a
+ * guest with Collaborate on a Captain's thread reads its seats and the agents beneath it and
+ * writes to none of them, so what reaches them goes through the thread the guest was given.
+ * Everything that asks "may this guest write here" goes through this function.
  */
+export const writesVia = (via: GrantVia) => via !== "ancestor";
+
 export const grantWrites = (
   grant: { readonly target_kind: "project" | "thread"; readonly target_id: string },
   threadId: ThreadId,
-) => grant.target_kind === "project" || grant.target_id === threadId;
+) => writesVia(grantVia(grant, threadId));
 
 /** Whether a thread is a Crew seat's. A guest answers no prompt on one (Shared conversations AC12). */
 export const isCrewSeatThread = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
@@ -758,7 +774,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
             {
               person: Person;
               grants: Array<{
-                via: "thread" | "ancestor" | "project";
+                via: GrantVia;
                 level: GrantLevel;
                 note: string | null;
               }>;
@@ -767,12 +783,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           for (const row of rows) {
             const entry = guests.get(row.person_id) ?? { person: toPerson(row), grants: [] };
             entry.grants.push({
-              via:
-                row.target_kind === "project"
-                  ? "project"
-                  : row.target_id === threadId
-                    ? "thread"
-                    : "ancestor",
+              via: grantVia(row, threadId),
               level: row.level,
               note: row.note,
             });

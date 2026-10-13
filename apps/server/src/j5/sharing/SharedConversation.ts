@@ -68,10 +68,22 @@ export const authorLine = (author: Pick<Author, "kind" | "displayName">, editedB
     ? `[Message from ${authorLabel(author)}]`
     : `[Message from ${authorLabel(author)}, edited by ${authorLabel(editedBy)}]`;
 
-const AUTHOR_LINE = /^\[Message from [^\]\n]*\]\n\n/;
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** A message's text as its author typed it, without the platform's first line. */
-export const withoutAuthorLine = (text: string) => text.replace(AUTHOR_LINE, "");
+/**
+ * A queued message's text without the line the platform put first on it: exactly the line for
+ * its recorded author, or that line's "edited by" form. A client that sends the stored text
+ * back on an edit has it taken off before it is written again. A first line that only looks
+ * like an author line was typed by the person and stays (AC7: no message is altered on account
+ * of its content).
+ */
+export const withoutAuthorLine = (text: string, author: Pick<Author, "kind" | "displayName">) =>
+  text.replace(
+    new RegExp(
+      `^\\[Message from ${escaped(authorLabel(author))}(?:, edited by [^\\]\\n]*)?\\]\\n\\n`,
+    ),
+    "",
+  );
 
 const withAuthorLine = (text: string, author: Author, editedBy?: Author) =>
   `${authorLine(author, editedBy)}\n\n${text}`;
@@ -144,7 +156,7 @@ const make = (sql: SqlClient.SqlClient, access: PersonAccessShape) => {
   /** A queued edit's text under its message's author, and its editor when that is someone else. */
   const stampEdit = (text: string, original: Author, editor: Author) =>
     withAuthorLine(
-      withoutAuthorLine(text),
+      withoutAuthorLine(text, original),
       original,
       editor.personId === original.personId ? undefined : editor,
     );
