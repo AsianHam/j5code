@@ -2691,7 +2691,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const effectiveAgentAssignment = agentPersonaAssignment ?? draftAgent.assignment ?? undefined;
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
-    if (!composerTrigger) return [];
+    if (!composerTrigger || guestComposer.textOnly) return [];
     if (composerTrigger.kind === "agent") return agentPicker.items;
     if (composerTrigger.kind === "slash-playbook")
       return playbookMenuItems(playbookQuery.data?.playbooks ?? [], composerTrigger, prompt);
@@ -2860,6 +2860,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     return [];
   }, [
+    guestComposer.textOnly,
     activeThreadId,
     agentPicker.items,
     playbookQuery.data,
