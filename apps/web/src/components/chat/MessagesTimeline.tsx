@@ -1,3 +1,4 @@
+import { useIsGuest } from "../../j5/sharing/guestAccess";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
@@ -2732,6 +2733,8 @@ function RevertUserMessageButton({
 }) {
   const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
+  // J5: a guest cannot rewind a thread; the server refuses it, so it is not offered.
+  if (useIsGuest(ctx.threadRef?.environmentId ?? null)) return null;
 
   return (
     <Tooltip>
