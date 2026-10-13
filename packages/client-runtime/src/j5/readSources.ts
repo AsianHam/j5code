@@ -5,12 +5,18 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { SupervisorConnectionState } from "../connection/model.ts";
 import type { EnvironmentCatalogState } from "../state/connections.ts";
-import { isJ5UnsupportedError } from "./http.ts";
 
 /** Environment labels are noise until a read model actually spans more than one environment. */
 export const spansMultipleEnvironments = (
   items: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
 ): boolean => new Set(items.map((item) => item.environmentId)).size > 1;
+
+/**
+ * Whether a server has a J5 ledger to read: false for one that does not report it (plain T3 Code,
+ * for one), and unknown until its config arrives. The only thing that makes a J5 view unsupported.
+ */
+export const j5LedgerSupported = (config: ServerConfig | null | undefined) =>
+  config == null ? undefined : config.environment.capabilities.j5ProjectLedger === true;
 
 export interface J5ReadSource<A> {
   readonly environmentId: EnvironmentId;
@@ -37,7 +43,7 @@ export function resolveJ5ReadSource<A>(input: {
   const connected = input.phase === "connected";
   const data = Option.getOrNull(AsyncResult.value(input.result));
   const failure = input.result._tag === "Failure" ? Cause.squash(input.result.cause) : null;
-  const unsupported = input.supported === false || isJ5UnsupportedError(failure);
+  const unsupported = input.supported === false;
   const status = unsupported
     ? "unsupported"
     : !connected
@@ -65,7 +71,11 @@ export function resolveJ5ReadSource<A>(input: {
   };
 }
 
-/** Merge read models through the existing catalog; each source keeps its own data and failure state. */
+/**
+ * Merge read models through the existing catalog; each source keeps its own data and failure state.
+ * A server whose config does not report the capability has no J5 ledger: its source is unsupported
+ * and this read is never made.
+ */
 export function createJ5ReadSourcesAtom<A>(input: {
   readonly label: string;
   readonly capability: "j5ProjectLedger";
@@ -87,10 +97,13 @@ export function createJ5ReadSourcesAtom<A>(input: {
     const sources: Array<J5ReadSource<A>> = [];
     for (const [environmentId, entry] of catalog.entries) {
       const state = Option.getOrNull(AsyncResult.value(get(input.stateAtom(environmentId))));
+      const config = get(input.configValueAtom(environmentId));
       const supported =
         input.guestAtom !== undefined && get(input.guestAtom(environmentId))
           ? false
-          : get(input.configValueAtom(environmentId))?.environment.capabilities[input.capability];
+          : config === null
+            ? undefined
+            : config.environment.capabilities[input.capability] === true;
       sources.push(
         resolveJ5ReadSource({
           environmentId,

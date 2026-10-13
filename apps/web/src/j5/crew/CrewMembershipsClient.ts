@@ -1,12 +1,13 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { listCrewMemberships } from "@t3tools/client-runtime/j5/http";
 import { createScopedThreadReadStore } from "@t3tools/client-runtime/j5/scopedThreadReadStore";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { CrewMembershipEntry, ThreadCrewMembership } from "@t3tools/contracts/j5";
+import * as Cause from "effect/Cause";
 import { useSyncExternalStore } from "react";
 
-import { runtime } from "../../lib/runtime";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { j5Environment } from "../state";
 
 export type { CrewMembershipEntry, ThreadCrewMembership } from "@t3tools/contracts/j5";
 
@@ -50,7 +51,14 @@ export const replaceCrewMemberships = (
 };
 
 const store = createScopedThreadReadStore<ThreadCrewMembership, CrewMembershipEntry>({
-  load: (prepared, threadIds) => runtime.runPromise(listCrewMemberships(prepared, threadIds)),
+  load: async (environmentId, threadIds) => {
+    const result = await j5Environment.listCrewMemberships.run(appAtomRegistry, {
+      environmentId,
+      input: { threadIds },
+    });
+    if (result._tag === "Failure") throw Cause.squash(result.cause);
+    return result.value.entries;
+  },
   replace: replaceCrewMemberships,
 });
 

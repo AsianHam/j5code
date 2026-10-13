@@ -3,7 +3,7 @@ import { ThreadId } from "@t3tools/contracts";
 
 import type { AgentCrewInstance } from "./AgentCrewInstanceService.ts";
 import { participantIdForThread } from "./HomeRegistrar.ts";
-import { projectSpawnedChildren, threadIdForParticipant } from "./SpawnedChildrenHttp.ts";
+import { projectSpawnedChildren, threadIdForParticipant } from "./spawnedChildrenRead.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
 
 const captainThread = ThreadId.make("thread:captain");

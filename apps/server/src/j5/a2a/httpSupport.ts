@@ -1,6 +1,5 @@
 import type { AuthEnvironmentScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Result from "effect/Result";
 import { HttpServerRequest, HttpServerRespondable, HttpServerResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -71,6 +70,3 @@ export const readJsonBody = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   return yield* Effect.result(request.json);
 });
-
-/** True when the body could not be read as JSON. */
-export const isBodyFailure = Result.isFailure;

@@ -23,6 +23,9 @@ export function suggestPlaybookName(text: string): string | null {
 
 export const J5_PLAYBOOK_WS_METHODS = {
   subscribeChanges: "j5.playbooks.subscribeChanges",
+  readLibrary: "j5.playbooks.readLibrary",
+  listThreadRuns: "j5.playbooks.listThreadRuns",
+  listRuns: "j5.playbooks.listRuns",
   exportPlaybook: "j5.playbooks.export",
   deletePlaybook: "j5.playbooks.delete",
   renamePlaybook: "j5.playbooks.rename",
@@ -132,8 +135,6 @@ export const PlaybookReadResponse = Schema.Struct({
 export type PlaybookReadResponse = typeof PlaybookReadResponse.Type;
 export const ThreadPlaybooksRequest = Schema.Struct({ threadId: ThreadId });
 export const ThreadPlaybooksResponse = Schema.Struct({ runs: Schema.Array(PlaybookProgress) });
-export const PLAYBOOK_PROGRESS_PATH = "/api/j5/playbooks/thread";
-export const PLAYBOOK_RUNS_PATH = "/api/j5/playbooks/runs";
 export const PLAYBOOK_RUNS_PAGE_SIZE = 100;
 export const PlaybookRunsRequest = Schema.Struct({
   status: Schema.optionalKey(Schema.Literals(["active", "all"])),
@@ -153,7 +154,6 @@ export const PlaybookLibraryResponse = Schema.Struct({
   workspaceRoot: Schema.String,
   ...PlaybookDiscovery.fields,
 });
-export const PLAYBOOK_LIBRARY_PATH = "/api/j5/playbooks/library";
 export const PlaybookDeleteRequest = Schema.Struct({
   ...PlaybookLibraryRequest.fields,
   name: Text,
@@ -181,6 +181,21 @@ export const J5PlaybookRpcGroup = RpcGroup.make(
     success: Schema.Int,
     error: EnvironmentAuthorizationError,
     stream: true,
+  }),
+  Rpc.make(J5_PLAYBOOK_WS_METHODS.readLibrary, {
+    payload: PlaybookLibraryRequest,
+    success: PlaybookLibraryResponse,
+    error: Schema.Union([PlaybookError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(J5_PLAYBOOK_WS_METHODS.listThreadRuns, {
+    payload: ThreadPlaybooksRequest,
+    success: ThreadPlaybooksResponse,
+    error: Schema.Union([PlaybookError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(J5_PLAYBOOK_WS_METHODS.listRuns, {
+    payload: PlaybookRunsRequest,
+    success: PlaybookRunsResponse,
+    error: Schema.Union([PlaybookError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(J5_PLAYBOOK_WS_METHODS.exportPlaybook, {
     payload: PlaybookExportRequest,

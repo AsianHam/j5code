@@ -6,6 +6,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
+import { PlaybookCrewRelay } from "../playbooks/PlaybookCrewRelay.ts";
+import { PlaybookStore } from "../playbooks/PlaybookStore.ts";
+import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
+import { AgentCrewProposalService } from "./AgentCrewProposalService.ts";
+import { ArchiveCrewService } from "./ArchiveCrewService.ts";
+import { A2AArchiveFacts } from "./ArchiveFactsService.ts";
+import { CrewRuntimeRequestService } from "./CrewRuntimeRequestService.ts";
+import { ParticipantPlacementService } from "./PlacementService.ts";
 import { A2AHumanInbox, layer as humanInboxLayer } from "./HumanInboxService.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
@@ -30,7 +38,24 @@ const makeTestLayer = () => {
   const database = NodeSqliteClient.layer({ filename: ":memory:" });
   const ledger = ledgerLayer.pipe(Layer.provide(database));
   const inbox = humanInboxLayer.pipe(Layer.provide(ledger), Layer.provide(database));
-  const clientReads = clientReadsLayer.pipe(Layer.provide(inbox), Layer.provide(database));
+  // These tests read identities and the open count; the Crew, Fleet and archive reads the service
+  // also carries are never reached, so their services stand in unimplemented.
+  const unreached = Layer.mergeAll(
+    Layer.mock(ParticipantPlacementService)({}),
+    Layer.mock(AgentCrewInstanceService)({}),
+    Layer.mock(AgentCrewProposalService)({}),
+    Layer.mock(CrewRuntimeRequestService)({}),
+    Layer.mock(PlaybookCrewRelay)({}),
+    Layer.mock(PlaybookStore)({}),
+    Layer.mock(A2AArchiveFacts)({}),
+    Layer.mock(ArchiveCrewService)({}),
+  );
+  const clientReads = clientReadsLayer.pipe(
+    Layer.provide(inbox),
+    Layer.provide(ledger),
+    Layer.provide(unreached),
+    Layer.provide(database),
+  );
   return Layer.mergeAll(database, ledger, inbox, clientReads);
 };
 

@@ -2,7 +2,6 @@ import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, ProjectId } from "./baseSchemas.ts";
 
-export const ARTIFACT_LIST_PATH = "/api/j5/artifacts/list";
 export const ARTIFACT_READ_PATH = "/api/j5/artifacts/read";
 
 export const ArtifactEntry = Schema.Struct({

@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { ARTIFACT_READ_PATH, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import { HttpClientRequest } from "effect/http";
 
 import {
   BearerConnectionTarget,
@@ -13,102 +13,14 @@ import {
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import { layerRemoteHttpClient } from "../rpc/http.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import {
-  listPeers,
-  isJ5UnsupportedError,
-  J5HttpError,
-  listHumanInbox,
-  readOpenInboxCount,
-  readThreadPlaybooks,
-  readAllPlaybooks,
-  readPlaybookLibrary,
-} from "./http.ts";
-
-const isJ5HttpError = Schema.is(J5HttpError);
+import { executeJ5Request, J5HttpError } from "./http.ts";
 
 const relayToken = (accessToken: string) =>
   ({ _tag: "Dpop", accessToken, expiresAtEpochMs: 4_102_444_800_000 }) as const;
 
-it.effect("reads each environment's run overview with its own credentials and paging filter", () =>
-  Effect.gen(function* () {
-    const requests: Request[] = [];
-    const fetch: typeof globalThis.fetch = async (input, init) => {
-      requests.push(new Request(input, init));
-      return Response.json({ runs: [], total: 101 });
-    };
-    for (const id of ["alpha", "bravo"]) {
-      const response = yield* readAllPlaybooks(
-        prepared(id, { _tag: "Bearer", token: `${id}-token` }),
-        {
-          status: "active",
-          offset: 100,
-        },
-      ).pipe(Effect.provide(layerRemoteHttpClient(fetch)));
-      expect(response.total).toBe(101);
-    }
-    expect(requests.map((request) => [request.url, request.headers.get("authorization")])).toEqual([
-      ["https://alpha.test/api/j5/playbooks/runs", "Bearer alpha-token"],
-      ["https://bravo.test/api/j5/playbooks/runs", "Bearer bravo-token"],
-    ]);
-    expect(
-      yield* Effect.promise(() => Promise.all(requests.map((request) => request.json()))),
-    ).toEqual([
-      { status: "active", offset: 100 },
-      { status: "active", offset: 100 },
-    ]);
-  }),
-);
-
-it.effect("reads the selected playbook workspace using only its environment credentials", () =>
-  Effect.gen(function* () {
-    const requests: Request[] = [];
-    const fetch: typeof globalThis.fetch = async (input, init) => {
-      requests.push(new Request(input, init));
-      return Response.json({ workspaceRoot: "/selected/worktree", playbooks: [] });
-    };
-    for (const id of ["alpha", "bravo"]) {
-      yield* readPlaybookLibrary(prepared(id, { _tag: "Bearer", token: `${id}-token` }), {
-        projectId: ProjectId.make("same-project"),
-        threadId: ThreadId.make("same-thread"),
-      }).pipe(Effect.provide(layerRemoteHttpClient(fetch)));
-    }
-    expect(requests.map((request) => [request.url, request.headers.get("authorization")])).toEqual([
-      ["https://alpha.test/api/j5/playbooks/library", "Bearer alpha-token"],
-      ["https://bravo.test/api/j5/playbooks/library", "Bearer bravo-token"],
-    ]);
-    const bodies = yield* Effect.promise(() =>
-      Promise.all(requests.map((request) => request.json())),
-    );
-    expect(bodies).toEqual([
-      { projectId: "same-project", threadId: "same-thread" },
-      { projectId: "same-project", threadId: "same-thread" },
-    ]);
-  }),
-);
-
-it.effect("reads playbook progress from the selected thread's environment", () =>
-  Effect.gen(function* () {
-    const requests: Request[] = [];
-    const fetch: typeof globalThis.fetch = async (input, init) => {
-      requests.push(new Request(input, init));
-      return Response.json({ runs: [] });
-    };
-    for (const id of ["alpha", "bravo"]) {
-      yield* readThreadPlaybooks(
-        prepared(id, { _tag: "Bearer", token: `${id}-token` }),
-        ThreadId.make(`${id}-thread`),
-      ).pipe(Effect.provide(layerRemoteHttpClient(fetch)));
-    }
-    expect(requests.map((request) => [request.url, request.headers.get("authorization")])).toEqual([
-      ["https://alpha.test/api/j5/playbooks/thread", "Bearer alpha-token"],
-      ["https://bravo.test/api/j5/playbooks/thread", "Bearer bravo-token"],
-    ]);
-    const bodies = yield* Effect.promise(() =>
-      Promise.all(requests.map((request) => request.json())),
-    );
-    expect(bodies).toEqual([{ threadId: "alpha-thread" }, { threadId: "bravo-thread" }]);
-  }),
-);
+/** The one J5 read left on HTTP: an artifact's content. */
+const read = (connection: PreparedConnection) =>
+  executeJ5Request(connection, HttpClientRequest.post(ARTIFACT_READ_PATH), 10_000);
 
 /** Hands out relay credentials the way the live authorization service does, one per request. */
 function relayAuthorization(tokens: ReadonlyArray<string>, httpBaseUrl = "https://relay.test") {
@@ -154,38 +66,22 @@ function prepared(id: string, authorization: PreparedHttpAuthorization | null): 
   };
 }
 
-it.effect("sends each server's own bearer credential and resolves its own person", () =>
+it.effect("sends each server its own bearer credential", () =>
   Effect.gen(function* () {
     const requests: Request[] = [];
     const fetch: typeof globalThis.fetch = async (input, init) => {
-      const request = new Request(input, init);
-      requests.push(request);
-      return Response.json({
-        personId: new URL(request.url).hostname === "alpha.test" ? "human:alpha" : "human:bravo",
-        items: [],
-      });
+      requests.push(new Request(input, init));
+      return Response.json({});
     };
-    const alpha = yield* listHumanInbox(
-      prepared("alpha", { _tag: "Bearer", token: "alpha-token" }),
-      "open",
-    ).pipe(Effect.provide(layerRemoteHttpClient(fetch)));
-    const bravo = yield* listHumanInbox(
-      prepared("bravo", { _tag: "Bearer", token: "bravo-token" }),
-      "open",
-    ).pipe(Effect.provide(layerRemoteHttpClient(fetch)));
-    expect([alpha.personId, bravo.personId]).toEqual(["human:alpha", "human:bravo"]);
-    expect(
-      requests.map((request) => [
-        new URL(request.url).origin,
-        request.headers.get("authorization"),
-      ]),
-    ).toEqual([
-      ["https://alpha.test", "Bearer alpha-token"],
-      ["https://bravo.test", "Bearer bravo-token"],
+    for (const id of ["alpha", "bravo"]) {
+      yield* read(prepared(id, { _tag: "Bearer", token: `${id}-token` })).pipe(
+        Effect.provide(layerRemoteHttpClient(fetch)),
+      );
+    }
+    expect(requests.map((request) => [request.url, request.headers.get("authorization")])).toEqual([
+      [`https://alpha.test${ARTIFACT_READ_PATH}`, "Bearer alpha-token"],
+      [`https://bravo.test${ARTIFACT_READ_PATH}`, "Bearer bravo-token"],
     ]);
-    expect(requests.every((request) => !new URL(request.url).searchParams.has("personId"))).toBe(
-      true,
-    );
   }),
 );
 
@@ -194,11 +90,9 @@ it.effect("includes session cookies for the prepared browser environment", () =>
     const requests: Request[] = [];
     const fetch: typeof globalThis.fetch = async (input, init) => {
       requests.push(new Request(input, init));
-      return Response.json({ personId: "human:browser", items: [] });
+      return Response.json({});
     };
-    yield* listHumanInbox(prepared("browser", null), "open").pipe(
-      Effect.provide(layerRemoteHttpClient(fetch)),
-    );
+    yield* read(prepared("browser", null)).pipe(Effect.provide(layerRemoteHttpClient(fetch)));
     expect(requests[0]?.credentials).toBe("include");
     expect(requests[0]?.headers.has("authorization")).toBe(false);
   }),
@@ -209,17 +103,14 @@ it.effect("signs fresh DPoP proofs for the actual method and remote URL", () =>
     const proofs: Array<{ method: string; url: string; accessToken?: string }> = [];
     const requests: Request[] = [];
     const fetch: typeof globalThis.fetch = async (input, init) => {
-      const request = new Request(input, init);
-      requests.push(request);
-      return new URL(request.url).pathname === "/api/j5/a2a/inbox"
-        ? Response.json({ personId: "human:relay", items: [] })
-        : Response.json({ personId: "human:relay", count: 2 });
+      requests.push(new Request(input, init));
+      return Response.json({});
     };
     const remote = prepared("relay", relayToken("stale-token"));
     const authorization = relayAuthorization(["relay-token"]);
     yield* Effect.gen(function* () {
-      yield* listHumanInbox(remote, "open");
-      yield* readOpenInboxCount(remote);
+      yield* read(remote);
+      yield* read(remote);
     }).pipe(
       Effect.provide(layerRemoteHttpClient(fetch)),
       Effect.provideService(RemoteEnvironmentAuthorization, authorization.service),
@@ -233,18 +124,12 @@ it.effect("signs fresh DPoP proofs for the actual method and remote URL", () =>
     );
     // The token comes from the authorization service at request time, not
     // from the credential captured when the connection was prepared.
-    expect(proofs).toEqual([
-      {
-        method: "GET",
-        url: "https://relay.test/api/j5/a2a/inbox?status=open",
-        accessToken: "relay-token",
-      },
-      {
-        method: "POST",
-        url: "https://relay.test/api/j5/a2a/client-reads/open-count",
-        accessToken: "relay-token",
-      },
-    ]);
+    const proof = {
+      method: "POST",
+      url: `https://relay.test${ARTIFACT_READ_PATH}`,
+      accessToken: "relay-token",
+    };
+    expect(proofs).toEqual([proof, proof]);
     expect(
       requests.map((request) => [
         request.headers.get("authorization"),
@@ -264,14 +149,11 @@ it.effect("refreshes a rejected relay token once and retries the same request", 
       const request = new Request(input, init);
       requests.push(request);
       return request.headers.get("authorization") === "DPoP fresh-token"
-        ? Response.json({ personId: "human:relay", items: [] })
+        ? Response.json({})
         : Response.json({ code: "auth_invalid", reason: "invalid_credential" }, { status: 401 });
     };
     const authorization = relayAuthorization(["expired-token", "fresh-token"]);
-    const inbox = yield* listHumanInbox(
-      prepared("relay", relayToken("expired-token")),
-      "open",
-    ).pipe(
+    const response = yield* read(prepared("relay", relayToken("expired-token"))).pipe(
       Effect.provide(layerRemoteHttpClient(fetch)),
       Effect.provideService(RemoteEnvironmentAuthorization, authorization.service),
       Effect.provideService(ManagedRelayDpopSigner, {
@@ -279,7 +161,7 @@ it.effect("refreshes a rejected relay token once and retries the same request", 
         createProof: () => Effect.succeed("proof"),
       }),
     );
-    expect(inbox).toEqual({ personId: "human:relay", items: [] });
+    expect(response.status).toBe(200);
     expect(requests.map((request) => request.headers.get("authorization"))).toEqual([
       "DPoP expired-token",
       "DPoP fresh-token",
@@ -288,63 +170,21 @@ it.effect("refreshes a rejected relay token once and retries the same request", 
   }),
 );
 
-it.effect("reports a bearer rejection as a J5 error without retrying", () =>
-  Effect.gen(function* () {
-    const requests: Request[] = [];
-    const fetch: typeof globalThis.fetch = async (input, init) => {
-      requests.push(new Request(input, init));
-      return Response.json({ message: "Sign in again." }, { status: 401 });
-    };
-    const error = yield* listHumanInbox(
-      prepared("bravo", { _tag: "Bearer", token: "old" }),
-      "open",
-    ).pipe(Effect.provide(layerRemoteHttpClient(fetch)), Effect.flip);
-    expect(error).toBeInstanceOf(J5HttpError);
-    expect(error).toMatchObject({ status: 401, detail: "Sign in again." });
-    expect(requests).toHaveLength(1);
-  }),
-);
-
-it("does not mistake a missing person or rejected credential for a missing J5 route", () => {
-  expect(isJ5UnsupportedError(new J5HttpError({ status: 404, detail: "Not found" }))).toBe(true);
-  expect(
-    isJ5UnsupportedError(
-      new J5HttpError({
-        status: 404,
-        detail: "Missing person",
-        code: "A2ALocalOperatorNotFoundError",
-      }),
-    ),
-  ).toBe(false);
-  expect(isJ5UnsupportedError(new J5HttpError({ status: 401, detail: "Sign in again" }))).toBe(
-    false,
-  );
-  expect(isJ5UnsupportedError(new J5HttpError({ status: 403, detail: "Read-only" }))).toBe(false);
-});
-
-it.effect("lists peers with the server's own credential, and surfaces its refusal code", () =>
-  Effect.gen(function* () {
-    const requests: Array<[string, string | null]> = [];
-    let refuse = false;
-    const fetch: typeof globalThis.fetch = async (input, init) => {
-      const request = new Request(input, init);
-      requests.push([new URL(request.url).pathname, request.headers.get("authorization")]);
-      return refuse
-        ? Response.json({ error: "SqlError", message: "Listing peers failed." }, { status: 500 })
-        : Response.json({ peers: [] });
-    };
-    const work = prepared("work", { _tag: "Bearer", token: "work-token" });
-    expect(yield* listPeers(work).pipe(Effect.provide(layerRemoteHttpClient(fetch)))).toEqual([]);
-    expect(requests).toEqual([["/api/j5/a2a/peers", "Bearer work-token"]]);
-    refuse = true;
-    const failure = yield* listPeers(work).pipe(
-      Effect.provide(layerRemoteHttpClient(fetch)),
-      Effect.flip,
-    );
-    expect(isJ5HttpError(failure)).toBe(true);
-    if (isJ5HttpError(failure)) {
-      expect(failure.code).toBe("SqlError");
-      expect(failure.message).toBe("Listing peers failed.");
-    }
-  }),
+it.effect(
+  "reports a refusal as a J5 error with the server's message and code, without retrying",
+  () =>
+    Effect.gen(function* () {
+      const requests: Request[] = [];
+      const fetch: typeof globalThis.fetch = async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({ error: "unauthorized", message: "Sign in again." }, { status: 401 });
+      };
+      const error = yield* read(prepared("bravo", { _tag: "Bearer", token: "old" })).pipe(
+        Effect.provide(layerRemoteHttpClient(fetch)),
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(J5HttpError);
+      expect(error).toMatchObject({ status: 401, detail: "Sign in again.", code: "unauthorized" });
+      expect(requests).toHaveLength(1);
+    }),
 );

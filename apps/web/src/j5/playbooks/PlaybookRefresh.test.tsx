@@ -34,7 +34,7 @@ vi.mock("../../state/query", () => ({
     return {
       data:
         atom === "runs"
-          ? { supported: state.supported, runs: state.visibleRuns, total: state.visibleRuns.length }
+          ? { runs: state.visibleRuns, total: state.visibleRuns.length }
           : atom === "changes"
             ? state.revision
             : null,
@@ -57,6 +57,9 @@ vi.mock("../../state/environments", () => {
     environmentId: "env",
     label: "Environment",
     connection: { phase: "connected" },
+    get serverConfig() {
+      return { environment: { capabilities: { j5ProjectLedger: state.supported } } };
+    },
   };
   return {
     useEnvironment: () => environment,

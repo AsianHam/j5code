@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const testState = vi.hoisted(() => ({
   connected: false,
+  socketPhase: "connected",
   listArtifacts: vi.fn(),
   readArtifact: vi.fn(),
   deleteArtifact: vi.fn(),
@@ -28,7 +29,11 @@ vi.mock("../../state/entities", () => ({
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
     environments: [
-      { environmentId: "environment:artifacts-connection", label: "Test environment" },
+      {
+        environmentId: "environment:artifacts-connection",
+        label: "Test environment",
+        connection: { phase: testState.socketPhase },
+      },
     ],
   }),
 }));
@@ -100,6 +105,7 @@ let renderer: ReactTestRenderer | null = null;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   testState.connected = false;
+  testState.socketPhase = "connected";
   testState.listArtifacts.mockReset().mockResolvedValue([]);
   testState.readArtifact.mockReset();
   testState.deleteArtifact.mockReset();
@@ -112,13 +118,20 @@ afterEach(async () => {
 });
 
 describe("ArtifactsPage environment connection", () => {
-  it("waits for usePreparedConnection before listing artifacts", async () => {
+  it("waits for the prepared connection and the socket before listing artifacts", async () => {
+    testState.socketPhase = "connecting";
     await act(async () => {
       renderer = create(renderPage());
     });
     expect(testState.listArtifacts).not.toHaveBeenCalled();
 
     testState.connected = true;
+    await act(async () => {
+      renderer?.update(renderPage());
+    });
+    expect(testState.listArtifacts).not.toHaveBeenCalled();
+
+    testState.socketPhase = "connected";
     await act(async () => {
       renderer?.update(renderPage());
     });

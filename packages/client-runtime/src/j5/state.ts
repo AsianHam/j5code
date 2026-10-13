@@ -1,64 +1,53 @@
-import { J5_ARTIFACT_WS_METHODS, type ThreadId } from "@t3tools/contracts";
-import { J5_CLIENT_ACTION_WS_METHODS, J5_PLAYBOOK_WS_METHODS } from "@t3tools/contracts/j5";
-import type {
-  FleetReadRequest,
-  PlaybookLibraryRequest,
-  PlaybookRunsRequest,
+import {
+  type ClientGuardedRpcTag,
+  J5_ARTIFACT_WS_METHODS,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+import {
+  J5_CLIENT_ACTION_WS_METHODS,
+  J5_CLIENT_READ_WS_METHODS,
+  J5_PLAYBOOK_WS_METHODS,
 } from "@t3tools/contracts/j5";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as SubscriptionRef from "effect/SubscriptionRef";
-import type { HttpClient } from "effect/http";
 import { AsyncResult, type Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import { EnvironmentRpcUnavailableError, type EnvironmentUnaryRpcTag } from "../rpc/client.ts";
+import {
+  EnvironmentRpcUnavailableError,
+  type EnvironmentRpcInput,
+  type EnvironmentUnaryRpcTag,
+  request,
+} from "../rpc/client.ts";
 import {
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "../state/runtime.ts";
-import * as J5Http from "./http.ts";
 import { sharingConnectionIsKnownGuest } from "./sharing.ts";
 
-const preparedConnection = Effect.gen(function* () {
-  const supervisor = yield* EnvironmentSupervisor;
-  const prepared = yield* SubscriptionRef.get(supervisor.prepared);
-  const state = yield* SubscriptionRef.get(supervisor.state);
-  if (Option.isNone(prepared) || state.phase !== "connected") {
-    return yield* new J5Http.J5HttpError({ status: 0, detail: "The environment is disconnected." });
-  }
-  // A guest is shown nothing of the server's inbox, Fleet page, Crews or Playbooks (Shared server
-  // AC24) and the server refuses each of these reads. Once the connection is known to be a
-  // guest's, none is sent: the read reports the environment as one without the feature, which is
-  // never polled. The check does not wait for that answer, so a member's reads are not delayed.
-  if (yield* sharingConnectionIsKnownGuest) {
-    return yield* new J5Http.J5HttpError({
-      status: 501,
-      detail: "This is not shared with you on this server.",
-    });
-  }
-  return prepared.value;
-});
+const defectText = (defect: unknown) => (defect instanceof Error ? defect.message : String(defect));
 
-export const supportedJ5Read = <A extends object, E, R>(read: Effect.Effect<A, E, R>) =>
-  read.pipe(
-    Effect.map((data) => ({ ...data, supported: true as const })),
-    Effect.catchIf(J5Http.isJ5UnsupportedError, () =>
-      Effect.succeed({ supported: false as const }),
-    ),
+/** A server too old to have the method answers with an "Unknown request tag" defect. */
+const isUnknownRequestTag = (cause: Cause.Cause<unknown>, tag: string) =>
+  cause.reasons.some(
+    (reason) =>
+      Cause.isDieReason(reason) &&
+      defectText(reason.defect).includes(`Unknown request tag: ${tag}`),
   );
 
-const defectText = (defect: unknown) => (defect instanceof Error ? defect.message : String(defect));
+/** That defect as a failure the control or view shows, in the words upstream uses for a server that must be updated. */
+const needsNewerServer = (environmentId: EnvironmentId, subject: "action" | "view") =>
+  new EnvironmentRpcUnavailableError({
+    environmentId,
+    message: `This ${subject} needs a newer server. Update the server hosting this environment, then try again.`,
+  });
 
 /**
  * A J5 action as a permission-aware command: `permissionAtom` says whether the session may run it,
  * and the same grant is checked again when it runs.
- *
- * A server too old to have the method answers with an "Unknown request tag" defect. That becomes
- * a failure the control shows, in the words upstream uses for a server that must be updated.
  */
 const createJ5ActionCommand = <R, E, TTag extends EnvironmentUnaryRpcTag>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -68,29 +57,41 @@ const createJ5ActionCommand = <R, E, TTag extends EnvironmentUnaryRpcTag>(
   const command = createEnvironmentRpcCommand(runtime, { label, tag });
   const run: typeof command.run = async (registry, target) => {
     const result = await command.run(registry, target);
-    return AsyncResult.isFailure(result) &&
-      result.cause.reasons.some(
-        (reason) =>
-          Cause.isDieReason(reason) &&
-          defectText(reason.defect).includes(`Unknown request tag: ${tag}`),
-      )
-      ? AsyncResult.failure(
-          Cause.fail(
-            new EnvironmentRpcUnavailableError({
-              environmentId: target.environmentId,
-              message:
-                "This action needs a newer server. Update the server hosting this environment, then try again.",
-            }),
-          ),
-        )
+    return AsyncResult.isFailure(result) && isUnknownRequestTag(result.cause, tag)
+      ? AsyncResult.failure(Cause.fail(needsNewerServer(target.environmentId, "action")))
       : result;
   };
   return { ...command, run };
 };
 
+type J5ReadTag = Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>;
+
+/**
+ * One J5 read over the environment's socket. No J5 read is a guarded method. A guest is shown
+ * nothing of the server's inbox, Fleet page, Crews or Playbooks (Shared server AC24) and the
+ * server refuses each of these reads, so once the connection is known to be a guest's none is
+ * sent. The check does not wait for that answer, so a member's reads are not delayed.
+ */
+const j5Read = <TTag extends J5ReadTag>(tag: TTag, input: EnvironmentRpcInput<TTag>) =>
+  Effect.gen(function* () {
+    const supervisor = yield* EnvironmentSupervisor;
+    if (yield* sharingConnectionIsKnownGuest) {
+      return yield* new EnvironmentRpcUnavailableError({
+        environmentId: supervisor.target.environmentId,
+        message: "This is not shared with you on this server.",
+      });
+    }
+    return yield* request(tag, input).pipe(
+      Effect.catchCauseIf(
+        (cause) => isUnknownRequestTag(cause, tag),
+        () => Effect.fail(needsNewerServer(supervisor.target.environmentId, "view")),
+      ),
+    );
+  });
+
 /** J5 uses the same environment registry, query lifecycle, and command dispatch as other features. */
 export function createJ5EnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
     playbookChanges: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -98,29 +99,28 @@ export function createJ5EnvironmentAtoms<R, E>(
       tag: J5_PLAYBOOK_WS_METHODS.subscribeChanges,
       idleTtlMs: 0,
     }),
-    playbookRuns: createEnvironmentQueryAtomFamily(runtime, {
+    playbookRuns: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "j5:playbook-runs",
+      tag: J5_PLAYBOOK_WS_METHODS.listRuns,
+      execute: (input) => j5Read(J5_PLAYBOOK_WS_METHODS.listRuns, input),
       staleTimeMs: 2_500,
-      execute: (input: PlaybookRunsRequest) =>
-        supportedJ5Read(
-          preparedConnection.pipe(
-            Effect.flatMap((prepared) => J5Http.readAllPlaybooks(prepared, input)),
-          ),
-        ),
     }),
-    playbookLibrary: createEnvironmentQueryAtomFamily(runtime, {
+    playbookLibrary: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "j5:playbook-library",
+      tag: J5_PLAYBOOK_WS_METHODS.readLibrary,
+      execute: (input) => j5Read(J5_PLAYBOOK_WS_METHODS.readLibrary, input),
       staleTimeMs: 0,
-      execute: (input: PlaybookLibraryRequest) =>
-        preparedConnection.pipe(
-          Effect.flatMap((prepared) => J5Http.readPlaybookLibrary(prepared, input)),
-        ),
     }),
     deletePlaybook: createJ5ActionCommand(
       runtime,
       "j5:delete-playbook",
       J5_PLAYBOOK_WS_METHODS.deletePlaybook,
     ),
+    listArtifacts: createEnvironmentRpcCommand(runtime, {
+      label: "j5:list-artifacts",
+      tag: J5_ARTIFACT_WS_METHODS.listArtifacts,
+      execute: (input) => j5Read(J5_ARTIFACT_WS_METHODS.listArtifacts, input),
+    }),
     deleteArtifact: createJ5ActionCommand(
       runtime,
       "j5:delete-artifact",
@@ -135,40 +135,52 @@ export function createJ5EnvironmentAtoms<R, E>(
       "j5:rename-playbook",
       J5_PLAYBOOK_WS_METHODS.renamePlaybook,
     ),
-    playbooks: createEnvironmentQueryAtomFamily(runtime, {
+    playbooks: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "j5:playbooks",
+      tag: J5_PLAYBOOK_WS_METHODS.listThreadRuns,
+      execute: (input) => j5Read(J5_PLAYBOOK_WS_METHODS.listThreadRuns, input),
       staleTimeMs: 2_500,
-      execute: (input: { readonly threadId: ThreadId }) =>
-        supportedJ5Read(
-          preparedConnection.pipe(
-            Effect.flatMap((prepared) => J5Http.readThreadPlaybooks(prepared, input.threadId)),
-          ),
-        ),
     }),
-    inbox: createEnvironmentQueryAtomFamily(runtime, {
+    inbox: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "j5:inbox",
+      tag: J5_CLIENT_READ_WS_METHODS.listHumanInbox,
+      execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.listHumanInbox, input),
       staleTimeMs: 7_500,
-      execute: (input: { readonly status: "open" | "answered"; readonly personId?: string }) =>
-        preparedConnection.pipe(
-          Effect.flatMap((prepared) =>
-            J5Http.listHumanInbox(prepared, input.status, input.personId),
-          ),
-        ),
     }),
-    openCount: createEnvironmentQueryAtomFamily(runtime, {
+    openCount: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "j5:inbox-count",
+      tag: J5_CLIENT_READ_WS_METHODS.readOpenInboxCount,
+      execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.readOpenInboxCount, input),
       staleTimeMs: 7_500,
-      execute: (input: { readonly personId?: string }) =>
-        preparedConnection.pipe(
-          Effect.flatMap((prepared) => J5Http.readOpenInboxCount(prepared, input.personId)),
-        ),
     }),
     // The Fleet page reads every connected environment's roster; it changes on the scale of turns.
-    fleet: createEnvironmentQueryAtomFamily(runtime, {
+    fleet: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "j5:fleet",
+      tag: J5_CLIENT_READ_WS_METHODS.readFleet,
+      execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.readFleet, input),
       staleTimeMs: 30_000,
-      execute: (input: FleetReadRequest) =>
-        preparedConnection.pipe(Effect.flatMap((prepared) => J5Http.readFleet(prepared, input))),
+    }),
+    // The sidebar asks about the rows it shows, a batch at a time (`scopedThreadReadStore`).
+    listCrewMemberships: createEnvironmentRpcCommand(runtime, {
+      label: "j5:crew-memberships",
+      tag: J5_CLIENT_READ_WS_METHODS.listCrewMemberships,
+      execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.listCrewMemberships, input),
+    }),
+    listSpawnedChildren: createEnvironmentRpcCommand(runtime, {
+      label: "j5:spawned-children",
+      tag: J5_CLIENT_READ_WS_METHODS.listSpawnedChildren,
+      execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.listSpawnedChildren, input),
+    }),
+    // What the archive dialog lists before a thread is archived, and the names it lists them by.
+    readPreArchiveFacts: createEnvironmentRpcCommand(runtime, {
+      label: "j5:pre-archive-facts",
+      tag: J5_CLIENT_READ_WS_METHODS.readPreArchiveFacts,
+      execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.readPreArchiveFacts, input),
+    }),
+    readParticipantIdentities: createEnvironmentRpcCommand(runtime, {
+      label: "j5:participant-identities",
+      tag: J5_CLIENT_READ_WS_METHODS.readParticipantIdentities,
+      execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.readParticipantIdentities, input),
     }),
     // Crew gates are read per environment like the inbox; a Captain on any connected server
     // reaches the human's bell and thread.
@@ -176,7 +188,9 @@ export function createJ5EnvironmentAtoms<R, E>(
       label: "j5:crew-proposals",
       staleTimeMs: 7_500,
       execute: (_input: Record<string, never>) =>
-        preparedConnection.pipe(Effect.flatMap(J5Http.listCrewProposals)),
+        j5Read(J5_CLIENT_READ_WS_METHODS.listCrewProposals, {}).pipe(
+          Effect.map((response) => response.proposals),
+        ),
     }),
     previewCrewProposal: createJ5ActionCommand(
       runtime,
@@ -198,7 +212,9 @@ export function createJ5EnvironmentAtoms<R, E>(
       label: "j5:crew-runtime-requests",
       staleTimeMs: 7_500,
       execute: (_input: Record<string, never>) =>
-        preparedConnection.pipe(Effect.flatMap(J5Http.listCrewRuntimeRequests)),
+        j5Read(J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests, {}).pipe(
+          Effect.map((response) => response.requests),
+        ),
     }),
     respondCrewRuntimeRequest: createJ5ActionCommand(
       runtime,
@@ -219,7 +235,9 @@ export function createJ5EnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       refreshIntervalMs: 30_000,
       execute: (_input: Record<string, never>) =>
-        preparedConnection.pipe(Effect.flatMap(J5Http.listPeers)),
+        j5Read(J5_CLIENT_READ_WS_METHODS.listPeers, {}).pipe(
+          Effect.map((response) => response.peers),
+        ),
     }),
     issuePeerCredential: createJ5ActionCommand(
       runtime,

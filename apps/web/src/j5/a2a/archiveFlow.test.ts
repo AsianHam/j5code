@@ -159,7 +159,7 @@ describe("archive flow", () => {
     expect(archive).not.toHaveBeenCalled();
   });
 
-  it("treats a missing or failed Crew read as a fact to warn about, not as no Crews", () => {
+  it("treats a failed Crew read as a fact to warn about, not as no Crews", () => {
     const failed = registered({ liveCrews: null });
     expect(needsArchiveWarning(failed)).toBe(true);
     expect(
@@ -167,11 +167,6 @@ describe("archive flow", () => {
         formatArchiveWarning({ threadTitle: "Captain", preflight: failed }).content,
       ),
     ).toContain("Crews it commands: couldn&#x27;t check.");
-    const { liveCrews: _absent, ...older } = registered().facts as Extract<
-      client.PreArchiveFacts,
-      { state: "registered" }
-    >;
-    expect(needsArchiveWarning({ facts: older, participantLabels: new Map() })).toBe(true);
     expect(needsArchiveWarning(registered({ liveCrews: [] }))).toBe(false);
   });
 

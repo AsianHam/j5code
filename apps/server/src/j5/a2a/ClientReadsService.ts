@@ -1,4 +1,13 @@
-import { NonNegativeInt, TrimmedNonEmptyString } from "@t3tools/contracts";
+import { NonNegativeInt, type ThreadId, TrimmedNonEmptyString } from "@t3tools/contracts";
+import type {
+  CrewMembershipsResponse,
+  CrewProposalsResponse,
+  CrewRuntimeRequestsResponse,
+  FleetResponse,
+  HumanInboxResponse,
+  PreArchiveFacts,
+  SpawnedChildrenResponse,
+} from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,9 +15,23 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { PlaybookCrewRelay } from "../playbooks/PlaybookCrewRelay.ts";
+import { PlaybookStore } from "../playbooks/PlaybookStore.ts";
+import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
+import { AgentCrewProposalService } from "./AgentCrewProposalService.ts";
+import { ArchiveCrewService } from "./ArchiveCrewService.ts";
+import { A2AArchiveFacts } from "./ArchiveFactsService.ts";
+import { makeCrewMembershipsRead } from "./crewMembershipsRead.ts";
+import { projectCrewProposal } from "./crewProposalProjection.ts";
+import { CrewRuntimeRequestService } from "./CrewRuntimeRequestService.ts";
+import { makeFleetRead } from "./fleetRead.ts";
 import { type A2AHumanInboxError, A2AHumanInbox } from "./HumanInboxService.ts";
+import { A2ALedger } from "./LedgerService.ts";
+import { ParticipantPlacementService } from "./PlacementService.ts";
 import { ParticipantId } from "./contracts.ts";
 import { outsideAgentNameRows } from "./outsideAgentNames.ts";
+import { makePreArchiveFactsRead } from "./preArchiveFactsRead.ts";
+import { makeSpawnedChildrenRead } from "./spawnedChildrenRead.ts";
 
 export const DisplayIdentity = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("known"), displayName: TrimmedNonEmptyString }),
@@ -166,6 +189,13 @@ export const explainOpenInboxCountStatement = (
   return sql.unsafe<QueryPlanRow>(`EXPLAIN QUERY PLAN ${statement}`, parameters);
 };
 
+type Read<Make> =
+  Make extends Effect.Effect<infer Run, never, infer _R>
+    ? Run extends (...args: infer Args) => Effect.Effect<unknown, infer E>
+      ? { readonly args: Args; readonly error: E }
+      : never
+    : never;
+
 export interface ClientReadsShape {
   /** Batch-oriented, total identity resolution for B3 timelines and A4 inbox sender labels. */
   readonly participantIdentities: (
@@ -175,69 +205,142 @@ export interface ClientReadsShape {
   readonly openInboxCount: (
     personId?: ParticipantId,
   ) => Effect.Effect<OpenInboxCount, ClientReadsError>;
+  /** The Inbox page: one person's open or answered Exchanges, under the person it resolved. */
+  readonly humanInbox: (input: {
+    readonly status: "open" | "answered";
+    readonly personId?: ParticipantId;
+  }) => Effect.Effect<HumanInboxResponse, A2AHumanInboxError>;
+  /** The crew gate: every proposal that awaits the person, as the roster card reads it. */
+  readonly crewProposals: Effect.Effect<
+    typeof CrewProposalsResponse.Type,
+    Effect.Error<ReturnType<AgentCrewProposalService["Service"]["listOpen"]>>
+  >;
+  /** The Inbox's Crew seat approvals: provider requests waiting on live Crew threads. */
+  readonly crewRuntimeRequests: Effect.Effect<
+    CrewRuntimeRequestsResponse,
+    Effect.Error<CrewRuntimeRequestService["Service"]["list"]>
+  >;
+  /** The Sidebar's crew chips for the threads it shows. */
+  readonly crewMemberships: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<
+    typeof CrewMembershipsResponse.Type,
+    Read<typeof makeCrewMembershipsRead>["error"]
+  >;
+  /** The agents placed under each thread the Sidebar shows, and which of those an agent spawned. */
+  readonly spawnedChildren: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<
+    typeof SpawnedChildrenResponse.Type,
+    Read<typeof makeSpawnedChildrenRead>["error"]
+  >;
+  /** The Fleet page; retired Crews only when asked for. */
+  readonly fleet: (
+    includeRetired: boolean,
+  ) => Effect.Effect<FleetResponse, Read<typeof makeFleetRead>["error"]>;
+  /** What archiving a thread would end, for the dialog that confirms it. Changes nothing. */
+  readonly preArchiveFacts: (
+    threadId: ThreadId,
+  ) => Effect.Effect<PreArchiveFacts, Read<typeof makePreArchiveFactsRead>["error"]>;
 }
 
 export class ClientReadsService extends Context.Service<ClientReadsService, ClientReadsShape>()(
   "t3/j5/a2a/ClientReadsService",
 ) {}
 
-export const layer: Layer.Layer<ClientReadsService, never, A2AHumanInbox | SqlClient.SqlClient> =
-  Layer.effect(
-    ClientReadsService,
-    Effect.gen(function* () {
-      const inbox = yield* A2AHumanInbox;
-      const sql = yield* SqlClient.SqlClient;
+export const layer: Layer.Layer<
+  ClientReadsService,
+  never,
+  | A2AHumanInbox
+  | SqlClient.SqlClient
+  | A2ALedger
+  | ParticipantPlacementService
+  | AgentCrewInstanceService
+  | AgentCrewProposalService
+  | CrewRuntimeRequestService
+  | PlaybookCrewRelay
+  | PlaybookStore
+  | A2AArchiveFacts
+  | ArchiveCrewService
+> = Layer.effect(
+  ClientReadsService,
+  Effect.gen(function* () {
+    const inbox = yield* A2AHumanInbox;
+    const sql = yield* SqlClient.SqlClient;
+    const proposals = yield* AgentCrewProposalService;
+    const projectProposal = projectCrewProposal(yield* PlaybookStore);
+    const runtimeRequests = yield* CrewRuntimeRequestService;
 
-      const participantIdentities: ClientReadsShape["participantIdentities"] = (input) =>
-        Effect.gen(function* () {
-          const uniqueParticipantIds = uniqueInFirstOccurrenceOrder(input.participantIds);
-          if (uniqueParticipantIds.length === 0) return { entries: [] };
-          const rows: Array<IdentityRow> = [];
-          for (const participantIdBatch of batchesOf(uniqueParticipantIds)) {
-            rows.push(...(yield* participantIdentityRows(sql, participantIdBatch)));
-            // Machine senders have no thread; their display name is their registered name.
-            rows.push(
-              ...(yield* sql<IdentityRow>`
+    const participantIdentities: ClientReadsShape["participantIdentities"] = (input) =>
+      Effect.gen(function* () {
+        const uniqueParticipantIds = uniqueInFirstOccurrenceOrder(input.participantIds);
+        if (uniqueParticipantIds.length === 0) return { entries: [] };
+        const rows: Array<IdentityRow> = [];
+        for (const participantIdBatch of batchesOf(uniqueParticipantIds)) {
+          rows.push(...(yield* participantIdentityRows(sql, participantIdBatch)));
+          // Machine senders have no thread; their display name is their registered name.
+          rows.push(
+            ...(yield* sql<IdentityRow>`
                 SELECT participant_id, name AS display_name
                 FROM j5_a2a_machine_participant
                 WHERE participant_id IN ${sql.in(participantIdBatch)}
               `),
+          );
+          // An outside agent has no thread either; it is shown by the label it signed in with.
+          rows.push(...(yield* outsideAgentNameRows(sql, participantIdBatch)));
+          // A sender homed on a peer has no thread here; the label its server
+          // sent with its latest delivery stands in, and only for ids nothing
+          // local named, so local-only reads never touch received history.
+          const named = new Set(rows.map((row) => row.participant_id));
+          const unresolved = participantIdBatch.filter(
+            (participantId) => !named.has(participantId),
+          );
+          if (unresolved.length > 0) {
+            rows.push(
+              ...(yield* peerSenderLabelStatement(sql, unresolved)).filter(
+                (row) => row.display_name !== null,
+              ),
             );
-            // An outside agent has no thread either; it is shown by the label it signed in with.
-            rows.push(...(yield* outsideAgentNameRows(sql, participantIdBatch)));
-            // A sender homed on a peer has no thread here; the label its server
-            // sent with its latest delivery stands in, and only for ids nothing
-            // local named, so local-only reads never touch received history.
-            const named = new Set(rows.map((row) => row.participant_id));
-            const unresolved = participantIdBatch.filter(
-              (participantId) => !named.has(participantId),
-            );
-            if (unresolved.length > 0) {
-              rows.push(
-                ...(yield* peerSenderLabelStatement(sql, unresolved)).filter(
-                  (row) => row.display_name !== null,
-                ),
-              );
-            }
           }
-          const rowsByParticipant = Map.groupBy(rows, (row) => row.participant_id);
-          return {
-            entries: uniqueParticipantIds.map((participantId) => {
-              return {
-                participantId,
-                identity: toIdentity(rowsByParticipant.get(participantId)?.[0]),
-              } satisfies ParticipantIdentityEntry;
-            }),
-          } satisfies ParticipantIdentitiesResponse;
-        });
+        }
+        const rowsByParticipant = Map.groupBy(rows, (row) => row.participant_id);
+        return {
+          entries: uniqueParticipantIds.map((participantId) => {
+            return {
+              participantId,
+              identity: toIdentity(rowsByParticipant.get(participantId)?.[0]),
+            } satisfies ParticipantIdentityEntry;
+          }),
+        } satisfies ParticipantIdentitiesResponse;
+      });
 
-      const openInboxCount: ClientReadsShape["openInboxCount"] = (requestedPersonId) =>
-        Effect.gen(function* () {
-          const personId = yield* inbox.resolvePersonId(requestedPersonId);
-          const rows = yield* openInboxCountStatement(sql, personId);
-          return { personId, count: rows[0]?.count ?? 0 } satisfies OpenInboxCount;
-        });
+    const openInboxCount: ClientReadsShape["openInboxCount"] = (requestedPersonId) =>
+      Effect.gen(function* () {
+        const personId = yield* inbox.resolvePersonId(requestedPersonId);
+        const rows = yield* openInboxCountStatement(sql, personId);
+        return { personId, count: rows[0]?.count ?? 0 } satisfies OpenInboxCount;
+      });
 
-      return ClientReadsService.of({ participantIdentities, openInboxCount });
-    }),
-  );
+    return ClientReadsService.of({
+      participantIdentities,
+      openInboxCount,
+      humanInbox: (input) =>
+        inbox
+          .resolvePersonId(input.personId)
+          .pipe(
+            Effect.flatMap((personId) =>
+              inbox.list(personId, input.status).pipe(Effect.map((items) => ({ personId, items }))),
+            ),
+          ),
+      crewProposals: proposals.listOpen().pipe(
+        Effect.flatMap((open) => Effect.forEach(open, projectProposal)),
+        Effect.map((listed) => ({ proposals: listed })),
+      ),
+      crewRuntimeRequests: runtimeRequests.list.pipe(Effect.map((requests) => ({ requests }))),
+      crewMemberships: yield* makeCrewMembershipsRead,
+      spawnedChildren: yield* makeSpawnedChildrenRead,
+      fleet: yield* makeFleetRead,
+      preArchiveFacts: yield* makePreArchiveFactsRead,
+    });
+  }),
+);

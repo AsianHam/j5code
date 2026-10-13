@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import {
   J5ClientActionRpcGroup,
+  J5ClientReadRpcGroup,
   J5PlaybookRpcGroup,
   J5SharingRpcGroup,
 } from "@t3tools/contracts/j5";
@@ -20,6 +21,8 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { makeClientActionRpcHandlers } from "./a2a/clientActionRpc.ts";
 import { ClientActionsService } from "./a2a/ClientActionsService.ts";
+import { makeClientReadRpcHandlers } from "./a2a/clientReadRpc.ts";
+import { ClientReadsService } from "./a2a/ClientReadsService.ts";
 import { PeerAdminService } from "./a2a/PeerAdminService.ts";
 import { makeAgentPersonaRpcHandlers } from "./agents/agentPersonaRpc.ts";
 import { ArtifactDeletion } from "./artifacts/ArtifactDeletion.ts";
@@ -40,6 +43,7 @@ const J5WsRpcGroup = J5AgentPersonaRpcGroup.merge(
   J5PlaybookRpcGroup,
   J5ClientActionRpcGroup,
   J5SharingRpcGroup,
+  J5ClientReadRpcGroup,
 );
 
 /** Every J5 RPC method, for `ws.ts` to leave out of the group upstream's handlers are typed by. */
@@ -47,7 +51,12 @@ export const J5_WS_RPC_METHODS = [...J5WsRpcGroup.requests.keys()] as ReadonlyAr
   RpcGroup.Rpcs<typeof J5WsRpcGroup>["_tag"]
 >;
 
-type J5WsRpcServices = ClientActionsService | PeerAdminService | ArtifactDeletion | PersonAccess;
+type J5WsRpcServices =
+  | ClientActionsService
+  | ClientReadsService
+  | PeerAdminService
+  | ArtifactDeletion
+  | PersonAccess;
 
 /**
  * The server-lifetime J5 services the handlers call. `ws.ts` reads them once, where its route is
@@ -55,7 +64,15 @@ type J5WsRpcServices = ClientActionsService | PeerAdminService | ArtifactDeletio
  */
 export const j5WsRpcServices = Effect.context<J5WsRpcServices>().pipe(
   // Only these: the whole server context laid over a socket's would shadow that socket's own.
-  Effect.map(Context.pick(ClientActionsService, PeerAdminService, ArtifactDeletion, PersonAccess)),
+  Effect.map(
+    Context.pick(
+      ClientActionsService,
+      ClientReadsService,
+      PeerAdminService,
+      ArtifactDeletion,
+      PersonAccess,
+    ),
+  ),
 );
 
 /**
@@ -80,6 +97,7 @@ export const layerJ5WsRpc = (
           deletion: yield* ArtifactDeletion,
         }),
         ...(yield* makeClientActionRpcHandlers()),
+        ...(yield* makeClientReadRpcHandlers()),
         ...(yield* makeAgentPersonaRpcHandlers({
           providers: providerRegistry.getProviders,
         })),

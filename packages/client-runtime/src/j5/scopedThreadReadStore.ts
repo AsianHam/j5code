@@ -27,12 +27,12 @@ interface EnvironmentReads {
  * `refreshRequested` re-read rows on purpose. A batch that changes nothing keeps the previous
  * map, so subscribers see the same snapshot and skip their render.
  */
-/** Every J5 per-thread read route caps a body at 500 ids; batches stay well under it. */
+/** Every J5 per-thread read caps a request at 500 ids; batches stay well under it. */
 export const THREAD_READ_BATCH_SIZE = 200;
 
 export function createScopedThreadReadStore<Value, Entry>(options: {
   readonly load: (
-    prepared: PreparedConnection,
+    environmentId: EnvironmentId,
     threadIds: ReadonlyArray<ThreadId>,
   ) => Promise<ReadonlyArray<Entry>>;
   readonly replace: (
@@ -66,7 +66,7 @@ export function createScopedThreadReadStore<Value, Entry>(options: {
     state.reading = reading;
     for (const threadId of threadIds) state.pending.delete(threadId);
     void options
-      .load(state.prepared, threadIds)
+      .load(environmentId, threadIds)
       .then((entries) => {
         if (environments.get(environmentId) !== state || state.reading !== reading) return;
         const next = options.replace(values, environmentId, threadIds, entries);

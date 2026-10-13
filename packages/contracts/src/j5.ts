@@ -460,16 +460,6 @@ export const J5_LEDGER_CAPABILITIES = {
   j5HumanInbox: false,
 } as const;
 
-export const J5_API_PATHS = {
-  inbox: "/api/j5/a2a/inbox",
-  openCount: "/api/j5/a2a/client-reads/open-count",
-  crewProposals: "/api/j5/a2a/crews/proposals",
-  crewRuntimeRequests: "/api/j5/a2a/crews/runtime-requests",
-  fleet: "/api/j5/a2a/client-reads/fleet",
-  crewMemberships: "/api/j5/a2a/client-reads/crew-memberships",
-  spawnedChildren: "/api/j5/a2a/client-reads/spawned-children",
-} as const;
-
 /**
  * Machine participants: registered non-agent senders (cron jobs, watchdogs,
  * shell scripts) that send plain messages from a project and never receive.
@@ -958,8 +948,8 @@ export const J5_PEER_API_PATHS = {
 
 /**
  * What a person does from a client, as WebSocket RPCs: the socket's scope check and the client's
- * permission guard (`j5/clientRpcPermissions.ts`) both apply. The reads beside them are still
- * HTTP routes. One group, merged into `WsRpcGroup` in `rpc.ts`.
+ * permission guard (`j5/clientRpcPermissions.ts`) both apply. The reads beside them are
+ * `J5ClientReadRpcGroup`. One group, merged into `WsRpcGroup` in `rpc.ts`.
  */
 export const J5_CLIENT_ACTION_WS_METHODS = {
   previewCrewProposal: "j5.crews.previewProposal",
@@ -1033,4 +1023,150 @@ export const J5ClientActionRpcGroup = RpcGroup.make(
     success: PeerProbeResponse,
     error: clientActionError,
   }),
+);
+
+/** The consequences an archive dialog lists before a thread is archived. */
+const PreArchiveOpenExchange = Schema.Struct({
+  projectId: Schema.String,
+  exchangeId: Schema.String,
+  direction: Schema.Literals(["inbound", "outbound"]),
+  replyObligation: Schema.Literals(["participant-owes-reply", "counterparty-owes-reply"]),
+  counterpartyId: Schema.String,
+  intent: Schema.String,
+  urgency: Schema.NullOr(Schema.Literals(["blocking", "soon", "fyi"])),
+  openedAt: Schema.String,
+});
+export const PreArchiveFactsRequest = Schema.Struct({ threadId: ThreadId });
+export type PreArchiveFactsRequest = typeof PreArchiveFactsRequest.Type;
+export const PreArchiveFacts = Schema.Union([
+  Schema.Struct({
+    state: Schema.Literal("not-an-a2a-participant"),
+    threadId: ThreadId,
+    openExchanges: Schema.Array(PreArchiveOpenExchange),
+    placementSubtree: Schema.Struct({ state: Schema.Literal("not-applicable") }),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("registered"),
+    threadId: ThreadId,
+    projectId: Schema.String,
+    participantId: Schema.String,
+    retired: Schema.Boolean,
+    openExchanges: Schema.Array(PreArchiveOpenExchange),
+    placementSubtree: Schema.Union([
+      Schema.Struct({
+        state: Schema.Literal("unknown"),
+        reason: Schema.Literal("placement-query-failed"),
+      }),
+      Schema.Struct({ state: Schema.Literal("none") }),
+      Schema.Struct({
+        state: Schema.Literal("known"),
+        participantIds: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+      }),
+    ]),
+    /** The Crews this agent commands; null when the Crew read failed: "couldn't check". */
+    liveCrews: Schema.NullOr(Schema.Array(PreArchiveLiveCrew)),
+    /** The seat this agent holds in a live Crew; seats are never archived one by one. */
+    crewSeat: Schema.NullOr(PreArchiveCrewSeat),
+  }),
+]);
+export type PreArchiveFacts = typeof PreArchiveFacts.Type;
+
+/** A participant's display name, or `unknown` when the ledger never learned one. */
+export const ParticipantIdentitiesRequest = Schema.Struct({
+  participantIds: Schema.Array(Schema.String),
+});
+export type ParticipantIdentitiesRequest = typeof ParticipantIdentitiesRequest.Type;
+export const ParticipantIdentitiesResponse = Schema.Struct({
+  entries: Schema.Array(
+    Schema.Struct({
+      participantId: Schema.String,
+      identity: Schema.Union([
+        Schema.Struct({ kind: Schema.Literal("known"), displayName: Schema.String }),
+        Schema.Struct({ kind: Schema.Literal("unknown") }),
+      ]),
+    }),
+  ),
+});
+export type ParticipantIdentitiesResponse = typeof ParticipantIdentitiesResponse.Type;
+
+export const HumanInboxListRequest = Schema.Struct({
+  status: Schema.Literals(["open", "answered"]),
+  personId: Schema.optionalKey(Schema.String),
+});
+export type HumanInboxListRequest = typeof HumanInboxListRequest.Type;
+export const OpenInboxCountRequest = Schema.Struct({
+  personId: Schema.optionalKey(Schema.String),
+});
+export type OpenInboxCountRequest = typeof OpenInboxCountRequest.Type;
+
+/** The sidebar asks about the rows it shows, in batches no larger than this. */
+export const THREAD_HOME_READ_MAX_THREADS = 500;
+export const ThreadHomesRequest = Schema.Struct({
+  threadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(THREAD_HOME_READ_MAX_THREADS)),
+});
+export type ThreadHomesRequest = typeof ThreadHomesRequest.Type;
+
+/**
+ * What a client reads from J5's ledger, as WebSocket RPCs beside `J5ClientActionRpcGroup`. Every
+ * one needs only read scope, except the peer list, which needs `access:read` like the rest of
+ * Settings → Connections. One group, merged into `WsRpcGroup` in `rpc.ts`.
+ */
+export const J5_CLIENT_READ_WS_METHODS = {
+  listHumanInbox: "j5.inbox.list",
+  readOpenInboxCount: "j5.inbox.openCount",
+  listCrewProposals: "j5.crews.listProposals",
+  listCrewRuntimeRequests: "j5.crews.listRuntimeRequests",
+  listCrewMemberships: "j5.crews.listMemberships",
+  readFleet: "j5.fleet.read",
+  listSpawnedChildren: "j5.fleet.listSpawnedChildren",
+  readPreArchiveFacts: "j5.archive.readFacts",
+  readParticipantIdentities: "j5.participants.readIdentities",
+  listPeers: "j5.peers.list",
+} as const;
+
+const clientRead = <
+  const Tag extends string,
+  Payload extends Schema.Top,
+  Success extends Schema.Top,
+>(
+  tag: Tag,
+  payload: Payload,
+  success: Success,
+) => Rpc.make(tag, { payload, success, error: clientActionError });
+
+export const J5ClientReadRpcGroup = RpcGroup.make(
+  clientRead(J5_CLIENT_READ_WS_METHODS.listHumanInbox, HumanInboxListRequest, HumanInboxResponse),
+  clientRead(
+    J5_CLIENT_READ_WS_METHODS.readOpenInboxCount,
+    OpenInboxCountRequest,
+    OpenInboxCountResponse,
+  ),
+  clientRead(J5_CLIENT_READ_WS_METHODS.listCrewProposals, Schema.Struct({}), CrewProposalsResponse),
+  clientRead(
+    J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests,
+    Schema.Struct({}),
+    CrewRuntimeRequestsResponse,
+  ),
+  clientRead(
+    J5_CLIENT_READ_WS_METHODS.listCrewMemberships,
+    ThreadHomesRequest,
+    CrewMembershipsResponse,
+  ),
+  clientRead(J5_CLIENT_READ_WS_METHODS.readFleet, FleetReadRequest, FleetResponse),
+  clientRead(
+    J5_CLIENT_READ_WS_METHODS.listSpawnedChildren,
+    ThreadHomesRequest,
+    SpawnedChildrenResponse,
+  ),
+  clientRead(
+    J5_CLIENT_READ_WS_METHODS.readPreArchiveFacts,
+    PreArchiveFactsRequest,
+    PreArchiveFacts,
+  ),
+  clientRead(
+    J5_CLIENT_READ_WS_METHODS.readParticipantIdentities,
+    ParticipantIdentitiesRequest,
+    ParticipantIdentitiesResponse,
+  ),
+  clientRead(J5_CLIENT_READ_WS_METHODS.listPeers, Schema.Struct({}), PeerListResponse),
 );

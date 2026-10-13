@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import {
   J5_CLIENT_ACTION_WS_METHODS,
+  J5_CLIENT_READ_WS_METHODS,
   J5_PLAYBOOK_WS_METHODS,
   J5_SHARING_WS_METHODS,
 } from "@t3tools/contracts/j5";
@@ -31,4 +32,5 @@ export const J5_RPC_AGGREGATES = {
   ...labelled(J5_PLAYBOOK_WS_METHODS, "j5Playbooks"),
   ...labelled(J5_CLIENT_ACTION_WS_METHODS, "j5ClientActions"),
   ...labelled(J5_SHARING_WS_METHODS, "j5Sharing"),
+  ...labelled(J5_CLIENT_READ_WS_METHODS, "j5ClientReads"),
 };

@@ -1,33 +1,21 @@
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 import * as J5Contracts from "@t3tools/contracts/j5";
-import { HttpRouter, HttpServerRespondable, HttpServerResponse } from "effect/http";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { annotateEnvironmentRequest } from "../../auth/http.ts";
 import { PlaybookCrewRelay } from "../playbooks/PlaybookCrewRelay.ts";
 import { AgentCrewInstanceService, type AgentCrewInstance } from "./AgentCrewInstanceService.ts";
-import { authenticateClientRead, jsonBody } from "./ClientReadsHttp.ts";
 import { A2ALedger } from "./LedgerService.ts";
 import { ParticipantPlacementService } from "./PlacementService.ts";
 import { LedgerProjectId, isOutsideAgentParticipantId } from "./contracts.ts";
 import { outsideAgentNameRows } from "./outsideAgentNames.ts";
 import type { ParticipantPlacementView } from "./placementContracts.ts";
 
-export const CLIENT_READS_FLEET_PATH = "/api/j5/a2a/client-reads/fleet";
-
-// The response shape is the J5 contract the clients decode; kept as aliases so the route's
-// encode and the client's decode cannot drift.
+// The response shape is the J5 contract the clients decode.
 export const FleetAgent = J5Contracts.FleetAgent;
 export const FleetProject = J5Contracts.FleetProject;
 export const FleetResponse = J5Contracts.FleetResponse;
 export type FleetAgent = J5Contracts.FleetAgent;
 export type FleetResponse = J5Contracts.FleetResponse;
-
-const encodeResponse = Schema.encodeEffect(FleetResponse);
-const decodeRequest = Schema.decodeUnknownEffect(J5Contracts.FleetReadRequest);
 
 /** Pure projection from placement rows, live Crews, and open-ask counts to one project. */
 export const projectFleetProject = (input: {
@@ -145,100 +133,65 @@ export const projectFleetProject = (input: {
  * and the count of open asks each agent owes. Status and last activity come from the client's
  * thread state, so this read carries only what the ledger knows. Unknowns stay unknown.
  */
-export const makeFleetReadsHttpRouteLayer = (path: HttpRouter.PathInput) =>
-  Layer.unwrap(
+export const makeFleetRead = Effect.gen(function* () {
+  const ledger = yield* A2ALedger;
+  const placements = yield* ParticipantPlacementService;
+  const crews = yield* AgentCrewInstanceService;
+  const relay = yield* PlaybookCrewRelay;
+  const sql = yield* SqlClient.SqlClient;
+  return (includeRetired: boolean) =>
     Effect.gen(function* () {
-      const ledger = yield* A2ALedger;
-      const placements = yield* ParticipantPlacementService;
-      const crews = yield* AgentCrewInstanceService;
-      const relay = yield* PlaybookCrewRelay;
-      const sql = yield* SqlClient.SqlClient;
-      const readFleet = (includeRetired: boolean) =>
-        Effect.gen(function* () {
-          const projects = yield* ledger.listProjectLedgers();
-          const result: Array<FleetResponse["projects"][number]> = [];
-          for (const project of projects) {
-            const participants = yield* placements.listParticipants(project.id);
-            const agentIds = participants
-              .filter((row) => row.participant.kind === "agent")
-              .map((row) => row.participantId);
-            const openAsks = new Map<string, number>();
-            if (agentIds.length > 0) {
-              const rows = yield* sql<{ readonly receiver_id: string; readonly count: number }>`
-              SELECT receiver_id, COUNT(*) AS count FROM j5_a2a_exchange
-              WHERE status = 'open' AND receiver_id IN ${sql.in([...agentIds])}
-              GROUP BY receiver_id
-            `;
-              for (const row of rows) openAsks.set(row.receiver_id, Number(row.count));
-            }
-            const outsideSpawnerIds = [
-              ...new Set(
-                participants.flatMap((row) =>
-                  row.provenance.kind === "spawned-by" &&
-                  isOutsideAgentParticipantId(row.provenance.spawnedByParticipantId)
-                    ? [row.provenance.spawnedByParticipantId]
-                    : [],
-                ),
-              ),
-            ];
-            const outsideAgentNames = new Map(
-              (outsideSpawnerIds.length === 0
-                ? []
-                : yield* outsideAgentNameRows(sql, outsideSpawnerIds)
-              ).map((row) => [row.participant_id, row.display_name] as const),
-            );
-            // Retired Crews carry rosters and briefs; only the page that shows them pays for them.
-            const projectCrews = (yield* crews.listForProject(project.id)).filter(
-              (crew) => includeRetired || crew.archivedAt === null,
-            );
-            // Archiving a Crew cancels its run, so only live Crews can have one.
-            const playbookRuns = new Map<string, J5Contracts.FleetCrew["playbookRun"]>();
-            for (const crew of projectCrews)
-              if (crew.archivedAt === null)
-                playbookRuns.set(crew.id, yield* relay.fleetRun(crew.id));
-            result.push(
-              projectFleetProject({
-                project,
-                participants,
-                crews: projectCrews,
-                openAsks,
-                playbookRuns,
-                outsideAgentNames,
-              }),
-            );
-          }
-          return { projects: result } satisfies FleetResponse;
-        });
-      return HttpRouter.add(
-        "POST",
-        path,
-        Effect.gen(function* () {
-          yield* annotateEnvironmentRequest("j5.a2a.clientReads.fleet");
-          yield* authenticateClientRead;
-          const body = yield* jsonBody;
-          const decoded = Result.isFailure(body)
-            ? undefined
-            : Result.getOrUndefined(yield* Effect.result(decodeRequest(body.success)));
-          const read = yield* Effect.result(
-            readFleet(decoded?.includeRetired === true).pipe(Effect.flatMap(encodeResponse)),
-          );
-          if (Result.isFailure(read)) {
-            yield* Effect.logError("J5 fleet read failed", { cause: read.failure });
-            return HttpServerResponse.jsonUnsafe(
-              { error: "FleetReadError", message: "Fleet read failed." },
-              { status: 500 },
-            );
-          }
-          return HttpServerResponse.jsonUnsafe(read.success);
-        }).pipe(
-          Effect.catchTags({
-            EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
-            EnvironmentInternalError: HttpServerRespondable.toResponse,
-            EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+      const projects = yield* ledger.listProjectLedgers();
+      const result: Array<FleetResponse["projects"][number]> = [];
+      for (const project of projects) {
+        const participants = yield* placements.listParticipants(project.id);
+        const agentIds = participants
+          .filter((row) => row.participant.kind === "agent")
+          .map((row) => row.participantId);
+        const openAsks = new Map<string, number>();
+        if (agentIds.length > 0) {
+          const rows = yield* sql<{ readonly receiver_id: string; readonly count: number }>`
+          SELECT receiver_id, COUNT(*) AS count FROM j5_a2a_exchange
+          WHERE status = 'open' AND receiver_id IN ${sql.in([...agentIds])}
+          GROUP BY receiver_id
+        `;
+          for (const row of rows) openAsks.set(row.receiver_id, Number(row.count));
+        }
+        const outsideSpawnerIds = [
+          ...new Set(
+            participants.flatMap((row) =>
+              row.provenance.kind === "spawned-by" &&
+              isOutsideAgentParticipantId(row.provenance.spawnedByParticipantId)
+                ? [row.provenance.spawnedByParticipantId]
+                : [],
+            ),
+          ),
+        ];
+        const outsideAgentNames = new Map(
+          (outsideSpawnerIds.length === 0
+            ? []
+            : yield* outsideAgentNameRows(sql, outsideSpawnerIds)
+          ).map((row) => [row.participant_id, row.display_name] as const),
+        );
+        // Retired Crews carry rosters and briefs; only the page that shows them pays for them.
+        const projectCrews = (yield* crews.listForProject(project.id)).filter(
+          (crew) => includeRetired || crew.archivedAt === null,
+        );
+        // Archiving a Crew cancels its run, so only live Crews can have one.
+        const playbookRuns = new Map<string, J5Contracts.FleetCrew["playbookRun"]>();
+        for (const crew of projectCrews)
+          if (crew.archivedAt === null) playbookRuns.set(crew.id, yield* relay.fleetRun(crew.id));
+        result.push(
+          projectFleetProject({
+            project,
+            participants,
+            crews: projectCrews,
+            openAsks,
+            playbookRuns,
+            outsideAgentNames,
           }),
-        ),
-      );
-    }),
-  );
-
-export const fleetReadsHttpRouteLayer = makeFleetReadsHttpRouteLayer(CLIENT_READS_FLEET_PATH);
+        );
+      }
+      return { projects: result } satisfies FleetResponse;
+    });
+});

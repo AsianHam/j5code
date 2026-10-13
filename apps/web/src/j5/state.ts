@@ -77,7 +77,7 @@ const polledCrewRuntimeRequestsAtom = Atom.family((environmentId: EnvironmentId)
       : NO_CREW_RUNTIME_REQUESTS,
   ).pipe(Atom.withLabel(`web-j5:polled-crew-runtime-requests:${environmentId}`)),
 );
-// A server without the route fails its source alone; the Inbox shows the rest.
+// A server without the read fails its source alone; the Inbox shows the rest.
 export const crewRuntimeRequestSourcesAtom = createJ5ReadSourcesAtom({
   ...sourcesInput,
   label: "web-j5:crew-runtime-request-sources",

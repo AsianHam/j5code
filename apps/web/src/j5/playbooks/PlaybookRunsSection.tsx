@@ -1,6 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { presentPlaybook, sortPlaybookRuns } from "@t3tools/client-runtime/j5/playbooks";
+import { j5LedgerSupported } from "@t3tools/client-runtime/j5/readSources";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { PLAYBOOK_RUNS_PAGE_SIZE, type PlaybookProgress } from "@t3tools/contracts/j5";
 import { Link } from "@tanstack/react-router";
@@ -21,6 +22,7 @@ import { j5Environment } from "../state";
 import { useVisibleRefresh } from "../useVisibleRefresh";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { fleetCrewAnchorId } from "../fleet/fleet.logic";
+import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 
 /** The Fleet page's Crews, so a Crew-linked run can name its Crew and jump to its group. */
 interface PlaybookRunCrewLinks {
@@ -166,16 +168,20 @@ function EnvironmentRuns({
   showEnvironmentLabel: boolean;
 } & PlaybookRunCrewLinks) {
   const [offset, setOffset] = useState(0);
+  // A guest is shown none of a server's Playbooks (Shared server AC24), so none is read.
+  const guest = useGuestEnvironmentIds().has(environment.environmentId);
+  const unsupported = guest || j5LedgerSupported(environment.serverConfig) === false;
   const query = useEnvironmentQuery(
-    j5Environment.playbookRuns({
-      environmentId: environment.environmentId,
-      input: { status, offset },
-    }),
+    unsupported
+      ? null
+      : j5Environment.playbookRuns({
+          environmentId: environment.environmentId,
+          input: { status, offset },
+        }),
   );
   const shell = useEnvironmentQuery(environmentShell.stateAtom(environment.environmentId));
   const connected = environment.connection.phase === "connected";
-  const unsupported = query.data?.supported === false;
-  const data = query.data?.supported ? query.data : null;
+  const { data } = query;
   const changes = useEnvironmentQuery(
     data
       ? j5Environment.playbookChanges({ environmentId: environment.environmentId, input: {} })

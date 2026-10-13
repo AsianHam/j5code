@@ -8,6 +8,7 @@ import {
   type IssuePeerCredentialRequest,
   type IssuePeerCredentialResponse,
   type PeerAddressesResponse,
+  type PeerListResponse,
   type PeerLinkMode,
   type PeerProbeRequest,
   type PeerProbeResponse,
@@ -145,6 +146,11 @@ export class PeerAdminService extends Context.Service<
       IssuePeerCredentialResponse,
       PeerCredentialForSelfError | PeerCredentialLinkModeError | PeerAdminOperationError
     >;
+    /** Every peer this server has recorded, with the state of its link. */
+    readonly list: Effect.Effect<
+      PeerListResponse,
+      Effect.Error<ReturnType<PeerRegistryService["Service"]["list"]>>
+    >;
     /** Prove the credential at the origin, then record the peer. */
     readonly add: (input: AddPeerRequest) => Effect.Effect<AddPeerResponse, AddPeerError>;
     /**
@@ -245,6 +251,7 @@ const make = Effect.gen(function* () {
 
   return PeerAdminService.of({
     issueCredential,
+    list: peers.list().pipe(Effect.map((listed) => ({ peers: listed }))),
     add: (input) =>
       DateTime.now.pipe(
         Effect.flatMap((now) =>

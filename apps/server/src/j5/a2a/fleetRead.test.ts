@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 
 import type { AgentCrewInstance } from "./AgentCrewInstanceService.ts";
-import { projectFleetProject } from "./FleetReadsHttp.ts";
+import { projectFleetProject } from "./fleetRead.ts";
 import { participantIdForThread } from "./HomeRegistrar.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
 import type { ParticipantPlacementView } from "./placementContracts.ts";

@@ -1,4 +1,5 @@
 import { presentPlaybook } from "@t3tools/client-runtime/j5/playbooks";
+import { j5LedgerSupported } from "@t3tools/client-runtime/j5/readSources";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useState } from "react";
@@ -8,30 +9,34 @@ import { useEnvironmentQuery } from "../../state/query";
 import { j5Environment } from "../state";
 import { PlaybookStepStrip } from "./PlaybookStepStrip";
 import { useVisibleRefresh } from "../useVisibleRefresh";
+import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 
 /** The visible thread owns this bounded live read; hidden tabs do no polling. */
 export function PlaybookBoard(props: { environmentId: EnvironmentId; threadId: ThreadId }) {
   const environment = useEnvironment(props.environmentId);
   const thread = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  // A guest is shown none of a server's Playbooks (Shared server AC24), so none is read.
+  const guest = useGuestEnvironmentIds().has(props.environmentId);
+  const unsupported = guest || j5LedgerSupported(environment?.serverConfig) === false;
   const query = useEnvironmentQuery(
-    j5Environment.playbooks({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId },
-    }),
+    unsupported
+      ? null
+      : j5Environment.playbooks({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId },
+        }),
   );
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const changes = useEnvironmentQuery(
-    query.data?.supported
+    query.data
       ? j5Environment.playbookChanges({ environmentId: props.environmentId, input: {} })
       : null,
   );
-  const runs = query.data?.supported ? query.data.runs : [];
+  const runs = query.data?.runs ?? [];
   useVisibleRefresh(
     query.refresh,
     runs.some((run) => run.status === "active") ? 30_000 : null,
-    environment?.connection.phase === "connected" &&
-      query.data?.supported !== false &&
-      !query.isPending,
+    environment?.connection.phase === "connected" && !unsupported && !query.isPending,
     `${thread?.latestRun?.runId}:${thread?.latestRun?.status}:${changes.data}`,
   );
   const run = runs.find((entry) => entry.runId === selectedRunId) ?? runs[0];

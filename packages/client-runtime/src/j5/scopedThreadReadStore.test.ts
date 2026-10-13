@@ -39,7 +39,7 @@ function waitForChange(
 it("keeps a negative answer loaded, re-reads only named rows, and keeps the snapshot when nothing changed", async () => {
   const one = ThreadId.make("thread:one");
   const two = ThreadId.make("thread:two");
-  const load = vi.fn(async (_: PreparedConnection, ids: ReadonlyArray<ThreadId>) =>
+  const load = vi.fn(async (_: EnvironmentId, ids: ReadonlyArray<ThreadId>) =>
     // Only `one` sits in a Crew; `two` is answered with nothing, which is an answer too.
     ids.includes(one) ? [{ threadId: one, value: "seat" }] : [],
   );
@@ -82,7 +82,7 @@ it("re-reads the rows still holding a value on a held refresh, so an ended relat
   const one = ThreadId.make("thread:one");
   const two = ThreadId.make("thread:two");
   let crews: ReadonlyArray<ThreadId> = [one];
-  const load = vi.fn(async (_: PreparedConnection, ids: ReadonlyArray<ThreadId>) =>
+  const load = vi.fn(async (_: EnvironmentId, ids: ReadonlyArray<ThreadId>) =>
     ids.filter((id) => crews.includes(id)).map((id) => ({ threadId: id, value: "seat" })),
   );
   const store = createScopedThreadReadStore<string, { threadId: ThreadId; value: string }>({

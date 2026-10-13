@@ -1,12 +1,13 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { listSpawnedChildren } from "@t3tools/client-runtime/j5/http";
 import { createScopedThreadReadStore } from "@t3tools/client-runtime/j5/scopedThreadReadStore";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { SpawnedChild, SpawnedChildrenEntry } from "@t3tools/contracts/j5";
+import * as Cause from "effect/Cause";
 import { useMemo, useSyncExternalStore } from "react";
 
-import { runtime } from "../../lib/runtime";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { j5Environment } from "../state";
 
 export type { SpawnedChild, SpawnedChildrenEntry } from "@t3tools/contracts/j5";
 
@@ -48,8 +49,14 @@ export const replaceSpawnedChildren = (
 };
 
 const store = createScopedThreadReadStore<SpawnedChildrenRow, RowEntry>({
-  load: (prepared, threadIds) =>
-    runtime.runPromise(listSpawnedChildren(prepared, threadIds)).then(spawnedChildrenRows),
+  load: async (environmentId, threadIds) => {
+    const result = await j5Environment.listSpawnedChildren.run(appAtomRegistry, {
+      environmentId,
+      input: { threadIds },
+    });
+    if (result._tag === "Failure") throw Cause.squash(result.cause);
+    return spawnedChildrenRows(result.value);
+  },
   replace: replaceSpawnedChildren,
 });
 

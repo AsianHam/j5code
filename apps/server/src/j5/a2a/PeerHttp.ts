@@ -262,12 +262,12 @@ export const peerHttpRouteLayer = Layer.unwrap(
         yield* annotateEnvironmentRequest("j5.a2a.peer.list");
         const session = yield* authenticate;
         yield* requireScope(session, AuthAccessReadScope);
-        const listed = yield* Effect.result(peers.list());
+        const listed = yield* Effect.result(admin.list);
         if (Result.isFailure(listed)) {
           yield* Effect.logError("J5 A2A peer list failed", { cause: listed.failure });
           return jsonError(500, tagOf(listed.failure), "Listing peers failed.");
         }
-        return HttpServerResponse.jsonUnsafe({ peers: listed.success } satisfies PeerListResponse);
+        return HttpServerResponse.jsonUnsafe(listed.success satisfies PeerListResponse);
       }).pipe(Effect.catchTags(respondableTags)),
     );
 

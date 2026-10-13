@@ -1,29 +1,7 @@
-import {
-  PLAYBOOK_LIBRARY_PATH,
-  PlaybookLibraryResponse,
-  type PlaybookLibraryRequest,
-  PLAYBOOK_PROGRESS_PATH,
-  PLAYBOOK_RUNS_PATH,
-  PlaybookRunsResponse,
-  type PlaybookRunsRequest,
-  ThreadPlaybooksResponse,
-  CrewMembershipsResponse,
-  CrewProposalsResponse,
-  CrewRuntimeRequestsResponse,
-  FleetResponse,
-  HumanInboxResponse,
-  J5_API_PATHS,
-  J5_PEER_API_PATHS,
-  OpenInboxCountResponse,
-  SpawnedChildrenResponse,
-  PeerListResponse,
-  type FleetReadRequest,
-} from "@t3tools/contracts/j5";
-import type { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
@@ -46,49 +24,6 @@ export class J5HttpError extends Schema.TaggedError<J5HttpError>()("J5HttpError"
     return this.detail;
   }
 }
-
-const isJ5HttpError = Schema.is(J5HttpError);
-
-/** An absent route is unsupported; a missing person or other domain resource is an error. */
-export const isJ5UnsupportedError = (error: unknown): boolean =>
-  isJ5HttpError(error) &&
-  (error.status === 501 ||
-    (error.status === 404 && (error.code === undefined || error.code === "not_found")));
-
-const READ_TIMEOUT_MS = 10_000;
-
-export const readPlaybookLibrary = Effect.fn("j5.http.readPlaybookLibrary")(function* (
-  prepared: PreparedConnection,
-  input: PlaybookLibraryRequest,
-) {
-  const request = yield* HttpClientRequest.post(PLAYBOOK_LIBRARY_PATH).pipe(
-    HttpClientRequest.bodyJson(input),
-  );
-  const response = yield* executeJ5Request(prepared, request, READ_TIMEOUT_MS);
-  return yield* HttpClientResponse.schemaBodyJson(PlaybookLibraryResponse)(response);
-});
-
-export const readThreadPlaybooks = Effect.fn("j5.http.readThreadPlaybooks")(function* (
-  prepared: PreparedConnection,
-  threadId: ThreadId,
-) {
-  const request = yield* HttpClientRequest.post(PLAYBOOK_PROGRESS_PATH).pipe(
-    HttpClientRequest.bodyJson({ threadId }),
-  );
-  const response = yield* executeJ5Request(prepared, request, READ_TIMEOUT_MS);
-  return yield* HttpClientResponse.schemaBodyJson(ThreadPlaybooksResponse)(response);
-});
-
-export const readAllPlaybooks = Effect.fn("j5.http.readAllPlaybooks")(function* (
-  prepared: PreparedConnection,
-  input: PlaybookRunsRequest,
-) {
-  const request = yield* HttpClientRequest.post(PLAYBOOK_RUNS_PATH).pipe(
-    HttpClientRequest.bodyJson(input),
-  );
-  const response = yield* executeJ5Request(prepared, request, READ_TIMEOUT_MS);
-  return yield* HttpClientResponse.schemaBodyJson(PlaybookRunsResponse)(response);
-});
 
 /**
  * Authorizes against this prepared environment only, through the same
@@ -137,94 +72,4 @@ export const executeJ5Request = Effect.fn("j5.http.executeRequest")(function* (
     detail: decoded?.message ?? `J5 request failed (HTTP ${response.status}).`,
     ...(decoded?.error === undefined ? {} : { code: decoded.error }),
   });
-});
-
-export const listHumanInbox = Effect.fn("j5.http.listHumanInbox")(function* (
-  prepared: PreparedConnection,
-  status: "open" | "answered",
-  personId?: string,
-) {
-  const query = new URLSearchParams({ status });
-  if (personId !== undefined) query.set("personId", personId);
-  const response = yield* executeJ5Request(
-    prepared,
-    HttpClientRequest.get(`${J5_API_PATHS.inbox}?${query.toString()}`),
-    READ_TIMEOUT_MS,
-  );
-  return yield* HttpClientResponse.schemaBodyJson(HumanInboxResponse)(response);
-});
-
-export const readOpenInboxCount = Effect.fn("j5.http.readOpenInboxCount")(function* (
-  prepared: PreparedConnection,
-  personId?: string,
-) {
-  const request = yield* HttpClientRequest.post(J5_API_PATHS.openCount).pipe(
-    HttpClientRequest.bodyJson(personId === undefined ? {} : { personId }),
-  );
-  const response = yield* executeJ5Request(prepared, request, READ_TIMEOUT_MS);
-  return yield* HttpClientResponse.schemaBodyJson(OpenInboxCountResponse)(response);
-});
-
-export const listCrewProposals = Effect.fn("j5.http.listCrewProposals")(function* (
-  prepared: PreparedConnection,
-) {
-  const request = yield* HttpClientRequest.post(J5_API_PATHS.crewProposals).pipe(
-    HttpClientRequest.bodyJson({}),
-  );
-  const response = yield* executeJ5Request(prepared, request, READ_TIMEOUT_MS);
-  return (yield* HttpClientResponse.schemaBodyJson(CrewProposalsResponse)(response)).proposals;
-});
-
-export const readFleet = Effect.fn("j5.http.readFleet")(function* (
-  prepared: PreparedConnection,
-  input: FleetReadRequest = {},
-) {
-  const request = yield* HttpClientRequest.post(J5_API_PATHS.fleet).pipe(
-    HttpClientRequest.bodyJson(input),
-  );
-  const response = yield* executeJ5Request(prepared, request, READ_TIMEOUT_MS);
-  return yield* HttpClientResponse.schemaBodyJson(FleetResponse)(response);
-});
-
-export const listCrewMemberships = Effect.fn("j5.http.listCrewMemberships")(function* (
-  prepared: PreparedConnection,
-  threadIds: ReadonlyArray<ThreadId>,
-) {
-  const request = yield* HttpClientRequest.post(J5_API_PATHS.crewMemberships).pipe(
-    HttpClientRequest.bodyJson({ threadIds: [...new Set(threadIds)] }),
-  );
-  const response = yield* executeJ5Request(prepared, request, READ_TIMEOUT_MS);
-  return (yield* HttpClientResponse.schemaBodyJson(CrewMembershipsResponse)(response)).entries;
-});
-
-export const listSpawnedChildren = Effect.fn("j5.http.listSpawnedChildren")(function* (
-  prepared: PreparedConnection,
-  threadIds: ReadonlyArray<ThreadId>,
-) {
-  const request = yield* HttpClientRequest.post(J5_API_PATHS.spawnedChildren).pipe(
-    HttpClientRequest.bodyJson({ threadIds: [...new Set(threadIds)] }),
-  );
-  const response = yield* executeJ5Request(prepared, request, READ_TIMEOUT_MS);
-  return yield* HttpClientResponse.schemaBodyJson(SpawnedChildrenResponse)(response);
-});
-
-/** Provider approvals waiting on this environment's live Crew seats that the Inbox can answer. */
-export const listCrewRuntimeRequests = Effect.fn("j5.http.listCrewRuntimeRequests")(function* (
-  prepared: PreparedConnection,
-) {
-  const request = yield* HttpClientRequest.post(J5_API_PATHS.crewRuntimeRequests).pipe(
-    HttpClientRequest.bodyJson({}),
-  );
-  const response = yield* executeJ5Request(prepared, request, READ_TIMEOUT_MS);
-  return (yield* HttpClientResponse.schemaBodyJson(CrewRuntimeRequestsResponse)(response)).requests;
-});
-
-/** The peers this server has recorded, as Settings → Connections lists them. */
-export const listPeers = Effect.fn("j5.http.listPeers")(function* (prepared: PreparedConnection) {
-  const response = yield* executeJ5Request(
-    prepared,
-    HttpClientRequest.get(J5_PEER_API_PATHS.peers),
-    READ_TIMEOUT_MS,
-  );
-  return (yield* HttpClientResponse.schemaBodyJson(PeerListResponse)(response)).peers;
 });

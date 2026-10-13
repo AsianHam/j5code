@@ -1,14 +1,16 @@
 import { presentPlaybook } from "@t3tools/client-runtime/j5/playbooks";
+import { j5LedgerSupported } from "@t3tools/client-runtime/j5/readSources";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useIsFocused } from "@react-navigation/native";
 import { useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { useThreadShell } from "../../state/entities";
+import { useEnvironmentServerConfig, useThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
 import { j5Environment } from "../state";
 import { useActivePlaybookRefresh } from "./useActivePlaybookRefresh";
+import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 
 const stepColor = {
   current: "bg-primary",
@@ -22,31 +24,36 @@ export function PlaybookBoard(props: { environmentId: EnvironmentId; threadId: T
   const focused = useIsFocused();
   const runtime = useRemoteEnvironmentRuntime(props.environmentId);
   const thread = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  // A guest is shown none of a server's Playbooks (Shared server AC24), so none is read.
+  const guest = useGuestEnvironmentIds().has(props.environmentId);
+  const serverConfig = useEnvironmentServerConfig(props.environmentId);
+  const supported = !guest && j5LedgerSupported(serverConfig) !== false;
   const query = useEnvironmentQuery(
-    j5Environment.playbooks({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId },
-    }),
+    supported
+      ? j5Environment.playbooks({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId },
+        })
+      : null,
   );
   const [expanded, setExpanded] = useState(true);
   const [showSteps, setShowSteps] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const changes = useEnvironmentQuery(
-    focused && query.data?.supported
+    focused && query.data
       ? j5Environment.playbookChanges({ environmentId: props.environmentId, input: {} })
       : null,
   );
   useActivePlaybookRefresh({
     focused,
     connected: runtime?.connectionState === "connected",
-    supported: query.data?.supported !== false,
-    activeRun:
-      query.data?.supported === true && query.data.runs.some((run) => run.status === "active"),
+    supported,
+    activeRun: query.data?.runs.some((run) => run.status === "active") === true,
     isPending: query.isPending,
     refreshKey: `${thread?.latestRun?.runId}:${thread?.latestRun?.status}:${changes.data}`,
     refresh: query.refresh,
   });
-  const runs = query.data?.supported ? query.data.runs : [];
+  const runs = query.data?.runs ?? [];
   const run = runs.find((entry) => entry.runId === selectedRunId) ?? runs[0];
   if (!run) return null;
   const display = presentPlaybook(run);

@@ -1,12 +1,10 @@
-import { AuthOrchestrationReadScope, AuthSessionId, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpRouter, HttpServer } from "effect/http";
 
-import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import { AgentCrewInstanceService, type AgentCrewInstance } from "./AgentCrewInstanceService.ts";
-import { makeAgentCrewReadsHttpRouteLayer, projectCrewMemberships } from "./AgentCrewReadsHttp.ts";
+import { makeCrewMembershipsRead, projectCrewMemberships } from "./crewMembershipsRead.ts";
 import { participantIdForThread } from "./HomeRegistrar.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
 
@@ -91,69 +89,42 @@ it("shows a former seat that now commands its own Crew as a captain", () => {
   ]);
 });
 
-it("serves the authenticated crew-membership read from the visible thread ids", async () => {
-  const received: Array<{
-    threadIds: ReadonlyArray<ThreadId>;
-    participantIds: ReadonlyArray<ParticipantId>;
-  }> = [];
-  const crews = Layer.mock(AgentCrewInstanceService)({
-    listInvolving: (input) => {
-      received.push(input);
-      return Effect.succeed([instance("crew:live", null)]);
-    },
-  });
-  const auth = Layer.mock(EnvironmentAuth.EnvironmentAuth)({
-    authenticateHttpRequest: () =>
-      Effect.succeed({
-        sessionId: AuthSessionId.make("auth-session:crew-reads"),
-        subject: "crew-reads-test",
-        method: "bearer-access-token",
-        scopes: [AuthOrchestrationReadScope],
-      }),
-  });
-  const routes = makeAgentCrewReadsHttpRouteLayer("/raw/crew-memberships").pipe(
-    Layer.provide(crews),
-    Layer.provideMerge(auth),
-    Layer.provide(HttpServer.layerServices),
-  );
-  const { dispose, handler } = HttpRouter.toWebHandler(routes, { disableLogger: true });
-  try {
-    const response = await handler(
-      new Request("http://environment.test/raw/crew-memberships", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ threadIds: [criticThread, captainThread] }),
-      }),
+it.effect("reads the Crews of the visible threads, as seats and as the Captains they may be", () =>
+  Effect.gen(function* () {
+    const received: Array<{
+      threadIds: ReadonlyArray<ThreadId>;
+      participantIds: ReadonlyArray<ParticipantId>;
+    }> = [];
+    const read = yield* makeCrewMembershipsRead.pipe(
+      Effect.provide(
+        Layer.mock(AgentCrewInstanceService)({
+          listInvolving: (input) => {
+            received.push(input);
+            return Effect.succeed([instance("crew:live", null)]);
+          },
+        }),
+      ),
     );
-    assert.equal(response.status, 200);
-    const body = (await response.json()) as {
-      entries: Array<{ threadId: string; membership: { kind: string } }>;
-    };
+    const { entries } = yield* read([criticThread, captainThread]);
     assert.deepStrictEqual(
-      body.entries.map((entry) => [entry.threadId, entry.membership.kind]),
+      entries.map((entry) => [entry.threadId, entry.membership.kind]),
       [
         [criticThread, "member"],
         [captainThread, "captain"],
       ],
     );
-    assert.deepStrictEqual(received[0]?.threadIds, [criticThread, captainThread]);
-    assert.deepStrictEqual(received[0]?.participantIds, [
-      participantIdForThread(criticThread),
-      participantIdForThread(captainThread),
+    // Each thread is looked up both as a seat and as the Captain its participant id may be.
+    assert.deepStrictEqual(received, [
+      {
+        threadIds: [criticThread, captainThread],
+        participantIds: [
+          participantIdForThread(criticThread),
+          participantIdForThread(captainThread),
+        ],
+      },
     ]);
-
-    const invalid = await handler(
-      new Request("http://environment.test/raw/crew-memberships", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ threadIds: "nope" }),
-      }),
-    );
-    assert.equal(invalid.status, 400);
-  } finally {
-    await dispose();
-  }
-});
+  }),
+);
 
 it("drops a retired Captain and its seats from the membership response", () => {
   assert.deepStrictEqual(

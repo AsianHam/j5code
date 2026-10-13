@@ -1,7 +1,5 @@
 import {
-  ARTIFACT_LIST_PATH,
   ARTIFACT_READ_PATH,
-  ArtifactListRequest,
   ArtifactReadRequest,
   AuthOrchestrationReadScope,
   type AuthEnvironmentScope,
@@ -30,7 +28,6 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import { ArtifactProjectUnavailableError } from "./ArtifactDeletion.ts";
 import { ArtifactWorkspace } from "./ArtifactWorkspace.ts";
 
-const decodeListRequest = Schema.decodeUnknownEffect(ArtifactListRequest);
 const decodeReadRequest = Schema.decodeUnknownEffect(ArtifactReadRequest);
 
 const authenticate = Effect.fn("j5.artifacts.authenticate")(function* (
@@ -93,40 +90,15 @@ const requireProject = Effect.fn("j5.artifacts.requireProject")(function* (
   }
 });
 
-/** Authenticated J5 reads of project artifacts from server-owned application storage. */
+/**
+ * The authenticated read of one artifact from server-owned application storage. It stays an HTTP
+ * route because an artifact can be megabytes, which upstream keeps off the RPC socket; listing
+ * and deleting are RPCs (`artifactRpc.ts`).
+ */
 export const artifactHttpRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const artifacts = yield* ArtifactWorkspace;
     const projects = yield* ProjectService.ProjectService;
-
-    const listRoute = HttpRouter.add(
-      "POST",
-      ARTIFACT_LIST_PATH,
-      Effect.gen(function* () {
-        yield* annotateEnvironmentRequest("j5.artifacts.list");
-        yield* authenticateRead;
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const body = yield* Effect.result(request.json);
-        if (Result.isFailure(body)) return requestFailure("The request body must be JSON.");
-        const decoded = yield* Effect.result(decodeListRequest(body.success));
-        if (Result.isFailure(decoded)) return requestFailure("A valid projectId is required.");
-        const input = decoded.success;
-        const result = yield* Effect.result(
-          requireProject(projects, input.projectId).pipe(
-            Effect.flatMap(() => artifacts.list(input.projectId)),
-          ),
-        );
-        return Result.isSuccess(result)
-          ? HttpServerResponse.jsonUnsafe({ entries: result.success })
-          : yield* operationFailure(result.failure);
-      }).pipe(
-        Effect.catchTags({
-          EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
-          EnvironmentInternalError: HttpServerRespondable.toResponse,
-          EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
-        }),
-      ),
-    );
 
     const readRoute = HttpRouter.add(
       "POST",
@@ -160,6 +132,6 @@ export const artifactHttpRouteLayer = Layer.unwrap(
       ),
     );
 
-    return Layer.mergeAll(listRoute, readRoute);
+    return readRoute;
   }),
 );

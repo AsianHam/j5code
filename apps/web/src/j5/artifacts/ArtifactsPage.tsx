@@ -156,8 +156,13 @@ export function ArtifactsPage({
   // The artifact client reads the environment's prepared connection from an atom that only holds
   // a value while something subscribes to it. Inside a thread the chat surface keeps it mounted;
   // on the standalone route this page is the only subscriber, so it must hold the subscription
-  // itself and wait for the connection before fetching, or every read fails as "not connected".
-  const connected = Option.isSome(usePreparedConnection(selectedEnvironmentId));
+  // itself. The list is read over the socket, which comes up after the prepared connection, so
+  // the page waits for both before fetching, or the read fails as "not connected".
+  const prepared = Option.isSome(usePreparedConnection(selectedEnvironmentId));
+  const connected =
+    prepared &&
+    environments.find((environment) => environment.environmentId === selectedEnvironmentId)
+      ?.connection.phase === "connected";
   const selectedEntry = entries.find((entry) => entry.path === selectedPath);
   const selectedRevision = artifactPreviewRevision(selectedEntry, manualRefreshes);
   const artifactChange = useEnvironmentQuery(

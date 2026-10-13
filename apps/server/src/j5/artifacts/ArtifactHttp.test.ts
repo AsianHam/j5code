@@ -1,5 +1,4 @@
 import {
-  ARTIFACT_LIST_PATH,
   ARTIFACT_READ_PATH,
   AuthOrchestrationReadScope,
   AuthSessionId,
@@ -16,7 +15,7 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import { artifactHttpRouteLayer } from "./ArtifactHttp.ts";
 import { ArtifactWorkspace } from "./ArtifactWorkspace.ts";
 
-it("lists and reads artifacts through the authenticated project boundary", async () => {
+it("reads an artifact through the authenticated project boundary", async () => {
   const projectId = ProjectId.make("project:artifacts-http");
   let scopes: ReadonlyArray<typeof AuthOrchestrationReadScope> = [];
   const auth = Layer.mock(EnvironmentAuth.EnvironmentAuth)({
@@ -34,10 +33,6 @@ it("lists and reads artifacts through the authenticated project boundary", async
     getById: () => Effect.succeed(Option.some({ workspaceRoot: "/workspace" } as never)),
   });
   const artifacts = Layer.mock(ArtifactWorkspace)({
-    list: (requestedProjectId) =>
-      Effect.succeed([
-        { path: `${requestedProjectId.slice(8)}/plan.md`, byteLength: 7, modifiedAt: null },
-      ]),
     read: ({ projectId: requestedProjectId, relativePath }) =>
       Effect.succeed({
         path: relativePath,
@@ -63,14 +58,8 @@ it("lists and reads artifacts through the authenticated project boundary", async
     );
 
   try {
-    assert.equal((await post(ARTIFACT_LIST_PATH, { projectId })).status, 401);
+    assert.equal((await post(ARTIFACT_READ_PATH, { projectId, path: "plan.md" })).status, 401);
     scopes = [AuthOrchestrationReadScope];
-
-    const list = await post(ARTIFACT_LIST_PATH, { projectId });
-    assert.equal(list.status, 200);
-    assert.deepStrictEqual(await list.json(), {
-      entries: [{ path: "artifacts-http/plan.md", byteLength: 7, modifiedAt: null }],
-    });
 
     const read = await post(ARTIFACT_READ_PATH, { projectId, path: "plan.md" });
     assert.equal(read.status, 200);

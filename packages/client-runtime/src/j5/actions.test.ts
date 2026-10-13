@@ -17,6 +17,7 @@ import {
 import {
   J5ActionError,
   J5_CLIENT_ACTION_WS_METHODS,
+  J5_CLIENT_READ_WS_METHODS,
   J5_PLAYBOOK_WS_METHODS,
 } from "@t3tools/contracts/j5";
 import * as Cause from "effect/Cause";
@@ -24,7 +25,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { HttpClient } from "effect/http";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
@@ -82,15 +82,7 @@ const fixture = (
       Layer.succeed(EnvironmentRegistry, {
         run: <A, E>(id: EnvironmentId, effect: Effect.Effect<A, E, EnvironmentSupervisor>) =>
           effect.pipe(Effect.provideService(EnvironmentSupervisor, supervisors.get(id)!)),
-      } as unknown as EnvironmentRegistry["Service"]).pipe(
-        // The J5 reads fetch over HTTP; no action does.
-        Layer.merge(
-          Layer.succeed(
-            HttpClient.HttpClient,
-            HttpClient.make(() => Effect.die("An action reached for HTTP.")),
-          ),
-        ),
-      ),
+      } as unknown as EnvironmentRegistry["Service"]),
     );
     const registry = yield* Effect.acquireRelease(
       Effect.sync(() => AtomRegistry.make()),
@@ -267,7 +259,9 @@ describe("J5 client permission guards", () => {
         J5_SKILL_LINK_WS_METHODS.list,
         J5_PLAYBOOK_WS_METHODS.exportPlaybook,
         J5_ARTIFACT_WS_METHODS.subscribeArtifactChanges,
+        J5_ARTIFACT_WS_METHODS.listArtifacts,
         ACTIONS.previewCrewProposal,
+        ...Object.values(J5_CLIENT_READ_WS_METHODS),
       ]) {
         expect(guards[method], method).toBeUndefined();
       }

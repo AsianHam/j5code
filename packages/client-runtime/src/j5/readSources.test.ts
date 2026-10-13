@@ -1,11 +1,10 @@
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId } from "@t3tools/contracts";
-import { J5_LEDGER_CAPABILITIES } from "@t3tools/contracts/j5";
+import { J5ActionError, J5_LEDGER_CAPABILITIES } from "@t3tools/contracts/j5";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
-import { J5HttpError } from "./http.ts";
 import {
   createJ5ReadSourcesAtom,
   resolveJ5ReadSource,
@@ -30,7 +29,7 @@ it("retains data but reports an outage or refresh failure instead of an empty su
   const failed = resolveJ5ReadSource({
     ...source,
     result: AsyncResult.failure(
-      Cause.fail(new J5HttpError({ status: 503, detail: "Unavailable" })),
+      Cause.fail(new J5ActionError({ code: "SqlError", message: "Unavailable" })),
       { previousSuccess: Option.some(success) },
     ),
   });
@@ -45,15 +44,7 @@ it("keeps unsupported, authentication failure, and not-yet-connected states dist
     resolveJ5ReadSource({
       ...source,
       result: AsyncResult.failure(
-        Cause.fail(new J5HttpError({ status: 404, detail: "Not found" })),
-      ),
-    }).status,
-  ).toBe("unsupported");
-  expect(
-    resolveJ5ReadSource({
-      ...source,
-      result: AsyncResult.failure(
-        Cause.fail(new J5HttpError({ status: 401, detail: "Pair again" })),
+        Cause.fail(new J5ActionError({ code: "A2ALocalOperatorNotFoundError", message: "Gone" })),
       ),
     }).status,
   ).toBe("error");
@@ -71,7 +62,7 @@ it("shows environment labels only once items span more than one environment", ()
   expect(spansMultipleEnvironments([alpha, bravo])).toBe(true);
 });
 
-/** Reads one environment's source for a capability key, counting the route calls it makes. */
+/** Reads one environment's source for a capability key, counting the reads it makes. */
 const readSourceFor = (
   capabilities: Partial<Record<keyof typeof J5_LEDGER_CAPABILITIES, boolean>>,
   capability: keyof typeof J5_LEDGER_CAPABILITIES,
@@ -120,8 +111,14 @@ it("shows an older client's J5 views as unsupported against a project-keyed serv
     data: ["row"],
     routeCalls: 1,
   });
-  // A key that is missing is probed, which is why the server states the older two as false.
-  expect(readSourceFor({ j5ProjectLedger: true }, "j5HumanInbox").routeCalls).toBe(1);
+});
+
+it("shows a server with no J5 ledger as unsupported without reading it", () => {
+  expect(readSourceFor({}, "j5ProjectLedger")).toEqual({
+    status: "unsupported",
+    data: null,
+    routeCalls: 0,
+  });
 });
 
 it("shows nothing from a server once its connection is known to be a guest's", () => {
@@ -148,7 +145,7 @@ it("shows nothing from a server once its connection is known to be a guest's", (
       Atom.make(() => {
         routeCalls += 1;
         return AsyncResult.failure<ReadonlyArray<string>, unknown>(
-          Cause.fail(new J5HttpError({ status: 403, detail: "Not shared" })),
+          Cause.fail(new J5ActionError({ code: "forbidden", message: "Not shared" })),
         );
       }),
     guestAtom: () => guest,

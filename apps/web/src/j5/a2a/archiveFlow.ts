@@ -38,11 +38,11 @@ export function needsArchiveWarning(preflight: ArchivePreflight): boolean {
   const { facts } = preflight;
   if (facts === null) return true;
   if (facts.state !== "registered") return false;
-  // A missing Crew read (older server) and a failed one both warn: neither is "no Crews".
+  // A failed Crew read warns: it is not "no Crews".
   return (
     facts.openExchanges.length > 0 ||
     facts.placementSubtree.state !== "none" ||
-    facts.liveCrews == null ||
+    facts.liveCrews === null ||
     facts.liveCrews.length > 0
   );
 }
@@ -73,7 +73,7 @@ export function formatArchiveWarning(input: {
   if (facts.state !== "registered") {
     return { message: title, content: null, confirmLabel: "Archive" };
   }
-  const liveCrews = facts.liveCrews ?? null;
+  const { liveCrews } = facts;
   const crews: ArchiveWarningCrews =
     liveCrews === null
       ? { state: "unknown" }
@@ -163,7 +163,7 @@ export async function archiveWithPreflight<Result>(input: {
     preflight = { facts: null, participantLabels: new Map() };
   }
   const crewSeat = preflight.facts?.state === "registered" ? preflight.facts.crewSeat : null;
-  if (crewSeat != null) {
+  if (crewSeat !== null) {
     toastManager.add({
       type: "warning",
       title: `${input.threadTitle} is seat ${crewSeat.seat} of Crew ${crewSeat.crewName}`,

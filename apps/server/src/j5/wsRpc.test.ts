@@ -193,7 +193,10 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
         Effect.gen(function* () {
           const artifacts = makeArtifactRpcHandlers({
             projects: { getById: () => Effect.die("unused") },
-            artifacts: { watch: () => Effect.die("unused") as never },
+            artifacts: {
+              watch: () => Effect.die("unused") as never,
+              list: () => Effect.die("unused"),
+            },
             deletion: yield* ArtifactDeletion,
           });
           return {
@@ -299,8 +302,10 @@ describe("J5 client action RPC scopes", () => {
   it("guards every J5 method that needs more than read on the client, with the server's scope", () => {
     const guarded: Readonly<Record<string, AuthEnvironmentScope>> = CLIENT_GUARDED_RPC_SCOPES;
     for (const [method, scope] of Object.entries(J5_RPC_SCOPES)) {
+      // A read needs no guard, whichever read scope it carries: the peer list is `access:read`.
       const unguarded =
         scope === AuthOrchestrationReadScope ||
+        scope === AuthAccessReadScope ||
         (UNGUARDED_QUERIES as ReadonlyArray<string>).includes(method);
       assert.equal(guarded[method], unguarded ? undefined : scope, method);
     }
