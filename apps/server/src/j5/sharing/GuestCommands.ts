@@ -141,6 +141,17 @@ export const guestCommand = (command: OrchestrationV2Command): GuestCommandDecis
       if (command.attachmentsByQuestionId !== undefined) {
         return refuse("A guest can answer in text only: no attachments.");
       }
+      // An answer is words, or a choice of options: what the server can put its author on.
+      if (
+        command.answers !== undefined &&
+        !Object.values(command.answers).every(
+          (answer) =>
+            typeof answer === "string" ||
+            (Array.isArray(answer) && answer.every((value) => typeof value === "string")),
+        )
+      ) {
+        return refuse("A guest answers a question in text.");
+      }
       if (command.decision !== undefined && !GUEST_DECISIONS.has(command.decision)) {
         return refuse("A guest can approve or decline this one request; a member decides more.");
       }

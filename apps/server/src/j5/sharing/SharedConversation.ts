@@ -74,6 +74,32 @@ export const authorLine = (author: Pick<Author, "kind" | "displayName">, editedB
     ? `[Message from ${authorLabel(author)}]`
     : `[Message from ${authorLabel(author)}, edited by ${authorLabel(editedBy)}]`;
 
+/**
+ * What the platform puts first on a person's answer to a question the agent asked, in a shared
+ * conversation. An answer does not pass through a message of the person's own: on some
+ * providers upstream writes it into a message itself, on others it goes back as the result of
+ * the agent's tool call. Either way the agent reads the answer's words, so its author goes on
+ * the words. Everything after this in the answer was typed or chosen by that person.
+ */
+export const answerLine = (author: Pick<Author, "kind" | "displayName">) =>
+  `[Answer from ${authorLabel(author)}]`;
+
+/** A question's answers with their author on each: on the text, or first among chosen options. */
+const answersFrom = (
+  answers: Readonly<Record<string, unknown>>,
+  author: Pick<Author, "kind" | "displayName">,
+) =>
+  Object.fromEntries(
+    Object.entries(answers).map(([question, answer]) => [
+      question,
+      typeof answer === "string"
+        ? `${answerLine(author)} ${answer}`
+        : Array.isArray(answer)
+          ? [answerLine(author), ...answer]
+          : answer,
+    ]),
+  );
+
 const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
@@ -384,6 +410,15 @@ const make = <E>(
     session: SessionIdentity,
     command: OrchestrationV2Command,
   ) {
+    if (command.type === "runtime-request.respond") {
+      // An answer in words says whose it is, as a message does; an approval carries no words.
+      if (command.answers === undefined) return command;
+      if (!(yield* isSharedConversation(sql, command.threadId))) return command;
+      const answerer = yield* sessionAuthor(session);
+      return answerer === null
+        ? command
+        : { ...command, answers: answersFrom(command.answers, answerer) };
+    }
     if (command.type !== "message.dispatch" && command.type !== "queued-run.edit") return command;
     if (command.type === "message.dispatch") {
       const { shared, note } = yield* announce(command.threadId, command.messageId);
@@ -462,6 +497,10 @@ const make = <E>(
           ? command
           : { ...command, text: stampEdit(command.text, original, author) };
       }
+      case "runtime-request.respond":
+        return command.answers === undefined
+          ? command
+          : { ...command, answers: answersFrom(command.answers, author) };
       default:
         return command;
     }
