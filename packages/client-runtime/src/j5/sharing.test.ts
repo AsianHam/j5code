@@ -100,6 +100,10 @@ const environments = Effect.fn(function* (
               otherReads.push(`${environmentId}:crew`);
               return Effect.succeed({ proposals: [] });
             },
+            [J5_CLIENT_READ_WS_METHODS.listThreadRosters]: () => {
+              otherReads.push(`${environmentId}:rosters`);
+              return Effect.succeed({ proposals: [] });
+            },
             [J5_ARTIFACT_WS_METHODS.listArtifacts]: () => {
               otherReads.push(`${environmentId}:artifacts`);
               return Effect.succeed({ entries: [] });
@@ -276,6 +280,13 @@ describe("a guest's connection", () => {
         }),
       );
       expect(AsyncResult.isSuccess(listed)).toBe(true);
+      // The rosters waiting on a thread the guest can read are theirs to ask for too.
+      const rosters = atoms.threadRosters({
+        environmentId: SHARED_SERVER,
+        input: { threadId: JOINED },
+      });
+      yield* AtomRegistry.mount(registry, rosters);
+      expect(yield* AtomRegistry.getResult(registry, rosters)).toEqual([]);
 
       const refused = <A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
         AtomRegistry.mount(registry, atom).pipe(
@@ -289,7 +300,7 @@ describe("a guest's connection", () => {
       expect(yield* refused(atoms.crewProposals({ environmentId: SHARED_SERVER, input: {} }))).toBe(
         true,
       );
-      expect(otherReads).toEqual([`${SHARED_SERVER}:artifacts`]);
+      expect(otherReads).toEqual([`${SHARED_SERVER}:artifacts`, `${SHARED_SERVER}:rosters`]);
       expect(fleetReads).toEqual([]);
     }),
   );

@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { presentAgentPersonaCatalog } from "@t3tools/client-runtime/j5/agent-personas";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { PencilIcon, PlusIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -15,6 +15,7 @@ import { addSeat, describeSeatAgent, removeSeat, saveSeat } from "./crewProposal
 import { describePersonaSwap, removedSeatSteps, stepTitle, unownedSteps } from "./crewPlaybookPlan";
 import { CrewSeatDialog } from "./CrewSeatDialog";
 import { crewSeatStopsForApprovals, describeCrewSeatWorkspace } from "./crewSeatRuntime";
+import { useCanOperateThread } from "../sharing/guestAccess";
 import type { CrewProposalSeatRuntime } from "@t3tools/contracts/j5";
 import { useParticipantLabels } from "../a2a/ParticipantIdentitiesClient";
 import { useCrewProposalPreview } from "./useCrewProposalPreview";
@@ -48,14 +49,22 @@ export function CrewProposalCard(props: {
     seats: ReadonlyArray<CrewProposalSeat>,
     approvalToken?: string,
   ) => void;
+  /**
+   * The roster is answered as it was proposed: seats are shown and cannot be changed. True for a
+   * guest, whose answer is checked against their level on the Captain's thread.
+   */
+  readonly asProposed?: boolean;
   /** Omitted when the card already sits in the Captain's thread. */
   readonly onOpenCaptain?: (() => void) | undefined;
 }) {
   const { proposal } = props;
   // Resolving a roster launches or refuses agents; the command says whether this session may.
-  const canResolve = useAtomValue(
+  const permitted = useAtomValue(
     j5Environment.resolveCrewProposal.permissionAtom(props.environmentId),
   );
+  const mayWrite = useCanOperateThread(props.environmentId, proposal.captainThreadId as ThreadId);
+  const canResolve = props.asProposed === true ? permitted && mayWrite : permitted;
+  const seatsCanChange = props.asProposed !== true;
   const [seats, setSeats] = useState<ReadonlyArray<CrewProposalSeat>>(proposal.requestedSeats);
   const [editor, setEditor] = useState<{
     readonly seat: CrewProposalSeat | null;
@@ -74,7 +83,13 @@ export function CrewProposalCard(props: {
     [catalog.data],
   );
   const agents = useMemo(() => rows.filter((agent) => agent.availability === "available"), [rows]);
-  const preview = useCrewProposalPreview(props.environmentId, proposal.id, seats, props.busy);
+  const preview = useCrewProposalPreview(
+    props.environmentId,
+    proposal.id,
+    seats,
+    props.busy,
+    props.asProposed === true,
+  );
   const runtimeFor = (seat: CrewProposalSeat) =>
     preview.runtimeSeats?.find((row) => row.seat === seat.seat);
   const stopping = seats.filter((seat) => crewSeatStopsForApprovals(seat, runtimeFor(seat))).length;
@@ -205,7 +220,7 @@ export function CrewProposalCard(props: {
                     </p>
                   ))}
                 </div>
-                <div className="flex items-center justify-self-end gap-1">
+                <div className="flex items-center justify-self-end gap-1" hidden={!seatsCanChange}>
                   <Button
                     aria-label={`Edit seat ${seat.seat}`}
                     disabled={props.busy}
@@ -249,6 +264,7 @@ export function CrewProposalCard(props: {
       <Button
         className="mt-3"
         aria-label="Add crew member"
+        hidden={!seatsCanChange}
         disabled={props.busy}
         size="sm"
         type="button"

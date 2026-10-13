@@ -35,6 +35,7 @@ describe("crew notices in the Captain's thread", () => {
       proposalId: "crew:j5:a2a:mcp:s:proposal:r1",
       requestKind: "roster",
       decision: "approved",
+      decidedBy: null,
       crewName: "Invoice Export PR",
       crewInstanceId: "crew:1",
       crewVersion: 1,
@@ -75,6 +76,19 @@ describe("crew notices in the Captain's thread", () => {
         text: approvedGate.replace("thread_id=thread:c", "thread_id=thread:c tail=junk"),
       }),
     ).toBeNull();
+  });
+
+  it("says who decided when the server names them, as it does in a shared conversation", () => {
+    const named = approvedGate.replace(
+      "decision: approved",
+      "decision: approved\ndecided_by: Priya (guest)",
+    );
+    const read = (text: string) => {
+      const notice = presentCrewNotice({ role: "user", createdBy: "system", text });
+      return notice?.kind === "gate" ? notice.decidedBy : undefined;
+    };
+    expect(read(named)).toBe("Priya (guest)");
+    expect(read(approvedGate)).toBeNull();
   });
 
   it("still presents a launch notice that names the playbook its Crew follows", () => {
@@ -178,6 +192,7 @@ describe("crew notices in the Captain's thread", () => {
     expect(declined).toMatchObject({
       kind: "gate",
       decision: "declined",
+      decidedBy: null,
       crewInstanceId: null,
       crewVersion: null,
       roster: [],

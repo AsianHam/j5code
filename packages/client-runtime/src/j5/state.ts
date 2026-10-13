@@ -2,6 +2,7 @@ import {
   type ClientGuardedRpcTag,
   J5_ARTIFACT_WS_METHODS,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   J5_CLIENT_ACTION_WS_METHODS,
@@ -74,7 +75,10 @@ type J5ReadTag = Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>;
  * readable by a guest of that project (Shared server AC9). A read the server starts to allow a
  * guest is added here, or the guest's client never asks.
  */
-const READS_A_GUEST_SENDS: ReadonlySet<string> = new Set([J5_ARTIFACT_WS_METHODS.listArtifacts]);
+const READS_A_GUEST_SENDS: ReadonlySet<string> = new Set([
+  J5_ARTIFACT_WS_METHODS.listArtifacts,
+  J5_CLIENT_READ_WS_METHODS.listThreadRosters,
+]);
 
 /**
  * One J5 read over the environment's socket. No J5 read is a guarded method. A guest is shown
@@ -228,6 +232,17 @@ export function createJ5EnvironmentAtoms<R, E>(
       refreshTrigger: rereadOn("crew"),
       execute: (_input: Record<string, never>) =>
         j5Read(J5_CLIENT_READ_WS_METHODS.listCrewProposals, {}).pipe(
+          Effect.map((response) => response.proposals),
+        ),
+    }),
+    // The rosters waiting on one thread: what a guest reads, since the list of every open
+    // proposal is not theirs. The server has no feed a guest may follow, so the gate asks again
+    // when the thread's run changes.
+    threadRosters: createEnvironmentQueryAtomFamily(runtime, {
+      label: "j5:thread-rosters",
+      staleTimeMs: 0,
+      execute: (input: { readonly threadId: ThreadId }) =>
+        j5Read(J5_CLIENT_READ_WS_METHODS.listThreadRosters, input).pipe(
           Effect.map((response) => response.proposals),
         ),
     }),

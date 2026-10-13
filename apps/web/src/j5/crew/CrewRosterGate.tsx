@@ -1,9 +1,12 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useCallback, useEffect, useState } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { notifyHumanInboxChanged } from "../a2a/humanInboxRefresh";
-import { crewProposalsQueryAtom } from "../state";
+import { useThreadShell } from "../../state/entities";
+import { useIsGuest } from "../sharing/guestAccess";
+import { crewProposalsQueryAtom, j5Environment } from "../state";
 import { CrewProposalCard } from "./CrewProposalCard";
 import { rosterGatesForThread } from "./crewProposals.logic";
 import {
@@ -24,9 +27,26 @@ export function CrewRosterGate(props: {
   readonly threadId: ThreadId | null | undefined;
 }) {
   const { environmentId, threadId } = props;
+  // A guest is not shown every open proposal on the server, only the rosters waiting on a thread
+  // they can read; they approve or decline one as proposed (Shared conversations AC10).
+  const isGuest = useIsGuest(environmentId ?? null);
   const query = useEnvironmentQuery(
-    environmentId !== undefined && threadId != null ? crewProposalsQueryAtom(environmentId) : null,
+    environmentId === undefined || threadId == null
+      ? null
+      : isGuest
+        ? j5Environment.threadRosters({ environmentId, input: { threadId } })
+        : crewProposalsQueryAtom(environmentId),
   );
+  // No feed tells a guest a roster was proposed or settled; the Captain's run changing does.
+  const runStatus = useThreadShell(
+    isGuest && environmentId !== undefined && threadId != null
+      ? scopeThreadRef(environmentId, threadId)
+      : null,
+  )?.latestRun?.status;
+  const { refresh } = query;
+  useEffect(() => {
+    if (isGuest) refresh();
+  }, [isGuest, refresh, runStatus]);
   useCrewProposalsRefresh();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,18 +67,23 @@ export function CrewRosterGate(props: {
         await resolveCrewProposal(
           environmentId,
           decision === "approve"
-            ? { proposalId: proposal.id, decision, seats, approvalToken: approvalToken! }
+            ? isGuest
+              ? { proposalId: proposal.id, decision, approvalToken: approvalToken! }
+              : { proposalId: proposal.id, decision, seats, approvalToken: approvalToken! }
             : { proposalId: proposal.id, decision },
         );
-        notifyHumanInboxChanged(environmentId);
-        await refreshCrewProposals(environmentId).catch(() => undefined);
+        if (isGuest) refresh();
+        else {
+          notifyHumanInboxChanged(environmentId);
+          await refreshCrewProposals(environmentId).catch(() => undefined);
+        }
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "Could not resolve the crew request.");
       } finally {
         setBusyId(null);
       }
     },
-    [environmentId],
+    [environmentId, isGuest, refresh],
   );
 
   const gates = rosterGatesForThread(query.data ?? [], threadId);
@@ -80,6 +105,7 @@ export function CrewRosterGate(props: {
             proposal={proposal}
             environmentId={environmentId}
             busy={busyId === proposal.id}
+            asProposed={isGuest}
             onResolve={(decision, seats, approvalToken) =>
               void resolve(proposal, decision, seats, approvalToken)
             }

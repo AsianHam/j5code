@@ -17,6 +17,8 @@ export function useCrewProposalPreview(
   proposalId: string,
   seats: ReadonlyArray<CrewProposalSeat>,
   busy: boolean,
+  /** Ask for the roster as it was proposed, naming no seats: all a guest may ask (AC10). */
+  asProposed = false,
 ) {
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<PreviewState | null>(null);
@@ -28,7 +30,10 @@ export function useCrewProposalPreview(
   useEffect(() => {
     if (environmentId === null || busy) return;
     let current = true;
-    void previewCrewProposal(environmentId, { proposalId, seats }).then(
+    void previewCrewProposal(
+      environmentId,
+      asProposed ? { proposalId } : { proposalId, seats },
+    ).then(
       (data) => {
         if (!current) return;
         // Refuse incomplete previews instead of approving seats with undisclosed settings.
