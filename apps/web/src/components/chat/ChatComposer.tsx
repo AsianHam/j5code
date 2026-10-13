@@ -6867,7 +6867,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         isResponding={respondingRequestIds.includes(
                           activePendingApproval.requestId,
                         )}
-                        options={activePendingApproval.options}
+                        options={guestComposer.approvalOptions(activePendingApproval.options)}
                         canRespond={activePendingApproval.responseCapability === "live"}
                         onRespondToApproval={onRespondToApproval}
                       />
