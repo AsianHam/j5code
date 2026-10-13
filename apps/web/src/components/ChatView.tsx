@@ -40,6 +40,7 @@ import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { CrewRosterGate } from "../j5/crew/CrewRosterGate";
 import { useCanOperateThread } from "../j5/sharing/guestAccess";
+import { useMayInterruptThread } from "../j5/sharing/guestComposer";
 import { expandPlaybookPrompt } from "@t3tools/client-runtime/j5/playbooks";
 import { PlaybookBoard } from "../j5/playbooks/PlaybookBoard";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -4580,8 +4581,10 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef]);
+  // J5: a guest who may write to a shared thread still never stops a run.
   const canInterruptRunningThread =
-    canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+    useMayInterruptThread(environmentId, canOperateThread) &&
+    deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
   const onInterrupt = useCallback(async () => {
     if (
       !activeThread ||
