@@ -30,7 +30,13 @@ import {
   isSharedConversation,
   writesVia,
 } from "./PersonAccess.ts";
-import { Writer, changeNote, firstNote } from "./sharedConversationNotes.ts";
+import {
+  Writer,
+  approvalsLine,
+  changeNote,
+  firstNote,
+  withApprovals,
+} from "./sharedConversationNotes.ts";
 
 /**
  * A shared conversation: a thread a guest holds Collaborate on
@@ -257,18 +263,81 @@ const make = <E>(
    * `startedAt` in its payload (`SharedConversation.integration.test.ts` fails if upstream
    * reshapes them).
    */
-  const carrierLost = (messageId: string) =>
+  const carrierState = (messageId: string) =>
     sql<{ readonly status: string | null; readonly started_at: string | null }>`
       SELECT run.status AS status, json_extract(run.payload_json, '$.startedAt') AS started_at
       FROM orchestration_v2_projection_messages AS message
       LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = message.run_id
       WHERE message.message_id = ${messageId}
     `.pipe(
-      Effect.map(
-        (rows) =>
-          rows[0] === undefined || (rows[0].status === "cancelled" && rows[0].started_at === null),
+      Effect.map((rows): "lost" | "pending" | "delivered" =>
+        rows[0] === undefined || (rows[0].status === "cancelled" && rows[0].started_at === null)
+          ? "lost"
+          : rows[0].status === "queued"
+            ? "pending"
+            : "delivered",
       ),
     );
+  const carrierLost = (messageId: string) =>
+    carrierState(messageId).pipe(Effect.map((state) => state === "lost"));
+
+  /**
+   * The approvals answered on a thread that its agent has not been told of (AC9), marked as
+   * told by the message now being taken in. A telling whose message was withdrawn before it
+   * ran is undone first, so those approvals are told again; one whose message is known to have
+   * reached the agent is closed and not looked at again. With `silently`, what is waiting is
+   * marked as told and nothing is returned: a thread shared again does not hear of approvals
+   * from while it was not shared.
+   */
+  const untoldApprovals = Effect.fn("j5.sharing.sharedConversation.untoldApprovals")(function* (
+    threadId: ThreadId,
+    carrier: MessageId,
+    silently: boolean,
+  ) {
+    const open = yield* sql<{ readonly told_message_id: string }>`
+      SELECT DISTINCT told_message_id FROM j5_a2a_prompt_answer
+      WHERE thread_id = ${threadId} AND told_message_id IS NOT NULL AND told_delivered = 0
+    `;
+    for (const { told_message_id } of open) {
+      const state = yield* carrierState(told_message_id);
+      if (state === "lost") {
+        yield* sql`
+          UPDATE j5_a2a_prompt_answer SET told_message_id = NULL
+          WHERE thread_id = ${threadId} AND told_message_id = ${told_message_id}
+        `;
+      } else if (state === "delivered") {
+        yield* sql`
+          UPDATE j5_a2a_prompt_answer SET told_delivered = 1
+          WHERE thread_id = ${threadId} AND told_message_id = ${told_message_id}
+        `;
+      }
+    }
+    const waiting = yield* sql<{
+      readonly person_kind: PersonKind;
+      readonly display_name: string | null;
+      readonly decision: string;
+    }>`
+      SELECT person_kind, display_name, decision FROM j5_a2a_prompt_answer
+      WHERE thread_id = ${threadId} AND settled = 1 AND decision IS NOT NULL
+        AND told_message_id IS NULL
+      ORDER BY answered_at, request_id
+    `;
+    if (waiting.length === 0) return null;
+    yield* sql`
+      UPDATE j5_a2a_prompt_answer
+      SET told_message_id = ${carrier}, told_delivered = ${silently ? 1 : 0}
+      WHERE thread_id = ${threadId} AND settled = 1 AND decision IS NOT NULL
+        AND told_message_id IS NULL
+    `;
+    return silently
+      ? null
+      : approvalsLine(
+          waiting.map((row) => ({
+            label: authorLabel({ kind: row.person_kind, displayName: row.display_name }),
+            decision: row.decision,
+          })),
+        );
+  });
 
   /**
    * Works out what the agent must be told about who can write to its thread (AC3, AC4), as a
@@ -312,12 +381,17 @@ const make = <E>(
     // A thread shared again after it stopped being one is told as a thread newly shared.
     const wasShared = told !== null && told.some((writer) => writer.kind === "guest");
     const note = wasShared ? changeNote(told, now) : shared ? firstNote(now) : null;
+    // An agent that knows its thread is shared is told who answered its approval prompts, on
+    // the same block; the last note of a thread that has stopped being shared carries what is
+    // left. A thread newly shared, or shared again, starts from here.
+    const approvals =
+      wasShared || shared ? yield* untoldApprovals(threadId, carrier, !wasShared) : null;
     if (note === null) {
       // Never told and nothing to tell: shared and unshared with no message in between.
       if (told === null && row !== undefined) {
         yield* sql`DELETE FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}`;
       }
-      return { shared, note: null };
+      return { shared, note: withApprovals(null, approvals) };
     }
     const toldAt = DateTime.formatIso(yield* DateTime.now);
     const previous = told === null ? null : yield* encodeTold(told);
@@ -331,7 +405,7 @@ const make = <E>(
         carrier_message_id = excluded.carrier_message_id,
         told_at = excluded.told_at
     `;
-    return { shared, note };
+    return { shared, note: withApprovals(note, approvals) };
   });
 
   /** The person a connection writes as: its guest, or the server's owner for any other. */
@@ -576,21 +650,27 @@ const make = <E>(
           if (author === null) return;
           const answeredAt = DateTime.formatIso(yield* DateTime.now);
           const keepFirst = when === "claimed" ? 1 : 0;
+          // What an approval was answered with; a question's answer and a dismissal have none.
+          const decision =
+            command.type === "runtime-request.respond" ? (command.decision ?? null) : null;
           yield* sql`
             INSERT INTO j5_a2a_prompt_answer (
               thread_id, request_id, person_id, person_kind, display_name, command_id,
-              answered_at
+              answered_at, decision, settled
             ) VALUES (
               ${command.threadId}, ${command.requestId}, ${author.personId}, ${author.kind},
-              ${author.displayName}, ${command.commandId}, ${answeredAt}
+              ${author.displayName}, ${command.commandId}, ${answeredAt}, ${decision},
+              ${keepFirst === 1 ? 0 : 1}
             )
             ON CONFLICT (thread_id, request_id) DO UPDATE SET
               person_id = excluded.person_id,
               person_kind = excluded.person_kind,
               display_name = excluded.display_name,
               command_id = excluded.command_id,
-              answered_at = excluded.answered_at
-            WHERE ${keepFirst} = 0 AND j5_a2a_prompt_answer.command_id <> excluded.command_id
+              answered_at = excluded.answered_at,
+              decision = excluded.decision,
+              settled = 1
+            WHERE ${keepFirst} = 0
           `;
         }).pipe(
           Effect.catch((cause) =>

@@ -8,7 +8,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // An approval or a question, by upstream's request id. The row is written before upstream
+  // An approval or a question, by upstream's request id. `decision` is what an approval was
+  // answered with; a question has none. `settled` is set once upstream's log shows the answer
+  // settled the prompt. An approval is told to the agent in the note at the top of the next
+  // message a person sends: `told_message_id` is that message, and `told_delivered` is set
+  // once the message is known to have reached the agent. The row is written before upstream
   // takes the answer, so it is there when the prompt is seen to settle; `command_id` is the
   // answer it was written for, by which it is taken back if upstream refuses that answer.
   yield* sql`
@@ -20,6 +24,10 @@ export default Effect.gen(function* () {
       display_name TEXT,
       command_id TEXT NOT NULL,
       answered_at TEXT NOT NULL,
+      decision TEXT,
+      settled INTEGER NOT NULL DEFAULT 0 CHECK (settled IN (0, 1)),
+      told_message_id TEXT,
+      told_delivered INTEGER NOT NULL DEFAULT 0 CHECK (told_delivered IN (0, 1)),
       PRIMARY KEY (thread_id, request_id)
     )
   `;

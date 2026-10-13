@@ -1594,4 +1594,141 @@ const each = <A, E>(
       assert.isTrue((yield* told).some(([requestId]) => requestId === "request:after"));
     }),
   );
+  each("the agent is told who answered its approval prompts, on the next message", () =>
+    Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const conversation = yield* sharedConversation;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* thread("thread:approvals");
+      yield* access.setOperatorName("Jackson");
+      const priya = yield* guest(PRIYA, "Priya", threadId, "collaborate");
+      const target = { kind: "thread" as const, threadId };
+      let answered = 0;
+      // An answer as `ws.ts` carries it through upstream, which accepts it and logs the prompt
+      // settling; `replayed` is upstream answering "accepted" for an id it already had.
+      const answer = (
+        who: EnvironmentAuth.AuthenticatedSession,
+        body: Record<string, unknown>,
+        replayed = false,
+      ) => {
+        answered += 1;
+        const command = {
+          type: "runtime-request.respond",
+          commandId: CommandId.make(`command:approval:${answered}`),
+          threadId,
+          requestId: RuntimeRequestId.make(`request:approval:${answered}`),
+          ...body,
+        } as const;
+        return conversation.admit(who, command).pipe(
+          Effect.tap(() => (replayed ? Effect.void : upstreamSettled(command))),
+          Effect.onExit((exit) => conversation.settled(who, command, exit)),
+        );
+      };
+      const line = (text: string) =>
+        ["<j5_shared_conversation>", text, "</j5_shared_conversation>"].join("\n");
+
+      // The first message tells the agent the thread is shared, and nothing of approvals.
+      yield* send(MEMBER, message(threadId, "Let us begin."));
+      assert.strictEqual(notes.length, 1);
+      assert.isFalse(notes[0]!.text.includes("Approval prompts"));
+
+      yield* answer(PRIYA, { decision: "accept" });
+      yield* answer(PRIYA, { decision: "accept" });
+      yield* answer(PRIYA, { decision: "decline" });
+      yield* answer(MEMBER, { decision: "acceptForSession" });
+      // Not approvals, or not answers that settled anything: none of these is counted.
+      yield* answer(PRIYA, { answers: { q1: "Yes." } });
+      yield* answer(PRIYA, { decision: "accept" }, true);
+
+      // The next message a person sends carries one line, whoever sends it, and only once.
+      yield* send(PRIYA, message(threadId, "What next?"));
+      assert.strictEqual(
+        notes[1]?.text,
+        line(
+          "Approval prompts answered since you were last told: Priya (guest) approved 2, declined 1; Jackson (member) approved 1.",
+        ),
+      );
+      yield* send(MEMBER, message(threadId, "Carry on."));
+      assert.strictEqual(notes.length, 2);
+
+      // A change in who can write and an approval, due together, ride in one block.
+      yield* answer(MEMBER, { decision: "cancel" });
+      const sam = yield* guest(SAM, "Sam", threadId, "collaborate");
+      yield* send(MEMBER, message(threadId, "Welcome, Sam."));
+      assert.strictEqual(
+        notes[2]?.text,
+        [
+          "<j5_shared_conversation>",
+          "Sam (guest) can now write to this thread.",
+          "Who can write now: Jackson (member), Priya (guest), Sam (guest).",
+          "Approval prompts answered since you were last told: Jackson (member) cancelled 1.",
+          "</j5_shared_conversation>",
+        ].join("\n"),
+      );
+
+      // The message that carries the line is queued and then withdrawn before it runs: the
+      // agent was never told, so the next message carries it.
+      yield* answer(SAM, { decision: "accept" });
+      const carrier = message(threadId, "One more thing.");
+      yield* send(SAM, carrier);
+      assert.strictEqual(notes.length, 4);
+      yield* queued(threadId, "run:approvals-carrier", carrier.messageId);
+      yield* sql`
+        UPDATE orchestration_v2_projection_runs SET status = 'cancelled'
+        WHERE run_id = 'run:approvals-carrier'
+      `;
+      yield* send(MEMBER, message(threadId, "Where were we?"));
+      assert.strictEqual(
+        notes[4]?.text,
+        line("Approval prompts answered since you were last told: Sam (guest) approved 1."),
+      );
+      yield* send(MEMBER, message(threadId, "Good."));
+      assert.strictEqual(notes.length, 5);
+
+      // The thread stops being shared with an approval untold: the last note carries it.
+      yield* answer(PRIYA, { decision: "accept" });
+      yield* access.removeGrant({ personId: priya.personId, target });
+      yield* access.removeGrant({ personId: sam.personId, target });
+      yield* send(MEMBER, message(threadId, "Just me now."));
+      assert.isTrue(notes[5]!.text.includes("Only members can write to this thread now."));
+      assert.isTrue(
+        notes[5]!.text.endsWith(
+          "Approval prompts answered since you were last told: Priya (guest) approved 1.\n</j5_shared_conversation>",
+        ),
+      );
+      // After that the agent is told of no approval: the thread is one person's again.
+      yield* answer(MEMBER, { decision: "accept" });
+      const plain = message(threadId, "Back to work.");
+      assert.strictEqual(yield* send(MEMBER, plain), plain);
+      // Shared again, it starts afresh: what was answered in between is not brought up.
+      yield* access.putGrant({ personId: sam.personId, target, level: "collaborate" });
+      yield* send(MEMBER, message(threadId, "Sam is back."));
+      assert.isTrue(notes[6]!.text.includes("This thread is now a shared conversation"));
+      assert.isFalse(notes[6]!.text.includes("Approval prompts"));
+      yield* send(MEMBER, message(threadId, "Nothing to add."));
+      assert.strictEqual(notes.length, 7);
+
+      // A thread that was never shared records and tells nothing.
+      const alone = yield* thread("thread:approvals-alone");
+      const unshared = {
+        type: "runtime-request.respond",
+        commandId: CommandId.make("command:approval:alone"),
+        threadId: alone,
+        requestId: RuntimeRequestId.make("request:approval:alone"),
+        decision: "accept",
+      } as const;
+      yield* conversation.admit(MEMBER, unshared).pipe(
+        Effect.tap(() => upstreamSettled(unshared)),
+        Effect.onExit((exit) => conversation.settled(MEMBER, unshared, exit)),
+      );
+      const toAlone = message(alone, "Hello.");
+      assert.strictEqual(yield* send(MEMBER, toAlone), toAlone);
+      assert.strictEqual(
+        (yield* sql<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM j5_a2a_prompt_answer WHERE thread_id = ${alone}
+        `)[0]!.n,
+        0,
+      );
+    }),
+  );
 }

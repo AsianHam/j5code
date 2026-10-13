@@ -101,3 +101,50 @@ export const changeNote = (before: ReadonlyArray<Writer>, after: ReadonlyArray<W
     ].join("\n"),
   ]);
 };
+
+/** An approval a person answered, as the agent is told of it. */
+export interface AnsweredApproval {
+  /** `Priya (guest)`, `Jackson (member)`. */
+  readonly label: string;
+  readonly decision: string;
+}
+
+const counted = (count: number, verb: string) => (count === 0 ? [] : [`${verb} ${count}`]);
+
+/**
+ * The line that tells an agent who answered its approval prompts since it was last told (AC9):
+ * a count per person, in the order they first answered. It names no command: the agent has
+ * each one in its own history, and a command's text can be long. `null` when there are none.
+ */
+export const approvalsLine = (answered: ReadonlyArray<AnsweredApproval>) => {
+  if (answered.length === 0) return null;
+  const people = new Map<string, { approved: number; declined: number; cancelled: number }>();
+  for (const { label, decision } of answered) {
+    const tally = people.get(label) ?? { approved: 0, declined: 0, cancelled: 0 };
+    if (decision === "decline") tally.declined += 1;
+    else if (decision === "cancel") tally.cancelled += 1;
+    else tally.approved += 1;
+    people.set(label, tally);
+  }
+  const parts = [...people].map(
+    ([label, tally]) =>
+      `${label} ${[
+        ...counted(tally.approved, "approved"),
+        ...counted(tally.declined, "declined"),
+        ...counted(tally.cancelled, "cancelled"),
+      ].join(", ")}`,
+  );
+  return `Approval prompts answered since you were last told: ${parts.join("; ")}.`;
+};
+
+/**
+ * One block for the top of a message: the note about who can write, when there is one, with
+ * the line about answered approvals as its last line, when there is one.
+ */
+export const withApprovals = (writersNote: string | null, line: string | null) => {
+  if (line === null) return writersNote;
+  if (writersNote === null) return note([line]);
+  const body = writersNote.slice(0, -`\n${NOTE_CLOSE}`.length);
+  // A first note is paragraphs; a change note is lines.
+  return `${body}${body.includes("\n\n") ? "\n\n" : "\n"}${line}\n${NOTE_CLOSE}`;
+};
