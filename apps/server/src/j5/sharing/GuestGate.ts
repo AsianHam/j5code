@@ -11,7 +11,11 @@ import {
   type WsRpcGroup,
   authScopeRequiredResponse,
 } from "@t3tools/contracts";
-import { J5_SHARING_WS_METHODS } from "@t3tools/contracts/j5";
+import {
+  J5_CLIENT_ACTION_WS_METHODS,
+  J5_CLIENT_READ_WS_METHODS,
+  J5_SHARING_WS_METHODS,
+} from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -50,7 +54,9 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * from the payload. `project`: for one project the guest holds a grant on as a whole, read from
  * the payload; a grant on one of its threads does not count. `messageAsset`: for an attachment or a tool's image that a thread within the
  * guest's reach holds, by the server's own records. `ownGrant`: for one grant the guest holds
- * itself, on exactly the project or thread the payload names. `narrowed`: for anything, because its handler answers a guest through
+ * itself, on exactly the project or thread the payload names. `roster`: for one Crew roster waiting
+ * for approval, at the level named on its Captain's thread, as it was proposed: a request that
+ * carries seats of its own is refused (Shared conversations AC10). `narrowed`: for anything, because its handler answers a guest through
  * `GuestView` or `PersonAccess`, with a reduced or filtered answer in place of upstream's.
  */
 type GuestRpcRule =
@@ -65,6 +71,7 @@ type GuestRpcRule =
       readonly projectId: (payload: unknown) => string | undefined;
     }
   | { readonly kind: "narrowed" }
+  | { readonly kind: "roster"; readonly level: GrantLevel }
   | { readonly kind: "ownGrant"; readonly target: (payload: unknown) => GrantTarget | undefined }
   | {
       readonly kind: "messageAsset";
@@ -189,8 +196,16 @@ export const GUEST_RPC_RULES: Partial<Record<WsRpcMethod, GuestRpcRule>> = {
   // Who else is on a thread the guest was granted: their names and levels, no more.
   [J5_SHARING_WS_METHODS.listThreadPeople]: viewThread,
   [J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges]: viewThread,
+  // The Crew rosters waiting for approval on it: the one J5 client read a guest may make. The
+  // list of every open proposal on the server, like the rest of those reads, is refused.
+  [J5_CLIENT_READ_WS_METHODS.listThreadRosters]: viewThread,
   // Who wrote each message in it: a name and whether they are a member or a guest.
   [J5_SHARING_WS_METHODS.listThreadAuthors]: viewThread,
+  // A Crew roster the Captain of a granted thread proposed (Shared conversations AC8, AC10,
+  // AC11): seen with View, approved or declined as proposed with Collaborate. Stopping or
+  // archiving a Crew, a seat's approval and the inbox are not listed.
+  [J5_CLIENT_ACTION_WS_METHODS.previewCrewProposal]: { kind: "roster", level: "view" },
+  [J5_CLIENT_ACTION_WS_METHODS.resolveCrewProposal]: { kind: "roster", level: "collaborate" },
   // The one thing a guest may change: giving up a grant it holds itself (AC25).
   [J5_SHARING_WS_METHODS.leaveGrant]: { kind: "ownGrant", target: grantTargetOf },
 };
@@ -495,6 +510,20 @@ export const layerRpcAuthorization = (
               );
             }
             if (rule === undefined) return Effect.fail(notSharedError());
+            if (rule.kind === "roster") {
+              const proposalId = field(options.payload, "proposalId");
+              // Changing a seat, and with it how much a seat may do, stays with members.
+              if (typeof proposalId !== "string" || field(options.payload, "seats") !== undefined) {
+                return Effect.fail(notSharedError());
+              }
+              return access.rosterProposalAccess(session, proposalId).pipe(
+                Effect.map((held) => reaches(held, rule.level)),
+                Effect.catch(refuseUnreadable),
+                Effect.flatMap((allowed) =>
+                  allowed ? inner(effect, options) : Effect.fail(notSharedError()),
+                ),
+              );
+            }
             if (rule.kind === "ownGrant") {
               const target = rule.target(options.payload);
               if (target === undefined) return Effect.fail(notSharedError());

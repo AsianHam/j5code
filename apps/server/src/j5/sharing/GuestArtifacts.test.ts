@@ -342,7 +342,21 @@ it.layer(testLayer)("a project guest and the artifact requests on the socket", (
   it.effect("is refused every J5 client read and the stream that says they changed", () =>
     Effect.gen(function* () {
       // Whatever a guest holds: none of these is listed, so each is refused by default.
-      for (const method of Object.values(J5_CLIENT_READ_WS_METHODS)) {
+      // But one, by design: the rosters on a thread a guest can read (Shared conversations AC8).
+      const { listThreadRosters, ...refusedReads } = J5_CLIENT_READ_WS_METHODS;
+      assert.deepInclude(GuestGate.GUEST_RPC_RULES[listThreadRosters], {
+        kind: "thread",
+        level: "view",
+      });
+      for (const who of ["project-guest", "thread-guest", "stray"] as const) {
+        // It names a thread, and a project's id is not one.
+        assert.match(
+          yield* authorized(who, listThreadRosters, { projectId: GRANTED }),
+          /^refused: /,
+          who,
+        );
+      }
+      for (const method of Object.values(refusedReads)) {
         assert.isUndefined((GuestGate.GUEST_RPC_RULES as Record<string, unknown>)[method], method);
         for (const who of ["project-guest", "thread-guest", "stray"] as const) {
           assert.match(

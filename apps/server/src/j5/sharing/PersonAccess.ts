@@ -284,6 +284,15 @@ export interface PersonAccessShape {
     session: SessionIdentity,
     asset: MessageAsset,
   ) => Effect.Effect<Access, PersonAccessStorageError>;
+  /**
+   * A connection's access to a Crew roster waiting for approval, which is its access to the
+   * thread of the Captain who proposed it. A request for a further seat is no roster and gives a
+   * guest `none`: it goes to the inbox, which is members' (Shared conversations AC12).
+   */
+  readonly rosterProposalAccess: (
+    session: SessionIdentity,
+    proposalId: string,
+  ) => Effect.Effect<Access, PersonAccessStorageError>;
   /** A connection's access to a project as a whole; a grant on one of its threads gives none. */
   readonly projectAccess: (
     session: SessionIdentity,
@@ -937,6 +946,20 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
                 );
               }),
             ),
+
+      rosterProposalAccess: Effect.fn("j5.sharing.personAccess.rosterProposalAccess")(
+        function* (session, proposalId) {
+          if (session.subject !== GUEST_SESSION_SUBJECT) return "member";
+          const rows = yield* sql<{ readonly captain_thread_id: string }>`
+            SELECT captain_thread_id FROM j5_agent_crew_proposal
+            WHERE id = ${proposalId} AND kind = 'roster'
+          `;
+          return rows[0] === undefined
+            ? "none"
+            : yield* threadAccess(session, rows[0].captain_thread_id as ThreadId);
+        },
+        Effect.mapError(storage("read a person's access to a crew roster")),
+      ),
 
       projectAccess: Effect.fn("j5.sharing.personAccess.projectAccess")(
         function* (session, projectId) {

@@ -1115,6 +1115,9 @@ export const J5_CLIENT_READ_WS_METHODS = {
   listHumanInbox: "j5.inbox.list",
   readOpenInboxCount: "j5.inbox.openCount",
   listCrewProposals: "j5.crews.listProposals",
+  // The rosters waiting for approval on one thread. The one read here a guest may make, of a
+  // thread it can read: the list above is every open proposal on the server.
+  listThreadRosters: "j5.crews.listThreadRosters",
   listCrewRuntimeRequests: "j5.crews.listRuntimeRequests",
   listCrewMemberships: "j5.crews.listMemberships",
   readFleet: "j5.fleet.read",
@@ -1168,6 +1171,11 @@ export const J5ClientReadRpcGroup = RpcGroup.make(
     OpenInboxCountResponse,
   ),
   clientRead(J5_CLIENT_READ_WS_METHODS.listCrewProposals, Schema.Struct({}), CrewProposalsResponse),
+  clientRead(
+    J5_CLIENT_READ_WS_METHODS.listThreadRosters,
+    Schema.Struct({ threadId: ThreadId }),
+    CrewProposalsResponse,
+  ),
   clientRead(
     J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests,
     Schema.Struct({}),

@@ -8,7 +8,7 @@ import {
   type ThreadId,
   authScopeRequiredResponse,
 } from "@t3tools/contracts";
-import type { SharingMessageAuthor } from "@t3tools/contracts/j5";
+import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -506,6 +506,58 @@ const make = <E>(
     }
   });
 
+  const isAnswer = (
+    command: OrchestrationV2Command,
+  ): command is Extract<
+    OrchestrationV2Command,
+    { readonly type: "runtime-request.respond" | "thread.user-input.dismiss" }
+  > => command.type === "runtime-request.respond" || command.type === "thread.user-input.dismiss";
+
+  /**
+   * Records who is answering a prompt in a shared conversation (AC9). It is written as the
+   * answer is taken in (`claimed`), before upstream settles the prompt, so that every client
+   * that sees the prompt settle on the thread's own feed finds who answered already there, with
+   * no second signal to wait for. Upstream takes one answer and refuses the rest; the first
+   * written stands unless upstream took another's (`accepted`), and a refused answer's row is
+   * taken back by `refused`. A failure to record is logged and does not stop the answer.
+   */
+  const recordAnswer = (
+    session: SessionIdentity,
+    command: OrchestrationV2Command,
+    when: "claimed" | "accepted",
+  ) =>
+    !isAnswer(command)
+      ? Effect.void
+      : Effect.gen(function* () {
+          if (!(yield* isSharedConversation(sql, command.threadId))) return;
+          const author = yield* sessionAuthor(session);
+          if (author === null) return;
+          const answeredAt = DateTime.formatIso(yield* DateTime.now);
+          const keepFirst = when === "claimed" ? 1 : 0;
+          yield* sql`
+            INSERT INTO j5_a2a_prompt_answer (
+              thread_id, request_id, person_id, person_kind, display_name, command_id,
+              answered_at
+            ) VALUES (
+              ${command.threadId}, ${command.requestId}, ${author.personId}, ${author.kind},
+              ${author.displayName}, ${command.commandId}, ${answeredAt}
+            )
+            ON CONFLICT (thread_id, request_id) DO UPDATE SET
+              person_id = excluded.person_id,
+              person_kind = excluded.person_kind,
+              display_name = excluded.display_name,
+              command_id = excluded.command_id,
+              answered_at = excluded.answered_at
+            WHERE ${keepFirst} = 0 AND j5_a2a_prompt_answer.command_id <> excluded.command_id
+          `;
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logError("J5 shared conversation could not record who answered a prompt", {
+              cause,
+            }),
+          ),
+        );
+
   return {
     withdrawQueued,
     /** The same for the guest on a connection, who has just left something. */
@@ -521,6 +573,76 @@ const make = <E>(
         ),
       ),
     /**
+     * After upstream has accepted a client's command: the person whose answer upstream took is
+     * the one recorded for the prompt, whoever was written down first.
+     */
+    accepted: (session: SessionIdentity, command: OrchestrationV2Command) =>
+      recordAnswer(session, command, "accepted"),
+    /** After upstream has refused a client's command: what was written for that answer is taken back. */
+    refused: (command: OrchestrationV2Command) =>
+      !isAnswer(command)
+        ? Effect.void
+        : sql`
+            DELETE FROM j5_a2a_prompt_answer
+            WHERE thread_id = ${command.threadId}
+              AND request_id = ${command.requestId}
+              AND command_id = ${command.commandId}
+          `.pipe(
+            Effect.asVoid,
+            Effect.catch((cause) =>
+              Effect.logError("J5 shared conversation could not take back a refused answer", {
+                cause,
+              }),
+            ),
+          ),
+    /**
+     * How the person on a connection is named to a Captain whose roster they are answering, when
+     * the Captain's thread is a shared conversation; `null` anywhere else, where the Captain is
+     * told what it always was.
+     */
+    rosterDecider: (session: SessionIdentity, proposalId: string) =>
+      Effect.gen(function* () {
+        const rows = yield* sql<{ readonly captain_thread_id: string }>`
+          SELECT captain_thread_id FROM j5_agent_crew_proposal WHERE id = ${proposalId}
+        `;
+        const threadId = rows[0]?.captain_thread_id;
+        if (threadId === undefined) return null;
+        if (!(yield* isSharedConversation(sql, threadId as ThreadId))) return null;
+        const author = yield* sessionAuthor(session);
+        return author === null ? null : authorLabel(author);
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logError("J5 shared conversation could not name who answered a roster", {
+            cause,
+          }).pipe(Effect.as(null)),
+        ),
+      ),
+    /** Who answered each approval and question while the thread was shared; as `threadAuthors`. */
+    threadAnswers: Effect.fn("j5.sharing.sharedConversation.threadAnswers")(function* (
+      session: SessionIdentity,
+      threadId: ThreadId,
+    ) {
+      const guest = yield* access.sessionPerson(session);
+      if (guest !== null && (yield* access.threadAccess(session, threadId)) === "none") return [];
+      const rows = yield* sql<{
+        readonly request_id: string;
+        readonly person_id: string;
+        readonly person_kind: PersonKind;
+        readonly display_name: string | null;
+      }>`
+        SELECT request_id, person_id, person_kind, display_name
+        FROM j5_a2a_prompt_answer
+        WHERE thread_id = ${threadId}
+        ORDER BY answered_at, request_id
+      `;
+      return rows.map((row): SharingPromptAnswer => ({
+        requestId: row.request_id,
+        displayName: row.display_name,
+        kind: row.person_kind,
+        you: guest === null ? row.person_kind === "member" : row.person_id === guest.personId,
+      }));
+    }),
+    /**
      * A client's command as it goes on to upstream. A member's is returned as received unless
      * it is a message for a shared conversation, which gains its author's line. A guest's is
      * refused unless it is one a Collaborate guest may send on that thread, and is rebuilt from
@@ -530,7 +652,7 @@ const make = <E>(
       session: SessionIdentity,
       command: OrchestrationV2Command,
     ): Effect.Effect<OrchestrationV2Command, EnvironmentAuthorizationError> =>
-      session.subject === GUEST_SESSION_SUBJECT
+      (session.subject === GUEST_SESSION_SUBJECT
         ? admitGuest(session, command).pipe(
             Effect.map((admitted): OrchestrationV2Command => admitted),
             // A guest's command goes nowhere when J5 cannot check it.
@@ -569,7 +691,8 @@ const make = <E>(
                 ),
               ),
             ),
-          ),
+          )
+      ).pipe(Effect.tap((admitted) => recordAnswer(session, admitted, "claimed"))),
     /**
      * Who wrote each message a person sent while the thread was shared, for a connection that
      * can read the thread. It says a name and whether they are a member or a guest, no more.

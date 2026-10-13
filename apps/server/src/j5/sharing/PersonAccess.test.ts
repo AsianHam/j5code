@@ -324,6 +324,7 @@ it.layer(testLayer)("PersonAccess", (it) => {
           threadAuthors: () => Effect.succeed([]),
           withdrawQueued: () => Effect.void,
           withdrawQueuedOf: () => Effect.void,
+          threadAnswers: () => Effect.succeed([]),
         },
         session,
       });
@@ -370,6 +371,7 @@ it.layer(testLayer)("PersonAccess", (it) => {
           threadAuthors: () => Effect.succeed([]),
           withdrawQueued: () => Effect.void,
           withdrawQueuedOf: () => Effect.void,
+          threadAnswers: () => Effect.succeed([]),
         },
         session,
       });
@@ -401,6 +403,7 @@ it.layer(testLayer)("PersonAccess", (it) => {
           threadAuthors: () => Effect.succeed([]),
           withdrawQueued: () => Effect.void,
           withdrawQueuedOf: () => Effect.void,
+          threadAnswers: () => Effect.succeed([]),
         },
         session,
       });
@@ -423,6 +426,7 @@ it.layer(testLayer)("PersonAccess", (it) => {
           threadAuthors: () => Effect.succeed([]),
           withdrawQueued: () => Effect.void,
           withdrawQueuedOf: () => Effect.void,
+          threadAnswers: () => Effect.succeed([]),
         },
         session: { sessionId: session.sessionId, subject: PersonAccess.GUEST_SESSION_SUBJECT },
       });

@@ -69,14 +69,23 @@ const peerFailure = (operation: string) => (error: Parameters<typeof peerAdminRe
 
 /** Handlers for `J5ClientActionRpcGroup`: each calls one service method and maps its failure. */
 export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHandlers")(
-  function* () {
+  function* (options?: {
+    /**
+     * Names the person on this connection when the proposal's Captain is in a shared
+     * conversation, where the Captain is told who answered; `null` anywhere else.
+     */
+    readonly rosterDecider: (proposalId: string) => Effect.Effect<string | null>;
+  }) {
     const actions = yield* ClientActionsService;
     const peers = yield* PeerAdminService;
     return {
       [METHODS.previewCrewProposal]: (input: CrewProposalPreviewRequest) =>
         actions.previewCrewProposal(input).pipe(Effect.catch(proposalFailure)),
       [METHODS.resolveCrewProposal]: (input: CrewProposalResolveRequest) =>
-        actions.resolveCrewProposal(input).pipe(Effect.catch(proposalFailure)),
+        (options?.rosterDecider(input.proposalId) ?? Effect.succeed(null)).pipe(
+          Effect.flatMap((decidedBy) => actions.resolveCrewProposal(input, decidedBy)),
+          Effect.catch(proposalFailure),
+        ),
       [METHODS.stopCrew]: (input: CrewStopRequest) =>
         actions.stopCrew(input).pipe(
           Effect.catch(

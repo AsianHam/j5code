@@ -308,7 +308,20 @@ export const SharingMessageAuthor = Schema.Struct({
 });
 export type SharingMessageAuthor = typeof SharingMessageAuthor.Type;
 
-export const SharingThreadAuthors = Schema.Struct({ authors: Schema.Array(SharingMessageAuthor) });
+/** Who answered one of the agent's approval or question prompts in a shared conversation. */
+export const SharingPromptAnswer = Schema.Struct({
+  requestId: Schema.String,
+  displayName: Schema.NullOr(Schema.String),
+  kind: SharingPersonKind,
+  /** The person asking answered it. */
+  you: Schema.Boolean,
+});
+export type SharingPromptAnswer = typeof SharingPromptAnswer.Type;
+
+export const SharingThreadAuthors = Schema.Struct({
+  authors: Schema.Array(SharingMessageAuthor),
+  answers: Schema.Array(SharingPromptAnswer),
+});
 export type SharingThreadAuthors = typeof SharingThreadAuthors.Type;
 
 export const SharingDeviceRequest = Schema.Struct({ sessionId: AuthSessionId });

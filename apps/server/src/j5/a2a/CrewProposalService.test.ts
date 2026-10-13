@@ -688,7 +688,20 @@ it.effect("gates every roster on the human and gates additions with the seat cap
       });
       assert.equal(custom.proposal.status, "open");
       assert.isNull(custom.proposal.requestedSeats[0]?.agentId);
-      yield* gate.resolve({ proposalId: custom.proposal.id, decision: "decline" });
+      // In a shared conversation the Captain is told who answered, and the record keeps it.
+      const named = yield* gate.resolve({
+        proposalId: custom.proposal.id,
+        decision: "decline",
+        decidedBy: "Priya (guest)",
+      });
+      assert.equal(named.proposal.decidedBy, "Priya (guest)");
+      const namedNotice = (yield* Ref.get(notices)).at(-1);
+      if (namedNotice?.type === "message.dispatch") {
+        assert.include(
+          namedNotice.text,
+          "decision: declined\ndecided_by: Priya (guest)\ncrew_name:",
+        );
+      }
 
       const declined = yield* gate.resolve({
         proposalId: request.proposal.id,
@@ -697,7 +710,11 @@ it.effect("gates every roster on the human and gates additions with the seat cap
       assert.equal(declined.proposal.status, "declined");
       assert.isNull(declined.instance);
       const last = (yield* Ref.get(notices)).at(-1);
-      if (last?.type === "message.dispatch") assert.include(last.text, "decision: declined");
+      // Anywhere else the notice is what it always was.
+      if (last?.type === "message.dispatch") {
+        assert.include(last.text, "decision: declined\ncrew_name:");
+        assert.notInclude(last.text, "decided_by");
+      }
 
       const tooMany = yield* gate
         .propose({

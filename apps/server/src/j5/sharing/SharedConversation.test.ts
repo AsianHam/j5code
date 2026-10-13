@@ -13,6 +13,7 @@ import {
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
+import { J5_CLIENT_ACTION_WS_METHODS, J5_CLIENT_READ_WS_METHODS } from "@t3tools/contracts/j5";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -914,6 +915,207 @@ const each = <A, E>(
         refused(yield* send(PRIYA, message(threadId, "Hello.", { senderThreadId: threadId }))),
       );
       assert.deepStrictEqual(notes, []);
+    }),
+  );
+  each("who answered a prompt is there before the prompt is seen to settle", () =>
+    Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const conversation = yield* sharedConversation;
+      const threadId = yield* thread("thread:answers");
+      const alone = yield* thread("thread:answers-alone");
+      yield* access.setOperatorName("Jackson");
+      yield* guest(PRIYA, "Priya", threadId, "collaborate");
+      yield* guest(SAM, "Sam", threadId, "view");
+      const respond = (on: ThreadId, request: string, command: string) =>
+        ({
+          type: "runtime-request.respond",
+          commandId: CommandId.make(command),
+          threadId: on,
+          requestId: RuntimeRequestId.make(request),
+          decision: "accept",
+        }) as const;
+      const told = (who: EnvironmentAuth.AuthenticatedSession, on: ThreadId) =>
+        conversation
+          .threadAnswers(who, on)
+          .pipe(
+            Effect.map((answers) =>
+              answers.map((a) => [a.requestId, a.displayName, a.kind, a.you]),
+            ),
+          );
+
+      // The guest's answer is taken in. Upstream has not yet settled the prompt, so no client
+      // has yet been told it settled; a second connection watching the thread, a viewer's here,
+      // already reads who answered, and so will when the thread's feed says it settled.
+      const first = respond(threadId, "request:approval", "command:priya");
+      assert.isFalse(refused(yield* send(PRIYA, first)));
+      assert.deepStrictEqual(yield* told(SAM, threadId), [
+        ["request:approval", "Priya", "guest", false],
+      ]);
+      yield* conversation.accepted(PRIYA, first);
+      // A late answer is refused by upstream: the first stands, on its being taken in and on
+      // its being refused.
+      const late = respond(threadId, "request:approval", "command:jackson-late");
+      yield* send(MEMBER, late);
+      assert.deepStrictEqual(yield* told(MEMBER, threadId), [
+        ["request:approval", "Priya", "guest", false],
+      ]);
+      yield* conversation.refused(late);
+      assert.deepStrictEqual(yield* told(MEMBER, threadId), [
+        ["request:approval", "Priya", "guest", false],
+      ]);
+
+      // An answer upstream refuses for any other reason leaves nothing behind.
+      const stale = respond(threadId, "request:gone", "command:priya-stale");
+      yield* send(PRIYA, stale);
+      yield* conversation.refused(stale);
+      assert.strictEqual((yield* told(MEMBER, threadId)).length, 1);
+
+      // Two answers at once: the guest's is written first and upstream takes the member's.
+      const losing = respond(threadId, "request:race", "command:priya-race");
+      const winning = respond(threadId, "request:race", "command:jackson-race");
+      yield* send(PRIYA, losing);
+      yield* send(MEMBER, winning);
+      yield* conversation.accepted(MEMBER, winning);
+      yield* conversation.refused(losing);
+      assert.deepStrictEqual(
+        (yield* told(MEMBER, threadId)).find(([requestId]) => requestId === "request:race"),
+        ["request:race", "Jackson", "member", true],
+      );
+
+      // A question a member dismisses is theirs.
+      const dismiss = {
+        type: "thread.user-input.dismiss",
+        commandId: CommandId.make("command:dismiss"),
+        threadId,
+        requestId: RuntimeRequestId.make("request:question"),
+      } as const;
+      yield* send(MEMBER, dismiss);
+      assert.deepStrictEqual(
+        (yield* told(PRIYA, threadId)).find(([requestId]) => requestId === "request:question"),
+        ["request:question", "Jackson", "member", false],
+      );
+
+      // A viewer cannot answer, and nothing is written for one who tries.
+      assert.isTrue(refused(yield* send(SAM, respond(threadId, "request:another", "command:sam"))));
+      assert.strictEqual((yield* told(MEMBER, threadId)).length, 3);
+      // A thread only one person can write to records nothing, and a guest reads nothing of it.
+      const unshared = respond(alone, "request:alone", "command:alone");
+      assert.strictEqual(yield* send(MEMBER, unshared), unshared);
+      yield* conversation.accepted(MEMBER, unshared);
+      assert.deepStrictEqual(yield* told(MEMBER, alone), []);
+      assert.deepStrictEqual(yield* told(PRIYA, alone), []);
+    }),
+  );
+
+  each("a guest approves or declines a roster as proposed, on a thread it can write to", () =>
+    Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const conversation = yield* sharedConversation;
+      const sql = yield* SqlClient.SqlClient;
+      const shared = yield* thread("thread:roster");
+      const viewed = yield* thread("thread:roster-viewed");
+      const elsewhere = yield* thread("thread:roster-elsewhere");
+      yield* access.setOperatorName("Jackson");
+      const priya = yield* guest(PRIYA, "Priya", shared, "collaborate");
+      yield* access.putGrant({
+        personId: priya.personId,
+        target: { kind: "thread", threadId: viewed },
+        level: "view",
+      });
+      yield* sql`PRAGMA foreign_keys = OFF`;
+      const proposal = (id: string, captainThreadId: ThreadId, kind: "roster" | "addition") => sql`
+        INSERT INTO j5_agent_crew_proposal (
+          id, project_id, captain_participant_id, captain_thread_id, kind, status, brief,
+          display_name, requested_seats, created_at
+        ) VALUES (
+          ${id}, ${PROJECT}, 'agent:captain', ${captainThreadId}, ${kind}, 'open', 'Split the work',
+          'Builders', '[]', ${AT}
+        )
+      `;
+      yield* proposal("proposal:shared", shared, "roster");
+      yield* proposal("proposal:addition", shared, "addition");
+      yield* proposal("proposal:viewed", viewed, "roster");
+      yield* proposal("proposal:elsewhere", elsewhere, "roster");
+
+      const ask = Effect.fn("test.ask")(function* (method: string, payload: unknown) {
+        const authorize = yield* RpcScopeAuthorization.pipe(
+          Effect.provide(
+            GuestGate.layerRpcAuthorization(PRIYA, RpcAuthorization.layer(PRIYA.scopes)),
+          ),
+        );
+        type Handler = Parameters<typeof authorize>[0];
+        return yield* authorize(
+          Effect.succeed("ran") as unknown as Handler,
+          {
+            rpc: { _tag: method },
+            payload,
+          } as unknown as Parameters<typeof authorize>[1],
+        ).pipe(
+          Effect.map(String),
+          Effect.catchTags({
+            EnvironmentAuthorizationError: (error) => Effect.succeed(`refused: ${error.message}`),
+          }),
+          Effect.scoped,
+        );
+      });
+      const { previewCrewProposal, resolveCrewProposal } = J5_CLIENT_ACTION_WS_METHODS;
+      const { listThreadRosters } = J5_CLIENT_READ_WS_METHODS;
+      const approve = (proposalId: string, extra: Record<string, unknown> = {}) =>
+        ask(resolveCrewProposal, { proposalId, decision: "approve", approvalToken: "t", ...extra });
+      const decline = (proposalId: string) =>
+        ask(resolveCrewProposal, { proposalId, decision: "decline" });
+
+      // As proposed, where it can write.
+      assert.strictEqual(yield* ask(previewCrewProposal, { proposalId: "proposal:shared" }), "ran");
+      assert.strictEqual(yield* approve("proposal:shared"), "ran");
+      assert.strictEqual(yield* decline("proposal:shared"), "ran");
+      // Not with seats of its own: none, the same ones, or one more.
+      for (const seats of [[], [{ seat: "builder", agentId: "scout", reason: "r" }]]) {
+        assert.isTrue(refused(yield* approve("proposal:shared", { seats })));
+        assert.isTrue(
+          refused(yield* ask(previewCrewProposal, { proposalId: "proposal:shared", seats })),
+        );
+      }
+      // A request for a further seat goes to the inbox, which is members'.
+      assert.isTrue(refused(yield* ask(previewCrewProposal, { proposalId: "proposal:addition" })));
+      assert.isTrue(refused(yield* approve("proposal:addition")));
+      assert.isTrue(refused(yield* decline("proposal:addition")));
+      // Seen, not answered, where it can only read.
+      assert.strictEqual(yield* ask(previewCrewProposal, { proposalId: "proposal:viewed" }), "ran");
+      assert.strictEqual(yield* ask(listThreadRosters, { threadId: viewed }), "ran");
+      assert.isTrue(refused(yield* approve("proposal:viewed")));
+      assert.isTrue(refused(yield* decline("proposal:viewed")));
+      // Nothing of a thread out of reach, or of a proposal that does not exist.
+      for (const proposalId of ["proposal:elsewhere", "proposal:missing"]) {
+        assert.isTrue(refused(yield* ask(previewCrewProposal, { proposalId })), proposalId);
+        assert.isTrue(refused(yield* approve(proposalId)), proposalId);
+      }
+      assert.isTrue(refused(yield* ask(listThreadRosters, { threadId: elsewhere })));
+      // The rest of what a person does to a Crew, and the inbox, stay members'.
+      for (const method of [
+        J5_CLIENT_ACTION_WS_METHODS.stopCrew,
+        J5_CLIENT_ACTION_WS_METHODS.archiveCrew,
+        J5_CLIENT_ACTION_WS_METHODS.respondCrewRuntimeRequest,
+        J5_CLIENT_ACTION_WS_METHODS.answerHumanExchange,
+      ]) {
+        assert.isTrue(
+          refused(yield* ask(method, { threadId: shared, proposalId: "proposal:shared" })),
+          method,
+        );
+      }
+
+      // The Captain is told who answered only where more than one person could have.
+      assert.strictEqual(
+        yield* conversation.rosterDecider(PRIYA, "proposal:shared"),
+        "Priya (guest)",
+      );
+      assert.strictEqual(
+        yield* conversation.rosterDecider(MEMBER, "proposal:shared"),
+        "Jackson (member)",
+      );
+      assert.isNull(yield* conversation.rosterDecider(MEMBER, "proposal:elsewhere"));
+      assert.isNull(yield* conversation.rosterDecider(MEMBER, "proposal:viewed"));
+      assert.isNull(yield* conversation.rosterDecider(MEMBER, "proposal:missing"));
     }),
   );
   each("a name cannot close the platform's line early", () =>

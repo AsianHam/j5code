@@ -56,6 +56,8 @@ export class ClientActionsService extends Context.Service<
     /** Approve (with the final seats) or decline one proposal; answers with it as the card reads it. */
     readonly resolveCrewProposal: (
       input: CrewProposalResolveRequest,
+      /** Who is answering, as the Captain is told; given only for a shared conversation. */
+      decidedBy?: string | null,
     ) => Effect.Effect<
       typeof CrewProposalResolveResponse.Type,
       Failure<CrewProposalService["Service"]["resolve"]>
@@ -116,8 +118,8 @@ const make = Effect.gen(function* () {
 
   return ClientActionsService.of({
     previewCrewProposal: (input) => proposals.preview(input),
-    resolveCrewProposal: (input) =>
-      proposals.resolve(input).pipe(
+    resolveCrewProposal: (input, decidedBy) =>
+      proposals.resolve({ ...input, decidedBy }).pipe(
         Effect.flatMap((result) =>
           projectProposal(result.proposal).pipe(
             Effect.map((proposal) => ({

@@ -1663,6 +1663,7 @@ it.layer(testLayer)("who may ask for what", (it) => {
           threadAuthors: () => Effect.succeed([]),
           withdrawQueued: () => Effect.void,
           withdrawQueuedOf: () => Effect.void,
+          threadAnswers: () => Effect.succeed([]),
         },
         session: guest.session,
       });

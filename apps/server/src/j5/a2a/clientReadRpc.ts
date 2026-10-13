@@ -1,4 +1,4 @@
-import { AuthAccessReadScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
+import { AuthAccessReadScope, AuthOrchestrationReadScope, type ThreadId } from "@t3tools/contracts";
 import {
   J5ActionError,
   J5_CLIENT_READ_WS_METHODS,
@@ -28,6 +28,7 @@ export const CLIENT_READ_RPC_SCOPES = {
   [METHODS.listHumanInbox]: AuthOrchestrationReadScope,
   [METHODS.readOpenInboxCount]: AuthOrchestrationReadScope,
   [METHODS.listCrewProposals]: AuthOrchestrationReadScope,
+  [METHODS.listThreadRosters]: AuthOrchestrationReadScope,
   [METHODS.listCrewRuntimeRequests]: AuthOrchestrationReadScope,
   [METHODS.listCrewMemberships]: AuthOrchestrationReadScope,
   [METHODS.readFleet]: AuthOrchestrationReadScope,
@@ -85,6 +86,10 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
       ),
     [METHODS.listCrewProposals]: () =>
       reads.crewProposals.pipe(Effect.catch(failed("Reading crew proposals failed."))),
+    [METHODS.listThreadRosters]: (input: { readonly threadId: ThreadId }) =>
+      reads
+        .threadRosters(input.threadId)
+        .pipe(Effect.catch(failed("Reading crew proposals failed."))),
     [METHODS.listCrewRuntimeRequests]: () =>
       reads.crewRuntimeRequests.pipe(Effect.catch(failed("Reading crew requests failed."))),
     [METHODS.listCrewMemberships]: (input: ThreadHomesRequest) =>

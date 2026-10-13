@@ -107,7 +107,9 @@ export const layerJ5WsRpc = (
           artifacts: artifactWorkspace,
           deletion: yield* ArtifactDeletion,
         }),
-        ...(yield* makeClientActionRpcHandlers()),
+        ...(yield* makeClientActionRpcHandlers({
+          rosterDecider: (proposalId) => conversation.rosterDecider(session, proposalId),
+        })),
         ...(yield* makeClientReadRpcHandlers()),
         ...(yield* makeAgentPersonaRpcHandlers({
           providers: providerRegistry.getProviders,

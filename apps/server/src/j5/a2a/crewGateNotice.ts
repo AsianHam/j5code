@@ -104,8 +104,10 @@ const changesLine = (changes: CrewRosterChanges) => {
   return parts.length === 0 ? "none" : parts.join("; ");
 };
 
+// `decided_by` is there only in a shared conversation, where more than one person could have
+// answered (Shared conversations AC9); every other Captain reads the notice as it always was.
 const head = (proposal: CrewProposal, decision: "approved" | "declined") =>
-  `<j5_crew_gate>\nproposal_id: ${proposal.id}\nkind: ${proposal.kind}\ndecision: ${decision}\ncrew_name: ${proposal.displayName}`;
+  `<j5_crew_gate>\nproposal_id: ${proposal.id}\nkind: ${proposal.kind}\ndecision: ${decision}${proposal.decidedBy == null ? "" : `\ndecided_by: ${reportField(proposal.decidedBy)}`}\ncrew_name: ${proposal.displayName}`;
 
 /** The platform-composed notice a Captain receives when the person declines: measured facts only. */
 export const crewDeclinedNoticeText = (proposal: CrewProposal) =>

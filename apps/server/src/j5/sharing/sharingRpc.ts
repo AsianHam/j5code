@@ -104,15 +104,15 @@ export const makeSharingRpcHandlers = (options: {
   readonly openLinks: OpenLinks["Service"];
   readonly conversation: Pick<
     SharedConversation,
-    "threadAuthors" | "withdrawQueued" | "withdrawQueuedOf"
+    "threadAuthors" | "threadAnswers" | "withdrawQueued" | "withdrawQueuedOf"
   >;
   readonly session: SessionIdentity;
 }) => ({
   [J5_SHARING_WS_METHODS.listThreadAuthors]: (input: SharingThreadAccessRequest) =>
-    options.conversation.threadAuthors(options.session, input.threadId).pipe(
-      Effect.map((authors) => ({ authors })),
-      Effect.catch(refused),
-    ),
+    Effect.all({
+      authors: options.conversation.threadAuthors(options.session, input.threadId),
+      answers: options.conversation.threadAnswers(options.session, input.threadId),
+    }).pipe(Effect.catch(refused)),
   [J5_SHARING_WS_METHODS.listOpenLinks]: () =>
     options.openLinks.list.pipe(
       Effect.map((links) => ({ links })),
