@@ -1461,6 +1461,44 @@ it.effect("attributes human-origin delivery to the user actor", () =>
         ),
         [{ messageId: upstreamMessageId, mode: "queue", createdBy: "user" }],
       );
+
+      // Once the server holds a name for the person, the header says it and keeps the id.
+      const sql = yield* SqlClient.SqlClient;
+      const at = "2026-10-13T00:00:00.000Z";
+      yield* sql`
+        INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at, kind, display_name)
+        VALUES (${personId}, 0, ${at}, 'member', 'Jackson')
+        ON CONFLICT (person_id) DO UPDATE SET display_name = 'Jackson'
+      `;
+      const headerOf = Effect.fn("test.headerOf")(function* (key: string) {
+        const messageId = LedgerMessageId.make(`message:j5-a2a-delivery-human-${key}`);
+        yield* transport.deliverAgent({
+          ...target.delivery,
+          messageId,
+          senderId: personId,
+          exchangeRole: "reply",
+          message,
+        });
+        const stored = (yield* threads.getThreadProjection(target.threadId)).messages.find(
+          (candidate) => candidate.id === deliveryMessageId(messageId),
+        );
+        return stored?.text.split("\n")[0];
+      });
+      assert.strictEqual(yield* headerOf("named"), `[Message from Jackson (${personId})]`);
+      // In a shared conversation it also says where the person stands, as a typed message does.
+      yield* sql`
+        INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at, kind, display_name)
+        VALUES ('human:transport-guest', 0, ${at}, 'guest', 'Priya')
+      `;
+      yield* sql`
+        INSERT INTO j5_a2a_person_grant (
+          person_id, target_kind, target_id, level, created_at, updated_at
+        ) VALUES ('human:transport-guest', 'thread', ${target.threadId}, 'collaborate', ${at}, ${at})
+      `;
+      assert.strictEqual(
+        yield* headerOf("shared"),
+        `[Message from Jackson (member) (${personId})]`,
+      );
     }).pipe(Effect.provide(makeTestLayer(harness)));
   }),
 );

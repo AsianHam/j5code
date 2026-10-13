@@ -53,7 +53,7 @@ it("renders the versioned peer envelope with exact reply semantics", () => {
     message: "Please verify the worker.",
   });
 
-  assert.equal(A2A_ENVELOPE_VERSION, 26);
+  assert.equal(A2A_ENVELOPE_VERSION, 27);
   assert.include(rendered, "Cross-agent message");
   assert.notMatch(rendered, /\b(?:J5|A2A)\b/);
   assert.include(rendered, "agent:sender");
@@ -257,4 +257,27 @@ it("renders the outside agent envelope by its label, on one line, with no reply 
     formatOutsideAgentEnvelope({ senderId, message: "x" }),
     /^\[Message from outside agent unnamed \(outside:session-1\)\]\n\n/,
   );
+});
+
+it("names a person on their inbox reply once the server holds a name, and keeps the id", () => {
+  const reply = (senderLabel?: string) =>
+    formatClosedHumanEnvelope({
+      senderId: ParticipantId.make("human:dfc92701"),
+      message: "Yes, go ahead.",
+      ...(senderLabel === undefined ? {} : { senderLabel }),
+    });
+  const body =
+    "\n\nYes, go ahead.\n\nThe platform closed this exchange when this reply was sent. No further reply is required.";
+  // No name on record: the header every agent has always read.
+  assert.strictEqual(reply(), `[Message from human:dfc92701]${body}`);
+  assert.strictEqual(reply("   "), `[Message from human:dfc92701]${body}`);
+  // A name: the name, then the id, as the outside-agent header has them.
+  assert.strictEqual(reply("Jackson"), `[Message from Jackson (human:dfc92701)]${body}`);
+  // In a shared conversation the label says where the person stands, as a typed message does.
+  assert.strictEqual(
+    reply("Jackson (member)"),
+    `[Message from Jackson (member) (human:dfc92701)]${body}`,
+  );
+  // A label cannot close the header early.
+  assert.strictEqual(reply("Jack]son\nX"), `[Message from Jack son X (human:dfc92701)]${body}`);
 });

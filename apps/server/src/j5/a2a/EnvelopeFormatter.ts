@@ -101,15 +101,34 @@ export const formatClosedPeerEnvelope = (input: {
   });
 
 /** A person's only ledger message is the inbox answer that closes an exchange. */
+/**
+ * A person's reply from the inbox to an agent's ask. With a name on record for the person the
+ * header says it, with the id after it as the outside-agent header has it:
+ * `[Message from Jackson (human:…)]`. In a shared conversation the label also says where the
+ * person stands, as the author line of a message typed in the thread does:
+ * `[Message from Jackson (member) (human:…)]`. With no name on record the header is the id
+ * alone, as it has always been.
+ */
 export const formatClosedHumanEnvelope = (input: {
   readonly senderId: ParticipantId;
+  /** `Jackson`, or `Jackson (member)` in a shared conversation; already fit for one line. */
+  readonly senderLabel?: string | undefined;
   readonly message: string;
-}): string =>
-  render(config.humanClosedMessage, {
-    senderId: input.senderId,
-    message: input.message,
-    closedExchangeInstruction: config.closedExchangeInstruction,
-  });
+}): string => {
+  const label = input.senderLabel?.replace(/[\]\s]+/g, " ").trim() ?? "";
+  return label.length === 0
+    ? render(config.humanClosedMessage, {
+        senderId: input.senderId,
+        message: input.message,
+        closedExchangeInstruction: config.closedExchangeInstruction,
+      })
+    : render(config.humanNamedClosedMessage, {
+        senderLabel: label,
+        senderId: input.senderId,
+        message: input.message,
+        closedExchangeInstruction: config.closedExchangeInstruction,
+      });
+};
 
 /** A3 supplies notice derivation; A2 owns this channel's stable rendering shape. */
 export const formatSilenceNoticeEnvelope = (input: {

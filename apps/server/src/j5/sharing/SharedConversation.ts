@@ -18,6 +18,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import type { ParticipantId } from "../a2a/contracts.ts";
 import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
+import { authorLabel } from "./authorLabel.ts";
 import { guestCommand } from "./GuestCommands.ts";
 import {
   GUEST_SESSION_SUBJECT,
@@ -45,6 +46,8 @@ import {
  * do. A thread only one person can write to passes through here untouched.
  */
 
+export { authorLabel } from "./authorLabel.ts";
+
 /** A person as the agent and other people are told of them: a name and where they stand. */
 export interface Author {
   readonly personId: ParticipantId;
@@ -52,23 +55,6 @@ export interface Author {
   /** `null` for the server's owner while no name has been set for them. */
   readonly displayName: string | null;
 }
-
-// The name rule already refuses brackets and line breaks (`isPersonName`). They are taken out
-// here as well, so that a name which reached the record some other way cannot close the line
-// early or open what looks like a second one. A parenthesised "member" or "guest" in a name is
-// taken out too, so the only such word on the line is the platform's, at the end: a guest named
-// "Jackson (member)" is written `Jackson (guest)`.
-const nameInLine = (name: string) =>
-  name
-    .replace(/\(\s*(?:member|guest)\s*\)/gi, " ")
-    .replace(/[[\]\s]+/g, " ")
-    .trim();
-
-/** How an author is named to the agent: `Priya (guest)`, `Jackson (member)`, `a member`. */
-export const authorLabel = (author: Pick<Author, "kind" | "displayName">) => {
-  const name = author.displayName === null ? "" : nameInLine(author.displayName);
-  return name.length === 0 ? `a ${author.kind}` : `${name} (${author.kind})`;
-};
 
 /**
  * The line the platform puts first on a person's message in a shared conversation, in the shape

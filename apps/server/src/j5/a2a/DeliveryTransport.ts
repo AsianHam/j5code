@@ -35,6 +35,8 @@ import {
   formatPeerEnvelope,
 } from "./EnvelopeFormatter.ts";
 import { outsideAgentNameRows } from "./outsideAgentNames.ts";
+import { isSharedConversation } from "../sharing/PersonAccess.ts";
+import { authorLabel, personNameInLine } from "../sharing/authorLabel.ts";
 import { PeerDeliveryRefusalCode } from "./PeerInboundService.ts";
 import { PeerRegistryService } from "./PeerRegistryService.ts";
 import { peerProtocolHeaders, responseProtocolMismatch } from "./peerProtocol.ts";
@@ -306,6 +308,8 @@ export const formatAgentDeliveryEnvelope = (
     readonly originProjectTitle?: string | undefined;
     /** The label an outside agent signed in with. */
     readonly outsideAgentName?: string | undefined;
+    /** How a person who replies from the inbox is named, when the server holds a name. */
+    readonly humanSenderLabel?: string | undefined;
   },
 ): string => {
   switch (input.envelopeChannel) {
@@ -314,6 +318,7 @@ export const formatAgentDeliveryEnvelope = (
         ? isHumanParticipantId(input.senderId)
           ? formatClosedHumanEnvelope({
               senderId: input.senderId,
+              senderLabel: input.humanSenderLabel,
               message: input.message,
             })
           : formatClosedPeerEnvelope({
@@ -528,10 +533,34 @@ export const live: Layer.Layer<
                     new A2ADeliveryTransportError({ operation: "read outside agent", cause }),
                 ),
               );
+          // A person's reply names them once the server holds a name, and says where they
+          // stand when the receiving thread is a shared conversation, as a typed message does.
+          const humanSenderLabel = !isHumanParticipantId(input.senderId)
+            ? undefined
+            : yield* Effect.gen(function* () {
+                const people = yield* sql<{
+                  readonly kind: "member" | "guest";
+                  readonly display_name: string | null;
+                }>`
+                  SELECT kind, display_name FROM j5_a2a_human_person
+                  WHERE person_id = ${input.senderId}
+                `;
+                const person = people[0];
+                if (person === undefined || person.display_name === null) return undefined;
+                return (yield* isSharedConversation(sql, participant.threadId))
+                  ? authorLabel({ kind: person.kind, displayName: person.display_name })
+                  : personNameInLine(person.display_name);
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new A2ADeliveryTransportError({ operation: "read the person replying", cause }),
+                ),
+              );
           const envelope = formatAgentDeliveryEnvelope({
             ...input,
             originProjectTitle: originProject[0]?.title,
             outsideAgentName: outsideAgent[0]?.display_name,
+            humanSenderLabel,
           });
           // Upstream links an agent-authored message to its sending thread. A machine and an
           // outside agent have none.
