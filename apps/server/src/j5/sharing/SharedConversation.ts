@@ -129,9 +129,83 @@ const NEAREST = { thread: 0, ancestor: 1, project: 2 } as const;
 const make = <E>(
   sql: SqlClient.SqlClient,
   access: PersonAccessShape,
-  /** Sends the agent of a thread one platform note, as a message of its own. */
-  tell: (threadId: ThreadId, text: string) => Effect.Effect<void, E>,
+  /** Hands upstream a command of the platform's own: a note to an agent, or a withdrawal. */
+  dispatch: (command: OrchestrationV2Command) => Effect.Effect<unknown, E>,
 ) => {
+  /** Sends the agent of a thread one platform note, as a message of its own. */
+  const tell = (threadId: ThreadId, text: string) => {
+    const id = NodeCrypto.randomUUID();
+    return dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`command:j5:shared-conversation-note:${id}`),
+      threadId,
+      messageId: MessageId.make(`message:j5:shared-conversation-note:${id}`),
+      text,
+      attachments: [],
+      createdBy: "system",
+      creationSource: "server",
+      dispatchMode: { type: "queue_after_active" },
+    });
+  };
+
+  /**
+   * Withdraws the messages a guest still has queued on threads they can no longer write to,
+   * after their access changed: a grant removed or lowered, the person removed, or their leaving.
+   * It is upstream's own cancelling of a queued run, as the guest could have done themselves.
+   * Messages already delivered stay under their name. A withdrawal that fails is logged and does
+   * not undo the change to their access.
+   */
+  const withdrawQueued = Effect.fn("j5.sharing.sharedConversation.withdrawQueued")(
+    function* (personId: string) {
+      const stranded = yield* sql<{ readonly run_id: string; readonly thread_id: string }>`
+        SELECT run.run_id, run.thread_id
+        FROM j5_a2a_message_author AS author
+        JOIN orchestration_v2_projection_runs AS run
+          ON run.thread_id = author.thread_id
+         AND run.status = 'queued'
+         AND json_extract(run.payload_json, '$.userMessageId') = author.message_id
+        WHERE author.person_id = ${personId}
+          AND author.person_kind = 'guest'
+          AND NOT EXISTS (
+            SELECT 1 FROM j5_a2a_person_grant AS held
+            WHERE held.person_id = author.person_id
+              AND held.level = 'collaborate'
+              AND (
+                (held.target_kind = 'thread' AND held.target_id = author.thread_id)
+                OR (held.target_kind = 'project' AND held.target_id = (
+                  SELECT project_id FROM orchestration_v2_projection_threads
+                  WHERE thread_id = author.thread_id
+                ))
+              )
+          )
+      `;
+      yield* Effect.forEach(
+        stranded,
+        (run) =>
+          dispatch({
+            type: "queued-run.cancel",
+            // One withdrawal per run, however many times the change is told.
+            commandId: CommandId.make(`command:j5:shared-conversation-withdraw:${run.run_id}`),
+            threadId: run.thread_id as ThreadId,
+            runId: run.run_id as RunId,
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logError("J5 shared conversation could not withdraw a queued message", {
+                cause,
+                runId: run.run_id,
+              }),
+            ),
+          ),
+        { discard: true },
+      );
+    },
+    Effect.catch((cause) =>
+      Effect.logError("J5 shared conversation could not read a person's queued messages", {
+        cause,
+      }),
+    ),
+  );
+
   /**
    * Everyone who can write to a thread, members first; none when no guest holds Collaborate on
    * it, which is a thread that is not a shared conversation.
@@ -143,7 +217,8 @@ const make = <E>(
     yield* ensureLocalOperatorHumanPerson(sql);
     const people = yield* access.threadPeople(threadId);
     const guests = people.guests.filter((guest) =>
-      guest.grants.some((grant) => grant.level === "collaborate"),
+      // A grant on a thread above this one gives reading only.
+      guest.grants.some((grant) => grant.level === "collaborate" && grant.via !== "ancestor"),
     );
     if (guests.length === 0) return [];
     return [
@@ -337,6 +412,19 @@ const make = <E>(
   });
 
   return {
+    withdrawQueued,
+    /** The same for the guest on a connection, who has just left something. */
+    withdrawQueuedOf: (session: SessionIdentity) =>
+      access.sessionPerson(session).pipe(
+        Effect.flatMap((person) =>
+          person === null || person.personId === null
+            ? Effect.void
+            : withdrawQueued(person.personId),
+        ),
+        Effect.catch((cause) =>
+          Effect.logError("J5 shared conversation could not read who left", { cause }),
+        ),
+      ),
     /**
      * A client's command as it goes on to upstream. A member's is returned as received unless
      * it is a message for a shared conversation, which gains its author's line. A guest's is
@@ -424,20 +512,7 @@ export type SharedConversation = ReturnType<typeof make<unknown>>;
  */
 export const sharedConversation = Effect.gen(function* () {
   const threads = yield* ThreadManagementService;
-  return make(yield* SqlClient.SqlClient, yield* PersonAccess, (threadId, text) => {
-    const id = NodeCrypto.randomUUID();
-    return threads
-      .dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make(`command:j5:shared-conversation-note:${id}`),
-        threadId,
-        messageId: MessageId.make(`message:j5:shared-conversation-note:${id}`),
-        text,
-        attachments: [],
-        createdBy: "system",
-        creationSource: "server",
-        dispatchMode: { type: "queue_after_active" },
-      })
-      .pipe(Effect.asVoid);
-  });
+  return make(yield* SqlClient.SqlClient, yield* PersonAccess, (command) =>
+    threads.dispatch(command),
+  );
 });

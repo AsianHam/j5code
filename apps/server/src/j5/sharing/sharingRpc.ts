@@ -101,7 +101,10 @@ export const makeSharingRpcHandlers = (options: {
   readonly access: Pick<PersonAccess["Service"], "watchThreadAccess" | "operatorName">;
   readonly people: People["Service"];
   readonly openLinks: OpenLinks["Service"];
-  readonly conversation: Pick<SharedConversation, "threadAuthors">;
+  readonly conversation: Pick<
+    SharedConversation,
+    "threadAuthors" | "withdrawQueued" | "withdrawQueuedOf"
+  >;
   readonly session: SessionIdentity;
 }) => ({
   [J5_SHARING_WS_METHODS.listThreadAuthors]: (input: SharingThreadAccessRequest) =>
@@ -124,9 +127,12 @@ export const makeSharingRpcHandlers = (options: {
       Effect.catch(refused),
     ),
   [J5_SHARING_WS_METHODS.leaveGrant]: (input: SharingLeaveGrantRequest) =>
-    options.people
-      .leaveGrant(options.session, input.target)
-      .pipe(Effect.as({}), Effect.catch(refused)),
+    options.people.leaveGrant(options.session, input.target).pipe(
+      // What they had queued where they can no longer write does not run.
+      Effect.tap(() => options.conversation.withdrawQueuedOf(options.session)),
+      Effect.as({}),
+      Effect.catch(refused),
+    ),
   [J5_SHARING_WS_METHODS.listPeople]: () =>
     options.people.list.pipe(
       Effect.map((people) => ({ people })),
@@ -135,11 +141,22 @@ export const makeSharingRpcHandlers = (options: {
   [J5_SHARING_WS_METHODS.createGuest]: (input: SharingCreateGuestRequest) =>
     options.people.createGuest(input).pipe(Effect.catch(refused)),
   [J5_SHARING_WS_METHODS.putGrant]: (input: SharingPutGrantRequest) =>
-    options.people.putGrant(input).pipe(Effect.catch(refused)),
+    options.people.putGrant(input).pipe(
+      // Lowered to View, what they had queued there does not run.
+      Effect.tap(() => options.conversation.withdrawQueued(input.personId)),
+      Effect.catch(refused),
+    ),
   [J5_SHARING_WS_METHODS.removeGrant]: (input: SharingGrantRequest) =>
-    options.people.removeGrant(input).pipe(Effect.catch(refused)),
+    options.people.removeGrant(input).pipe(
+      Effect.tap(() => options.conversation.withdrawQueued(input.personId)),
+      Effect.catch(refused),
+    ),
   [J5_SHARING_WS_METHODS.removePerson]: (input: SharingPersonRequest) =>
-    options.people.removePerson(input.personId).pipe(Effect.as({}), Effect.catch(refused)),
+    options.people.removePerson(input.personId).pipe(
+      Effect.tap(() => options.conversation.withdrawQueued(input.personId)),
+      Effect.as({}),
+      Effect.catch(refused),
+    ),
   [J5_SHARING_WS_METHODS.revokeDevice]: (input: SharingDeviceRequest) =>
     options.people.revokeDevice(input.sessionId).pipe(Effect.as({}), Effect.catch(refused)),
   [J5_SHARING_WS_METHODS.createLink]: (input: SharingCreateLinkRequest) =>

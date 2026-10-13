@@ -1651,6 +1651,8 @@ it.layer(testLayer)("who may ask for what", (it) => {
         openLinks: yield* OpenLinks,
         conversation: {
           threadAuthors: () => Effect.succeed([]),
+          withdrawQueued: () => Effect.void,
+          withdrawQueuedOf: () => Effect.void,
         },
         session: guest.session,
       });

@@ -322,6 +322,8 @@ it.layer(testLayer)("PersonAccess", (it) => {
         openLinks: noOpenLinks,
         conversation: {
           threadAuthors: () => Effect.succeed([]),
+          withdrawQueued: () => Effect.void,
+          withdrawQueuedOf: () => Effect.void,
         },
         session,
       });
@@ -366,6 +368,8 @@ it.layer(testLayer)("PersonAccess", (it) => {
         openLinks: noOpenLinks,
         conversation: {
           threadAuthors: () => Effect.succeed([]),
+          withdrawQueued: () => Effect.void,
+          withdrawQueuedOf: () => Effect.void,
         },
         session,
       });
@@ -395,6 +399,8 @@ it.layer(testLayer)("PersonAccess", (it) => {
         openLinks: noOpenLinks,
         conversation: {
           threadAuthors: () => Effect.succeed([]),
+          withdrawQueued: () => Effect.void,
+          withdrawQueuedOf: () => Effect.void,
         },
         session,
       });
@@ -413,7 +419,11 @@ it.layer(testLayer)("PersonAccess", (it) => {
         access,
         people: noPeople,
         openLinks: noOpenLinks,
-        conversation: { threadAuthors: () => Effect.succeed([]) },
+        conversation: {
+          threadAuthors: () => Effect.succeed([]),
+          withdrawQueued: () => Effect.void,
+          withdrawQueuedOf: () => Effect.void,
+        },
         session: { sessionId: session.sessionId, subject: PersonAccess.GUEST_SESSION_SUBJECT },
       });
       assert.deepStrictEqual(yield* guestHandlers[J5_SHARING_WS_METHODS.getConnectionAccess](), {

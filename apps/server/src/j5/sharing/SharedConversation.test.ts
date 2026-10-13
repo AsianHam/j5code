@@ -47,11 +47,18 @@ const SAM = session("session:sam", PersonAccess.GUEST_SESSION_SUBJECT);
 /** The platform's notes to agents, in the order upstream's thread service was handed them. */
 let notes: Array<{ readonly threadId: string; readonly text: string; readonly createdBy: string }> =
   [];
+/** The queued runs the platform withdrew, by run id. */
+let withdrawn: Array<string> = [];
 const threadService = Layer.sync(ThreadManagementService, () => {
   notes = [];
+  withdrawn = [];
   return {
     dispatch: (command: OrchestrationV2Command) =>
       Effect.sync(() => {
+        if (command.type === "queued-run.cancel") {
+          withdrawn.push(command.runId);
+          return;
+        }
         assert.strictEqual(command.type, "message.dispatch");
         if (command.type !== "message.dispatch") return;
         // Sent as J5's other platform notices are: the platform's own, queued, never a steer.
@@ -1103,6 +1110,75 @@ const each = <A, E>(
         };
         assert.strictEqual(yield* send(MEMBER, command), command as unknown, type);
       }
+    }),
+  );
+
+  each("a guest who can no longer write has their queued messages withdrawn", () =>
+    Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const conversation = yield* sharedConversation;
+      const first = yield* thread("thread:withdraw-one");
+      const second = yield* thread("thread:withdraw-two");
+      const priya = yield* guest(PRIYA, "Priya", first, "collaborate");
+      yield* access.putGrant({
+        personId: priya.personId,
+        target: { kind: "thread", threadId: second },
+        level: "collaborate",
+      });
+      const sam = yield* guest(SAM, "Sam", first, "collaborate");
+      const queue = Effect.fn("test.queue")(function* (
+        who: EnvironmentAuth.AuthenticatedSession,
+        threadId: ThreadId,
+        runId: string,
+      ) {
+        const sent = message(threadId, "Later.");
+        yield* send(who, sent);
+        yield* queued(threadId, runId, sent.messageId);
+      });
+      yield* queue(PRIYA, first, "run:priya-one");
+      yield* queue(PRIYA, second, "run:priya-two");
+      yield* queue(SAM, first, "run:sam");
+      yield* queue(MEMBER, first, "run:member");
+      // A message of Priya's that already ran stays, under her name.
+      const delivered = message(first, "Earlier.");
+      yield* send(PRIYA, delivered);
+
+      // Nothing changed for her: nothing is withdrawn.
+      yield* conversation.withdrawQueued(priya.personId);
+      assert.deepStrictEqual(withdrawn, []);
+
+      // Lowered to View on one thread: what she had queued there goes, and nothing else.
+      yield* access.putGrant({
+        personId: priya.personId,
+        target: { kind: "thread", threadId: first },
+        level: "view",
+      });
+      yield* conversation.withdrawQueued(priya.personId);
+      assert.deepStrictEqual(withdrawn, ["run:priya-one"]);
+
+      // She leaves the other: told by her own connection.
+      yield* access.removeGrant({
+        personId: priya.personId,
+        target: { kind: "thread", threadId: second },
+      });
+      withdrawn = [];
+      yield* conversation.withdrawQueuedOf(PRIYA);
+      // The first is named again because this stand-in for upstream never took it off the
+      // queue; upstream's own cancel does, and the command id is the same each time.
+      assert.deepStrictEqual(withdrawn.toSorted(), ["run:priya-one", "run:priya-two"]);
+
+      // A person removed altogether: the record of what they wrote remains, and finds the run.
+      withdrawn = [];
+      yield* access.removeGuest(sam.personId);
+      yield* conversation.withdrawQueued(sam.personId);
+      assert.deepStrictEqual(withdrawn, ["run:sam"]);
+      // A member's queued message is never touched, and her delivered message keeps her name.
+      yield* conversation.withdrawQueuedOf(MEMBER);
+      assert.isFalse(withdrawn.includes("run:member"));
+      const authors = yield* conversation.threadAuthors(MEMBER, first);
+      assert.isTrue(
+        authors.some((a) => a.messageId === delivered.messageId && a.displayName === "Priya"),
+      );
     }),
   );
 }
