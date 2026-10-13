@@ -1,4 +1,5 @@
 import { useIsGuest } from "../../j5/sharing/guestAccess";
+import { PromptAnsweredBy } from "../../j5/sharing/PromptAnsweredBy";
 import { useSharedConversationEntries } from "../../j5/sharing/sharedTimeline";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
@@ -5770,6 +5771,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 {answerPreview}
               </span>
             ) : null}
+            <PromptAnsweredBy toolData={workEntry.toolData} />
           </p>
         </div>
       }
