@@ -48,6 +48,13 @@ export interface LinkRoute extends QrEndpointOption {
   /** Only this machine can open a link over this route. */
   readonly loopback: boolean;
   readonly urlFor: (credential: string) => string;
+  /**
+   * The address on the server itself, never the hosted app's. A join link uses it: the hosted
+   * app's pairing form takes a pairing credential and cannot ask a join link's person their name.
+   */
+  readonly directUrlFor: (secret: string) => string;
+  /** What `detail` says when the direct address is the one offered. */
+  readonly directDetail: string;
 }
 
 const hostnameOf = (baseUrl: string) => {
@@ -145,6 +152,9 @@ export function linkRoutesFromEndpoints(
         : reachabilityHint(endpoint.reachability),
       loopback: endpoint.reachability === "loopback",
       urlFor: (credential) => markedAsShareLink(endpointUrl(endpoint, credential)),
+      directUrlFor: (secret) =>
+        markedAsShareLink(resolveDesktopPairingUrl(endpoint.httpBaseUrl, secret)),
+      directDetail: reachabilityHint(endpoint.reachability),
     }));
 }
 
@@ -160,6 +170,8 @@ export function linkRouteFromBaseUrl(baseUrl: string): LinkRoute {
     detail: loopback ? "Clients on this machine" : "The address this client uses",
     loopback,
     urlFor: (credential) => markedAsShareLink(resolveDesktopPairingUrl(baseUrl, credential)),
+    directUrlFor: (secret) => markedAsShareLink(resolveDesktopPairingUrl(baseUrl, secret)),
+    directDetail: loopback ? "Clients on this machine" : "The address this client uses",
   };
 }
 

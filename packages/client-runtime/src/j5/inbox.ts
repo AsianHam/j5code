@@ -55,7 +55,9 @@ export function j5SourceNotice(source: J5ReadSource<unknown>): string | null {
     case "offline":
       return `${source.environmentLabel}: offline${source.data === null ? "" : " — showing saved results"}.`;
     case "unsupported":
-      return `${source.environmentLabel}: this server does not provide this J5 feature.`;
+      return source.guest === true
+        ? "Nothing from a server you are a guest on appears here."
+        : `${source.environmentLabel}: this server does not provide this J5 feature.`;
     case "error":
       return `${source.environmentLabel}: ${source.error ?? "could not refresh"}${source.data === null ? "" : " — showing saved results."}`;
   }

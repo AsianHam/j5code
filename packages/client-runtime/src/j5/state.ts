@@ -69,15 +69,24 @@ const createJ5ActionCommand = <R, E, TTag extends EnvironmentUnaryRpcTag>(
 type J5ReadTag = Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>;
 
 /**
+ * The J5 reads a guest's client still sends: the ones the server answers for a guest holding the
+ * grant (`GUEST_RPC_RULES` in the server's `j5/sharing/GuestGate.ts`). A project's artifacts are
+ * readable by a guest of that project (Shared server AC9). A read the server starts to allow a
+ * guest is added here, or the guest's client never asks.
+ */
+const READS_A_GUEST_SENDS: ReadonlySet<string> = new Set([J5_ARTIFACT_WS_METHODS.listArtifacts]);
+
+/**
  * One J5 read over the environment's socket. No J5 read is a guarded method. A guest is shown
  * nothing of the server's inbox, Fleet page, Crews or Playbooks (Shared server AC24) and the
- * server refuses each of these reads, so once the connection is known to be a guest's none is
- * sent. The check does not wait for that answer, so a member's reads are not delayed.
+ * server refuses each of these reads, so once the connection is known to be a guest's only the
+ * reads in `READS_A_GUEST_SENDS` go out. The check does not wait for that answer, so a member's
+ * reads are not delayed.
  */
 const j5Read = <TTag extends J5ReadTag>(tag: TTag, input: EnvironmentRpcInput<TTag>) =>
   Effect.gen(function* () {
     const supervisor = yield* EnvironmentSupervisor;
-    if (yield* sharingConnectionIsKnownGuest) {
+    if (!READS_A_GUEST_SENDS.has(tag) && (yield* sharingConnectionIsKnownGuest)) {
       return yield* new EnvironmentRpcUnavailableError({
         environmentId: supervisor.target.environmentId,
         message: "This is not shared with you on this server.",

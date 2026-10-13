@@ -19,6 +19,7 @@ import {
   useThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { GuestLanding } from "../j5/sharing/GuestLanding";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 
@@ -31,7 +32,11 @@ function ChatIndexRouteView() {
     if (environments.length === 0) return <HostedStaticOnboardingState />;
   }
 
-  return <IndexDraftLanding />;
+  return (
+    <GuestLanding>
+      <IndexDraftLanding />
+    </GuestLanding>
+  );
 }
 
 /**

@@ -230,7 +230,9 @@ function EnvironmentRuns({
         </p>
       ) : unsupported ? (
         <p role="status" className="text-sm text-muted-foreground">
-          This environment does not support the playbook overview yet.
+          {guest
+            ? "Nothing from a server you are a guest on appears here."
+            : "This environment does not support the playbook overview yet."}
         </p>
       ) : query.error ? (
         <p role="alert" className="text-sm text-destructive">

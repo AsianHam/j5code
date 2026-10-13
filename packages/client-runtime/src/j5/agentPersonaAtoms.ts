@@ -1,12 +1,16 @@
 import { J5_AGENT_PERSONA_WS_METHODS } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { EnvironmentRpcUnavailableError, request } from "../rpc/client.ts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "../state/runtime.ts";
+import { sharingConnectionIsKnownGuest } from "./sharing.ts";
 
 /** Environment-scoped atoms for the J5 agent persona library RPCs; web and mobile each build one. */
 export function createAgentPersonaEnvironmentAtoms<R, E>(
@@ -22,6 +26,19 @@ export function createAgentPersonaEnvironmentAtoms<R, E>(
     catalog: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:j5-agent-personas:catalog",
       tag: J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaCatalog,
+      // Pickers all over the chat view mount this. The server refuses it to a guest (Shared
+      // server AC24), so once the connection is known to be a guest's it is not sent.
+      execute: (input) =>
+        Effect.gen(function* () {
+          if (yield* sharingConnectionIsKnownGuest) {
+            const supervisor = yield* EnvironmentSupervisor;
+            return yield* new EnvironmentRpcUnavailableError({
+              environmentId: supervisor.target.environmentId,
+              message: "Personas are not available on a server you are a guest on.",
+            });
+          }
+          return yield* request(J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaCatalog, input);
+        }),
       staleTimeMs: 0,
     }),
     importAgentPersonas: createEnvironmentRpcCommand(runtime, {

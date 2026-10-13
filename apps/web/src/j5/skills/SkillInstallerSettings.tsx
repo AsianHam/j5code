@@ -1,3 +1,8 @@
+import {
+  GUEST_SKILLS_UNAVAILABLE,
+  useGuestEnvironmentIds,
+  useIsGuestEverywhere,
+} from "../sharing/guestAccess";
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -24,6 +29,7 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
+  SettingsUnavailableGroup,
 } from "../../components/settings/settingsLayout";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -66,8 +72,30 @@ function upstreamOf(
   return status?.git.upstream ?? null;
 }
 
+/** Skills belong to the person a server belongs to; a guest is not offered them (AC24). */
 export function SkillInstallerSettings() {
-  const { environments } = useEnvironments();
+  return useIsGuestEverywhere() ? (
+    <SettingsPageContainer>
+      <SettingsSection title="Skills">
+        <SettingsUnavailableGroup message={GUEST_SKILLS_UNAVAILABLE}>
+          {null}
+        </SettingsUnavailableGroup>
+      </SettingsSection>
+    </SettingsPageContainer>
+  ) : (
+    <MemberSkillInstallerSettings />
+  );
+}
+
+function MemberSkillInstallerSettings() {
+  const guestEnvironmentIds = useGuestEnvironmentIds();
+  const { environments: everyEnvironment } = useEnvironments();
+  // A server this person is a guest on is left out: its skills are not theirs to manage.
+  const environments = useMemo(
+    () =>
+      everyEnvironment.filter((environment) => !guestEnvironmentIds.has(environment.environmentId)),
+    [everyEnvironment, guestEnvironmentIds],
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const orderedEnvironments = useMemo(
     () =>

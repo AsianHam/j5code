@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, J5_ARTIFACT_WS_METHODS, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   J5_CLIENT_READ_WS_METHODS,
   J5_SHARING_WS_METHODS,
@@ -58,6 +58,7 @@ const environments = Effect.fn(function* (
   const viewedLevel = yield* SubscriptionRef.make<SharingThreadLevel>("view");
   const asked: Array<string> = [];
   const fleetReads: Array<EnvironmentId> = [];
+  const otherReads: Array<string> = [];
   const supervisor = Effect.fn(function* (
     environmentId: EnvironmentId,
     kind: SharingConnectionKind,
@@ -90,6 +91,18 @@ const environments = Effect.fn(function* (
             [J5_CLIENT_READ_WS_METHODS.readFleet]: () => {
               fleetReads.push(environmentId);
               return Effect.succeed({ projects: [] });
+            },
+            [J5_CLIENT_READ_WS_METHODS.readOpenInboxCount]: () => {
+              otherReads.push(`${environmentId}:inbox`);
+              return Effect.succeed({ personId: "human:local-operator", count: 0 });
+            },
+            [J5_CLIENT_READ_WS_METHODS.listCrewProposals]: () => {
+              otherReads.push(`${environmentId}:crew`);
+              return Effect.succeed({ proposals: [] });
+            },
+            [J5_ARTIFACT_WS_METHODS.listArtifacts]: () => {
+              otherReads.push(`${environmentId}:artifacts`);
+              return Effect.succeed({ entries: [] });
             },
             [J5_SHARING_WS_METHODS.getConnectionAccess]: () => {
               asked.push(`${environmentId}:connection`);
@@ -131,7 +144,7 @@ const environments = Effect.fn(function* (
     Effect.sync(() => AtomRegistry.make()),
     (registry) => Effect.sync(() => registry.dispose()),
   );
-  return { layer, registry, viewedLevel, asked, fleetReads };
+  return { layer, registry, viewedLevel, asked, fleetReads, otherReads };
 });
 
 /** Waits for the atom to hold `expected`; a value that never arrives fails the test by timeout. */
@@ -220,6 +233,40 @@ describe("a guest's connection", () => {
       expect(refused).toMatchObject({ message: "This is not shared with you on this server." });
       expect(AsyncResult.isFailure(registry.get(shared))).toBe(true);
       expect(fleetReads).toEqual([MEMBER_SERVER]);
+    }),
+  );
+
+  it.effect("still asks for a project's artifacts, which the server gives a project's guest", () =>
+    Effect.gen(function* () {
+      const { layer, registry, fleetReads, otherReads } = yield* environments();
+      const runtime = Atom.runtime(layer);
+      const sharing = createSharingEnvironmentAtoms(runtime);
+      const atoms = createJ5EnvironmentAtoms(runtime);
+      yield* AtomRegistry.mount(registry, sharing.isGuest(SHARED_SERVER));
+      expect(yield* settlesAt(registry, sharing.isGuest(SHARED_SERVER), true)).toBe(true);
+
+      const listed = yield* Effect.promise(() =>
+        atoms.listArtifacts.run(registry, {
+          environmentId: SHARED_SERVER,
+          input: { projectId: ProjectId.make("project-shared") },
+        }),
+      );
+      expect(AsyncResult.isSuccess(listed)).toBe(true);
+
+      const refused = <A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) =>
+        AtomRegistry.mount(registry, atom).pipe(
+          Effect.andThen(Effect.exit(AtomRegistry.getResult(registry, atom))),
+          Effect.map((exit) => exit._tag === "Failure"),
+        );
+      expect(yield* refused(atoms.openCount({ environmentId: SHARED_SERVER, input: {} }))).toBe(
+        true,
+      );
+      expect(yield* refused(atoms.fleet({ environmentId: SHARED_SERVER, input: {} }))).toBe(true);
+      expect(yield* refused(atoms.crewProposals({ environmentId: SHARED_SERVER, input: {} }))).toBe(
+        true,
+      );
+      expect(otherReads).toEqual([`${SHARED_SERVER}:artifacts`]);
+      expect(fleetReads).toEqual([]);
     }),
   );
 });

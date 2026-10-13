@@ -83,6 +83,7 @@ export function DeviceLinkDialog({
             <ShareLinkPanel
               environmentId={environmentId}
               secret={link.credential}
+              kind="named"
               whoCannotOpen={person.name}
               meta={namedLinkMeta({
                 expiresAtMs: link.expiresAt.epochMilliseconds,

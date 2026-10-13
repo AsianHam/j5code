@@ -53,7 +53,7 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
-import { useCanSeePeople } from "../../j5/sharing/peopleAccess";
+import { useSettingsNavShown } from "../../j5/sharing/peopleAccess";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -118,13 +118,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
-  // J5 (case 72): People is listed only for a connection that can see who is on the server.
-  const canSeePeople = useCanSeePeople();
+  // J5 (cases 72, 73): People is listed only for a connection that can see who is on the server,
+  // and a guest is not offered the pages that could only fail for them.
+  const shownForConnection = useSettingsNavShown();
   const navItems = SETTINGS_NAV_ITEMS.filter(
     (item) =>
       (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)) &&
-      (item.to !== "/settings/people" || canSeePeople),
+      shownForConnection(item.to),
   );
+
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");

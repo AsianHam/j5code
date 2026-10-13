@@ -64,6 +64,15 @@ export function JoinLinkDialog({
   const people = useEnvironmentQuery(canManage ? peopleQuery(environmentId) : null);
   // People join through the link without this client doing anything, so each opening reads again.
   useEffect(() => refreshSharing(environmentId), [environmentId]);
+  // People join while the dialog is open; the server counts each change to who is on the thread.
+  const peopleRevision = useEnvironmentQuery(
+    threadId === null
+      ? null
+      : sharingManage.threadPeopleChanges({ environmentId, input: { threadId } }),
+  ).data?.revision;
+  useEffect(() => {
+    if (peopleRevision !== undefined && peopleRevision > 0) refreshSharing(environmentId);
+  }, [environmentId, peopleRevision]);
   const createOpenLink = useAtomCommand(sharingManage.createOpenLink, { reportFailure: false });
   const revokeOpenLink = useAtomCommand(sharingManage.revokeOpenLink, { reportFailure: false });
 
@@ -249,6 +258,7 @@ function ActiveJoinLink({
         <ShareLinkPanel
           environmentId={environmentId}
           secret={token}
+          kind="join"
           whoCannotOpen="People"
           meta={meta}
         />

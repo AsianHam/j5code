@@ -76,6 +76,24 @@ describe("link routes", () => {
     expect(isMarkedShareLink("https://app.example/pair#token=SECRET")).toBe(false);
   });
 
+  it("sends a named link through the hosted app where the route allows, and a join link never", () => {
+    const [route] = linkRoutesFromEndpoints([
+      endpoint({
+        id: "tailscale-magicdns:openclaw",
+        httpBaseUrl: "https://openclaw.tail1234.ts.net",
+        reachability: "private-network",
+        compatibility: { hostedHttpsApp: "compatible" } as AdvertisedEndpoint["compatibility"],
+      }),
+    ]);
+    expect(new URL(route!.urlFor("SECRET")).searchParams.get("host")).toBe(
+      "https://openclaw.tail1234.ts.net",
+    );
+    expect(route!.directUrlFor("SECRET")).toBe(
+      "https://openclaw.tail1234.ts.net/pair#token=SECRET&j5share=1",
+    );
+    expect(route!.directDetail).toBe("Devices on your private network");
+  });
+
   it("leaves out an address the server is not reachable at now", () => {
     expect(linkRoutesFromEndpoints([endpoint({ status: "unavailable" })])).toEqual([]);
   });

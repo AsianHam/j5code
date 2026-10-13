@@ -1,3 +1,4 @@
+import { useViewOnlyComposerProps } from "../../j5/sharing/viewOnlyComposer";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { useAgentMentionPicker } from "../../j5/agents/useAgentMentionPicker";
 import { applyAgentMentionSelection } from "@t3tools/client-runtime/j5/agent-mentions";
@@ -1825,6 +1826,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     editingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
   } = props;
+  const viewOnlyComposerProps = useViewOnlyComposerProps(environmentId, canOperateThread);
   const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
@@ -7042,7 +7044,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     : prompt.trim() ||
                       (showProviderUnavailable
                         ? "Enable a provider in Settings"
-                        : "Ask anything...")}
+                        : // J5 (case 73): the collapsed composer says the same to a guest with View.
+                          (viewOnlyComposerProps.placeholder ?? "Ask anything..."))}
                 </button>
                 {collapsedComposerImagePreviews}
                 <button
@@ -7604,6 +7607,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
+                    // J5 (case 73): a guest with View is told so here; for anyone else this is empty.
+                    {...viewOnlyComposerProps}
                     disabled={
                       isConnecting ||
                       isComposerApprovalState ||

@@ -26,6 +26,8 @@ export interface J5ReadSource<A> {
   readonly data: A | null;
   readonly error: string | null;
   readonly refreshing: boolean;
+  /** Set when the source is unsupported because the connection is a guest's, not for the server's age. */
+  readonly guest?: true;
 }
 
 export interface J5ReadSources<A> {
@@ -38,6 +40,7 @@ export function resolveJ5ReadSource<A>(input: {
   readonly environmentLabel: string;
   readonly phase: SupervisorConnectionState["phase"];
   readonly supported?: boolean;
+  readonly guest?: boolean;
   readonly result: AsyncResult.AsyncResult<A, unknown>;
 }): J5ReadSource<A> {
   const connected = input.phase === "connected";
@@ -68,6 +71,7 @@ export function resolveJ5ReadSource<A>(input: {
           ? failure.message
           : "The environment request failed.",
     refreshing: connected && input.result.waiting,
+    ...(input.guest === true ? { guest: true as const } : {}),
   };
 }
 
@@ -98,18 +102,19 @@ export function createJ5ReadSourcesAtom<A>(input: {
     for (const [environmentId, entry] of catalog.entries) {
       const state = Option.getOrNull(AsyncResult.value(get(input.stateAtom(environmentId))));
       const config = get(input.configValueAtom(environmentId));
-      const supported =
-        input.guestAtom !== undefined && get(input.guestAtom(environmentId))
-          ? false
-          : config === null
-            ? undefined
-            : config.environment.capabilities[input.capability] === true;
+      const guest = input.guestAtom !== undefined && get(input.guestAtom(environmentId));
+      const supported = guest
+        ? false
+        : config === null
+          ? undefined
+          : config.environment.capabilities[input.capability] === true;
       sources.push(
         resolveJ5ReadSource({
           environmentId,
           environmentLabel: entry.target.label,
           phase: state?.phase ?? "available",
           ...(supported === undefined ? {} : { supported }),
+          guest,
           result:
             supported === false
               ? AsyncResult.initial<A, unknown>(false)

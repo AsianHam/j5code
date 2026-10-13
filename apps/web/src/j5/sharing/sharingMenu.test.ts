@@ -12,7 +12,11 @@ vi.mock("../../state/session", () => ({
 }));
 
 import { closeSharingDialog, sharingDialogStore } from "./sharingDialogs";
-import { runSharingMenuAction, withSharingMenuItems } from "./sharingMenu";
+import {
+  provideSharingMenuGuestRead,
+  runSharingMenuAction,
+  withSharingMenuItems,
+} from "./sharingMenu";
 
 const thread = { environmentId: "env-1", threadId: "thread-1" } as ScopedThreadRef;
 const upstream: ReadonlyArray<ContextMenuItem<"rename" | "copy" | "project-settings">> = [
@@ -22,6 +26,7 @@ const upstream: ReadonlyArray<ContextMenuItem<"rename" | "copy" | "project-setti
 ];
 
 afterEach(() => {
+  provideSharingMenuGuestRead(() => false);
   granted.clear();
   closeSharingDialog();
 });
@@ -56,5 +61,37 @@ describe("the thread menu's Share item", () => {
       environmentId: "env-1",
       target: { kind: "thread", threadId: "thread-1" },
     });
+  });
+});
+
+describe("a guest's thread menu", () => {
+  const withLifecycle: ReadonlyArray<ContextMenuItem<string>> = [
+    ...upstream,
+    { id: "archive", label: "Archive thread", separatorBefore: true },
+    { id: "delete", label: "Delete", destructive: true },
+  ];
+
+  it("has Leave thread where Archive was, and no Archive, Delete, Share or Project settings", () => {
+    provideSharingMenuGuestRead(() => true);
+    const items = withSharingMenuItems(withLifecycle, thread);
+    expect(items.map((item) => item.label)).toEqual(["Rename thread", "Copy", "Leave thread"]);
+    expect(items.at(-1)).toMatchObject({ separatorBefore: true });
+  });
+
+  it("opens the leave confirmation for the thread", () => {
+    expect(runSharingMenuAction("j5:leave-thread", thread)).toBe(true);
+    expect(sharingDialogStore.read().request).toEqual({
+      kind: "leave",
+      environmentId: "env-1",
+      threadId: "thread-1",
+    });
+  });
+
+  it("is left as a member's when the connection is not a guest's", () => {
+    granted.add("env-1");
+    const labels = withSharingMenuItems(withLifecycle, thread).map((item) => item.label);
+    expect(labels).toContain("Archive thread");
+    expect(labels).toContain("Delete");
+    expect(labels).not.toContain("Leave thread");
   });
 });

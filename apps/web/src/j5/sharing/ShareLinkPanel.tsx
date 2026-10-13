@@ -47,11 +47,15 @@ export function useLinkRoutes(environmentId: EnvironmentId): ReadonlyArray<LinkR
 }
 
 /** The address a link has over the route this client would offer first, for a one-click copy. */
-export function useLinkAddress(environmentId: EnvironmentId): (secret: string) => string | null {
+export function useLinkAddress(
+  environmentId: EnvironmentId,
+  kind: "named" | "join",
+): (secret: string) => string | null {
   const routes = useLinkRoutes(environmentId);
   const defaultRouteKey = useUiStateStore((state) => state.defaultAdvertisedEndpointKey);
   const route = selectQrEndpointOption(routes, null, defaultRouteKey);
-  return (secret) => route?.urlFor(secret) ?? null;
+  return (secret) =>
+    route === null ? null : kind === "join" ? route.directUrlFor(secret) : route.urlFor(secret);
 }
 
 /**
@@ -61,11 +65,14 @@ export function useLinkAddress(environmentId: EnvironmentId): (secret: string) =
 export function ShareLinkPanel({
   environmentId,
   secret,
+  kind,
   meta,
   whoCannotOpen,
 }: {
   readonly environmentId: EnvironmentId;
   readonly secret: string;
+  /** A named person's link may open in the hosted app; a join link opens on the server itself. */
+  readonly kind: "named" | "join";
   readonly meta: ReactNode;
   /** Who the loopback-only warning names: the person, or "People" for a join link. */
   readonly whoCannotOpen: string;
@@ -74,7 +81,9 @@ export function ShareLinkPanel({
   const defaultRouteKey = useUiStateStore((state) => state.defaultAdvertisedEndpointKey);
   const [routeId, setRouteId] = useState<string | null>(null);
   const route = selectQrEndpointOption(routes, routeId, defaultRouteKey);
-  const url = route?.urlFor(secret) ?? "";
+  const url =
+    route === null ? "" : kind === "join" ? route.directUrlFor(secret) : route.urlFor(secret);
+  const detailOf = (option: LinkRoute) => (kind === "join" ? option.directDetail : option.detail);
   const localOnly = onlyThisMachineCanReach(routes);
   // A browser on plain HTTP has no clipboard; the address is shown whole to copy by hand.
   const [showWhole, setShowWhole] = useState(false);
@@ -105,7 +114,7 @@ export function ShareLinkPanel({
           <Select value={route?.id ?? ""} onValueChange={(value) => setRouteId(value)}>
             <SelectTrigger aria-label="Reach this server via">
               <SelectValue>
-                {route === null ? "" : `${route.label} · ${route.detail.toLowerCase()}`}
+                {route === null ? "" : `${route.label} · ${detailOf(route).toLowerCase()}`}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup alignItemWithTrigger={false}>
@@ -113,7 +122,7 @@ export function ShareLinkPanel({
                 <SelectItem hideIndicator key={option.id} value={option.id}>
                   <span className="flex min-w-0 flex-col">
                     <span>{option.label}</span>
-                    <span className="text-xs text-muted-foreground">{option.detail}</span>
+                    <span className="text-xs text-muted-foreground">{detailOf(option)}</span>
                   </span>
                 </SelectItem>
               ))}

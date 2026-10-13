@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import { j5SourceNotice } from "./inbox.ts";
 import { EnvironmentId } from "@t3tools/contracts";
 import { J5ActionError, J5_LEDGER_CAPABILITIES } from "@t3tools/contracts/j5";
 import * as Cause from "effect/Cause";
@@ -162,4 +163,8 @@ it("shows nothing from a server once its connection is known to be a guest's", (
     error: null,
   });
   expect(routeCalls).toBe(1);
+  // The page says why, in a guest's terms, and not that the server is too old.
+  expect(j5SourceNotice(registry.get(sources).sources[0]!)).toBe(
+    "Nothing from a server you are a guest on appears here.",
+  );
 });

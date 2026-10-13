@@ -21,6 +21,8 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { useIsGuest } from "../../j5/sharing/guestAccess";
+import { ThreadPeopleSection } from "../../j5/sharing/ThreadPeople";
 
 export interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
@@ -63,6 +65,8 @@ export interface ThreadDetailsPanelProps extends Pick<
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
+  // J5 (case 73): upstream's Automations section asks for what a guest is not given.
+  const isGuest = useIsGuest(props.environmentId);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
     props.activeProjectScripts ? props.gitCwd : null,
@@ -172,7 +176,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             </ThreadDetailsSection>
           ) : null}
 
-          {density === "full" && !props.draftId ? (
+          {density === "full" && !props.draftId && !isGuest ? (
             <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
           ) : null}
 
@@ -181,6 +185,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               environmentId={props.environmentId}
               threadId={props.threadId}
             />
+          ) : null}
+
+          {density === "full" && !props.draftId ? (
+            <ThreadPeopleSection environmentId={props.environmentId} threadId={props.threadId} />
           ) : null}
         </>
       )}

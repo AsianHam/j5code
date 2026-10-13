@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { isPersonName, type SharingPerson } from "@t3tools/contracts/j5";
+import { isPersonName } from "@t3tools/contracts/j5";
 import { useState } from "react";
 
 import { Badge } from "../../components/ui/badge";
@@ -23,7 +23,7 @@ export function ConfirmNameTag({
   onOpenChange,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly person: SharingPerson;
+  readonly person: { readonly personId: string; readonly displayName: string | null };
   readonly canManage: boolean;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;

@@ -231,6 +231,13 @@ export function ArtifactsPage({
     );
   }, [artifactChange.data]);
 
+  // The server refuses the change feed for a project this connection can no longer read, such as
+  // one a guest's grant on has ended. Reading the list again is then refused too, which clears
+  // the file that was open instead of leaving it on screen.
+  useEffect(() => {
+    if (artifactChange.error !== null) setListGeneration((generation) => generation + 1);
+  }, [artifactChange.error]);
+
   useEffect(() => {
     if (
       !connected ||

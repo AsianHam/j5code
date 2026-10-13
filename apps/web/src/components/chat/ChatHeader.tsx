@@ -1,3 +1,4 @@
+import { ThreadPeopleChip } from "../../j5/sharing/ThreadPeople";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -355,6 +356,9 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread ? (
+        <ThreadPeopleChip environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
+      ) : null}
     </div>
   );
 });

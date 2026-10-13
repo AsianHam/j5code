@@ -3,8 +3,8 @@ import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import {
   HostedPairingRouteSurface,
   PairingPendingSurface,
-  PairingRouteSurface,
 } from "../components/auth/PairingRouteSurface";
+import { GuestAwarePairingSurface } from "../j5/sharing/GuestAwarePairingSurface";
 
 export const Route = createFileRoute("/pair")({
   beforeLoad: async ({ context }) => {
@@ -39,7 +39,7 @@ function PairRouteView() {
   }
 
   return (
-    <PairingRouteSurface
+    <GuestAwarePairingSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
         // Recreate the primary connection so its WebSocket and cached scopes

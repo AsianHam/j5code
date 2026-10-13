@@ -83,7 +83,8 @@ export type EnvironmentSubscriptionRpcTag =
   // J5: saved-agent handoff refresh signal (packages/contracts/src/j5/agentPersona.ts).
   | typeof J5_AGENT_PERSONA_WS_METHODS.subscribeAgentHandoffRefreshes
   // J5: a guest's level on one thread (packages/contracts/src/j5/sharing.ts).
-  | typeof J5_SHARING_WS_METHODS.subscribeThreadAccess;
+  | typeof J5_SHARING_WS_METHODS.subscribeThreadAccess
+  | typeof J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges;
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.chatGptHandoffSubscribe

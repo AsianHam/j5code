@@ -33,6 +33,12 @@ export type SharingDialogRequest =
       readonly person: { readonly personId: string; readonly name: string };
     }
   | {
+      /** A guest gives up what a thread was shared with them through. */
+      readonly kind: "leave";
+      readonly environmentId: EnvironmentId;
+      readonly threadId: ThreadId;
+    }
+  | {
       readonly kind: "device-link";
       readonly environmentId: EnvironmentId;
       readonly person: { readonly personId: string; readonly name: string };

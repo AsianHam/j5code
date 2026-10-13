@@ -1,6 +1,7 @@
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -47,12 +48,32 @@ export const sharingManage = {
   revokeLink: command(J5_SHARING_WS_METHODS.revokeLink),
   // Renaming also confirms a name a guest gave themselves; the two are one request.
   renamePerson: command(J5_SHARING_WS_METHODS.renamePerson),
+  // What a guest's own connection asks and does about the grants it holds (AC25).
+  ownGrants: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:j5-sharing:own-grants",
+    tag: J5_SHARING_WS_METHODS.listOwnGrants,
+    staleTimeMs: 0,
+  }),
+  leaveGrant: command(J5_SHARING_WS_METHODS.leaveGrant),
+  // Who can reach one thread, for anyone who can reach it: a member, or a guest it was shared with.
+  threadPeople: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:j5-sharing:thread-people",
+    tag: J5_SHARING_WS_METHODS.listThreadPeople,
+    staleTimeMs: 0,
+  }),
+  threadPeopleChanges: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:j5-sharing:thread-people-changes",
+    tag: J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges,
+  }),
 };
 
 export const peopleQuery = (environmentId: EnvironmentId) =>
   sharingManage.people({ environmentId, input: {} });
 export const openLinksQuery = (environmentId: EnvironmentId) =>
   sharingManage.openLinks({ environmentId, input: {} });
+
+export const ownGrantsQuery = (environmentId: EnvironmentId) =>
+  sharingManage.ownGrants({ environmentId, input: {} });
 
 /** Reads both lists again after a change this client made. */
 export function refreshSharing(environmentId: EnvironmentId) {

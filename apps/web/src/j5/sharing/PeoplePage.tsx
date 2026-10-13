@@ -581,11 +581,13 @@ function DeviceLine({
 function CopyLinkButton({
   environmentId,
   linkId,
+  kind,
 }: {
   readonly environmentId: EnvironmentId;
   readonly linkId: string;
+  readonly kind: "named" | "join";
 }) {
-  const addressFor = useLinkAddress(environmentId);
+  const addressFor = useLinkAddress(environmentId, kind);
   const secret = linkSecretMadeHere(linkId);
   const address = secret === null ? null : addressFor(secret);
   const { copyToClipboard, isCopied } = useCopyToClipboard({
@@ -624,7 +626,7 @@ function PendingLinkLine({
       <span className="min-w-0 flex-1 truncate text-muted-foreground">
         Unused link · {left} left
       </span>
-      <CopyLinkButton environmentId={environmentId} linkId={link.linkId} />
+      <CopyLinkButton environmentId={environmentId} linkId={link.linkId} kind="named" />
       <Button
         size="xs"
         variant="destructive-outline"
@@ -693,7 +695,7 @@ function JoinLinkRow({
         >
           Details
         </Button>
-        <CopyLinkButton environmentId={environmentId} linkId={link.linkId} />
+        <CopyLinkButton environmentId={environmentId} linkId={link.linkId} kind="join" />
         <Button
           size="xs"
           variant="destructive-outline"

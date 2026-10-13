@@ -221,6 +221,7 @@ export function ShareDialog({
               key={link.linkId}
               environmentId={environmentId}
               secret={link.credential}
+              kind="named"
               whoCannotOpen={typedName}
               meta={namedLinkMeta({
                 expiresAtMs: link.expiresAt.epochMilliseconds,
