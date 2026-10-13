@@ -278,6 +278,7 @@ it.layer(testLayer)("guest RPC authorization", (it) => {
       yield* grantGuest(granted, "view");
       for (const method of [
         ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+        ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
         ORCHESTRATION_V2_WS_METHODS.getTurnDiff,
         ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
         ORCHESTRATION_V2_WS_METHODS.getTurnItem,
@@ -287,6 +288,21 @@ it.layer(testLayer)("guest RPC authorization", (it) => {
         assert.strictEqual(yield* call(GUEST, method, { threadId: granted }), "ran", method);
         assert.match(yield* call(GUEST, method, { threadId: other }), /^refused: /, method);
         assert.match(yield* call(GUEST, method, {}), /^refused: /, method);
+        // A thread that does not exist, and a guest's session no person is recorded for.
+        assert.match(
+          yield* call(GUEST, method, { threadId: "thread:rpc-missing" }),
+          /^refused: /,
+          method,
+        );
+        assert.match(
+          yield* call(
+            session("session:guest-unbound", PersonAccess.GUEST_SESSION_SUBJECT),
+            method,
+            { threadId: granted },
+          ),
+          /^refused: /,
+          method,
+        );
       }
     }),
   );
@@ -421,7 +437,6 @@ it.layer(testLayer)("guest RPC authorization", (it) => {
       for (const method of [
         // Holds the permission upstream asks for, and names the granted thread.
         ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-        ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
         ORCHESTRATION_V2_WS_METHODS.launchThread,
         // Feeds and reads that carry every thread, the host's settings or the host's files.
         ORCHESTRATION_V2_WS_METHODS.searchThreads,

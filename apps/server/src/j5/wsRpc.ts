@@ -34,6 +34,7 @@ import { makePlaybookRpcHandlers } from "./playbooks/playbookRpc.ts";
 import { OpenLinks } from "./sharing/OpenLinks.ts";
 import { People } from "./sharing/People.ts";
 import { PersonAccess, type SessionIdentity } from "./sharing/PersonAccess.ts";
+import { sharedConversation } from "./sharing/SharedConversation.ts";
 import { makeSharingRpcHandlers } from "./sharing/sharingRpc.ts";
 import { makeSkillCatalogRpcHandlers } from "./skills/skillCatalogRpc.ts";
 import { makeSkillLinkRpcHandlers } from "./skills/skillLinkRpc.ts";
@@ -99,6 +100,7 @@ export const layerJ5WsRpc = (
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      const conversation = yield* sharedConversation;
       return J5WsRpcGroup.of({
         ...makeArtifactRpcHandlers({
           projects,
@@ -125,6 +127,7 @@ export const layerJ5WsRpc = (
           access: yield* PersonAccess,
           people: yield* People,
           openLinks: yield* OpenLinks,
+          conversation,
           session,
         }),
       });

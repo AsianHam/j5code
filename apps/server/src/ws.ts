@@ -177,6 +177,7 @@ import { refreshSkillProviders } from "./j5/skills/skillProviderRefresh.ts";
 import { PlaybookStore } from "./j5/playbooks/PlaybookStore.ts";
 import { layerRpcAuthorization as j5LayerRpcAuthorization } from "./j5/sharing/GuestGate.ts";
 import { connectionView as j5ConnectionView } from "./j5/sharing/GuestView.ts";
+import { sharedConversation as j5SharedConversation } from "./j5/sharing/SharedConversation.ts";
 import { J5_WS_RPC_METHODS, j5WsRpcServices, layerJ5WsRpc } from "./j5/wsRpc.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
@@ -1211,6 +1212,9 @@ const layerWsRpc = (
       const currentSessionId = currentSession.sessionId;
       // J5: a guest's connection is given reduced answers; a member's, upstream's (FORK.md case 69).
       const j5View = yield* j5ConnectionView(currentSession);
+      // J5: a guest's commands are held to what a guest may send, and a person's message in a
+      // shared conversation gains its author's name (FORK.md case 75).
+      const j5Conversation = yield* j5SharedConversation;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -3140,7 +3144,13 @@ const layerWsRpc = (
             ),
           ),
       });
-      return handlers;
+      return {
+        ...handlers,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          j5Conversation
+            .admit(currentSession, command)
+            .pipe(Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand])),
+      };
     }),
   );
 

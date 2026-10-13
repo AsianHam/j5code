@@ -26,6 +26,7 @@ import * as Stream from "effect/Stream";
 import { failAsJ5ActionError } from "../rpcActionError.ts";
 import type { OpenLinks } from "./OpenLinks.ts";
 import type { People } from "./People.ts";
+import type { SharedConversation } from "./SharedConversation.ts";
 import {
   type Access,
   GUEST_SESSION_SUBJECT,
@@ -56,6 +57,7 @@ export const SHARING_RPC_SCOPES = {
   // Any member reads who is on a thread; a guest reads it of a thread its grants cover.
   [J5_SHARING_WS_METHODS.listThreadPeople]: AuthOrchestrationReadScope,
   [J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges]: AuthOrchestrationReadScope,
+  [J5_SHARING_WS_METHODS.listThreadAuthors]: AuthOrchestrationReadScope,
   [J5_SHARING_WS_METHODS.revokeLink]: AuthAccessWriteScope,
   [J5_SHARING_WS_METHODS.listOpenLinks]: AuthAccessReadScope,
   [J5_SHARING_WS_METHODS.createOpenLink]: AuthAccessWriteScope,
@@ -99,8 +101,14 @@ export const makeSharingRpcHandlers = (options: {
   readonly access: Pick<PersonAccess["Service"], "watchThreadAccess" | "operatorName">;
   readonly people: People["Service"];
   readonly openLinks: OpenLinks["Service"];
+  readonly conversation: Pick<SharedConversation, "threadAuthors">;
   readonly session: SessionIdentity;
 }) => ({
+  [J5_SHARING_WS_METHODS.listThreadAuthors]: (input: SharingThreadAccessRequest) =>
+    options.conversation.threadAuthors(options.session, input.threadId).pipe(
+      Effect.map((authors) => ({ authors })),
+      Effect.catch(refused),
+    ),
   [J5_SHARING_WS_METHODS.listOpenLinks]: () =>
     options.openLinks.list.pipe(
       Effect.map((links) => ({ links })),

@@ -414,7 +414,8 @@ export const layer: Layer.Layer<
             personId: toGuest ? null : guest.person.personId,
             displayName: guest.person.displayName,
             level: higher(guest.grants.map((grant) => grant.level)),
-            grants: guest.grants,
+            // Field by field: the line a member wrote for the agent is not told to anyone here.
+            grants: guest.grants.map((grant) => ({ via: grant.via, level: grant.level })),
             you: caller !== null && caller.personId === guest.person.personId,
             nameSelfGiven: guest.person.nameSelfGiven,
             joinedByOpenLink: guest.person.joinedOpenLinkId !== null,

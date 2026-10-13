@@ -32,6 +32,8 @@ export const J5_SHARING_WS_METHODS = {
   // Who can reach one thread, for anyone who can reach it themselves.
   listThreadPeople: "j5.sharing.listThreadPeople",
   subscribeThreadPeopleChanges: "j5.sharing.subscribeThreadPeopleChanges",
+  // Who wrote each message in a shared conversation, for anyone who can read the thread.
+  listThreadAuthors: "j5.sharing.listThreadAuthors",
   revokeLink: "j5.sharing.revokeLink",
   // A view-only link several people can join one thread with.
   listOpenLinks: "j5.sharing.listOpenLinks",
@@ -286,6 +288,24 @@ export type SharingThreadPeople = typeof SharingThreadPeople.Type;
 export const SharingThreadPeopleChange = Schema.Struct({ revision: Schema.Number });
 export type SharingThreadPeopleChange = typeof SharingThreadPeopleChange.Type;
 
+/**
+ * Who sent one message in a shared conversation: the name they had when they sent it, and
+ * whether they are a member or a guest. Nothing else about a person is told. A message with no
+ * entry was not sent by a person while the thread was shared.
+ */
+export const SharingMessageAuthor = Schema.Struct({
+  messageId: Schema.String,
+  /** `null` for the server's owner while no name was set for them. */
+  displayName: Schema.NullOr(Schema.String),
+  kind: SharingPersonKind,
+  /** The person asking wrote it. */
+  you: Schema.Boolean,
+});
+export type SharingMessageAuthor = typeof SharingMessageAuthor.Type;
+
+export const SharingThreadAuthors = Schema.Struct({ authors: Schema.Array(SharingMessageAuthor) });
+export type SharingThreadAuthors = typeof SharingThreadAuthors.Type;
+
 export const SharingDeviceRequest = Schema.Struct({ sessionId: AuthSessionId });
 export type SharingDeviceRequest = typeof SharingDeviceRequest.Type;
 
@@ -528,6 +548,12 @@ export const J5SharingRpcGroup = RpcGroup.make(
     success: SharingThreadPeopleChange,
     error: ManageError,
     stream: true,
+  }),
+  // Who wrote each message a person sent while the thread was shared.
+  Rpc.make(J5_SHARING_WS_METHODS.listThreadAuthors, {
+    payload: SharingThreadAccessRequest,
+    success: SharingThreadAuthors,
+    error: ManageError,
   }),
   // Cancels a share link that has not been used yet.
   Rpc.make(J5_SHARING_WS_METHODS.revokeLink, {

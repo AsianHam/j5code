@@ -1649,6 +1649,9 @@ it.layer(testLayer)("who may ask for what", (it) => {
         access: yield* PersonAccess.PersonAccess,
         people: yield* People,
         openLinks: yield* OpenLinks,
+        conversation: {
+          threadAuthors: () => Effect.succeed([]),
+        },
         session: guest.session,
       });
       const refused = yield* Effect.flip(

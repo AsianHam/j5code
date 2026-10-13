@@ -318,6 +318,9 @@ it.layer(testLayer)("PersonAccess", (it) => {
         access,
         people: noPeople,
         openLinks: noOpenLinks,
+        conversation: {
+          threadAuthors: () => Effect.succeed([]),
+        },
         session,
       });
       const told = (threadId: ThreadId) =>
@@ -358,6 +361,9 @@ it.layer(testLayer)("PersonAccess", (it) => {
         access,
         people: noPeople,
         openLinks: noOpenLinks,
+        conversation: {
+          threadAuthors: () => Effect.succeed([]),
+        },
         session,
       });
       yield* handlers[J5_SHARING_WS_METHODS.subscribeThreadAccess]({ threadId }).pipe(
@@ -384,6 +390,9 @@ it.layer(testLayer)("PersonAccess", (it) => {
         access,
         people: noPeople,
         openLinks: noOpenLinks,
+        conversation: {
+          threadAuthors: () => Effect.succeed([]),
+        },
         session,
       });
       // A member's connection is told the owner's name, or that there is none yet.
@@ -401,6 +410,7 @@ it.layer(testLayer)("PersonAccess", (it) => {
         access,
         people: noPeople,
         openLinks: noOpenLinks,
+        conversation: { threadAuthors: () => Effect.succeed([]) },
         session: { sessionId: session.sessionId, subject: PersonAccess.GUEST_SESSION_SUBJECT },
       });
       assert.deepStrictEqual(yield* guestHandlers[J5_SHARING_WS_METHODS.getConnectionAccess](), {

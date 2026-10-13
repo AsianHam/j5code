@@ -21,6 +21,7 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
+import { guestCommandThreadId } from "./GuestCommands.ts";
 import { GuestPairing, MEMBER_OPENED_GUEST_LINK } from "./GuestPairing.ts";
 import { issueGuestProjectIconUrl, projectIdOfGuestIconPath } from "./GuestProjectIcons.ts";
 import { layer as openLinksLayer } from "./OpenLinks.ts";
@@ -151,11 +152,23 @@ export const GUEST_RPC_RULES: Partial<Record<WsRpcMethod, GuestRpcRule>> = {
   [WS_METHODS.subscribeServerLifecycle]: narrowed,
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: narrowed,
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: viewThread,
+  // Upstream's client reads the thread once more before it sends a message. It is the thread
+  // load a guest already has (`/api/orchestration/threads/:id/bounded`): the same service call
+  // and the same wire form, keyed by the one thread, changing nothing.
+  [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: viewThread,
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: viewThread,
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: viewThread,
   [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: viewThread,
   [ORCHESTRATION_V2_WS_METHODS.searchThread]: viewThread,
   [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: viewThread,
+  // The one way a guest writes (AC13): a command on `GUEST_COMMAND_TYPES`, for the thread the
+  // command itself names, at Collaborate. Any other command names no thread here and is refused.
+  // `SharedConversation.admit` then holds the command to the fields a guest may set.
+  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: {
+    kind: "thread",
+    level: "collaborate",
+    threadId: guestCommandThreadId,
+  },
   // The images and files in a granted thread's messages (AC12); the URL it returns is signed for
   // that one asset and is the only thing `/api/assets` serves for it.
   // A project's favicon too, for a project in the guest's sidebar, named by its id; J5 answers
@@ -176,6 +189,8 @@ export const GUEST_RPC_RULES: Partial<Record<WsRpcMethod, GuestRpcRule>> = {
   // Who else is on a thread the guest was granted: their names and levels, no more.
   [J5_SHARING_WS_METHODS.listThreadPeople]: viewThread,
   [J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges]: viewThread,
+  // Who wrote each message in it: a name and whether they are a member or a guest.
+  [J5_SHARING_WS_METHODS.listThreadAuthors]: viewThread,
   // The one thing a guest may change: giving up a grant it holds itself (AC25).
   [J5_SHARING_WS_METHODS.leaveGrant]: { kind: "ownGrant", target: grantTargetOf },
 };

@@ -200,6 +200,8 @@ export interface PersonAccessShape {
         readonly grants: ReadonlyArray<{
           readonly via: "thread" | "ancestor" | "project";
           readonly level: GrantLevel;
+          /** The line the member wrote for the agent when sharing; not for the guest. */
+          readonly note: string | null;
         }>;
       }>;
     },
@@ -369,6 +371,73 @@ const isPersonAccessError = Schema.is(
 
 /** How far up a placement tree a thread grant is looked for; trees are a few levels deep. */
 const MAX_ANCESTOR_DEPTH = 64;
+
+/**
+ * Every grant a guest holds that covers a thread: on the thread itself, on a thread above it, or
+ * on its project. The same walk up from the thread as `threadLevels`, for everyone at once.
+ */
+const guestGrantsOnThread = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+  sql<PersonRow & GrantRow>`
+        WITH RECURSIVE chain(thread_id, depth) AS (
+          SELECT ${threadId}, 0
+          UNION ALL
+          SELECT
+            COALESCE(
+              (
+                SELECT json_extract(thread.payload_json, '$.lineage.parentThreadId')
+                FROM orchestration_v2_projection_threads AS thread
+                WHERE thread.thread_id = chain.thread_id
+                  AND json_extract(thread.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+              ),
+              (
+                SELECT parent.thread_id
+                FROM j5_a2a_membership AS child
+                JOIN j5_a2a_participant_placement AS placement
+                  ON placement.project_id = child.project_id
+                 AND placement.participant_id = child.participant_id
+                JOIN j5_a2a_membership AS parent
+                  ON parent.project_id = placement.project_id
+                 AND parent.participant_id = placement.placement_parent_id
+                WHERE child.thread_id = chain.thread_id
+                  AND placement.provenance_kind <> 'forked-from'
+                LIMIT 1
+              )
+            ),
+            chain.depth + 1
+          FROM chain
+          WHERE chain.thread_id IS NOT NULL AND chain.depth < ${MAX_ANCESTOR_DEPTH}
+        )
+        SELECT person.person_id, person.kind, person.display_name, person.name_self_given,
+          person.joined_open_link_id, held.target_kind, held.target_id, held.level, held.note
+        FROM j5_a2a_person_grant AS held
+        JOIN j5_a2a_human_person AS person
+          ON person.person_id = held.person_id AND person.kind = 'guest'
+        WHERE (held.target_kind = 'thread' AND held.target_id IN (
+            SELECT thread_id FROM chain WHERE thread_id IS NOT NULL
+          ))
+          OR (held.target_kind = 'project' AND held.target_id = (
+            SELECT project_id FROM orchestration_v2_projection_threads
+            WHERE thread_id = ${threadId}
+          ))
+        ORDER BY person.created_at, person.person_id, held.target_kind DESC, held.target_id
+      `;
+
+/**
+ * Whether a thread is a shared conversation: one a guest holds Collaborate on
+ * (docs/j5/product/features/shared-conversations.md). For code that has the database and no
+ * session, such as an agent's tool.
+ */
+export const isSharedConversation = Effect.fn("j5.sharing.isSharedConversation")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+) {
+  // A server where no guest holds Collaborate on anything, which is most, is asked no more.
+  const any = yield* sql<{ readonly found: number }>`
+    SELECT 1 AS found FROM j5_a2a_person_grant WHERE level = 'collaborate' LIMIT 1
+  `;
+  if (any.length === 0) return false;
+  return (yield* guestGrantsOnThread(sql, threadId)).some((row) => row.level === "collaborate");
+});
 
 const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> = Layer.effect(
   PersonAccess,
@@ -650,51 +719,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
 
       threadPeople: Effect.fn("j5.sharing.personAccess.threadPeople")(
         function* (threadId) {
-          // The same walk up from the thread as `threadLevels`, for everyone at once.
-          const rows = yield* sql<PersonRow & GrantRow>`
-            WITH RECURSIVE chain(thread_id, depth) AS (
-              SELECT ${threadId}, 0
-              UNION ALL
-              SELECT
-                COALESCE(
-                  (
-                    SELECT json_extract(thread.payload_json, '$.lineage.parentThreadId')
-                    FROM orchestration_v2_projection_threads AS thread
-                    WHERE thread.thread_id = chain.thread_id
-                      AND json_extract(thread.payload_json, '$.lineage.relationshipToParent') = 'subagent'
-                  ),
-                  (
-                    SELECT parent.thread_id
-                    FROM j5_a2a_membership AS child
-                    JOIN j5_a2a_participant_placement AS placement
-                      ON placement.project_id = child.project_id
-                     AND placement.participant_id = child.participant_id
-                    JOIN j5_a2a_membership AS parent
-                      ON parent.project_id = placement.project_id
-                     AND parent.participant_id = placement.placement_parent_id
-                    WHERE child.thread_id = chain.thread_id
-                      AND placement.provenance_kind <> 'forked-from'
-                    LIMIT 1
-                  )
-                ),
-                chain.depth + 1
-              FROM chain
-              WHERE chain.thread_id IS NOT NULL AND chain.depth < ${MAX_ANCESTOR_DEPTH}
-            )
-            SELECT person.person_id, person.kind, person.display_name, person.name_self_given,
-              person.joined_open_link_id, held.target_kind, held.target_id, held.level, held.note
-            FROM j5_a2a_person_grant AS held
-            JOIN j5_a2a_human_person AS person
-              ON person.person_id = held.person_id AND person.kind = 'guest'
-            WHERE (held.target_kind = 'thread' AND held.target_id IN (
-                SELECT thread_id FROM chain WHERE thread_id IS NOT NULL
-              ))
-              OR (held.target_kind = 'project' AND held.target_id = (
-                SELECT project_id FROM orchestration_v2_projection_threads
-                WHERE thread_id = ${threadId}
-              ))
-            ORDER BY person.created_at, person.person_id, held.target_kind DESC, held.target_id
-          `;
+          const rows = yield* guestGrantsOnThread(sql, threadId);
           const members = yield* sql<PersonRow>`
             SELECT person_id, kind, display_name, name_self_given, joined_open_link_id
             FROM j5_a2a_human_person
@@ -705,7 +730,11 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
             string,
             {
               person: Person;
-              grants: Array<{ via: "thread" | "ancestor" | "project"; level: GrantLevel }>;
+              grants: Array<{
+                via: "thread" | "ancestor" | "project";
+                level: GrantLevel;
+                note: string | null;
+              }>;
             }
           >();
           for (const row of rows) {
@@ -718,6 +747,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
                     ? "thread"
                     : "ancestor",
               level: row.level,
+              note: row.note,
             });
             guests.set(row.person_id, entry);
           }
