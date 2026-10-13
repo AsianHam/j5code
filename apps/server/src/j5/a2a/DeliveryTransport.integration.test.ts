@@ -26,6 +26,7 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
@@ -2139,6 +2140,7 @@ const startPendingTestTurn = Effect.fn("A2AIntegration.startPendingTestTurn")(fu
 const finishTestTurn = Effect.fn("A2AIntegration.finishTestTurn")(function* (
   harness: DeliveryHarness,
   threadId: ThreadId,
+  failure: OrchestrationV2ProviderFailure | null = null,
 ) {
   const turn = (yield* Ref.get(harness.activeTurns)).get(threadId)!;
   const sink = yield* EventSinkV2;
@@ -2148,21 +2150,25 @@ const finishTestTurn = Effect.fn("A2AIntegration.finishTestTurn")(function* (
       (stored) =>
         stored.event.type === "run.updated" &&
         stored.event.runId === turn.runId &&
-        stored.event.payload.status === "completed",
+        stored.event.payload.status === (failure === null ? "completed" : "failed"),
     ),
     Stream.runHead,
     Effect.forkChild({ startImmediately: true }),
   );
-  yield* PubSub.publish(turn.events, {
+  const terminal = {
     type: "turn.terminal",
     driver,
     providerThreadId: turn.providerThreadId,
     providerTurnId: turn.providerTurnId,
     runOrdinal: turn.runOrdinal,
-    status: "completed",
-    failure: null,
     threadDisposition: "reusable",
-  });
+  } as const;
+  yield* PubSub.publish(
+    turn.events,
+    failure === null
+      ? { ...terminal, status: "completed", failure }
+      : { ...terminal, status: "failed", failure, failureItemOrdinal: 1 },
+  );
   yield* runWorkerUntil(worker, completed);
 });
 
@@ -3359,6 +3365,90 @@ it.effect("keeps held delivery pending and reuses the same message when the queu
         ),
         1,
       );
+    }).pipe(Effect.provide(makeTestLayer(harness)));
+  }),
+);
+
+/** Leaves a target idle with one held message: its turn ends while its queue is held. */
+const idleWithHeldQueue = Effect.fn("A2AIntegration.idleWithHeldQueue")(function* (
+  harness: DeliveryHarness,
+  target: { readonly projectId: ProjectId; readonly threadId: ThreadId },
+  failure: OrchestrationV2ProviderFailure | null = null,
+) {
+  const threads = yield* ThreadManagementService;
+  yield* startBusyTurn(target);
+  const earlier = yield* threads.sendToThread({
+    projectId: target.projectId,
+    threadId: target.threadId,
+    commandId: CommandId.make(`command:held-idle:earlier:${target.threadId}`),
+    messageId: MessageId.make(`message:held-idle:earlier:${target.threadId}`),
+    text: "Earlier work",
+    attachments: [],
+    mode: "queue",
+    createdBy: "user",
+    creationSource: "web",
+  });
+  yield* (yield* EventSinkV2).write({
+    events: [
+      {
+        id: EventId.make(`event:held-idle:earlier:${target.threadId}`),
+        type: "run.updated",
+        threadId: target.threadId,
+        runId: earlier.run.id,
+        providerInstanceId: earlier.run.providerInstanceId,
+        occurredAt: yield* DateTime.now,
+        payload: { ...earlier.run, status: "queued", queueHeld: true },
+      },
+    ],
+  });
+  yield* finishTestTurn(harness, target.threadId, failure);
+  return earlier.run.id;
+});
+
+it.effect("resumes an idle receiver's held queue so a delivery runs after the held messages", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("held-idle", "gpt-5.4");
+      const threads = yield* ThreadManagementService;
+      const transport = yield* A2ADeliveryTransport;
+      const earlierRunId = yield* idleWithHeldQueue(harness, target);
+      const idle = yield* threads.getThreadProjection(target.threadId);
+      assert.equal(idle.runs.find((run) => run.id === earlierRunId)?.status, "queued");
+
+      yield* transport.deliverAgent(target.delivery);
+
+      const after = yield* threads.getThreadProjection(target.threadId);
+      assert.notEqual(after.runs.find((run) => run.id === earlierRunId)?.status, "queued");
+      const delivered = after.runs.find(
+        (run) => run.userMessageId === deliveryMessageId(target.messageId),
+      );
+      assert.equal(delivered?.status, "queued");
+      assert.isNotTrue(delivered?.queueHeld);
+    }).pipe(Effect.provide(makeTestLayer(harness)));
+  }),
+);
+
+it.effect("keeps a delivery unsent while a usage limit blocks the receiver's held queue", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("held-limited", "gpt-5.4");
+      const threads = yield* ThreadManagementService;
+      const transport = yield* A2ADeliveryTransport;
+      const earlierRunId = yield* idleWithHeldQueue(harness, target, {
+        class: "usage_limit",
+        message: "Usage limit reached.",
+        code: null,
+        retryable: null,
+      });
+
+      const error = yield* transport.deliverAgent(target.delivery).pipe(Effect.flip);
+
+      assert.instanceOf(error, A2ADeliveryHeldError);
+      const after = yield* threads.getThreadProjection(target.threadId);
+      assert.equal(after.runs.find((run) => run.id === earlierRunId)?.status, "queued");
+      assert.isFalse(after.messages.some((row) => row.id === deliveryMessageId(target.messageId)));
     }).pipe(Effect.provide(makeTestLayer(harness)));
   }),
 );

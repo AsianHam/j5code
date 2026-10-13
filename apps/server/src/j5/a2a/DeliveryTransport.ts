@@ -12,7 +12,9 @@ import {
   type PeerDeliveryRequest,
 } from "@t3tools/contracts/j5";
 import { codexModelFamily, normalizeModelSlug } from "@t3tools/shared/model";
+import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -161,6 +163,13 @@ export class A2ADeliveryTransport extends Context.Service<
 >()("t3/j5/a2a/DeliveryTransport/A2ADeliveryTransport") {}
 
 const stablePart = (value: string) => encodeURIComponent(value);
+
+/** A run upstream queues new messages behind. */
+const isActiveRun = (run: OrchestrationV2Run) =>
+  run.status === "preparing" ||
+  run.status === "starting" ||
+  run.status === "running" ||
+  run.status === "waiting";
 
 /**
  * Every retry reuses this upstream command/message pair. A rejected upstream
@@ -551,6 +560,42 @@ export const live: Layer.Layer<
                   new A2ADeliveryHeldError({ participantId: input.receiverId, runId: run.id }),
                 )
               : Effect.void;
+          // Upstream starts a message sent to an idle thread at once, even past a held queue, and
+          // leaves the held messages waiting. A delivery keeps its place instead: it resumes the
+          // queue, so the held messages run first and it joins the back (#580). A retry of an
+          // accepted delivery never resumes again. Upstream refuses to resume a thread stopped by
+          // a usage limit, so that delivery waits unsent, as a held one, until the thread continues.
+          const heldQueueRun = target.runs.find(
+            (run) => run.status === "queued" && run.queueHeld === true,
+          );
+          const queueBehindHeld =
+            alreadyAccepted || heldQueueRun === undefined || target.runs.some(isActiveRun)
+              ? Effect.void
+              : usageLimitBlockedRun(
+                    target.runs,
+                    target.turnItems,
+                    target.providerSessions
+                      .filter(
+                        (session) =>
+                          session.providerInstanceId === target.thread.providerInstanceId,
+                      )
+                      .toSorted(
+                        (left, right) =>
+                          DateTime.toEpochMillis(right.updatedAt) -
+                          DateTime.toEpochMillis(left.updatedAt),
+                      )[0]?.lastError ?? null,
+                  ) !== null
+                ? Effect.fail(
+                    new A2ADeliveryHeldError({
+                      participantId: input.receiverId,
+                      runId: heldQueueRun.id,
+                    }),
+                  )
+                : orchestrator.dispatch({
+                    type: "queue.resume",
+                    commandId: CommandId.make(`${deliveryCommandId(input.messageId)}:resume`),
+                    threadId: participant.threadId,
+                  });
           const mode = input.mode ?? "queue";
           if (mode !== "queue") {
             // The sender asked for a steer or a restart (see `askedDeliveryCommandId`).
@@ -611,9 +656,11 @@ export const live: Layer.Layer<
                 );
               if (yield* landed()) return;
             }
+            yield* queueBehindHeld;
             return yield* heldRun((yield* threads.sendToThread(sendInput)).run);
           }
           if (steeringRun === undefined) {
+            yield* queueBehindHeld;
             yield* heldRun((yield* threads.sendToThread(sendInput)).run);
           } else {
             // Pin the checked run and model. If it completed before admission,
