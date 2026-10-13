@@ -26,6 +26,18 @@ const authorOfMessage = new WeakMap<object, SharingMessageAuthor | "waiting">();
  */
 export const sharedAuthorOf = (message: object) => authorOfMessage.get(message);
 
+// Whose each message of the thread on screen is, for code that holds a message outside the
+// timeline, such as the action that puts a reverted message back in the composer.
+let recordedAuthors: { has(messageId: string): boolean } = new Set<string>();
+
+/**
+ * A message's text as its author typed it, for handing back to a composer. A message the server
+ * records an author for loses the line that is there for the agent; sent again with it, the agent
+ * would read a typed author line under the real one. Any other message is returned as it is.
+ */
+export const sharedMessageTypedText = (message: { readonly id: string; readonly text: string }) =>
+  recordedAuthors.has(message.id) ? withoutAuthorLine(message.text) : message.text;
+
 // Who answered each prompt of the thread on screen, for the line a settled prompt carries.
 let answers: ReadonlyMap<string, SharingPromptAnswer> = new Map();
 const listeners = new Set<() => void>();
@@ -70,6 +82,9 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
     answers = record.answers;
     for (const listener of listeners) listener();
   }, [record.answers]);
+  useEffect(() => {
+    recordedAuthors = record.authors;
+  }, [record.authors]);
   // The messages this client drew from what its person typed, before the server's copy came.
   const typedHere = useRef(new Set<string>());
   for (const message of messages) {
