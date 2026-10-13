@@ -1,7 +1,10 @@
 import {
+  ARTIFACT_READ_PATH,
   AuthOrchestrationReadScope,
   EnvironmentAuthorizationError,
+  J5_ARTIFACT_WS_METHODS,
   ORCHESTRATION_V2_WS_METHODS,
+  ProjectId,
   RpcScopeAuthorization,
   ThreadId,
   WS_METHODS,
@@ -35,7 +38,8 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 /**
  * A request a guest may make. `thread`: for one thread, at the level named, with the thread read
- * from the payload. `messageAsset`: for an attachment or a tool's image that a thread within the
+ * from the payload. `project`: for one project the guest holds a grant on as a whole, read from
+ * the payload; a grant on one of its threads does not count. `messageAsset`: for an attachment or a tool's image that a thread within the
  * guest's reach holds, by the server's own records. `narrowed`: for anything, because its handler answers a guest through
  * `GuestView` or `PersonAccess`, with a reduced or filtered answer in place of upstream's.
  */
@@ -44,6 +48,11 @@ type GuestRpcRule =
       readonly kind: "thread";
       readonly level: GrantLevel;
       readonly threadId: (payload: unknown) => string | undefined;
+    }
+  | {
+      readonly kind: "project";
+      readonly level: GrantLevel;
+      readonly projectId: (payload: unknown) => string | undefined;
     }
   | { readonly kind: "narrowed" }
   | {
@@ -63,6 +72,11 @@ const field = (value: unknown, name: string): unknown =>
   typeof value === "object" && value !== null && name in value
     ? (value as Record<string, unknown>)[name]
     : undefined;
+
+const payloadProjectId = (payload: unknown) => {
+  const projectId = field(payload, "projectId");
+  return typeof projectId === "string" && projectId.length > 0 ? projectId : undefined;
+};
 
 /**
  * The asset kinds a guest may ask a URL for: the two that are part of a conversation and that the
@@ -85,6 +99,7 @@ const messageAssetOf = (payload: unknown): MessageAsset | undefined => {
 };
 
 const viewThread: GuestRpcRule = { kind: "thread", level: "view", threadId: payloadThreadId };
+const viewProject: GuestRpcRule = { kind: "project", level: "view", projectId: payloadProjectId };
 const narrowed: GuestRpcRule = { kind: "narrowed" };
 
 /**
@@ -105,15 +120,24 @@ export const GUEST_RPC_RULES: Partial<Record<WsRpcMethod, GuestRpcRule>> = {
   // The images and files in a granted thread's messages (AC12); the URL it returns is signed for
   // that one asset and is the only thing `/api/assets` serves for it.
   [WS_METHODS.assetsCreateUrl]: { kind: "messageAsset", asset: messageAssetOf },
+  // A granted project's artifacts: listed, and told when they change (AC9). Reading one is an
+  // HTTP route (`guestHttpRule`). Deleting one is not listed.
+  [J5_ARTIFACT_WS_METHODS.listArtifacts]: viewProject,
+  [J5_ARTIFACT_WS_METHODS.subscribeArtifactChanges]: viewProject,
   // A guest asking what it holds: answered for its own session, `none` for a thread out of reach.
   [J5_SHARING_WS_METHODS.getConnectionAccess]: narrowed,
   [J5_SHARING_WS_METHODS.subscribeThreadAccess]: narrowed,
 };
 
-/** `open`: the route decides what a guest gets. `thread`: allowed when a grant covers the thread. */
+/**
+ * `open`: the route decides what a guest gets. `thread`: allowed when a grant covers the thread.
+ * `projectInBody`: allowed when the guest holds a grant on the project the request's JSON body
+ * names.
+ */
 export type GuestHttpRule =
   | { readonly kind: "open" }
   | { readonly kind: "thread"; readonly threadId: ThreadId }
+  | { readonly kind: "projectInBody" }
   | { readonly kind: "refuse" };
 
 const THREAD_LOAD = /^\/api\/orchestration\/threads\/([^/]+)(?:\/(?:bounded|history))?$/;
@@ -135,6 +159,8 @@ const decodeSegment = (segment: string) => {
  * not listed.
  */
 export const guestHttpRule = (method: string, pathname: string): GuestHttpRule => {
+  // Reading one artifact of a project (AC9): a POST that changes nothing.
+  if (method === "POST" && pathname === ARTIFACT_READ_PATH) return { kind: "projectInBody" };
   if (method !== "GET") return { kind: "refuse" };
   if (pathname === "/ws") return { kind: "open" };
   const threadLoad = THREAD_LOAD.exec(pathname);
@@ -153,8 +179,8 @@ const requestPathname = (request: HttpServerRequest.HttpServerRequest) =>
 /**
  * Wraps upstream's `EnvironmentAuth`, through which every HTTP route and WebSocket upgrade signs a
  * request in. A guest's session comes back with its permissions only on a route `guestHttpRule`
- * allows, and for a thread route only when a grant covers that thread; anywhere else it comes back
- * with none, so the route's own permission check refuses it the way it refuses any connection
+ * allows, for a thread route only when a grant covers that thread, and for an artifact read only
+ * when a grant is on the project its body names; anywhere else it comes back with none, so the route's own permission check refuses it the way it refuses any connection
  * that lacks the permission. If the grant cannot be read, the guest gets none.
  */
 export const layerGatedEnvironmentAuth = Layer.effect(
@@ -169,16 +195,28 @@ export const layerGatedEnvironmentAuth = Layer.effect(
       if (session.subject !== GUEST_SESSION_SUBJECT) return session;
       const rule = guestHttpRule(request.method, requestPathname(request));
       if (rule.kind === "open") return session;
-      const allowed =
-        rule.kind === "thread" &&
-        (yield* access.threadAccess(session, rule.threadId).pipe(
-          Effect.map((level) => reaches(level, "view")),
-          Effect.catch((cause) =>
-            Effect.logError("J5 guest gate could not read a grant; refusing", { cause }).pipe(
-              Effect.as(false),
-            ),
+      if (rule.kind === "refuse") return { ...session, scopes: [] };
+      // The body is read once and kept, so the route reads the same bytes this check did.
+      const held =
+        rule.kind === "thread"
+          ? access.threadAccess(session, rule.threadId)
+          : request.json.pipe(
+              Effect.map(payloadProjectId),
+              Effect.orElseSucceed(() => undefined),
+              Effect.flatMap((projectId) =>
+                projectId === undefined
+                  ? Effect.succeed("none" as const)
+                  : access.projectAccess(session, ProjectId.make(projectId)),
+              ),
+            );
+      const allowed = yield* held.pipe(
+        Effect.map((level) => reaches(level, "view")),
+        Effect.catch((cause) =>
+          Effect.logError("J5 guest gate could not read a grant; refusing", { cause }).pipe(
+            Effect.as(false),
           ),
-        ));
+        ),
+      );
       return allowed ? session : { ...session, scopes: [] };
     });
 
@@ -210,9 +248,9 @@ const notSharedError = () =>
 /**
  * The per-connection RPC authorization for `ws.ts`. For a member's session it is upstream's own
  * layer, untouched. For a guest's it runs first: a request must be in `GUEST_RPC_RULES`, and
- * unless its answer is narrowed for a guest it must name a thread the guest's grants cover at the
- * rule's level. Only then does upstream's permission check run, and the request is ended if the
- * grants stop covering the thread while it is still running.
+ * unless its answer is narrowed for a guest it must name a thread the guest's grants cover, or a
+ * project the guest holds a grant on, at the rule's level. Only then does upstream's permission check run, and the request is ended if the
+ * grants stop covering it while it is still running.
  */
 export const layerRpcAuthorization = (
   session: Pick<EnvironmentAuth.AuthenticatedSession, "sessionId" | "subject">,
@@ -229,9 +267,16 @@ export const layerRpcAuthorization = (
             Effect.logError("J5 guest gate could not read a grant; refusing", { cause }).pipe(
               Effect.as(false),
             );
-          const reachesThread = (threadId: ThreadId, level: GrantLevel) =>
-            access.threadAccess(session, threadId).pipe(
-              Effect.map((held) => reaches(held, level)),
+          /** Whether the guest still holds what a `thread` or `project` rule asks for. */
+          const reachesNamed = (
+            rule: Extract<GuestRpcRule, { readonly kind: "thread" | "project" }>,
+            named: string,
+          ) =>
+            (rule.kind === "thread"
+              ? access.threadAccess(session, ThreadId.make(named))
+              : access.projectAccess(session, ProjectId.make(named))
+            ).pipe(
+              Effect.map((held) => reaches(held, rule.level)),
               Effect.catch(refuseUnreadable),
             );
           return RpcScopeAuthorization.of((effect, options) => {
@@ -248,18 +293,21 @@ export const layerRpcAuthorization = (
                 ),
               );
             }
-            const named = rule?.threadId(options.payload);
-            if (rule === undefined || named === undefined) return Effect.fail(notSharedError());
-            const threadId = ThreadId.make(named);
+            if (rule === undefined) return Effect.fail(notSharedError());
+            const named =
+              rule.kind === "thread"
+                ? rule.threadId(options.payload)
+                : rule.projectId(options.payload);
+            if (named === undefined) return Effect.fail(notSharedError());
             return Effect.gen(function* () {
               // Subscribed before the first check, so no change between the two is missed.
               const grantChanges = yield* access.subscribeGrantChanges;
-              if (!(yield* reachesThread(threadId, rule.level))) return yield* notSharedError();
+              if (!(yield* reachesNamed(rule, named))) return yield* notSharedError();
               // `effect` runs a streaming request to its end, so a feed opened while the grant
               // held would outlive it. It ends, refused as a new request would be, on the first
-              // change to anyone's grants that leaves this thread out of reach (AC10, AC11).
+              // change to anyone's grants that leaves it out of reach (AC10, AC11).
               const lostAccess = Stream.fromSubscription(grantChanges).pipe(
-                Stream.mapEffect(() => reachesThread(threadId, rule.level)),
+                Stream.mapEffect(() => reachesNamed(rule, named)),
                 Stream.filter((stillReaches) => !stillReaches),
                 Stream.runHead,
                 Effect.andThen(Effect.fail(notSharedError())),
