@@ -6,10 +6,9 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
-import { authorWhileQueued, forgetQueuedAuthor, useThreadAuthors } from "./sharedConversation";
+import { useThreadAuthors } from "./sharedConversation";
 import {
   mayHaveAuthorLine,
-  queuedAuthorKey,
   settledPromptSignal,
   sharedMessageView,
   type AuthorsByMessage,
@@ -112,29 +111,6 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
   for (const message of messages) {
     if (!mayHaveAuthorLine(message.text)) typedHere.current.add(message.id);
   }
-  const queuedKey = useMemo(
-    () =>
-      threadRef === null
-        ? null
-        : (authorLine: string, typed: string) =>
-            queuedAuthorKey({
-              environmentId: threadRef.environmentId,
-              threadId: threadRef.threadId,
-              authorLine,
-              typed,
-            }),
-    [threadRef],
-  );
-  // Once the record answers for a message, what the queue knew of it has served its purpose.
-  useEffect(() => {
-    if (queuedKey === null) return;
-    for (const message of messages) {
-      const author = record.authors.get(message.id);
-      if (author === undefined) continue;
-      const { authorLine, typed } = splitSharedMessage(message.text, author.note);
-      if (authorLine !== null) forgetQueuedAuthor(queuedKey(authorLine, typed));
-    }
-  }, [messages, queuedKey, record.authors]);
   return useMemo(() => {
     if (record.answers.size === 0 && !messages.some((message) => mayHaveAuthorLine(message.text))) {
       return entries;
@@ -158,8 +134,6 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
         recorded: record.authors.get(entry.message.id),
         unrecorded: record.unrecorded.has(entry.message.id),
         typedHere: typedHere.current.has(entry.message.id),
-        whileQueued: (authorLine, typed) =>
-          queuedKey === null ? undefined : authorWhileQueued(queuedKey(authorLine, typed)),
       });
       if (view === null) return [entry];
       const message = { ...entry.message, text: view.typed };
@@ -178,5 +152,5 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
       marks.set(note, { kind: "note" });
       return [{ ...entry, id: `${entry.id}:shared-note`, message: note }, shown];
     });
-  }, [entries, messages, queuedKey, record.answers, record.authors, record.unrecorded]);
+  }, [entries, messages, record.answers, record.authors, record.unrecorded]);
 }

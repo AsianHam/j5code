@@ -1,11 +1,6 @@
-import { splitSharedMessage } from "@t3tools/client-runtime/j5/shared-conversation";
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import {
-  J5_SHARING_WS_METHODS,
-  type SharingMessageAuthor,
-  type SharingPromptAnswer,
-} from "@t3tools/contracts/j5";
+import { J5_SHARING_WS_METHODS, type SharingPromptAnswer } from "@t3tools/contracts/j5";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -18,7 +13,6 @@ import {
   authorsByMessage,
   mayHaveAuthorLine,
   messagesTheRecordDoesNotHold,
-  queuedAuthorKey,
   queuedMessageRules,
   queuedMessageTexts,
   withoutAuthorLine,
@@ -113,23 +107,6 @@ export function useThreadAuthors(
   return useMemo(() => ({ ...result, unrecorded }), [result, unrecorded]);
 }
 
-// Whose each queued message was. A queued message is given a new id when its turn starts, so
-// for the moment before the record is read for that id the timeline would not know whose it is;
-// the queue did, and this carries it across. An entry is taken out when it is used up: once the
-// record has answered for the started message. Bounded besides: the oldest entries go first.
-const queuedAuthors = new Map<string, SharingMessageAuthor>();
-const QUEUED_AUTHORS_KEPT = 200;
-
-/**
- * Whose a message that has just started from the queue was, as the queue knew it. Only a message
- * stored with the platform's author line can have been one, and the line is part of the key, so
- * a plain message, or the same words from someone else, is never matched.
- */
-export const authorWhileQueued = (key: string) => queuedAuthors.get(key);
-
-/** The record has answered for the started message; what the queue knew is no longer needed. */
-export const forgetQueuedAuthor = (key: string) => void queuedAuthors.delete(key);
-
 /**
  * The queue of a shared conversation as one person may use it: each message with the words its
  * author typed, a name on someone else's, and whether this person may change or withdraw it. A
@@ -157,15 +134,6 @@ export function useSharedQueue<
     const { typed, shown } = waiting
       ? { typed: withoutAuthorLine(item.text), shown: withoutAuthorLine(item.text) }
       : queuedMessageTexts(item.text, author);
-    const { authorLine } = splitSharedMessage(item.text, author?.note);
-    if (author !== undefined && authorLine !== null) {
-      const key = queuedAuthorKey({ environmentId, threadId, authorLine, typed });
-      queuedAuthors.delete(key);
-      queuedAuthors.set(key, author);
-      if (queuedAuthors.size > QUEUED_AUTHORS_KEPT) {
-        queuedAuthors.delete(queuedAuthors.keys().next().value as string);
-      }
-    }
     // `text` goes to the editor and back to the server; `preview` is only ever drawn.
     return { ...item, text: typed, preview: shown, ...queuedMessageRules({ isGuest, author }) };
   });

@@ -154,33 +154,20 @@ export const authorRecordWanted = (input: {
 }) => input.authoredMessages > 0 || (input.settledPrompts && input.knownShared);
 
 /**
- * The key a queued message's author is remembered under for the moment its turn starts: the
- * server, the thread, the author line as stored and the typed words. Two people who queue the
- * same words have different author lines, so neither is taken for the other.
- */
-export const queuedAuthorKey = (input: {
-  readonly environmentId: string;
-  readonly threadId: string;
-  readonly authorLine: string;
-  readonly typed: string;
-}) => JSON.stringify([input.environmentId, input.threadId, input.authorLine, input.typed]);
-
-/**
  * How one message of a thread is shown: `null` to leave it as it came, or the words its author
- * typed, the note it carries, and whose it is. The record decides (`recorded`). Before the
- * record has answered for a message stored as a shared conversation stores one, the lines for
- * the agent are kept off the screen and the author is, in order: whoever the queue knew it to be
- * when it was queued (`whileQueued`, asked only for such a message); the reader, when this
- * client first drew the message from what its person typed (`author: null`); or not known yet
- * (`"waiting"`). A message that does not begin as a stored one, or that the record has been
- * read for and does not hold, is a plain message, whatever its words.
+ * typed, the note it carries, and whose it is. The record decides, by the message's id
+ * (`recorded`), never by its words: two people can send the same words, and a member can type a
+ * line that looks like the platform's. Before the record has answered for a message stored as a
+ * shared conversation stores one, the lines for the agent are kept off the screen and the author
+ * is the reader, when this client first drew the message from what its person typed
+ * (`author: null`), or not known yet (`"waiting"`). A message that does not begin as a stored
+ * one, or that the record has been read for and does not hold, is a plain message.
  */
 export function sharedMessageView(input: {
   readonly text: string;
   readonly recorded: SharingMessageAuthor | undefined;
   readonly unrecorded: boolean;
   readonly typedHere: boolean;
-  readonly whileQueued: (authorLine: string, typed: string) => SharingMessageAuthor | undefined;
 }): {
   readonly typed: string;
   readonly note: string | null;
@@ -193,7 +180,5 @@ export function sharedMessageView(input: {
   if (input.unrecorded) return null;
   const { typed, note, authorLine } = splitSharedMessage(input.text);
   if (authorLine === null) return null;
-  const queued = input.whileQueued(authorLine, typed);
-  if (queued !== undefined) return { typed, note, author: queued };
   return { typed, note, author: input.typedHere ? null : "waiting" };
 }

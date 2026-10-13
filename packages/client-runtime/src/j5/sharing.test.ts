@@ -346,6 +346,27 @@ describe("asking a read again while it is still out", () => {
       expect(seen).toEqual([2]);
     }),
   );
+
+  it.effect("keeps showing the last answer while the read is out again", () =>
+    Effect.gen(function* () {
+      const { layer, registry, inboxHolds } = yield* environments();
+      const atoms = createJ5EnvironmentAtoms(Atom.runtime(layer));
+      const count = atoms.openCount({ environmentId: MEMBER_SERVER, input: {} });
+      yield* AtomRegistry.mount(registry, count);
+      expect((yield* AtomRegistry.getResult(registry, count)).count).toBe(1);
+      const held = yield* Deferred.make<void>();
+      inboxHolds.push(Deferred.await(held));
+      registry.refresh(count);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      // The second read has not answered: the first answer is still what a reader gets.
+      const during = registry.get(count);
+      expect(Option.getOrNull(AsyncResult.value(during))?.count).toBe(1);
+      expect(during.waiting).toBe(true);
+      yield* Deferred.succeed(held, undefined);
+      expect((yield* AtomRegistry.getResult(registry, count)).count).toBe(2);
+    }),
+  );
 });
 
 describe("a member's connection", () => {

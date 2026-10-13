@@ -8,7 +8,6 @@ import {
   authorsByMessage,
   isSettledPrompt,
   messagesTheRecordDoesNotHold,
-  queuedAuthorKey,
   queuedMessageRules,
   queuedMessageTexts,
   settledPromptSignal,
@@ -92,8 +91,7 @@ describe("a queued message in a shared conversation", () => {
 });
 
 describe("how one message of a thread is shown", () => {
-  const none = () => undefined;
-  const plain = { recorded: undefined, unrecorded: false, typedHere: false, whileQueued: none };
+  const plain = { recorded: undefined, unrecorded: false, typedHere: false };
 
   it("is what the record says: the typed words, the note it carries, and whose it is", () => {
     expect(
@@ -126,54 +124,26 @@ describe("how one message of a thread is shown", () => {
     expect(sharedMessageView({ ...plain, text: "yes" })).toBeNull();
   });
 
-  describe("a message that has just started from the queue", () => {
-    const environmentId = "env-1";
-    const threadId = "thread-1";
-    const queued = new Map<string, SharingMessageAuthor>();
-    const remember = (author: SharingMessageAuthor, authorLine: string, typed: string) =>
-      queued.set(queuedAuthorKey({ environmentId, threadId, authorLine, typed }), author);
-    const whileQueued = (authorLine: string, typed: string) =>
-      queued.get(queuedAuthorKey({ environmentId, threadId, authorLine, typed }));
-    remember(priya, "[Message from Priya (guest)]", "yes");
+  describe("whose a message is, when its words are someone else's too", () => {
+    // A guest sent "yes" (recorded as m1). Nothing about that may reach another message.
+    const authors = authorsByMessage([{ ...priya, messageId: "m1" }]);
+    const view = (id: string, text: string) =>
+      sharedMessageView({ ...plain, text, recorded: authors.get(id) });
 
-    it("is whose the queue knew it to be, from its first frame", () => {
-      expect(
-        sharedMessageView({ ...plain, whileQueued, text: "[Message from Priya (guest)]\n\nyes" }),
-      ).toEqual({ typed: "yes", note: null, author: priya });
+    it("is the guest's for the message the record holds under its id", () => {
+      expect(view("m1", "[Message from Priya (guest)]\n\nyes")?.author).toMatchObject({
+        displayName: "Priya",
+      });
     });
 
-    it("never lends its author to a plain message with the same words", () => {
+    it("is plain for a member's plain message with the same words, after collaboration ends", () => {
       // The collaborator was lowered to View; a member then sends a plain "yes".
-      expect(sharedMessageView({ ...plain, whileQueued, text: "yes" })).toBeNull();
+      expect(view("m9", "yes")).toBeNull();
     });
 
-    it("never lends its author to the same words from someone else", () => {
-      const view = sharedMessageView({
-        ...plain,
-        whileQueued,
-        text: "[Message from Sam (guest)]\n\nyes",
-      });
-      expect(view?.author).toBe("waiting");
-    });
-
-    it("is kept apart by server and by thread", () => {
-      const elsewhere = queuedAuthorKey({
-        environmentId: "env-2",
-        threadId,
-        authorLine: "[Message from Priya (guest)]",
-        typed: "yes",
-      });
-      expect(queued.has(elsewhere)).toBe(false);
-      expect(
-        queued.has(
-          queuedAuthorKey({
-            environmentId,
-            threadId: "thread-2",
-            authorLine: "[Message from Priya (guest)]",
-            typed: "yes",
-          }),
-        ),
-      ).toBe(false);
+    it("is not the guest's for the same words from someone else", () => {
+      // Sam's own "yes", not yet answered for by the record: no name, never Priya's.
+      expect(view("m8", "[Message from Sam (guest)]\n\nyes")?.author).toBe("waiting");
     });
   });
 });
