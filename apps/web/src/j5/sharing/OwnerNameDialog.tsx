@@ -19,6 +19,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { rememberOwnerName } from "./ownerName";
 import { NAME_NOT_USABLE } from "./shareLink.logic";
 import { refusalMessage, sharingManage } from "./sharingManage";
+import { showReturnedPerson } from "./returnedPeople";
 
 /**
  * Asks the person a server belongs to what they are called on it. A guest reading a thread, and
@@ -62,6 +63,7 @@ export function OwnerNameDialog({
       setError(refusalMessage(result));
       return;
     }
+    showReturnedPerson(environmentId, result.value);
     rememberOwnerName(environmentId, displayName);
     onSaved();
   };

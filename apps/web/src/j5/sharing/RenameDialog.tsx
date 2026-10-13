@@ -17,6 +17,7 @@ import { Input } from "../../components/ui/input";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { NAME_NOT_USABLE } from "./shareLink.logic";
 import { refreshSharing, refusalMessage, sharingManage } from "./sharingManage";
+import { showReturnedPerson } from "./returnedPeople";
 
 /**
  * A member changes what a guest is called. The name is what the agent and other people see, so a
@@ -54,6 +55,7 @@ export function RenameDialog({
       setError(refusalMessage(result));
       return;
     }
+    showReturnedPerson(environmentId, result.value);
     refreshSharing(environmentId);
     onClose();
   };

@@ -20,6 +20,7 @@ import { LevelControl } from "./LevelControl";
 import { peopleWithGrantOn, removeGrantWarning } from "./people.logic";
 import { openSharingDialog } from "./sharingDialogs";
 import { peopleQuery, refreshSharing, refusalMessage, sharingManage } from "./sharingManage";
+import { showReturnedPerson, usePeopleNow } from "./returnedPeople";
 
 interface SharedProject {
   readonly environmentId: EnvironmentId;
@@ -67,7 +68,7 @@ function ProjectSharing({
     if (canRead) refreshSharing(environmentId);
   }, [canRead, environmentId]);
   const target = { kind: "project" as const, projectId: project.id };
-  const holders = peopleWithGrantOn(people.data?.people ?? [], target);
+  const holders = peopleWithGrantOn(usePeopleNow(environmentId, people.data?.people), target);
   const where = showServer && server !== null ? ` on ${server.label}` : "";
 
   if (isGuest) return null;
@@ -143,7 +144,7 @@ function HolderRow({
         title: `Could not stop sharing ${projectTitle}`,
         description: refusalMessage(result),
       });
-    }
+    } else showReturnedPerson(environmentId, result.value);
     refreshSharing(environmentId);
   };
 

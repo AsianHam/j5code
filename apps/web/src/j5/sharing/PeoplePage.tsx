@@ -57,6 +57,7 @@ import {
   refusalMessage,
   sharingManage,
 } from "./sharingManage";
+import { usePeopleNow } from "./returnedPeople";
 
 const ROW_NOTE_CLASSNAME = `${ITEM_ROW_CLASSNAME} text-xs text-muted-foreground`;
 
@@ -120,7 +121,7 @@ function People({ environmentId }: { readonly environmentId: EnvironmentId }) {
   useEffect(() => refreshSharing(environmentId), [environmentId]);
   const nowMs = Date.parse(useNowMinute());
 
-  const { guests, members } = splitPeople(people.data?.people ?? []);
+  const { guests, members } = splitPeople(usePeopleNow(environmentId, people.data?.people));
   const activeLinks = (links.data?.links ?? []).filter((link) => openLinkIsActive(link, nowMs));
   const countLabel = (count: number, one: string, many: string) => (
     <span className="text-xs text-muted-foreground">

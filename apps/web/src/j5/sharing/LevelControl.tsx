@@ -14,6 +14,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 import { useAtomCommand } from "../../state/use-atom-command";
 import { levelLabel } from "./shareLink.logic";
 import { refreshSharing, refusalMessage, sharingManage } from "./sharingManage";
+import { showReturnedPerson } from "./returnedPeople";
 
 /**
  * Whether a guest can be raised to Collaborate yet. Nothing lets a guest send to an agent today,
@@ -49,7 +50,7 @@ export function LevelControl({
         title: "Could not change the level",
         description: refusalMessage(result),
       });
-    }
+    } else showReturnedPerson(environmentId, result.value);
     refreshSharing(environmentId);
   };
 
