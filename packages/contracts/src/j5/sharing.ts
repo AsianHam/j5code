@@ -355,12 +355,24 @@ export const SharingLinkOpens = Schema.Union([
     projectTitle: Schema.NullOr(Schema.String),
     /** The icon a person chose for the thread's project, when they chose one. */
     projectIcon: Schema.NullOr(ProjectIconOverride),
+    /**
+     * A link to the project's favicon file, relative to the server, when the project has one and
+     * no chosen icon. It is J5's own signed link, good for an hour, and names no folder. A client
+     * draws `projectIcon` when there is one, then this, then its default.
+     */
+    projectFaviconUrl: Schema.NullOr(Schema.String),
     level: SharingGrantLevel,
   }),
   Schema.Struct({
     kind: Schema.Literal("project"),
     projectTitle: Schema.String,
     projectIcon: Schema.NullOr(ProjectIconOverride),
+    /**
+     * A link to the project's favicon file, relative to the server, when the project has one and
+     * no chosen icon. It is J5's own signed link, good for an hour, and names no folder. A client
+     * draws `projectIcon` when there is one, then this, then its default.
+     */
+    projectFaviconUrl: Schema.NullOr(Schema.String),
     level: SharingGrantLevel,
   }),
 ]);

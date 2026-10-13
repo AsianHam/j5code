@@ -4,6 +4,7 @@ import {
   SharingDescribeRequest,
   SharingJoinRequest,
 } from "@t3tools/contracts/j5";
+import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -12,6 +13,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import { issueGuestProjectIconUrl } from "./GuestProjectIcons.ts";
 import { OpenLinks } from "./OpenLinks.ts";
 import { GUEST_SESSION_SUBJECT } from "./PersonAccess.ts";
 
@@ -59,13 +61,29 @@ export const openLinkHttpRouteLayer = Layer.unwrap(
           ? ""
           : (yield* environment.value.getDescriptor).label;
         return yield* openLinks.describe(decoded.value.link).pipe(
-          Effect.map((described) =>
-            HttpServerResponse.jsonUnsafe({
-              ...described,
-              // Each entry by its titles and chosen icon; its project's id stays here.
-              opens: described.opens.map(({ projectId: _projectId, ...entry }) => entry),
-              serverName,
-            }),
+          Effect.flatMap((described) =>
+            // Each entry by its titles and icon; its project's id stays here. The favicon link
+            // is the one a guest's own client is given once paired (`GuestProjectIcons.ts`):
+            // the holder of a link that works could pair and be given it anyway.
+            Effect.forEach(described.opens, ({ projectId, ...entry }) =>
+              // A chosen icon is what a client draws; a favicon is asked for only without one.
+              projectId === null || entry.projectIcon !== null
+                ? Effect.succeed(entry)
+                : issueGuestProjectIconUrl(projectId).pipe(
+                    Effect.map((link) => ({
+                      ...entry,
+                      projectFaviconUrl:
+                        link === null ||
+                        link.relativeUrl.endsWith(`/${PROJECT_FAVICON_FALLBACK_MARKER}`)
+                          ? null
+                          : link.relativeUrl,
+                    })),
+                  ),
+            ).pipe(
+              Effect.map((opens) =>
+                HttpServerResponse.jsonUnsafe({ ...described, opens, serverName }),
+              ),
+            ),
           ),
           Effect.catchTags({
             OpenLinkRefusedError: (error) =>

@@ -22,6 +22,7 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import { GuestPairing, MEMBER_OPENED_GUEST_LINK } from "./GuestPairing.ts";
+import { issueGuestProjectIconUrl, projectIdOfGuestIconPath } from "./GuestProjectIcons.ts";
 import { layer as openLinksLayer } from "./OpenLinks.ts";
 import { layer as peopleLayer, sameTarget } from "./People.ts";
 import {
@@ -67,6 +68,8 @@ type GuestRpcRule =
   | {
       readonly kind: "messageAsset";
       readonly asset: (payload: unknown) => MessageAsset | undefined;
+      /** The project whose favicon the request asks for, when it asks for one by id. */
+      readonly projectIcon: (payload: unknown) => ProjectId | undefined;
     };
 
 const payloadThreadId = (payload: unknown) =>
@@ -122,6 +125,18 @@ const grantTargetOf = (payload: unknown): GrantTarget | undefined => {
   return undefined;
 };
 
+/**
+ * The project a favicon request names by id. Upstream's client keys the request by the project's
+ * folder, which for a guest is a placeholder and is not read; the id rides where upstream carries
+ * the path of a favicon override.
+ */
+const projectIconOf = (payload: unknown): ProjectId | undefined => {
+  const resource = field(payload, "resource");
+  return field(resource, "_tag") === "project-favicon"
+    ? projectIdOfGuestIconPath(field(resource, "path"))
+    : undefined;
+};
+
 const viewThread: GuestRpcRule = { kind: "thread", level: "view", threadId: payloadThreadId };
 const viewProject: GuestRpcRule = { kind: "project", level: "view", projectId: payloadProjectId };
 const narrowed: GuestRpcRule = { kind: "narrowed" };
@@ -143,7 +158,13 @@ export const GUEST_RPC_RULES: Partial<Record<WsRpcMethod, GuestRpcRule>> = {
   [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: viewThread,
   // The images and files in a granted thread's messages (AC12); the URL it returns is signed for
   // that one asset and is the only thing `/api/assets` serves for it.
-  [WS_METHODS.assetsCreateUrl]: { kind: "messageAsset", asset: messageAssetOf },
+  // A project's favicon too, for a project in the guest's sidebar, named by its id; J5 answers
+  // that one itself (`GuestProjectIcons.ts`), since upstream's answer names the host's folder.
+  [WS_METHODS.assetsCreateUrl]: {
+    kind: "messageAsset",
+    asset: messageAssetOf,
+    projectIcon: projectIconOf,
+  },
   // A granted project's artifacts: listed, and told when they change (AC9). Reading one is an
   // HTTP route (`guestHttpRule`). Deleting one is not listed.
   [J5_ARTIFACT_WS_METHODS.listArtifacts]: viewProject,
@@ -433,6 +454,21 @@ export const layerRpcAuthorization = (
             const rule = GUEST_RPC_RULES[options.rpc._tag as WsRpcMethod];
             if (rule?.kind === "narrowed") return inner(effect, options);
             if (rule?.kind === "messageAsset") {
+              const projectId = rule.projectIcon(options.payload);
+              if (projectId !== undefined) {
+                // Upstream's handler is not run: its answer would carry the project's folder.
+                // J5's own answer goes through upstream's permission check in its place.
+                const answer = access.projectInFeed(session, projectId).pipe(
+                  Effect.catch(refuseUnreadable),
+                  Effect.flatMap((inFeed) =>
+                    inFeed ? issueGuestProjectIconUrl(projectId) : Effect.succeed(null),
+                  ),
+                  Effect.flatMap((link) =>
+                    link === null ? Effect.fail(notSharedError()) : Effect.succeed(link),
+                  ),
+                );
+                return inner(answer as unknown as typeof effect, options);
+              }
               const asset = rule.asset(options.payload);
               if (asset === undefined) return Effect.fail(notSharedError());
               return access.messageAssetAccess(session, asset).pipe(

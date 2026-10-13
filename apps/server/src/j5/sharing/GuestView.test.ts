@@ -626,6 +626,8 @@ live(
           id: shared,
           title: "Title of project:shared",
           workspaceRoot: "/",
+          // The project's id where a favicon's path would be; J5 serves the favicon by it.
+          faviconPath: "j5-shared-project/project%3Ashared.png",
           defaultModelSelection: null,
           scripts: [],
           createdAt: AT,
@@ -742,6 +744,8 @@ live(
       id: shared,
       title: "Shared renamed",
       workspaceRoot: "/",
+      // The project's id where a favicon's path would be; J5 serves the favicon by it.
+      faviconPath: "j5-shared-project/project%3Ashared.png",
       // The icon a person chose is plain data and is shown; the favicon's path is the host's.
       projectIcon: { kind: "emoji", emoji: "🚀" },
       defaultModelSelection: null,

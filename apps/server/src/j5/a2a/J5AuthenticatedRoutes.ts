@@ -4,6 +4,7 @@ import { machineSenderHttpRouteLayer } from "./MachineSenderHttp.ts";
 import { peerHttpRouteLayer } from "./PeerHttp.ts";
 import { artifactHttpRouteLayer } from "../artifacts/ArtifactHttp.ts";
 import { layer as artifactWorkspaceLayer } from "../artifacts/ArtifactWorkspace.ts";
+import { guestProjectIconRouteLayer } from "../sharing/GuestProjectIcons.ts";
 import { openLinkHttpRouteLayer } from "../sharing/OpenLinkHttp.ts";
 
 /**
@@ -19,4 +20,5 @@ export const j5AuthenticatedRoutesLayer = Layer.mergeAll(
   machineSenderHttpRouteLayer,
   peerHttpRouteLayer,
   openLinkHttpRouteLayer,
+  guestProjectIconRouteLayer,
 ).pipe(Layer.provide(artifactWorkspaceLayer));

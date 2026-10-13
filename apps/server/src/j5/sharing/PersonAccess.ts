@@ -286,6 +286,14 @@ export interface PersonAccessShape {
     projectId: ProjectId,
   ) => Effect.Effect<Access, PersonAccessStorageError>;
   /**
+   * Whether a project is one a connection's sidebar holds: a member's always; a guest's when
+   * they hold a grant on it or can see a thread that lives in it.
+   */
+  readonly projectInFeed: (
+    session: SessionIdentity,
+    projectId: ProjectId,
+  ) => Effect.Effect<boolean, PersonAccessStorageError>;
+  /**
    * The guest whose reach just changed, each time `putGrant`, `removeGrant`, `removeGuest` or
    * `unbindSession` commits. A feed already open for that guest subscribes so the change reaches
    * them without reconnecting.
@@ -875,6 +883,45 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           return highest(rows.map((row) => row.level));
         },
         Effect.mapError(storage("read a person's access to a project")),
+      ),
+
+      projectInFeed: Effect.fn("j5.sharing.personAccess.projectInFeed")(
+        function* (session, projectId) {
+          const person = yield* sessionPerson(session);
+          if (person === null) return true;
+          const { personId } = person;
+          if (personId === null) return false;
+          // The cheap answers first: a grant on the project, or on a thread that lives in it.
+          const direct = yield* sql<{ readonly found: number }>`
+            SELECT 1 AS found
+            FROM j5_a2a_person_grant AS held
+            WHERE held.person_id = ${personId}
+              AND (
+                (held.target_kind = 'project' AND held.target_id = ${projectId})
+                OR (held.target_kind = 'thread' AND EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_threads AS thread
+                  WHERE thread.thread_id = held.target_id
+                    AND thread.project_id = ${projectId}
+                    AND thread.deleted_at IS NULL
+                ))
+              )
+            LIMIT 1
+          `;
+          if (direct.length > 0) return true;
+          // An agent beneath a granted thread can live in another project; its thread is in the
+          // guest's sidebar, and so is that project.
+          const threads = yield* sql<{ readonly thread_id: string }>`
+            SELECT thread_id FROM orchestration_v2_projection_threads
+            WHERE project_id = ${projectId} AND deleted_at IS NULL
+          `;
+          for (const thread of threads) {
+            if ((yield* threadLevels(personId, thread.thread_id as ThreadId)).length > 0) {
+              return true;
+            }
+          }
+          return false;
+        },
+        Effect.mapError(storage("read whether a project is in a person's sidebar")),
       ),
 
       subscribeGrantChanges: PubSub.subscribe(grantChanges),

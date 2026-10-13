@@ -269,6 +269,8 @@ const make: Layer.Layer<
           kind: "project",
           projectTitle: row.title,
           projectIcon: chosenIcon(row.icon),
+          // Filled in by the route, which serves the file; this service reads no files.
+          projectFaviconUrl: null,
           level,
           projectId: target.projectId,
         }));
@@ -291,6 +293,8 @@ const make: Layer.Layer<
         threadTitle: row.title,
         projectTitle: row.project_title,
         projectIcon: chosenIcon(row.icon),
+        // Filled in by the route, which serves the file; this service reads no files.
+        projectFaviconUrl: null,
         level,
         projectId: row.project_id === null ? null : ProjectId.make(row.project_id),
       }));

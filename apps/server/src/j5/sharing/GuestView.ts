@@ -20,6 +20,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { guestIconPath } from "./GuestProjectIcons.ts";
 import { GUEST_SESSION_SUBJECT, PersonAccess, type SessionIdentity } from "./PersonAccess.ts";
 
 /**
@@ -132,15 +133,17 @@ export const reduceServerConfig = (config: ServerConfig): ServerConfig => ({
 /**
  * A project as a guest's client is told of it: enough to draw the thread under its project's name
  * and chosen icon. The icon a person chose (`projectIcon`: a named glyph, an emoji or a monogram)
- * is plain data and passes. A favicon file does not: upstream's client asks for one by the
- * project's folder, which a guest is not told, and the signed link it would get names that folder
- * in the clear. A guest sees upstream's default icon for a project with no chosen one.
+ * is plain data and passes. A favicon file is asked for by the project's folder upstream, which a
+ * guest is not told, so its path is replaced by one that names the project by id, and J5 serves
+ * the file (`GuestProjectIcons.ts`).
  */
 const reduceProject = (project: OrchestrationProjectShell): OrchestrationProjectShell => ({
   id: project.id,
   title: project.title,
   workspaceRoot: PLACEHOLDER_PATH,
   ...(project.projectIcon == null ? {} : { projectIcon: project.projectIcon }),
+  // Not the host's path to a favicon: the project's id, for `GuestProjectIcons` to answer by.
+  faviconPath: guestIconPath(project.id),
   defaultModelSelection: null,
   scripts: [],
   createdAt: project.createdAt,

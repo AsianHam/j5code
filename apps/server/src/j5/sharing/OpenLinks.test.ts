@@ -734,6 +734,8 @@ it.layer(testLayer)("asking what a link opens", (it) => {
               kind: "project",
               projectTitle: "Billing Migration",
               projectIcon: { kind: "emoji", emoji: "🧾" },
+              // No favicon services in this test; `GuestProjectIcons.test.ts` covers the link.
+              projectFaviconUrl: null,
               level: "view",
             },
             {
@@ -741,6 +743,8 @@ it.layer(testLayer)("asking what a link opens", (it) => {
               threadTitle: "Plan the cutover",
               projectTitle: "Billing Migration",
               projectIcon: { kind: "emoji", emoji: "🧾" },
+              // No favicon services in this test; `GuestProjectIcons.test.ts` covers the link.
+              projectFaviconUrl: null,
               level: "collaborate",
             },
           ],
@@ -759,6 +763,8 @@ it.layer(testLayer)("asking what a link opens", (it) => {
               threadTitle: "Plan the cutover",
               projectTitle: "Billing Migration",
               projectIcon: { kind: "emoji", emoji: "🧾" },
+              // No favicon services in this test; `GuestProjectIcons.test.ts` covers the link.
+              projectFaviconUrl: null,
               level: "view",
             },
           ],
