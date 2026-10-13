@@ -1,3 +1,4 @@
+import { useGuestComposer } from "../../j5/sharing/guestComposer";
 import { useViewOnlyComposerProps } from "../../j5/sharing/viewOnlyComposer";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { useAgentMentionPicker } from "../../j5/agents/useAgentMentionPicker";
@@ -1827,6 +1828,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onRemoveEditingQueuedAttachment,
   } = props;
   const viewOnlyComposerProps = useViewOnlyComposerProps(environmentId, canOperateThread);
+  const guestComposer = useGuestComposer(environmentId);
   const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
@@ -5878,6 +5880,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   ): Promise<boolean> => {
     if (!activeThreadId || files.length === 0 || isRevertingCheckpointRef.current) return false;
+    if (guestComposer.refusesFiles()) return false;
     if (
       pendingUserInputs.length > 0 &&
       (!supportsQuestionAttachments ||
