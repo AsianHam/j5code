@@ -47,6 +47,7 @@ import { A2ALedgerTransactionWriter, A2ALedger, type A2ALedgerError } from "./Le
 import { recordOutsideAgentName } from "./outsideAgentNames.ts";
 import { PeerDirectory, type PeerDirectoryError } from "./PeerDirectory.ts";
 import { findPeerCounterparty, findPeerRoute } from "./peerCounterparty.ts";
+import { isSharedConversation } from "../sharing/PersonAccess.ts";
 
 const encodeSentPayload = Schema.encodeEffect(Schema.toCodecJson(MessageSentPayload));
 
@@ -193,6 +194,23 @@ export class A2AHumanAskOrReplyRequiredError extends Schema.TaggedError<A2AHuman
 ) {
   override get message(): string {
     return `A plain send to human participant ${this.participantId} is refused. To the human, use an ask with expect_reply=true, intent, and urgency=blocking|soon|fyi, or a reply with exchange_id. If nobody needs to act, say it in your own thread instead.`;
+  }
+}
+
+/**
+ * Refuses an agent's ask to a person's inbox from a shared conversation (Shared conversations
+ * AC13). An agent reads this text as its tool's answer; it is reviewed as agent-facing wording.
+ * The example uses the name of the person it tried to ask, when the server holds one.
+ */
+export const sharedConversationAskRefusal = (personName: string | null) =>
+  `This thread is a shared conversation, so an ask to a person's inbox is refused. Ask in this thread instead and name the person you are asking${personName === null ? "" : `, for example "${personName}, should I go ahead?"`}. Everyone on the thread sees the question and the answer.`;
+
+export class A2ASharedConversationAskError extends Schema.TaggedError<A2ASharedConversationAskError>()(
+  "A2ASharedConversationAskError",
+  { personName: Schema.NullOr(Schema.String) },
+) {
+  override get message(): string {
+    return sharedConversationAskRefusal(this.personName);
   }
 }
 
@@ -345,6 +363,7 @@ export type A2ASendError =
   | A2AUrgencyNotAcceptedError
   | A2AUrgencyRequiresExchangeError
   | A2AHumanAskOrReplyRequiredError
+  | A2ASharedConversationAskError
   | A2AHumanFollowupNotAllowedError
   | A2AExchangeNotOpenError
   | A2AExchangeAlreadyAnsweredError
@@ -380,6 +399,7 @@ export const isSendRefusal = Schema.is(
     A2AUrgencyNotAcceptedError,
     A2AUrgencyRequiresExchangeError,
     A2AHumanAskOrReplyRequiredError,
+    A2ASharedConversationAskError,
     A2AHumanFollowupNotAllowedError,
     A2AExchangeNotOpenError,
     A2AExchangeAlreadyAnsweredError,
@@ -962,6 +982,23 @@ const rawLayer: Layer.Layer<
 
       const receiver = yield* participantMembership(input.to, sender.projectId, remote);
       const receiverId = receiver.participantId;
+      // An agent in a shared conversation asks people in the thread, where everyone on it sees
+      // the question and the answer. A reply to a person's own message is not an ask.
+      if (receiver.kind === "human" && input.exchangeId === undefined) {
+        const senderThread = yield* sql<{ readonly thread_id: string | null }>`
+          SELECT thread_id FROM j5_a2a_membership
+          WHERE project_id = ${sender.projectId} AND participant_id = ${sender.participantId}
+        `;
+        const threadId = senderThread[0]?.thread_id;
+        if (threadId != null && (yield* isSharedConversation(sql, threadId as ThreadId))) {
+          const asked = yield* sql<{ readonly display_name: string | null }>`
+            SELECT display_name FROM j5_a2a_human_person WHERE person_id = ${receiverId}
+          `;
+          return yield* new A2ASharedConversationAskError({
+            personName: asked[0]?.display_name ?? null,
+          });
+        }
+      }
       if (
         receiver.kind === "human" &&
         input.expectReply !== true &&

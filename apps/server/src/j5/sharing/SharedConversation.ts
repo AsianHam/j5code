@@ -1,7 +1,11 @@
+// @effect-diagnostics nodeBuiltinImport:off - random ids for the platform's notes.
+import * as NodeCrypto from "node:crypto";
+
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   EnvironmentAuthorizationError,
-  type MessageId,
+  MessageId,
   type OrchestrationV2Command,
   type RunId,
   type ThreadId,
@@ -10,8 +14,10 @@ import {
 import type { SharingMessageAuthor } from "@t3tools/contracts/j5";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import type { ParticipantId } from "../a2a/contracts.ts";
 import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
 import { guestCommand } from "./GuestCommands.ts";
@@ -24,6 +30,7 @@ import {
   isCrewSeatThread,
   isSharedConversation,
 } from "./PersonAccess.ts";
+import { Writer, changeNote, firstNote } from "./sharedConversationNotes.ts";
 
 /**
  * A shared conversation: a thread a guest holds Collaborate on
@@ -109,7 +116,96 @@ const toAuthor = (row: AuthorRow): Author => ({
   displayName: row.display_name,
 });
 
-const make = (sql: SqlClient.SqlClient, access: PersonAccessShape) => {
+class NoteNotSentError extends Schema.TaggedError<NoteNotSentError>()("NoteNotSentError", {
+  cause: Schema.Defect(),
+}) {}
+
+const ToldWriters = Schema.fromJsonString(Schema.Array(Writer));
+const decodeTold = Schema.decodeEffect(ToldWriters);
+const encodeTold = Schema.encodeEffect(ToldWriters);
+
+const NEAREST = { thread: 0, ancestor: 1, project: 2 } as const;
+
+const make = <E>(
+  sql: SqlClient.SqlClient,
+  access: PersonAccessShape,
+  /** Sends the agent of a thread one platform note, as a message of its own. */
+  tell: (threadId: ThreadId, text: string) => Effect.Effect<void, E>,
+) => {
+  /**
+   * Everyone who can write to a thread, members first; none when no guest holds Collaborate on
+   * it, which is a thread that is not a shared conversation.
+   */
+  const writers = Effect.fn("j5.sharing.sharedConversation.writers")(function* (
+    threadId: ThreadId,
+  ) {
+    // The owner is recorded before they are first needed as a member of the thread.
+    yield* ensureLocalOperatorHumanPerson(sql);
+    const people = yield* access.threadPeople(threadId);
+    const guests = people.guests.filter((guest) =>
+      guest.grants.some((grant) => grant.level === "collaborate"),
+    );
+    if (guests.length === 0) return [];
+    return [
+      ...people.members.map((member): Writer => ({
+        personId: member.personId,
+        kind: "member",
+        label: authorLabel(member),
+        purpose: null,
+      })),
+      ...guests
+        .toSorted(
+          (left, right) =>
+            authorLabel(left.person).localeCompare(authorLabel(right.person)) ||
+            left.person.personId.localeCompare(right.person.personId),
+        )
+        .map((guest): Writer => ({
+          personId: guest.person.personId,
+          kind: "guest",
+          label: authorLabel(guest.person),
+          // The line on the grant nearest the thread that carries one.
+          purpose:
+            guest.grants
+              .filter((grant) => grant.note !== null)
+              .toSorted((left, right) => NEAREST[left.via] - NEAREST[right.via])[0]?.note ?? null,
+        })),
+    ];
+  });
+
+  /**
+   * Tells the agent who can write to its thread when that differs from what it was last told
+   * (AC3, AC4), and reports whether the thread is a shared conversation. It runs as a person's
+   * message is taken in, so the note reaches the agent ahead of the first message it bears on,
+   * and a change to a grant wakes no agent by itself. A thread that was never shared costs one
+   * lookup by key and one for any Collaborate grant on the server.
+   */
+  const announce = Effect.fn("j5.sharing.sharedConversation.announce")(function* (
+    threadId: ThreadId,
+  ) {
+    const rows = yield* sql<{ readonly writers_json: string }>`
+      SELECT writers_json FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}
+    `;
+    const told = rows[0] === undefined ? null : yield* decodeTold(rows[0].writers_json);
+    const shared = yield* isSharedConversation(sql, threadId);
+    if (told === null && !shared) return false;
+    const now = shared ? yield* writers(threadId) : [];
+    const text = told === null ? firstNote(now) : changeNote(told, now);
+    if (text === null) return shared;
+    yield* tell(threadId, text).pipe(Effect.mapError((cause) => new NoteNotSentError({ cause })));
+    if (shared) {
+      const toldAt = DateTime.formatIso(yield* DateTime.now);
+      yield* sql`
+        INSERT INTO j5_a2a_shared_thread_told (thread_id, writers_json, told_at)
+        VALUES (${threadId}, ${yield* encodeTold(now)}, ${toldAt})
+        ON CONFLICT (thread_id)
+        DO UPDATE SET writers_json = excluded.writers_json, told_at = excluded.told_at
+      `;
+    } else {
+      yield* sql`DELETE FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}`;
+    }
+    return shared;
+  });
+
   /** The person a connection writes as: its guest, or the server's owner for any other. */
   const sessionAuthor = Effect.fn("j5.sharing.sharedConversation.sessionAuthor")(function* (
     session: SessionIdentity,
@@ -166,7 +262,11 @@ const make = (sql: SqlClient.SqlClient, access: PersonAccessShape) => {
     command: OrchestrationV2Command,
   ) {
     if (command.type !== "message.dispatch" && command.type !== "queued-run.edit") return command;
-    if (!(yield* isSharedConversation(sql, command.threadId))) return command;
+    const shared =
+      command.type === "message.dispatch"
+        ? yield* announce(command.threadId)
+        : yield* isSharedConversation(sql, command.threadId);
+    if (!shared) return command;
     const author = yield* sessionAuthor(session);
     if (author === null) return command;
     if (command.type === "message.dispatch") {
@@ -215,6 +315,7 @@ const make = (sql: SqlClient.SqlClient, access: PersonAccessShape) => {
           WHERE message_id = ${command.messageId}
         `;
         if (existing.length > 0) return yield* refused("This message was already sent.");
+        yield* announce(command.threadId);
         yield* recordAuthor(command.threadId, command.messageId, author);
         return { ...command, text: withAuthorLine(command.text, author) };
       }
@@ -314,9 +415,29 @@ const make = (sql: SqlClient.SqlClient, access: PersonAccessShape) => {
   };
 };
 
-export type SharedConversation = ReturnType<typeof make>;
+export type SharedConversation = ReturnType<typeof make<unknown>>;
 
-/** Built over the database and `PersonAccess`, which every socket's handlers already have. */
+/**
+ * Built over the database, `PersonAccess` and upstream's thread service, which every socket's
+ * handlers already have. A note goes to the agent the way J5's other platform notices do: a
+ * message the platform sends, which starts the agent when it is idle and queues when it is not.
+ */
 export const sharedConversation = Effect.gen(function* () {
-  return make(yield* SqlClient.SqlClient, yield* PersonAccess);
+  const threads = yield* ThreadManagementService;
+  return make(yield* SqlClient.SqlClient, yield* PersonAccess, (threadId, text) => {
+    const id = NodeCrypto.randomUUID();
+    return threads
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:j5:shared-conversation-note:${id}`),
+        threadId,
+        messageId: MessageId.make(`message:j5:shared-conversation-note:${id}`),
+        text,
+        attachments: [],
+        createdBy: "system",
+        creationSource: "server",
+        dispatchMode: { type: "queue_after_active" },
+      })
+      .pipe(Effect.asVoid);
+  });
 });

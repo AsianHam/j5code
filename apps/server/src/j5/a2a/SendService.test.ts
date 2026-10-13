@@ -634,6 +634,113 @@ it.effect("refuses plain human sends while allowing human asks and replies", () 
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect("refuses an ask to a person's inbox from a shared conversation", () =>
+  Effect.gen(function* () {
+    yield* runMigrations();
+    const projectId = yield* setupSameProject();
+    yield* registerPerson();
+    const service = yield* A2ASendService;
+    const ledgerService = yield* A2ALedger;
+    const sql = yield* SqlClient.SqlClient;
+    // A guest holds Collaborate on the sender's thread, and only View on the receiver's.
+    yield* sql`
+      INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at, kind, display_name)
+      VALUES ('human:guest', 0, ${timestamp}, 'guest', 'Priya')
+    `;
+    for (const [threadId, level] of [
+      [sender.threadId, "collaborate"],
+      [receiver.threadId, "view"],
+    ] as const) {
+      yield* sql`
+        INSERT INTO j5_a2a_person_grant (
+          person_id, target_kind, target_id, level, created_at, updated_at
+        ) VALUES ('human:guest', 'thread', ${threadId}, ${level}, ${timestamp}, ${timestamp})
+      `;
+    }
+    const ask = (commandId: string, senderThreadId: ThreadId) =>
+      service.send({
+        commandId: CommCommandId.make(commandId),
+        senderThreadId,
+        to: person.id,
+        message: "Should I go ahead?",
+        expectReply: true,
+        intent: "Obtain a decision",
+        urgency: "soon",
+        acceptedAt: timestamp,
+      });
+
+    const refused = yield* Effect.flip(ask("command:shared-ask", sender.threadId));
+    assert.equal(refused._tag, "A2ASharedConversationAskError");
+    // No name is recorded for the person asked, so the example names no one.
+    assert.equal(
+      refused.message,
+      "This thread is a shared conversation, so an ask to a person's inbox is refused. Ask in this thread instead and name the person you are asking. Everyone on the thread sees the question and the answer.",
+    );
+    yield* sql`UPDATE j5_a2a_human_person SET display_name = 'Jackson' WHERE person_id = ${person.id}`;
+    assert.equal(
+      (yield* Effect.flip(ask("command:shared-ask-named", sender.threadId))).message,
+      'This thread is a shared conversation, so an ask to a person\'s inbox is refused. Ask in this thread instead and name the person you are asking, for example "Jackson, should I go ahead?". Everyone on the thread sees the question and the answer.',
+    );
+    // A plain send is told the same, not to open an ask.
+    const plain = yield* Effect.flip(
+      service.send({
+        commandId: CommCommandId.make("command:shared-plain"),
+        senderThreadId: sender.threadId,
+        to: person.id,
+        message: "FYI.",
+        acceptedAt: timestamp,
+      }),
+    );
+    assert.equal(plain._tag, "A2ASharedConversationAskError");
+    const writes = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM j5_a2a_comm_event
+      WHERE command_id IN ('command:shared-ask', 'command:shared-plain')
+    `;
+    assert.deepStrictEqual(writes, [{ count: 0 }]);
+
+    // A thread a guest can only read is not a shared conversation: its agent asks as before.
+    assert.equal((yield* ask("command:viewed-ask", receiver.threadId)).exchangeState, "open");
+    // Agents in a shared conversation still message each other.
+    const peer = yield* service.send({
+      commandId: CommCommandId.make("command:shared-peer"),
+      senderThreadId: sender.threadId,
+      to: receiver.id,
+      message: "Over to you.",
+      acceptedAt: timestamp,
+    });
+    assert.equal(peer.exchangeState, "none");
+    // And a reply to something a person asked the agent is not an ask.
+    const inbound = ExchangeId.make("exchange:shared-inbound");
+    yield* ledgerService.append({
+      commandId: CommCommandId.make("command:shared-inbound"),
+      projectId,
+      acceptedAt: timestamp,
+      event: {
+        kind: "exchange.opened",
+        sender: person.id,
+        receiver: sender.id,
+        exchangeId: inbound,
+        correlationId: null,
+        payload: { intent: "Request a reply", urgency: "soon" },
+        createdAt: timestamp,
+      },
+    });
+    const reply = yield* service.send({
+      commandId: CommCommandId.make("command:shared-reply"),
+      senderThreadId: sender.threadId,
+      to: person.id,
+      message: "Here it is.",
+      exchangeId: inbound,
+      acceptedAt: timestamp,
+    });
+    assert.equal(reply.exchangeState, "closed");
+
+    // The guest's grant goes: the thread is one person's again, and its agent asks as before.
+    yield* sql`DELETE FROM j5_a2a_person_grant WHERE target_id = ${sender.threadId}`;
+    assert.equal((yield* ask("command:unshared-ask", sender.threadId)).exchangeState, "open");
+  }).pipe(Effect.provide(testLayer)),
+);
+
 it.effect("rolls back the send receipt when its projection write fails", () =>
   Effect.gen(function* () {
     yield* setupSameProject();
