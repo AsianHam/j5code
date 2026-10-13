@@ -4,6 +4,7 @@ import {
   authorName,
   authorRecordSignal,
   authorsByMessage,
+  isSettledPrompt,
   mayHaveAuthorLine,
   queuedMessageRules,
   queuedMessageText,
@@ -94,29 +95,38 @@ describe("a queued message in a shared conversation", () => {
 
 describe("what tells the client to ask the server's record again", () => {
   const message = (id: string, role: string) => ({ id, kind: "message", message: { role } });
-  const prompt = (id: string, status: string) => ({
+  const prompt = (id: string, completedAt: string | null) => ({
     id,
     kind: "work",
-    entry: { toolData: { type: "approval_request", status } },
+    entry: { toolData: { type: "approval_request", requestId: `request-${id}`, completedAt } },
   });
 
-  it("moves when a person's message arrives or a prompt changes", () => {
-    const before = authorRecordSignal([message("m1", "user"), prompt("p1", "pending")]);
-    expect(authorRecordSignal([message("m1", "user"), prompt("p1", "resolved")])).not.toBe(before);
+  it("moves when a person's message arrives or a prompt settles", () => {
+    const before = authorRecordSignal([message("m1", "user"), prompt("p1", null)]);
     expect(
-      authorRecordSignal([message("m1", "user"), prompt("p1", "pending"), message("m2", "user")]),
+      authorRecordSignal([message("m1", "user"), prompt("p1", "2026-10-13T06:40:00Z")]),
+    ).not.toBe(before);
+    expect(
+      authorRecordSignal([message("m1", "user"), prompt("p1", null), message("m2", "user")]),
     ).not.toBe(before);
   });
 
-  it("stays as it was while the agent writes and works", () => {
+  it("stays as it was for a prompt still open, and while the agent writes and works", () => {
     const before = authorRecordSignal([message("m1", "user")]);
     expect(
       authorRecordSignal([
         message("m1", "user"),
         message("a1", "assistant"),
+        prompt("p1", null),
         { id: "w1", kind: "work", entry: { toolData: { type: "tool_call" } } },
       ]),
     ).toBe(before);
+  });
+
+  it("names an answerer only on a settled prompt", () => {
+    expect(isSettledPrompt(prompt("p1", "2026-10-13T06:40:00Z").entry.toolData)).toBe(true);
+    expect(isSettledPrompt(prompt("p1", null).entry.toolData)).toBe(false);
+    expect(isSettledPrompt({ type: "tool_call", completedAt: "2026-10-13T06:40:00Z" })).toBe(false);
   });
 });
 

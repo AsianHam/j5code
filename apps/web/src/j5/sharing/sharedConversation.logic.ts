@@ -86,35 +86,42 @@ export function sharedConversationNote(message: {
 export const answeredBy = (answer: Pick<SharingPromptAnswer, "displayName" | "kind" | "you">) =>
   answer.you ? "You" : authorName(answer);
 
+/** Whether one of the agent's prompts has been settled, read from the thread's own item for it. */
+export function isSettledPrompt(toolData: unknown): toolData is {
+  readonly type: "approval_request" | "user_input_request";
+  readonly requestId: string;
+} {
+  const item = toolData as
+    | { readonly type?: unknown; readonly requestId?: unknown; readonly completedAt?: unknown }
+    | undefined;
+  return (
+    (item?.type === "approval_request" || item?.type === "user_input_request") &&
+    typeof item.requestId === "string" &&
+    item.completedAt !== null &&
+    item.completedAt !== undefined
+  );
+}
+
 /**
- * What moves when the server's record of authors and answers can have gained a row: a person's
- * message arriving, or a prompt of the agent's changing. Other entries, such as the agent's own
- * streaming text, leave it as it was.
+ * What moves when the server's record can have gained a row this client should read: a person's
+ * message arriving, or a prompt of the agent's settling. The server records who is answering
+ * before a prompt settles, so the name is there by then; a prompt still open is never a reason
+ * to read, since an answer the provider goes on to refuse would show a name on it. The agent's
+ * own text and work leave the signal as it was.
  */
 export function authorRecordSignal(
   entries: ReadonlyArray<{
     readonly id: string;
     readonly kind: string;
     readonly message?: { readonly role: string } | undefined;
-    readonly entry?: { readonly toolData?: unknown; readonly questionAnswer?: unknown } | undefined;
+    readonly entry?: { readonly toolData?: unknown } | undefined;
   }>,
 ): string {
   const parts: Array<string> = [];
   for (const entry of entries) {
     if (entry.kind === "message") {
       if (entry.message?.role === "user") parts.push(entry.id);
-      continue;
-    }
-    const item = entry.entry?.toolData as
-      | { readonly type?: unknown; readonly status?: unknown; readonly decision?: unknown }
-      | undefined;
-    if (item?.type === "approval_request" || item?.type === "user_input_request") {
-      parts.push(
-        `${entry.id}:${String(item.status ?? "")}:${String(item.decision ?? "")}:${
-          entry.entry?.questionAnswer === undefined ? 0 : 1
-        }`,
-      );
-    }
+    } else if (isSettledPrompt(entry.entry?.toolData)) parts.push(entry.id);
   }
   return parts.join("|");
 }
