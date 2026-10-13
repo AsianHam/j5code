@@ -1,3 +1,4 @@
+import { useSharedQueue } from "../../j5/sharing/sharedConversation";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -93,7 +94,7 @@ export function QueuedRunsControl({
   );
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
-  const canReorder = workflow?.canReorder === true;
+  const canReorderAsBuilt = workflow?.canReorder === true;
   const queuedImageAttachmentIds = useMemo(() => {
     const ids: string[] = [];
     for (const { attachments } of workflow?.queuedRuns ?? []) {
@@ -135,7 +136,7 @@ export function QueuedRunsControl({
   const optimisticQueued = props.optimisticMessages.filter(
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
-  const items = [
+  const queuedItems = [
     ...queued.map(({ run, text, attachments }, serverIndex) => ({
       key: run.id,
       runId: run.id,
@@ -169,6 +170,10 @@ export function QueuedRunsControl({
       pending: true,
     })),
   ];
+  // J5: in a shared conversation each message shows who wrote it, and a guest changes only their own.
+  const sharedQueue = useSharedQueue(props.environmentId, props.threadId, queuedItems);
+  const items = sharedQueue.items;
+  const canReorder = canReorderAsBuilt && sharedQueue.mayReorder;
   const participantLabels = useParticipantLabels(
     props.environmentId,
     items.flatMap((item) => participantIdsForThreadA2AEnvelope(item.text)),
@@ -281,7 +286,7 @@ export function QueuedRunsControl({
         <ComposerBanner.Scroll className={cn("max-h-32", !expanded && "hidden")}>
           <ComposerBanner.Children render={<ol />} id={queueListId}>
             {items.map((item) => {
-              const previewText = replaceComposerContextReferences(item.text, (reference) =>
+              const previewText = replaceComposerContextReferences(item.preview, (reference) =>
                 reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
               ).trim();
               const delivery = formatThreadA2AQueuedDelivery(item.text, participantLabels);
@@ -434,7 +439,9 @@ export function QueuedRunsControl({
                                 size="icon-xs"
                                 variant="ghost-muted"
                                 aria-label="Edit queued message"
-                                disabled={item.runId === null || busyRunId !== null}
+                                disabled={
+                                  item.runId === null || busyRunId !== null || !item.mayChange
+                                }
                                 onClick={() => {
                                   if (item.runId !== null && item.messageId !== null) {
                                     props.onEditQueuedRun({
@@ -462,6 +469,7 @@ export function QueuedRunsControl({
                               disabled={
                                 item.runId === null ||
                                 busyRunId !== null ||
+                                !item.maySteer ||
                                 !workflow?.canPromoteToSteer
                               }
                               onClick={() => {
@@ -485,7 +493,9 @@ export function QueuedRunsControl({
                             render={
                               <ComposerBanner.Dismiss
                                 aria-label="Remove queued message"
-                                disabled={item.runId === null || busyRunId !== null}
+                                disabled={
+                                  item.runId === null || busyRunId !== null || !item.mayChange
+                                }
                                 onClick={() => {
                                   if (item.runId !== null) void remove(item.runId);
                                 }}
