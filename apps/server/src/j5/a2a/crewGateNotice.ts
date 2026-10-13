@@ -124,6 +124,11 @@ export const crewLaunchReportText = (input: {
   readonly windowMs: number;
   /** The playbook the Crew follows, with its live title (its name when the file can't be read). */
   readonly playbook?: { readonly name: string; readonly title: string } | null;
+  /**
+   * The Captain's thread is a shared conversation, where an ask to a person's inbox is refused
+   * (Shared conversations AC13), so the Captain is told to ask in its thread instead.
+   */
+  readonly sharedConversation?: boolean;
 }) => {
   const { proposal, instance, verdicts } = input;
   const playbook = input.playbook ?? null;
@@ -196,7 +201,9 @@ export const crewLaunchReportText = (input: {
     );
   if (failed.length === 0 && notCreated.length === 0 && pending.length === 0)
     prose.push(
-      "Your crew is running. Each seat has your brief and this roster; coordinate with j5_send_message, and ask the user through the inbox for decisions you cannot make from the brief.",
+      input.sharedConversation === true
+        ? "Your crew is running. Each seat has your brief and this roster; coordinate with j5_send_message, and ask in this thread, naming the person, for decisions you cannot make from the brief."
+        : "Your crew is running. Each seat has your brief and this roster; coordinate with j5_send_message, and ask the user through the inbox for decisions you cannot make from the brief.",
     );
   if (playbook !== null && proposal.kind === "roster")
     prose.push(

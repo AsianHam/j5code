@@ -284,4 +284,29 @@ describe("crew launch report", () => {
     assert.include(text, "Your crew is running.");
     assert.notInclude(text, "seat_failed");
   });
+
+  it("tells a Captain in a shared conversation to ask in its thread, and any other what it always has", () => {
+    const report = (sharedConversation?: boolean) =>
+      crewLaunchReportText({
+        proposal: { ...proposal, approvedSeats: proposal.requestedSeats },
+        instance: { ...instance, members: instance.members.slice(0, 2) } as AgentCrewInstance,
+        verdicts: new Map([
+          ["setup", { kind: "started" }],
+          ["punchline", { kind: "started" }],
+        ]),
+        windowMs: 60_000,
+        ...(sharedConversation === undefined ? {} : { sharedConversation }),
+      });
+    const inbox =
+      "Your crew is running. Each seat has your brief and this roster; coordinate with j5_send_message, and ask the user through the inbox for decisions you cannot make from the brief.";
+    const thread =
+      "Your crew is running. Each seat has your brief and this roster; coordinate with j5_send_message, and ask in this thread, naming the person, for decisions you cannot make from the brief.";
+    // Left out or false, the report is the same text, byte for byte.
+    assert.strictEqual(report(false), report());
+    assert.include(report(), inbox);
+    assert.notInclude(report(), "ask in this thread");
+    // Shared: that one line differs and nothing else does.
+    assert.strictEqual(report(true), report().replace(inbox, thread));
+    assert.notInclude(report(true), "through the inbox");
+  });
 });

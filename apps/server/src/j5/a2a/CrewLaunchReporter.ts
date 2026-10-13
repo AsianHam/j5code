@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import type { OrchestratorV2Error } from "../../orchestration-v2/Orchestrator.ts";
 
@@ -33,6 +34,7 @@ import {
   crewSeatReservedBy,
 } from "./crewSeatIds.ts";
 import { participantIdForThread } from "./HomeRegistrar.ts";
+import { isSharedConversation } from "../sharing/PersonAccess.ts";
 import { runFailureDetail } from "./runFailures.ts";
 import { lifecycleCommandId, lifecycleId } from "./spawnIds.ts";
 import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
@@ -175,6 +177,7 @@ const makeLayer = (daemon: boolean) =>
     CrewLaunchReporter,
     Effect.gen(function* () {
       const threads = yield* ThreadManagementService;
+      const sql = yield* SqlClient.SqlClient;
       const alertHumanOfCrewFailure = yield* makeCrewFailureAlert;
       const proposals = yield* AgentCrewProposalService;
       const playbooks = yield* PlaybookStore;
@@ -232,6 +235,10 @@ const makeLayer = (daemon: boolean) =>
             verdicts: launch.verdicts,
             windowMs: CREW_LAUNCH_REPORT_WINDOW_MS,
             playbook,
+            // If it cannot be read the report is the one every Captain has always had.
+            sharedConversation: yield* isSharedConversation(sql, proposal.captainThreadId).pipe(
+              Effect.orElseSucceed(() => false),
+            ),
           }),
           attachments: [],
           modelSelection: captain.thread.modelSelection,
