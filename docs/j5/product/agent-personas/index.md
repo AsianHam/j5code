@@ -6,7 +6,7 @@ status: 1
 
 # Agent persona definition contract
 
-Revised 2026-09-08 following [Jacksondr5's PR #75 review](https://github.com/Jacksondr5/j5code/pull/75) and Bryant's approval of folder loading first. A **persona** is the current implementation of a user-authored [Role](../features/roles.md), not a second product concept. The eleven definitions below are starter examples, not a closed platform registry or a prescribed workflow.
+A **persona** is the current implementation of a user-authored [Role](../features/roles.md), not a second product concept. The eleven definitions below are starter examples, not a closed platform registry or a prescribed workflow.
 
 ## Delivery boundary
 
@@ -161,7 +161,7 @@ Handoff artifacts are files in the project's shared artifacts (see the Artifacts
 
 ## Behavioral instructions and runtime permissions
 
-A Role guides behavior. Its text does not grant permissions or guarantee compliance. A runtime policy means only what the provider's sandbox enforces (Jackson, 2026-10-03, #439). The matrix below records what each policy is for; anything beyond the enforced control in the second table, such as no commit, no push, targeted edits only, or no merge, belongs in the persona's own instructions.
+A Role guides behavior. Its text does not grant permissions or guarantee compliance. A runtime policy means only what the provider's sandbox enforces (Jackson, 2026-10-03). The matrix below records what each policy is for; anything beyond the enforced control in the second table, such as no commit, no push, targeted edits only, or no merge, belongs in the persona's own instructions.
 
 | Policy            | Workspace                                              | Commands and tests                                                            | Git                             | Pull requests                     | External systems                       |
 | ----------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- | ------------------------------- | --------------------------------- | -------------------------------------- |
@@ -215,5 +215,7 @@ Follow-up work: in-app git commit/push/pull (status nudges and open-in-editor sh
 
 ## History
 
+- 2026-09-08 — revised after Jackson's review of [PR #75](https://github.com/Jacksondr5/j5code/pull/75) and Bryant's approval of folder loading first.
 - 2026-09-24 — upstream removed the Agents right panel in the V2 advance (PR #262); handoff status and persona identity for delegated children moved to the chip beside their Lineage rows and subagent cards.
 - 2026-09-24 — the J5 document is named "handoff artifact" to distinguish it from upstream's context handoffs.
+- 2026-10-03 — a runtime policy means only what the provider's sandbox enforces (Jackson, [#439](https://github.com/Jacksondr5/j5code/issues/439)).
