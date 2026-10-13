@@ -8477,6 +8477,9 @@ export default function ChatView(props: ChatViewProps) {
             "Make room for this message's attachments in the composer before rewinding.",
           );
         }
+        // J5: a reverted message of a shared conversation comes back without the agent's author
+        // line. Read before the rewind, which takes the message out of the author record.
+        const typedText = sharedMessageTypedText(message);
         const commandId = CommandId.make(randomUUID());
         await waitForRevertedMessage(routeThreadRef, messageId, turnCount, commandId, async () => {
           const result = await revertThreadCheckpoint({
@@ -8486,8 +8489,7 @@ export default function ChatView(props: ChatViewProps) {
           if (result._tag === "Failure") throw squashAtomCommandFailure(result);
         });
         const currentPrompt = store.getComposerDraft(composerDraftTarget)?.prompt ?? "";
-        // J5: a reverted message of a shared conversation comes back without the agent's author line.
-        const restoredPrompt = recallableComposerPrompt(sharedMessageTypedText(message));
+        const restoredPrompt = recallableComposerPrompt(typedText);
         const nextPrompt =
           restoredPrompt.length === 0
             ? currentPrompt
