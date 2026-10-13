@@ -182,6 +182,51 @@ describe("ThreadA2ADeliveryRenderer", () => {
     expect(markup).toContain("Please prioritize the alert.");
   });
 
+  it("reads the id of an inbox reply that names its author, in an ordinary and a shared thread", () => {
+    for (const [header, label] of [
+      ["[Message from Jackson (human:viewer)]", "Jackson"],
+      ["[Message from Jackson (member) (human:viewer)]", "Jackson (member)"],
+      // A name with spaces and parentheses of its own.
+      [
+        "[Message from Ada (she/her) Lovelace (member) (human:viewer)]",
+        "Ada (she/her) Lovelace (member)",
+      ],
+    ] as const) {
+      const source = message({
+        id: deliveryId(`human-named-${label}`),
+        createdBy: "user",
+        text: humanClosedRaw.replace("[Message from human:viewer]", header),
+      });
+      expect(presentThreadA2ADelivery({ message: source })).toMatchObject({
+        kind: "human",
+        senderId: "human:viewer",
+        senderLabel: label,
+        body: "Human reply delivered verbatim.",
+        exchange: "closed",
+      });
+      // Someone else's reply is named; the viewer's own still reads as theirs.
+      expect(renderToStaticMarkup(<ThreadA2ADeliveryRenderer message={source} />)).toContain(
+        `Via Inbox · ${label}`,
+      );
+      expect(
+        renderToStaticMarkup(
+          <ThreadA2ADeliveryRenderer
+            message={source}
+            resolveViewerParticipantId={() => "human:viewer"}
+          />,
+        ),
+      ).toContain("You · via Inbox");
+    }
+  });
+
+  it("keeps a reply that carries only the id as it was", () => {
+    const source = message({ id: deliveryId("human-id"), createdBy: "user", text: humanClosedRaw });
+    expect(presentThreadA2ADelivery({ message: source })).toMatchObject({
+      senderId: "human:viewer",
+      senderLabel: null,
+    });
+  });
+
   it("uses You only when the caller proves the viewer matches the sender", () => {
     const markup = renderToStaticMarkup(
       <ThreadA2ADeliveryRenderer

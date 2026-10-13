@@ -91,6 +91,8 @@ export type ThreadA2ADeliveryPresentation =
       readonly kind: "human";
       readonly rawEnvelope: string;
       readonly senderId: string;
+      /** The name the reply came with, and in a shared conversation "(member)" after it; null for a reply that carries only the id. */
+      readonly senderLabel: string | null;
       readonly body: string;
       readonly exchange: "expects-reply" | "plain" | "closed";
     }
@@ -230,12 +232,20 @@ function parseAgentAuthoredEnvelope(rawEnvelope: string) {
   );
 }
 
+// A person's inbox reply that names them: "[Message from Jackson (human:…)]", and in a shared
+// conversation "[Message from Jackson (member) (human:…)]". The id is the trailing parenthesis,
+// as in the outside-agent header; the name before it may itself hold spaces and parentheses.
+const HUMAN_NAMED_HEADER = /^\[Message from ([^\]\n]+) \((human:[^\]\s()]+)\)\]\n\n/;
+
 function parseHumanEnvelope(rawEnvelope: string) {
-  // #11 c487cf8's exact template. The older v6 literal header remains raw.
-  const header = /^\[Message from ([^\]\n]+)\]\n\n/.exec(rawEnvelope);
+  // #11 c487cf8's exact template, whose whole header is the sender's id; stored replies and a
+  // person with no name on record keep that form. The older v6 literal header remains raw.
+  const named = HUMAN_NAMED_HEADER.exec(rawEnvelope);
+  const header = named ?? /^\[Message from ([^\]\n]+)\]\n\n/.exec(rawEnvelope);
   if (!header) return null;
 
-  const senderId = header[1]!;
+  const senderId = named === null ? header[1]! : named[2]!;
+  const senderLabel = named === null ? null : named[1]!;
   const content = rawEnvelope.slice(header[0].length);
   const divider = content.lastIndexOf("\n\n");
   if (divider > 0) {
@@ -244,7 +254,7 @@ function parseHumanEnvelope(rawEnvelope: string) {
       instruction: content.slice(divider + 2),
     });
     if (closedInstruction?.exchange === "closed") {
-      return { senderId, body: content.slice(0, divider), ...closedInstruction };
+      return { senderId, senderLabel, body: content.slice(0, divider), ...closedInstruction };
     }
   }
 
@@ -257,7 +267,7 @@ function parseHumanEnvelope(rawEnvelope: string) {
   });
   return instruction === null || instruction.exchange === "closed"
     ? null
-    : { senderId, body, ...instruction };
+    : { senderId, senderLabel, body, ...instruction };
 }
 
 function counterpartSummary(counterpartId: string, suffix: string): string | null {
@@ -361,6 +371,7 @@ export function presentThreadA2ADelivery(
         kind: "human",
         rawEnvelope: message.text,
         senderId: human.senderId,
+        senderLabel: human.senderLabel,
         body: human.body,
         exchange: human.exchange,
       };
@@ -622,7 +633,7 @@ export function renderThreadA2ADelivery(props: ThreadA2ADeliveryCompositionInput
     const attribution =
       viewerParticipantId !== null && viewerParticipantId === presentation.senderId
         ? "You · via Inbox"
-        : `Via Inbox · ${presentation.senderId}`;
+        : `Via Inbox · ${presentation.senderLabel ?? presentation.senderId}`;
     return (
       <section className="rounded-lg bg-accent px-3 py-2.5" data-j5-a2a-renderer="human">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
