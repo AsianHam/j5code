@@ -387,6 +387,10 @@
       "types": "./src/j5/sharing.ts",
       "default": "./src/j5/sharing.ts"
     },
+    "./j5/shared-conversation": {
+      "types": "./src/j5/sharedConversation.ts",
+      "default": "./src/j5/sharedConversation.ts"
+    },
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"

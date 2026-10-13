@@ -1,42 +1,62 @@
+import {
+  answersWithoutAuthor,
+  sharedNoteText,
+} from "@t3tools/client-runtime/j5/shared-conversation";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
-import { authorWhileQueued, useThreadAuthors } from "./sharedConversation";
+import { authorWhileQueued, forgetQueuedAuthor, useThreadAuthors } from "./sharedConversation";
 import {
   mayHaveAuthorLine,
-  messageStanding,
+  queuedAuthorKey,
   settledPromptSignal,
-  withoutAuthorLine,
+  sharedMessageView,
+  type AuthorsByMessage,
 } from "./sharedConversation.logic";
+import { splitSharedMessage } from "@t3tools/client-runtime/j5/shared-conversation";
 
 interface MessageEntry {
   readonly id: string;
   readonly kind: string;
   readonly message?: { readonly id: string; readonly role: string; readonly text: string };
+  readonly entry?: {
+    readonly toolData?: unknown;
+    readonly questionAnswer?: {
+      readonly requestId: string;
+      readonly answers: Readonly<Record<string, unknown>>;
+    };
+  };
 }
 
-// Whose each drawn message is, for the card that draws another person's. Keyed by the message
-// object the timeline holds, so nothing is kept for a thread that is no longer on screen.
-const authorOfMessage = new WeakMap<object, SharingMessageAuthor | "waiting">();
-
 /**
- * Who the server records as having written this message; "waiting" for one whose answer has not
- * come yet and that this client did not draw from its own person's typing; nothing otherwise.
+ * What J5 draws in place of upstream's bubble for a message the timeline holds: another person's
+ * message (`author`, or "waiting" for the moment before the record says whose it is), or the
+ * notice for the note a message carries.
  */
-export const sharedAuthorOf = (message: object) => authorOfMessage.get(message);
+export type SharedMark =
+  | { readonly kind: "message"; readonly author: SharingMessageAuthor | "waiting" }
+  | { readonly kind: "note" };
+
+// Keyed by the message object the timeline holds, so nothing is kept for a thread off screen.
+const marks = new WeakMap<object, SharedMark>();
+
+/** What J5 draws for this message, or nothing when it is upstream's to draw. */
+export const sharedMarkOf = (message: object) => marks.get(message);
 
 // Whose each message of the thread on screen is, for code that holds a message outside the
 // timeline, such as the action that puts a reverted message back in the composer.
-let recordedAuthors: { has(messageId: string): boolean } = new Set<string>();
+let recordedAuthors: AuthorsByMessage = new Map();
 
 /**
  * A message's text as its author typed it, for handing back to a composer. A message the server
  * records an author for loses the line that is there for the agent; sent again with it, the agent
  * would read a typed author line under the real one. Any other message is returned as it is.
  */
-export const sharedMessageTypedText = (message: { readonly id: string; readonly text: string }) =>
-  recordedAuthors.has(message.id) ? withoutAuthorLine(message.text) : message.text;
+export function sharedMessageTypedText(message: { readonly id: string; readonly text: string }) {
+  const author = recordedAuthors.get(message.id);
+  return author === undefined ? message.text : splitSharedMessage(message.text, author.note).typed;
+}
 
 // Who answered each prompt of the thread on screen, for the line a settled prompt carries.
 let answers: ReadonlyMap<string, SharingPromptAnswer> = new Map();
@@ -60,9 +80,11 @@ export function usePromptAnswer(requestId: string | null): SharingPromptAnswer |
 
 /**
  * A thread's timeline as a shared conversation shows it. A message the server records an author
- * for loses its first line, "[Message from …]", which is there for the agent; whose it is stays
- * with the message for J5's card. Every other entry, and every entry of a thread that was never
- * shared, is returned as it came.
+ * for is shown as what its author typed: the note it carries becomes a notice just before it,
+ * and the author line, which is there for the agent, is taken off; whose it is stays with the
+ * message for J5's card. An answer to the agent's question that the record holds an answerer for
+ * loses the line the server put on it. Every other entry, and every entry of a thread that was
+ * never shared, is returned as it came.
  */
 export function useSharedConversationEntries<Entry extends MessageEntry>(
   threadRef: ScopedThreadRef | null,
@@ -90,31 +112,71 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
   for (const message of messages) {
     if (!mayHaveAuthorLine(message.text)) typedHere.current.add(message.id);
   }
+  const queuedKey = useMemo(
+    () =>
+      threadRef === null
+        ? null
+        : (authorLine: string, typed: string) =>
+            queuedAuthorKey({
+              environmentId: threadRef.environmentId,
+              threadId: threadRef.threadId,
+              authorLine,
+              typed,
+            }),
+    [threadRef],
+  );
+  // Once the record answers for a message, what the queue knew of it has served its purpose.
+  useEffect(() => {
+    if (queuedKey === null) return;
+    for (const message of messages) {
+      const author = record.authors.get(message.id);
+      if (author === undefined) continue;
+      const { authorLine, typed } = splitSharedMessage(message.text, author.note);
+      if (authorLine !== null) forgetQueuedAuthor(queuedKey(authorLine, typed));
+    }
+  }, [messages, queuedKey, record.authors]);
   return useMemo(() => {
-    if (!messages.some((message) => mayHaveAuthorLine(message.text))) return entries;
-    return entries.map((entry) => {
-      if (entry.message === undefined || entry.message.role !== "user") return entry;
-      const typed = withoutAuthorLine(entry.message.text);
-      // The record's own answer, or for the moment before it, what the queue knew of a message
-      // that has just started from it.
-      const author =
-        record.authors.get(entry.message.id) ??
-        (record.unrecorded.has(entry.message.id) || threadRef === null
-          ? undefined
-          : authorWhileQueued(threadRef.threadId, typed));
-      const standing = messageStanding({
-        looksAuthored: mayHaveAuthorLine(entry.message.text),
-        recorded: author !== undefined,
+    if (record.answers.size === 0 && !messages.some((message) => mayHaveAuthorLine(message.text))) {
+      return entries;
+    }
+    return entries.flatMap((entry): ReadonlyArray<Entry> => {
+      const answer = entry.entry?.questionAnswer;
+      if (answer !== undefined && record.answers.has(answer.requestId)) {
+        return [
+          {
+            ...entry,
+            entry: {
+              ...entry.entry,
+              questionAnswer: { ...answer, answers: answersWithoutAuthor(answer.answers) },
+            },
+          },
+        ];
+      }
+      if (entry.message === undefined || entry.message.role !== "user") return [entry];
+      const view = sharedMessageView({
+        text: entry.message.text,
+        recorded: record.authors.get(entry.message.id),
         unrecorded: record.unrecorded.has(entry.message.id),
         typedHere: typedHere.current.has(entry.message.id),
+        whileQueued: (authorLine, typed) =>
+          queuedKey === null ? undefined : authorWhileQueued(queuedKey(authorLine, typed)),
       });
-      if (standing === "plain") return entry;
-      const message = { ...entry.message, text: typed };
-      // Until the record answers, the reader's own message stays their own bubble and anyone
-      // else's is a card with no name yet; neither shows the line meant for the agent.
-      if (author !== undefined) authorOfMessage.set(message, author);
-      else if (standing === "waiting-unknown") authorOfMessage.set(message, "waiting");
-      return { ...entry, message };
+      if (view === null) return [entry];
+      const message = { ...entry.message, text: view.typed };
+      // The reader's own message stays upstream's bubble; anyone else's is J5's card.
+      if (view.author === "waiting" || (view.author !== null && !view.author.you)) {
+        marks.set(message, { kind: "message", author: view.author });
+      }
+      const shown = { ...entry, message };
+      if (view.note === null) return [shown];
+      // The note the message carried for the agent, as a notice of its own just before it.
+      const note = {
+        ...entry.message,
+        id: `${entry.message.id}:shared-note`,
+        text: sharedNoteText(view.note),
+      };
+      marks.set(note, { kind: "note" });
+      return [{ ...entry, id: `${entry.id}:shared-note`, message: note }, shown];
     });
-  }, [entries, messages, record.authors, record.unrecorded, threadRef]);
+  }, [entries, messages, queuedKey, record.answers, record.authors, record.unrecorded]);
 }

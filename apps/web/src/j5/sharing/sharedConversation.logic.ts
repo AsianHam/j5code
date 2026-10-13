@@ -1,21 +1,17 @@
+import {
+  looksLikeSharedMessage,
+  splitSharedMessage,
+} from "@t3tools/client-runtime/j5/shared-conversation";
 import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
 
-// The line the server puts first on a person's message once a thread is a shared conversation
-// (`authorLine` in the server's `j5/sharing/SharedConversation.ts`): "[Message from Priya (guest)]",
-// "[Message from a member]", or either followed by ", edited by <the same kind of label>". It is
-// matched exactly, with its "(member)" or "(guest)", because J5's older envelopes also begin
-// "[Message from …]" (an inbox reply, an automation, an outside agent) and none of those is a
-// reason to ask the server who wrote a message.
-const AUTHOR_LABEL = "(?:a (?:member|guest)|[^\\]\\n]* \\((?:member|guest)\\))";
-const AUTHOR_LINE = new RegExp(
-  `^\\[Message from ${AUTHOR_LABEL}(?:, edited by ${AUTHOR_LABEL})?\\]\\n\\n`,
-);
+/**
+ * Whether a text begins the way a person's message in a shared conversation is stored (a note,
+ * when it carries one, then the author line); only the server's record says it is one.
+ */
+export const mayHaveAuthorLine = looksLikeSharedMessage;
 
-/** Whether a text begins the way an authored message does; only the server's record says it is one. */
-export const mayHaveAuthorLine = (text: string) => AUTHOR_LINE.test(text);
-
-/** A message's text as its author typed it. */
-export const withoutAuthorLine = (text: string) => text.replace(AUTHOR_LINE, "");
+/** A message's text as its author typed it, read from the text alone. */
+export const withoutAuthorLine = (text: string) => splitSharedMessage(text).typed;
 
 export type AuthorsByMessage = ReadonlyMap<string, SharingMessageAuthor>;
 
@@ -58,28 +54,11 @@ export function queuedMessageRules(input: {
  */
 export function queuedMessageTexts(
   text: string,
-  author: Pick<SharingMessageAuthor, "displayName" | "kind" | "you"> | undefined,
+  author: Pick<SharingMessageAuthor, "displayName" | "kind" | "you" | "note"> | undefined,
 ): { readonly typed: string; readonly shown: string } {
   if (author === undefined) return { typed: text, shown: text };
-  const typed = withoutAuthorLine(text);
+  const { typed } = splitSharedMessage(text, author.note);
   return { typed, shown: author.you ? typed : `${authorName(author)}: ${typed}` };
-}
-
-const NOTE_OPEN = "<j5_shared_conversation>";
-const NOTE_CLOSE = "</j5_shared_conversation>";
-
-/**
- * What the platform told the agent about who can write to the thread, without its tags, or
- * `null` for any other message. Only the platform sends one: a person's message in a shared
- * conversation begins with the author line.
- */
-export function sharedConversationNote(message: {
-  readonly createdBy?: string | undefined;
-  readonly text: string;
-}): string | null {
-  if (message.createdBy !== "system" || !message.text.startsWith(NOTE_OPEN)) return null;
-  const body = message.text.slice(NOTE_OPEN.length).trim();
-  return (body.endsWith(NOTE_CLOSE) ? body.slice(0, -NOTE_CLOSE.length) : body).trim();
 }
 
 /** "Priya answered", "You answered", "A guest answered": who settled one of the agent's prompts. */
@@ -142,27 +121,6 @@ export function messagesTheRecordDoesNotHold<Record>(input: {
 }
 
 /**
- * How a message stands with the server's record, which decides whose it is. "recorded": the
- * record names its author. "plain": it does not begin as an authored message does, or the record
- * has been read for it and does not hold it, so it is a line someone typed. "waiting": it begins
- * as an authored one does and the record has not answered for it yet, a moment in which the line
- * is kept off the screen: "own" when this client first drew the message from what its person
- * typed, "unknown" otherwise.
- */
-export function messageStanding(input: {
-  readonly looksAuthored: boolean;
-  readonly recorded: boolean;
-  /** The record was read for this message and does not hold it. */
-  readonly unrecorded: boolean;
-  /** This client drew the message before the server's copy, without an author line. */
-  readonly typedHere: boolean;
-}): "recorded" | "plain" | "waiting-own" | "waiting-unknown" {
-  if (input.recorded) return "recorded";
-  if (!input.looksAuthored || input.unrecorded) return "plain";
-  return input.typedHere ? "waiting-own" : "waiting-unknown";
-}
-
-/**
  * The agent's prompts that have settled, as one value that moves when another does. The server
  * records who is answering before a prompt settles, so the name is there by then; a prompt still
  * open is never a reason to read, since an answer the provider goes on to refuse would show a
@@ -180,4 +138,62 @@ export function settledPromptSignal(
       entry.kind !== "message" && isSettledPrompt(entry.entry?.toolData) ? [entry.id] : [],
     )
     .join("|");
+}
+
+/**
+ * Whether the record of who wrote and who answered is asked for at all. A thread that was never
+ * shared costs nothing: it is asked only when the thread holds a message stored as a shared
+ * conversation stores one, or when a prompt has settled in a thread known to be shared (this
+ * connection is a guest's, or someone on the thread can write to it). The second case is a
+ * prompt answered before anyone has sent a message, where no stored line says the thread is shared.
+ */
+export const authorRecordWanted = (input: {
+  readonly authoredMessages: number;
+  readonly settledPrompts: boolean;
+  readonly knownShared: boolean;
+}) => input.authoredMessages > 0 || (input.settledPrompts && input.knownShared);
+
+/**
+ * The key a queued message's author is remembered under for the moment its turn starts: the
+ * server, the thread, the author line as stored and the typed words. Two people who queue the
+ * same words have different author lines, so neither is taken for the other.
+ */
+export const queuedAuthorKey = (input: {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly authorLine: string;
+  readonly typed: string;
+}) => JSON.stringify([input.environmentId, input.threadId, input.authorLine, input.typed]);
+
+/**
+ * How one message of a thread is shown: `null` to leave it as it came, or the words its author
+ * typed, the note it carries, and whose it is. The record decides (`recorded`). Before the
+ * record has answered for a message stored as a shared conversation stores one, the lines for
+ * the agent are kept off the screen and the author is, in order: whoever the queue knew it to be
+ * when it was queued (`whileQueued`, asked only for such a message); the reader, when this
+ * client first drew the message from what its person typed (`author: null`); or not known yet
+ * (`"waiting"`). A message that does not begin as a stored one, or that the record has been
+ * read for and does not hold, is a plain message, whatever its words.
+ */
+export function sharedMessageView(input: {
+  readonly text: string;
+  readonly recorded: SharingMessageAuthor | undefined;
+  readonly unrecorded: boolean;
+  readonly typedHere: boolean;
+  readonly whileQueued: (authorLine: string, typed: string) => SharingMessageAuthor | undefined;
+}): {
+  readonly typed: string;
+  readonly note: string | null;
+  readonly author: SharingMessageAuthor | "waiting" | null;
+} | null {
+  if (input.recorded !== undefined) {
+    const { typed, note } = splitSharedMessage(input.text, input.recorded.note);
+    return { typed, note, author: input.recorded };
+  }
+  if (input.unrecorded) return null;
+  const { typed, note, authorLine } = splitSharedMessage(input.text);
+  if (authorLine === null) return null;
+  const queued = input.whileQueued(authorLine, typed);
+  if (queued !== undefined) return { typed, note, author: queued };
+  return { typed, note, author: input.typedHere ? null : "waiting" };
 }

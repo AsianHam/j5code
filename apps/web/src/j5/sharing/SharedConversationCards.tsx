@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 
 import { MessageCopyButton } from "../../components/chat/MessageCopyButton";
 
-import { authorName, sharedConversationNote } from "./sharedConversation.logic";
-import { sharedAuthorOf } from "./sharedTimeline";
+import { authorName } from "./sharedConversation.logic";
+import { sharedMarkOf } from "./sharedTimeline";
 import { initialsOf } from "./shareLink.logic";
 
 interface SharedMessageInput {
@@ -21,20 +21,22 @@ interface SharedMessageInput {
  * cards: the name, a "guest" or "member" tag, and initials where a picture would go.
  */
 export function renderSharedConversationMessage(props: SharedMessageInput): ReactNode {
-  const note = sharedConversationNote(props.message);
-  if (note !== null) {
+  const mark = sharedMarkOf(props.message);
+  if (mark === undefined) return null;
+  if (mark.kind === "note") {
     return (
       <details className="text-xs text-muted-foreground" data-j5-shared-conversation="note">
         <summary className="cursor-pointer select-none">
           The agent was told who can write to this thread
           {props.timestampLabel ? ` · ${props.timestampLabel}` : null}
         </summary>
-        <p className="mt-1.5 whitespace-pre-wrap break-words border-l border-border pl-3">{note}</p>
+        <p className="mt-1.5 whitespace-pre-wrap break-words border-l border-border pl-3">
+          {props.message.text}
+        </p>
       </details>
     );
   }
-  const author = sharedAuthorOf(props.message);
-  if (author === undefined || (author !== "waiting" && author.you)) return null;
+  const { author } = mark;
   // For the moment before the server says whose it is, the card is drawn without a name.
   const name = author === "waiting" ? null : authorName(author);
   return (

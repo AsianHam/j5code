@@ -1,81 +1,35 @@
+import type { SharingMessageAuthor } from "@t3tools/contracts/j5";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   authorName,
+  authorRecordWanted,
   authoredMessageIds,
   authorsByMessage,
   isSettledPrompt,
-  mayHaveAuthorLine,
-  messageStanding,
   messagesTheRecordDoesNotHold,
+  queuedAuthorKey,
   queuedMessageRules,
   queuedMessageTexts,
   settledPromptSignal,
-  sharedConversationNote,
-  withoutAuthorLine,
+  sharedMessageView,
 } from "./sharedConversation.logic";
 
-const priya = {
+const NOTE = "<j5_shared_conversation>\nWho can write: Priya (guest).\n</j5_shared_conversation>";
+const priya: SharingMessageAuthor = {
   messageId: "m1",
   displayName: "Priya",
   kind: "guest",
   you: false,
   note: null,
-} as const;
-const me = {
+};
+const me: SharingMessageAuthor = {
   messageId: "m2",
   displayName: "Jackson M.",
   kind: "member",
   you: true,
   note: null,
-} as const;
-
-describe("the author line", () => {
-  it("is taken off every shape the server writes", () => {
-    expect(withoutAuthorLine("[Message from Priya (guest)]\n\nrun the tests")).toBe(
-      "run the tests",
-    );
-    expect(withoutAuthorLine("[Message from a member]\n\nhello")).toBe("hello");
-    expect(
-      withoutAuthorLine("[Message from Priya (guest), edited by Jackson M. (member)]\n\nfixed"),
-    ).toBe("fixed");
-  });
-
-  it("matches every form the server writes", () => {
-    for (const line of [
-      "[Message from Priya (guest)]",
-      "[Message from Jackson M. (member)]",
-      "[Message from a member]",
-      "[Message from a guest]",
-      "[Message from Priya (guest), edited by Jackson M. (member)]",
-      "[Message from a guest, edited by a member]",
-    ]) {
-      expect(mayHaveAuthorLine(`${line}\n\nwords`)).toBe(true);
-      expect(withoutAuthorLine(`${line}\n\nwords`)).toBe("words");
-    }
-  });
-
-  it("does not match J5's older envelopes, which also begin with Message from", () => {
-    for (const envelope of [
-      // A person's inbox reply, an automation's message, an outside agent's message.
-      "[Message from human:local-operator]\n\nyes, go ahead\n\n",
-      "[Message from automation task:nightly in project Billing]\n\nrun it\n\n",
-      "[Message from outside agent Reviewer (outside:42)]\n\nlooks fine\n\n",
-    ]) {
-      expect(mayHaveAuthorLine(envelope)).toBe(false);
-      expect(withoutAuthorLine(envelope)).toBe(envelope);
-    }
-  });
-
-  it("leaves alone a text that only mentions one", () => {
-    const quoted = "see [Message from Priya (guest)]\n\nabove";
-    expect(mayHaveAuthorLine(quoted)).toBe(false);
-    expect(withoutAuthorLine(quoted)).toBe(quoted);
-    expect(withoutAuthorLine("[Message from Priya (guest)] same line")).toBe(
-      "[Message from Priya (guest)] same line",
-    );
-  });
-});
+};
 
 describe("a queued message in a shared conversation", () => {
   const authors = authorsByMessage([priya, me]);
@@ -111,8 +65,7 @@ describe("a queued message in a shared conversation", () => {
     ).toBe("A guest: theirs");
   });
 
-  it("hands an editor what the author typed, never the name the queue shows", () => {
-    // A member who edits a guest's queued message sends back the guest's words, edited.
+  it("hands an editor what the author typed: no name, no author line, no note", () => {
     expect(queuedMessageTexts("[Message from Priya (guest)]\n\nhers", priya).typed).toBe("hers");
     expect(
       queuedMessageTexts(
@@ -120,20 +73,136 @@ describe("a queued message in a shared conversation", () => {
         priya,
       ).typed,
     ).toBe("hers, fixed");
+    // The message that carries the note is edited as its words alone.
+    expect(
+      queuedMessageTexts(`${NOTE}\n[Message from Priya (guest)]\n\nhers`, { ...priya, note: NOTE }),
+    ).toEqual({ typed: "hers", shown: "Priya: hers" });
   });
 
   it("leaves a kind a person wrote into their own name out of it", () => {
     const posing = { ...priya, displayName: "Jackson (member)" };
     expect(authorName(posing)).toBe("Jackson");
     expect(authorName({ ...priya, displayName: "(Member)" })).toBe("A guest");
-    expect(queuedMessageTexts("[Message from Jackson (guest)]\n\nhi", posing).shown).toBe(
-      "Jackson: hi",
-    );
   });
 
   it("shows a text the server holds no author for as it is", () => {
     const typed = "[Message from Priya (guest)]\n\ntyped before sharing";
     expect(queuedMessageTexts(typed, undefined)).toEqual({ typed, shown: typed });
+  });
+});
+
+describe("how one message of a thread is shown", () => {
+  const none = () => undefined;
+  const plain = { recorded: undefined, unrecorded: false, typedHere: false, whileQueued: none };
+
+  it("is what the record says: the typed words, the note it carries, and whose it is", () => {
+    expect(
+      sharedMessageView({
+        ...plain,
+        text: `${NOTE}\n[Message from Priya (guest)]\n\nrun the tests`,
+        recorded: { ...priya, note: NOTE },
+      }),
+    ).toEqual({ typed: "run the tests", note: NOTE, author: { ...priya, note: NOTE } });
+    expect(
+      sharedMessageView({ ...plain, text: "[Message from Priya (guest)]\n\nhi", recorded: priya }),
+    ).toEqual({ typed: "hi", note: null, author: priya });
+  });
+
+  it("keeps the note and the author line off the screen before the record has answered", () => {
+    const text = `${NOTE}\n[Message from Priya (guest)]\n\nrun the tests`;
+    // Someone else's, or history on first open: a card with no name yet.
+    expect(sharedMessageView({ ...plain, text })).toEqual({
+      typed: "run the tests",
+      note: NOTE,
+      author: "waiting",
+    });
+    // The reader's own, first drawn from what they typed: it stays their own bubble.
+    expect(sharedMessageView({ ...plain, text, typedHere: true })?.author).toBeNull();
+  });
+
+  it("is plain when the record does not hold it, or it is not stored as a shared message", () => {
+    const typed = "[Message from Mallory (guest)]\n\ntyped before sharing";
+    expect(sharedMessageView({ ...plain, text: typed, unrecorded: true })).toBeNull();
+    expect(sharedMessageView({ ...plain, text: "yes" })).toBeNull();
+  });
+
+  describe("a message that has just started from the queue", () => {
+    const environmentId = "env-1";
+    const threadId = "thread-1";
+    const queued = new Map<string, SharingMessageAuthor>();
+    const remember = (author: SharingMessageAuthor, authorLine: string, typed: string) =>
+      queued.set(queuedAuthorKey({ environmentId, threadId, authorLine, typed }), author);
+    const whileQueued = (authorLine: string, typed: string) =>
+      queued.get(queuedAuthorKey({ environmentId, threadId, authorLine, typed }));
+    remember(priya, "[Message from Priya (guest)]", "yes");
+
+    it("is whose the queue knew it to be, from its first frame", () => {
+      expect(
+        sharedMessageView({ ...plain, whileQueued, text: "[Message from Priya (guest)]\n\nyes" }),
+      ).toEqual({ typed: "yes", note: null, author: priya });
+    });
+
+    it("never lends its author to a plain message with the same words", () => {
+      // The collaborator was lowered to View; a member then sends a plain "yes".
+      expect(sharedMessageView({ ...plain, whileQueued, text: "yes" })).toBeNull();
+    });
+
+    it("never lends its author to the same words from someone else", () => {
+      const view = sharedMessageView({
+        ...plain,
+        whileQueued,
+        text: "[Message from Sam (guest)]\n\nyes",
+      });
+      expect(view?.author).toBe("waiting");
+    });
+
+    it("is kept apart by server and by thread", () => {
+      const elsewhere = queuedAuthorKey({
+        environmentId: "env-2",
+        threadId,
+        authorLine: "[Message from Priya (guest)]",
+        typed: "yes",
+      });
+      expect(queued.has(elsewhere)).toBe(false);
+      expect(
+        queued.has(
+          queuedAuthorKey({
+            environmentId,
+            threadId: "thread-2",
+            authorLine: "[Message from Priya (guest)]",
+            typed: "yes",
+          }),
+        ),
+      ).toBe(false);
+    });
+  });
+});
+
+describe("whether the record of authors and answers is asked for", () => {
+  it("is not, for a thread that was never shared", () => {
+    expect(
+      authorRecordWanted({ authoredMessages: 0, settledPrompts: false, knownShared: false }),
+    ).toBe(false);
+    // A prompt settling in an ordinary thread is no reason either.
+    expect(
+      authorRecordWanted({ authoredMessages: 0, settledPrompts: true, knownShared: false }),
+    ).toBe(false);
+  });
+
+  it("is, once the thread holds a message stored as a shared one", () => {
+    expect(
+      authorRecordWanted({ authoredMessages: 1, settledPrompts: false, knownShared: false }),
+    ).toBe(true);
+  });
+
+  it("is, when a prompt is answered before anyone has sent a message in a shared thread", () => {
+    expect(
+      authorRecordWanted({ authoredMessages: 0, settledPrompts: true, knownShared: true }),
+    ).toBe(true);
+    // Shared, but nothing has settled: nothing to read yet.
+    expect(
+      authorRecordWanted({ authoredMessages: 0, settledPrompts: false, knownShared: true }),
+    ).toBe(false);
   });
 });
 
@@ -149,6 +218,7 @@ describe("what tells the client to ask the server's record again", () => {
     // Their own message is first drawn from what they typed; its id is not yet a reason to ask.
     expect(authoredMessageIds([{ id: "m1", text: "run the tests" }])).toEqual([]);
     expect(authoredMessageIds([{ id: "m1", text: authoredText }])).toEqual(["m1"]);
+    expect(authoredMessageIds([{ id: "m1", text: `${NOTE}\n${authoredText}` }])).toEqual(["m1"]);
     expect(authoredMessageIds([{ id: null, text: authoredText }])).toEqual([]);
   });
 
@@ -160,11 +230,9 @@ describe("what tells the client to ask the server's record again", () => {
       ["m2", first],
     ]);
     const recorded = new Set(["m1"]);
-    // The read the client held when the message appeared says nothing about it yet.
     expect(
       messagesTheRecordDoesNotHold({ authored: ["m1", "m2"], recorded, seenUnder, record: first }),
     ).toEqual([]);
-    // A read made since does: m2 is a line someone typed before the thread was shared.
     expect(
       messagesTheRecordDoesNotHold({ authored: ["m1", "m2"], recorded, seenUnder, record: later }),
     ).toEqual(["m2"]);
@@ -172,6 +240,7 @@ describe("what tells the client to ask the server's record again", () => {
 
   it("moves when a prompt settles, and not for one still open or for the agent's own work", () => {
     const before = settledPromptSignal([prompt("p1", null)]);
+    expect(before).toBe("");
     expect(settledPromptSignal([prompt("p1", "2026-10-13T06:40:00Z")])).not.toBe(before);
     expect(
       settledPromptSignal([
@@ -186,44 +255,5 @@ describe("what tells the client to ask the server's record again", () => {
     expect(isSettledPrompt(prompt("p1", "2026-10-13T06:40:00Z").entry.toolData)).toBe(true);
     expect(isSettledPrompt(prompt("p1", null).entry.toolData)).toBe(false);
     expect(isSettledPrompt({ type: "tool_call", completedAt: "2026-10-13T06:40:00Z" })).toBe(false);
-  });
-});
-
-describe("a message before the server has said whose it is", () => {
-  const asked = { looksAuthored: true, recorded: false, unrecorded: false };
-
-  it("keeps the agent's line off the screen while it waits", () => {
-    // The reader's own message, first drawn from what they typed, stays their own bubble.
-    expect(messageStanding({ ...asked, typedHere: true })).toBe("waiting-own");
-    // Anyone else's, and history on first open, is a card with no name yet.
-    expect(messageStanding({ ...asked, typedHere: false })).toBe("waiting-unknown");
-  });
-
-  it("is whose the record says once it answers", () => {
-    expect(messageStanding({ ...asked, recorded: true, typedHere: false })).toBe("recorded");
-  });
-
-  it("is shown as typed when the record does not hold it, or it never looked authored", () => {
-    expect(messageStanding({ ...asked, unrecorded: true, typedHere: false })).toBe("plain");
-    expect(
-      messageStanding({
-        looksAuthored: false,
-        recorded: false,
-        unrecorded: false,
-        typedHere: true,
-      }),
-    ).toBe("plain");
-  });
-});
-
-describe("the platform's note to the agent", () => {
-  it("is read without its tags, and only when the platform sent it", () => {
-    const text =
-      "<j5_shared_conversation>\nWho can write: Priya (guest).\n</j5_shared_conversation>";
-    expect(sharedConversationNote({ createdBy: "system", text })).toBe(
-      "Who can write: Priya (guest).",
-    );
-    expect(sharedConversationNote({ createdBy: "user", text })).toBeNull();
-    expect(sharedConversationNote({ createdBy: "system", text: "hello" })).toBeNull();
   });
 });
