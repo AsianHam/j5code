@@ -226,18 +226,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               render={<span role="button" tabIndex={0} />}
               aria-label="Dismiss question without answering"
               title="Dismiss question without answering"
-              disabled={isResponding}
+              disabled={isResponding || disabled}
               data-pending-user-input-dismiss
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                onDismiss(prompt.requestId);
+                if (!disabled) onDismiss(prompt.requestId);
               }}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" && event.key !== " ") return;
                 event.preventDefault();
                 event.stopPropagation();
-                onDismiss(prompt.requestId);
+                if (!disabled) onDismiss(prompt.requestId);
               }}
             />
           ) : null}
