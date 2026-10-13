@@ -581,12 +581,16 @@ const make = <E>(
       { readonly type: "runtime-request.respond" | "thread.user-input.dismiss" }
     >,
   ) =>
+    // Upstream's event log is `orchestration_events`: a thread's events are its stream, the
+    // payload of this event is the request itself, and `command_id` is the command that caused
+    // it (`SharedConversation.integration.test.ts` fails if upstream stops writing these).
     sql<{ readonly found: number }>`
-      SELECT 1 AS found FROM orchestration_v2_events
+      SELECT 1 AS found FROM orchestration_events
       WHERE command_id = ${command.commandId}
-        AND thread_id = ${command.threadId}
+        AND aggregate_kind = 'thread'
+        AND stream_id = ${command.threadId}
         AND event_type = 'runtime-request.updated'
-        AND instr(payload_json, ${command.requestId}) > 0
+        AND json_extract(payload_json, '$.id') = ${command.requestId}
       LIMIT 1
     `.pipe(Effect.map((rows) => rows.length > 0));
 

@@ -173,13 +173,16 @@ const upstreamSettled = Effect.fn("test.upstreamSettled")(function* (command: {
   readonly requestId: string;
 }) {
   const sql = yield* SqlClient.SqlClient;
+  // As upstream's event store writes a thread's event: the payload is the request itself.
   yield* sql`
-    INSERT INTO orchestration_v2_events (
-      event_id, command_id, thread_id, event_type, occurred_at, payload_json
+    INSERT INTO orchestration_events (
+      event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, command_id,
+      actor_kind, payload_json, metadata_json
     ) VALUES (
-      ${`event:${command.commandId}:${command.requestId}`}, ${command.commandId},
-      ${command.threadId}, 'runtime-request.updated', ${AT},
-      ${JSON.stringify({ payload: { id: command.requestId, status: "resolved" } })}
+      ${`event:${command.commandId}:${command.requestId}`}, 'thread', ${command.threadId},
+      (SELECT COUNT(*) FROM orchestration_events WHERE stream_id = ${command.threadId}),
+      'runtime-request.updated', ${AT}, ${command.commandId}, 'server',
+      ${JSON.stringify({ id: command.requestId, status: "resolved" })}, '{}'
     )
   `;
 });

@@ -124,6 +124,25 @@ it.effect(
       assert.strictEqual(yield* send(MEMBER, before), before);
       assert.strictEqual((yield* stored).text(before.messageId), "Let us review the plan.");
 
+      // Who answered a prompt is kept only when upstream's log shows the command settled it.
+      // No prompt can be raised here without a provider, so this pins what that check reads, on
+      // an event upstream does write for this command: the log is `orchestration_events`, a
+      // thread's events are its stream, the payload is the changed thing itself with its `id`,
+      // and `command_id` is the command that caused it.
+      const sql = yield* SqlClient.SqlClient;
+      const logged = yield* sql<{ readonly event_type: string; readonly id: string | null }>`
+      SELECT event_type, json_extract(payload_json, '$.id') AS id FROM orchestration_events
+      WHERE command_id = ${before.commandId}
+        AND aggregate_kind = 'thread'
+        AND stream_id = ${threadId}
+    `;
+      assert.isTrue(
+        logged.some(
+          (event) => event.event_type === "message.updated" && event.id === before.messageId,
+        ),
+        JSON.stringify(logged),
+      );
+
       const priya = yield* access.createGuest({ displayName: "Priya" });
       yield* access.bindSession({ sessionId: GUEST.sessionId, personId: priya.personId });
       const target = { kind: "thread" as const, threadId };
