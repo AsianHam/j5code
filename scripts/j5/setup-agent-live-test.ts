@@ -7,6 +7,7 @@
  *   node scripts/j5/setup-agent-live-test.ts restart    stop, then start on the same home
  *   node scripts/j5/setup-agent-live-test.ts stop       stop the server
  *   node scripts/j5/setup-agent-live-test.ts rebuild    stop, delete the test home and repository, build and start again
+ *   node scripts/j5/setup-agent-live-test.ts guest "<name>"   add a second person to the running server, with their pairing URL
  *
  * A start and `rebuild` take a mode flag. With none, the home holds a test
  * project and pre-made threads. `--fresh` gives an empty home, so the first-run
@@ -38,6 +39,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
+import * as NodeUtil from "node:util";
 
 const COMMANDS = ["start", "status", "restart", "stop", "rebuild"] as const;
 type LiveTestCommand = (typeof COMMANDS)[number];
@@ -55,6 +57,8 @@ const START_BUDGET_MS = 100_000;
 const STOP_TIMEOUT_MS = 20_000;
 /** How long `status` waits for both servers' peer lists together. Each read takes about four seconds on a busy host. */
 const PEER_LIST_TIMEOUT_MS = 20_000;
+/** How long `guest` waits for the server to pair the script and answer its three requests. */
+const GUEST_TIMEOUT_MS = 30_000;
 /** `scripts/hold.sh` in the test repository waits for this file in the repository root. */
 const HOLD_RELEASE_FILE = ".hold-release";
 const RECOVERY_LOG_LINE = "V2 orchestration recovery completed";
@@ -86,7 +90,9 @@ interface DefaultManifest {
   readonly baseCommit?: string;
   /** In base mode: the clock both builds are given, in epoch milliseconds. */
   readonly baseClock?: number;
-  readonly project: { readonly title: string };
+  readonly project: { readonly id: string; readonly title: string };
+  /** The name the home's owner was built with. Absent in a home built before the generator set one. */
+  readonly ownerName?: string;
   readonly defaultModel: string;
   readonly personas: ReadonlyArray<{
     readonly id: string;
@@ -478,6 +484,8 @@ export function formatInstructions(input: {
   /** The second server in the peer modes. */
   readonly remote?: {
     readonly facts: ServerLogFacts;
+    /** The name Remote's owner was built with, from Remote's own manifest. */
+    readonly ownerName: string | undefined;
     /** Opened in a browser paired with Local, it adds Remote there. Works once. */
     readonly addToBrowserUrl: string | undefined;
     /** Whether each server's own peer list names the other. */
@@ -486,13 +494,15 @@ export function formatInstructions(input: {
 }): string {
   const { paths, manifest, facts, remote } = input;
   const pairCommand = `node ${pairArguments(paths).join(" ")}`;
+  const ownerLine = (ownerName: string | undefined) =>
+    ownerName === undefined ? "" : `\n  Owner         ${ownerName}`;
   return `J5 Code live-test server${remote === undefined ? "" : "s"}: RUNNING
 ${remote === undefined ? "" : "\nLocal, where the browser pairs:"}
   Pairing URL   ${input.pairingUrl ?? `none could be minted; run: ${pairCommand}`}
   Web           http://localhost:${facts.webPort}
   Server port   ${facts.serverPort}
   Home          ${paths.home}
-  Log           ${paths.log}
+  Log           ${paths.log}${ownerLine("ownerName" in manifest ? manifest.ownerName : undefined)}
 ${
   remote === undefined
     ? ""
@@ -500,7 +510,7 @@ ${
 Remote, which has no web server of its own:
   Server port   ${remote.facts.serverPort}
   Home          ${paths.remote.home}
-  Log           ${paths.remote.log}
+  Log           ${paths.remote.log}${ownerLine(remote.ownerName)}
   Project       ${paths.remote.testRepo}
   Add to the browser, after pairing with Local (works once):
     ${remote.addToBrowserUrl ?? "none could be minted"}
@@ -548,7 +558,12 @@ Release it with: touch ${NodePath.join(paths.testRepo, HOLD_RELEASE_FILE)}`
 Commands:
   ${selfCommand(paths, "status")}    say whether it is running
   ${selfCommand(paths, "restart")}   stop, then start on the same home
-  ${selfCommand(paths, "stop")}      stop the server
+  ${selfCommand(paths, "stop")}      stop the server${
+    manifest.mode === "fresh" || manifest.mode === "for-dev"
+      ? ""
+      : `\n  ${selfCommand(paths, 'guest "<name>"')}   add a second person, with their pairing URL
+                                      (flags: --thread <id> or --project <id>, --level view|collaborate)`
+  }
   ${selfCommand(paths, "rebuild")}   stop, delete ${paths.root}, build and start again
                                       (flags: none for the test project, --fresh for an empty home,
                                       --peer or --peer --poll for two peered servers,
@@ -643,6 +658,7 @@ function printRunning(
         : {
             remote: {
               facts: remoteFacts,
+              ownerName: readDefaultManifest(paths.remote.root).ownerName,
               peered: justPeered || arePeered(paths, facts.serverPort, remoteFacts.serverPort),
               addToBrowserUrl: addRemoteUrl({
                 localWebPort: facts.webPort,
@@ -657,6 +673,13 @@ function printRunning(
 
 function readManifest(paths: LiveTestPaths): Manifest {
   return JSON.parse(NodeFS.readFileSync(paths.manifest, "utf8")) as Manifest;
+}
+
+/** The generator's own manifest for one server: Local's, or Remote's under its own root. */
+function readDefaultManifest(root: string): DefaultManifest {
+  return JSON.parse(
+    NodeFS.readFileSync(NodePath.join(root, "manifest.json"), "utf8"),
+  ) as DefaultManifest;
 }
 
 function logTail(paths: ServerPaths): string {
@@ -715,13 +738,15 @@ function buildHome(paths: LiveTestPaths, mode: LiveTestMode, base: BaseTarget | 
     NodeFS.writeFileSync(paths.manifest, `${JSON.stringify(manifest)}\n`);
     return;
   }
-  const generate = (root: string) => {
+  const generate = (root: string, ownerName: string) => {
     const build = NodeChildProcess.spawnSync(
       process.execPath,
       [
         NodePath.join(paths.worktree, "apps/server/src/j5/test-support/liveTestHome.ts"),
         "--root",
         root,
+        "--owner-name",
+        ownerName,
       ],
       {
         cwd: paths.worktree,
@@ -735,7 +760,7 @@ function buildHome(paths: LiveTestPaths, mode: LiveTestMode, base: BaseTarget | 
   };
   if (!isPeerMode(mode)) {
     console.log("Building the test repository and home (about 30 seconds, no model calls)...");
-    generate(paths.root);
+    generate(paths.root, "Test owner");
     if (base !== undefined) {
       const manifest: Manifest = {
         ...(readManifest(paths) as DefaultManifest),
@@ -750,8 +775,8 @@ function buildHome(paths: LiveTestPaths, mode: LiveTestMode, base: BaseTarget | 
   }
   console.log("Building two test repositories and homes (about a minute, no model calls)...");
   // Remote first: Local's manifest is the mark of a finished build, so it comes last.
-  generate(paths.remote.root);
-  generate(paths.root);
+  generate(paths.remote.root, "Remote owner");
+  generate(paths.root, "Local owner");
   const manifest: Manifest = { ...(readManifest(paths) as DefaultManifest), mode };
   NodeFS.writeFileSync(paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`);
 }
@@ -1979,9 +2004,187 @@ function statusOfHead(paths: LiveTestPaths): void {
   );
 }
 
+/** What `guest` was asked for. The ids and the name go to the server as given; it checks them. */
+export interface GuestRequest {
+  readonly name: string;
+  /** Absent means the test project of the server it is added to. */
+  readonly target?: { readonly kind: "project" | "thread"; readonly id: string };
+  readonly level: "view" | "collaborate";
+}
+
+const GUEST_USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts guest "<name>" [--thread <id> | --project <id>] [--level view|collaborate]`;
+const GUEST_NOT_ON_BASE =
+  "`guest` adds a person to the head server only. The base server belongs to the base checkout's own script, which this command does not reach.";
+
+/** The arguments after `guest`. */
+export function parseGuest(args: ReadonlyArray<string>): GuestRequest {
+  if (args.includes(MODE_FLAGS.base)) throw new LiveTestRefusal(GUEST_NOT_ON_BASE);
+  const parsed = (() => {
+    try {
+      return NodeUtil.parseArgs({
+        args: [...args],
+        allowPositionals: true,
+        options: {
+          thread: { type: "string" },
+          project: { type: "string" },
+          level: { type: "string", default: "view" },
+        },
+      });
+    } catch {
+      throw new LiveTestRefusal(GUEST_USAGE);
+    }
+  })();
+  const [name] = parsed.positionals;
+  const { thread, project, level } = parsed.values;
+  if (
+    parsed.positionals.length !== 1 ||
+    name === undefined ||
+    name.trim() === "" ||
+    (thread !== undefined && project !== undefined) ||
+    (level !== "view" && level !== "collaborate")
+  ) {
+    throw new LiveTestRefusal(GUEST_USAGE);
+  }
+  return {
+    name,
+    level,
+    ...(thread !== undefined
+      ? { target: { kind: "thread", id: thread } }
+      : project !== undefined
+        ? { target: { kind: "project", id: project } }
+        : {}),
+  };
+}
+
+/**
+ * Why `guest` will not act on this build, or undefined when it may. It needs a
+ * home with a named owner and a server this script has proven to be its own.
+ */
+export function guestRefusal(input: {
+  readonly built: LiveTestMode | undefined;
+  /** Whether the server the guest goes to, Local in a peer build, is running. */
+  readonly serving: boolean;
+  readonly startCommand: string;
+}): string | undefined {
+  const { built } = input;
+  if (built === "fresh") {
+    return "`guest` does not run on a --fresh home: its owner has no name yet, which is what that home is for.";
+  }
+  if (built === "for-dev") {
+    return "`guest` does not run on a --for-dev server: it holds a copy of the developer's data.";
+  }
+  return input.serving
+    ? undefined
+    : `No live-test server is running here to add a guest to. Start it with: ${input.startCommand}`;
+}
+
+/** What `guest` prints: who was added, what they were granted, and the URL that pairs a browser as them. */
+export function formatGuest(input: {
+  /** Whether the build has a Remote server too. */
+  readonly peer: boolean;
+  readonly personId: string;
+  readonly displayName: string;
+  readonly level: string;
+  readonly target: { readonly kind: "project" | "thread"; readonly id: string };
+  readonly pairingUrl: string;
+}): string {
+  return `Added a guest to the live-test server${input.peer ? " Local" : ""}:
+
+  Name          ${input.displayName}
+  Person id     ${input.personId}
+  Granted       ${input.level} on ${input.target.kind} ${input.target.id}
+  Pairing URL   ${input.pairingUrl}
+${input.peer ? "\nGuests are added to Local only; this command does not reach Remote.\n" : ""}
+Open the pairing URL in a new incognito tab, one tab per person.
+`;
+}
+
+/**
+ * Adds a guest to the running server as its owner, through the same requests
+ * the People page makes. In a peer build that server is Local: a browser not
+ * paired with Local is not served the app, so a guest of Remote could not open it.
+ */
+function guest(paths: LiveTestPaths, request: GuestRequest): void {
+  const built = builtMode(paths);
+  // Identity first, as for a stop: only a server proven to be this script's is acted on.
+  const state = currentServerState(paths);
+  if (state.kind === "unverified") throw new LiveTestRefusal(state.reason);
+  const refusal = guestRefusal({
+    built,
+    serving: state.kind === "running",
+    startCommand: selfCommand(paths, modeFlags(built ?? "default", builtBaseRef(paths))),
+  });
+  if (refusal !== undefined) throw new LiveTestRefusal(refusal);
+  // The refusal above covers this; it is here to tell the compiler so.
+  if (state.kind !== "running") return;
+  const grantOn = request.target ?? {
+    kind: "project" as const,
+    id: readDefaultManifest(paths.root).project.id,
+  };
+  // The owner's requests are WebSocket only, so the script pairs as a client of its own.
+  const token = mintPairingUrl(paths)?.split("#token=")[1];
+  if (token === undefined) {
+    throw new LiveTestRefusal(
+      `No pairing token could be minted for the server. Try: node ${pairArguments(paths).join(" ")}`,
+    );
+  }
+  const added = NodeChildProcess.spawnSync(
+    process.execPath,
+    [
+      NodePath.join(paths.worktree, "apps/server/src/j5/test-support/liveTestOwnerClient.ts"),
+      "--origin",
+      `http://127.0.0.1:${state.facts.serverPort}`,
+      // The address a browser opens; the client builds the link there, as the Share dialog would.
+      "--web-origin",
+      `http://localhost:${state.facts.webPort}`,
+      "--token",
+      token,
+      "--name",
+      request.name,
+      `--${grantOn.kind}`,
+      grantOn.id,
+      "--level",
+      request.level,
+    ],
+    {
+      cwd: paths.worktree,
+      env: liveTestEnvironment(process.env, paths.worktree),
+      encoding: "utf8",
+      timeout: GUEST_TIMEOUT_MS,
+    },
+  );
+  if (added.status !== 0) {
+    throw new LiveTestRefusal(
+      `The server did not add the guest:\n${
+        (added.stderr ?? "")
+          .split("\n")
+          .filter((line) => !/ExperimentalWarning|--trace-warnings/.test(line))
+          .join("\n")
+          .trim() || String(added.error ?? "it gave no reason")
+      }`,
+    );
+  }
+  const { personId, displayName, pairingUrl } = JSON.parse(added.stdout) as {
+    readonly personId: string;
+    readonly displayName: string;
+    readonly pairingUrl: string;
+  };
+  console.log(
+    formatGuest({
+      peer: isPeerMode(built ?? "default"),
+      personId,
+      displayName,
+      level: request.level,
+      target: grantOn,
+      pairingUrl,
+    }),
+  );
+}
+
 const USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts [--fresh | --peer [--poll] | --for-dev | --base <ref>]
        node scripts/j5/setup-agent-live-test.ts rebuild [--fresh | --peer [--poll] | --for-dev | --base <ref>]
-       node scripts/j5/setup-agent-live-test.ts status | restart | stop`;
+       node scripts/j5/setup-agent-live-test.ts status | restart | stop
+       ${GUEST_USAGE.slice("Usage: ".length)}`;
 
 /**
  * The command and, for a start or `rebuild`, the mode its flags ask for.
@@ -2027,7 +2230,8 @@ export function parseCommand(args: ReadonlyArray<string>): {
 }
 
 async function main(): Promise<void> {
-  const { command, mode, baseRef } = parseCommand(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  const parsed = args[0] === "guest" ? parseGuest(args.slice(1)) : parseCommand(args);
   // oxlint-disable-next-line t3code/no-global-process-runtime -- a standalone CLI with no Effect runtime.
   if (NodeOS.platform() !== "linux") {
     throw new LiveTestRefusal("This script reads /proc and runs only on Linux.");
@@ -2043,6 +2247,8 @@ async function main(): Promise<void> {
     homeDirectory: NodeOS.homedir(),
     environment: process.env,
   });
+  if (!("command" in parsed)) return guest(paths, parsed);
+  const { command, mode, baseRef } = parsed;
   if (command === "status") return status(paths);
   if (command === "stop") return stop(paths);
   if (command === "restart" || command === "rebuild") await stop(paths, command === "rebuild");

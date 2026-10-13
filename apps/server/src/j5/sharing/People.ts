@@ -150,6 +150,15 @@ export class PeopleUpstreamError extends Schema.TaggedError<PeopleUpstreamError>
   }
 }
 
+/**
+ * A name as it is stored: trimmed, and refused unless it is one a person may have. Every way of
+ * naming someone checks it here, the offline build of a live-test home included.
+ */
+export const checkedPersonName = (name: string): Effect.Effect<string, PersonNameError> => {
+  const trimmed = name.trim();
+  return isPersonName(trimmed) ? Effect.succeed(trimmed) : Effect.fail(new PersonNameError({}));
+};
+
 type StorageError = PersonAccessStorageError | PeopleUpstreamError | GuestPairingError;
 
 export interface PeopleShape {
@@ -429,7 +438,7 @@ export const layer: Layer.Layer<
 
       createGuest: Effect.fn("j5.sharing.people.createGuest")(function* (input) {
         yield* requireOwnerName;
-        if (!isPersonName(input.displayName.trim())) return yield* new PersonNameError({});
+        yield* checkedPersonName(input.displayName);
         const guest = yield* access.createGuest({ displayName: input.displayName });
         return yield* one(guest.personId).pipe(Effect.orDie);
       }),
@@ -525,17 +534,15 @@ export const layer: Layer.Layer<
       }),
 
       setOwnerName: Effect.fn("j5.sharing.people.setOwnerName")(function* (input) {
-        const displayName = input.displayName.trim();
-        if (!isPersonName(displayName)) return yield* new PersonNameError({});
+        const displayName = yield* checkedPersonName(input.displayName);
         const owner = yield* access.setOperatorName(displayName);
         return yield* one(owner.personId).pipe(Effect.orDie);
       }),
 
       rename: Effect.fn("j5.sharing.people.rename")(function* (input) {
         const personId = yield* personIdOf(input.personId);
-        const displayName = input.displayName.trim();
         // The contract says the same; this holds for any other caller.
-        if (!isPersonName(displayName)) return yield* new PersonNameError({});
+        const displayName = yield* checkedPersonName(input.displayName);
         yield* access.setGuestName({ personId, displayName });
         return yield* one(personId);
       }),

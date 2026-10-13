@@ -1,13 +1,16 @@
 import type { AdvertisedEndpoint } from "@t3tools/contracts";
-import type { SharingOpenLink, SharingPerson } from "@t3tools/contracts/j5";
+import {
+  isMarkedShareLink,
+  markedAsShareLink,
+  type SharingOpenLink,
+  type SharingPerson,
+} from "@t3tools/contracts/j5";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import { getPairingTokenFromUrl } from "../../pairingUrl";
 import {
   activeOpenLinkFor,
-  isMarkedShareLink,
-  markedAsShareLink,
   guestsMatchingName,
   joinLinkMeta,
   lifetimeLeft,

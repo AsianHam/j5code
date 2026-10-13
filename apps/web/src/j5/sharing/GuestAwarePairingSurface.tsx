@@ -1,6 +1,7 @@
 import {
   SHARING_DESCRIBE_PATH,
   SHARING_JOIN_PATH,
+  isMarkedShareLink,
   isPersonName,
   type SharingLinkDescription,
 } from "@t3tools/contracts/j5";
@@ -34,7 +35,7 @@ import {
 import { APP_DISPLAY_NAME } from "../../branding";
 import { projectIconColorClassName } from "../../projectIconColors";
 import { pairThroughShareLink } from "./pairedThroughShareLink";
-import { isMarkedShareLink, NAME_NOT_USABLE } from "./shareLink.logic";
+import { NAME_NOT_USABLE } from "./shareLink.logic";
 import {
   invitationFor,
   DESCRIBE_TIMEOUT_MS,

@@ -2,12 +2,13 @@
 /**
  * Builds the self-contained home an agent live-tests against, with no model:
  *
- *   node apps/server/src/j5/test-support/liveTestHome.ts --root <absolute directory>
+ *   node apps/server/src/j5/test-support/liveTestHome.ts --root <absolute directory> --owner-name <name>
  *
  * Under `<root>` it makes `test-repo` (see liveTestRepo.ts) with its bare
  * origin, and `home`, a J5 home holding one project, replayed Claude and Codex
  * threads from upstream's provider replay kit, J5's delivery seed, two light
- * personas, and Claude Haiku as the default model. It finishes by writing
+ * personas, Claude Haiku as the default model, and an owner who already has a
+ * name, so sharing works without the startup dialog. It finishes by writing
  * `<root>/manifest.json`, which is what `scripts/j5/setup-agent-live-test.ts`
  * reads. Nothing in the home points outside `<root>`.
  *
@@ -59,6 +60,8 @@ import {
   runDevDeliverySeed,
   validateIsolatedBaseDir,
 } from "../a2a/test-support/devDeliverySeed.ts";
+import { checkedPersonName } from "../sharing/People.ts";
+import * as PersonAccess from "../sharing/PersonAccess.ts";
 import {
   createLiveTestRepo,
   LIVE_TEST_HOLD_RELEASE_FILE,
@@ -133,6 +136,8 @@ export interface LiveTestHomeManifest {
   readonly testRepo: string;
   readonly testRepoOrigin: string;
   readonly project: { readonly id: string; readonly title: string };
+  /** The name the home's owner was given, as stored. */
+  readonly ownerName: string;
   readonly defaultModel: string;
   /** `fallbackModel` is the second route, used when the first is unavailable or the launcher prefers its own provider. */
   readonly personas: ReadonlyArray<{
@@ -325,6 +330,20 @@ function writeSettingsAndPersonas(home: string): void {
   }
 }
 
+/**
+ * Names the home's owner the way the running server does, on the database alone: no server is
+ * up yet, and a hand-written row would skip what `setOperatorName` keeps true.
+ */
+const nameOwner = (databasePath: string, ownerName: string) =>
+  PersonAccess.PersonAccess.use((access) => access.setOperatorName(ownerName)).pipe(
+    Effect.provide(
+      PersonAccess.layer.pipe(
+        Layer.provide(SqlitePersistence.layerFromPath(databasePath)),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+
 /** Written last, so its presence means the build finished. */
 function writeManifest(manifestPath: string, manifest: LiveTestHomeManifest): void {
   NodeFS.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -332,13 +351,16 @@ function writeManifest(manifestPath: string, manifest: LiveTestHomeManifest): vo
 
 /**
  * Builds the test repository and home under `root` and returns the manifest
- * it wrote. `root` must not hold a build already. `replays` narrows the
- * replayed threads, for tests.
+ * it wrote. `root` must not hold a build already. `ownerName` is held to the
+ * rule every person's name is. `replays` narrows the replayed threads, for
+ * tests.
  */
 export const buildLiveTestHome = Effect.fn("buildLiveTestHome")(function* (input: {
   readonly root: string;
+  readonly ownerName: string;
   readonly replays?: ReadonlyArray<readonly [fixture: string, driver: ReplayDriver]>;
 }) {
+  const ownerName = yield* checkedPersonName(input.ownerName);
   const paths = liveTestHomePaths(input.root);
   for (const existing of Object.values(paths)) {
     if (NodeFS.existsSync(existing)) {
@@ -387,6 +409,7 @@ export const buildLiveTestHome = Effect.fn("buildLiveTestHome")(function* (input
   const seed = yield* runDevDeliverySeed(home, {
     project: { id: projectId, workspaceRoot: testRepo },
   });
+  yield* nameOwner(databasePath, ownerName);
   writeSettingsAndPersonas(home);
 
   const manifest: LiveTestHomeManifest = {
@@ -395,6 +418,7 @@ export const buildLiveTestHome = Effect.fn("buildLiveTestHome")(function* (input
     testRepo,
     testRepoOrigin,
     project: { id: projectId, title: LIVE_TEST_PROJECT_TITLE },
+    ownerName,
     defaultModel: LIVE_TEST_DEFAULT_MODEL.model,
     personas: LIVE_TEST_PERSONAS.map(({ id, routes }) => ({
       id,
@@ -414,17 +438,22 @@ export const buildLiveTestHome = Effect.fn("buildLiveTestHome")(function* (input
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const root = args[1];
+  const ownerName = args[3];
   if (
-    args.length !== 2 ||
+    args.length !== 4 ||
     args[0] !== "--root" ||
+    args[2] !== "--owner-name" ||
     root === undefined ||
+    ownerName === undefined ||
     !NodePath.isAbsolute(root)
   ) {
-    process.stderr.write("Usage: liveTestHome.ts --root <absolute directory>\n");
+    process.stderr.write(
+      "Usage: liveTestHome.ts --root <absolute directory> --owner-name <name>\n",
+    );
     process.exit(64);
   }
   Effect.runPromise(
-    buildLiveTestHome({ root }).pipe(
+    buildLiveTestHome({ root, ownerName }).pipe(
       Effect.provide(Logger.layer([], { mergeWithExisting: false })),
     ),
   ).then(

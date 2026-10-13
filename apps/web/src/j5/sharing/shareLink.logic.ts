@@ -1,9 +1,10 @@
 import type { AdvertisedEndpoint } from "@t3tools/contracts";
-import type {
-  SharingGrantLevel,
-  SharingLinkLifetime,
-  SharingOpenLink,
-  SharingPerson,
+import {
+  markedAsShareLink,
+  type SharingGrantLevel,
+  type SharingLinkLifetime,
+  type SharingOpenLink,
+  type SharingPerson,
 } from "@t3tools/contracts/j5";
 
 import {
@@ -73,32 +74,6 @@ const isHostedUrl = (value: string) => {
     return false;
   }
 };
-
-/**
- * The mark J5 puts on every share link it makes, in the fragment beside upstream's `token`. The
- * page that opens the link reads it to know the link is a guest's before asking the server
- * anything, so a share link that no longer works is told apart from a pairing token the server
- * simply does not describe. Upstream reads the fragment as parameters and takes only `token`.
- */
-export const SHARE_LINK_MARK = "j5share";
-
-/** A pairing address marked as a share link's. */
-export function markedAsShareLink(address: string): string {
-  const url = new URL(address);
-  const fragment = new URLSearchParams(url.hash.replace(/^#/u, ""));
-  fragment.set(SHARE_LINK_MARK, "1");
-  url.hash = fragment.toString();
-  return url.toString();
-}
-
-/** Whether an address carries J5's mark. */
-export function isMarkedShareLink(address: string): boolean {
-  try {
-    return new URLSearchParams(new URL(address).hash.replace(/^#/u, "")).has(SHARE_LINK_MARK);
-  } catch {
-    return false;
-  }
-}
 
 // The four helpers below follow upstream's Connections settings, where they are private to
 // `ConnectionsSettings.tsx`: which address a link uses, how it is described, and which one a

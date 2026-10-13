@@ -68,6 +68,12 @@ are missing, install them and run it again.
 | `stop`    | Stops the server. Run it when you finish                              |
 | `rebuild` | Stops, discards the test home, builds a new one, and starts it        |
 
+`guest "<name>" [--thread <id> | --project <id>] [--level view|collaborate]`
+adds a second person to the running test server and prints their pairing URL.
+Open it in a new incognito tab (`profileId: "incognito"`,
+`reuseExistingTab: false`). Each incognito tab is its own person, so open one
+per person and never pair a second person in a tab that already has one.
+
 A start returns within about two minutes. On a busy machine it can return
 before it has finished, and prints the command that finishes it.
 
@@ -201,6 +207,7 @@ Say so in the report instead of implying coverage:
 - the desktop app: Electron, the packaged build, the updater, installers;
 - relay and tunnel connections, a second machine, an unreachable peer;
 - continuing one of the threads the script made;
+- a guest on the Remote server of a peer build;
 - threads without a project: a test home inside a checkout does not offer them;
 - behavior under the developer's real data volume;
 - providers other than Codex and Claude on this host.

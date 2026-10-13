@@ -40,6 +40,8 @@ it.live(
       );
       const build = buildLiveTestHome({
         root,
+        // Stored trimmed, under the rule every person's name is held to.
+        ownerName: " Test owner ",
         replays: [
           ["multi_turn", "claudeAgent"],
           ["subagent", "codex"],
@@ -48,6 +50,7 @@ it.live(
       const manifest = yield* build;
 
       assert.equal(manifest.home, NodePath.join(root, "home"));
+      assert.equal(manifest.ownerName, "Test owner");
       // Each persona's second route is recorded too: a launch can resolve to it.
       assert.deepEqual(manifest.personas, [
         { id: "haiku-helper", model: "claude-haiku-5-5", fallbackModel: "gpt-6-luna" },
@@ -68,6 +71,15 @@ it.live(
         assert.deepEqual(
           database.prepare("SELECT project_id, workspace_root FROM projection_projects").all(),
           [{ project_id: manifest.project.id, workspace_root: manifest.testRepo }],
+        );
+        // The owner is named before any server starts, so sharing never waits on the dialog.
+        assert.deepEqual(
+          database
+            .prepare(
+              "SELECT display_name, name_key FROM j5_a2a_human_person WHERE is_local_operator = 1",
+            )
+            .all(),
+          [{ display_name: "Test owner", name_key: "test owner" }],
         );
         const threads = database
           .prepare(
@@ -172,6 +184,11 @@ it.live(
 
       // A second build never writes over the first.
       assert.equal((yield* Effect.exit(build))._tag, "Failure");
+      // A name no person may have is refused before anything is built.
+      const unnamed = NodePath.join(root, "unnamed");
+      const refused = yield* Effect.flip(buildLiveTestHome({ root: unnamed, ownerName: "[x]" }));
+      assert.equal(refused._tag, "PersonNameError");
+      assert.isFalse(NodeFS.existsSync(unnamed));
     }).pipe(Effect.scoped),
   60_000,
 );

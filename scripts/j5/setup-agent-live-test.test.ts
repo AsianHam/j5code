@@ -7,6 +7,10 @@ import * as NodePath from "node:path";
 import {
   PAIRING_SCOPES,
   classifyServer,
+  formatGuest,
+  formatInstructions,
+  guestRefusal,
+  parseGuest,
   LiveTestRefusal,
   addRemoteUrl,
   baseEnvironment,
@@ -794,5 +798,174 @@ describe("PAIRING_SCOPES", () => {
       NodePath.join(import.meta.dirname, "../../packages/contracts/src/auth.ts")
     )) as { readonly AuthAdministrativeScopes: ReadonlyArray<string> };
     assert.sameMembers([...PAIRING_SCOPES], [...contracts.AuthAdministrativeScopes]);
+  });
+});
+
+describe("formatInstructions", () => {
+  const worktree = "/w";
+  const server = (root: string) => ({
+    worktree,
+    home: `${root}/home`,
+    testRepo: `${root}/test-repo`,
+    log: `${root}/server.log`,
+    record: `${root}/server.json`,
+  });
+  const paths = {
+    ...server("/w/.j5code/live-test"),
+    root: "/w/.j5code/live-test",
+    manifest: "/w/.j5code/live-test/manifest.json",
+    base: "/w/.j5code/live-test/base",
+    remote: { ...server("/w/.j5code/live-test/remote"), root: "/w/.j5code/live-test/remote" },
+  };
+  const facts: ServerLogFacts = {
+    serverPort: 13000,
+    webPort: 5000,
+    baseDir: paths.home,
+    pairingUrl: undefined,
+    recovered: true,
+    sharedUrl: undefined,
+    shareFailure: undefined,
+  };
+  const built = {
+    project: { id: "project-1", title: "Live test repo" },
+    defaultModel: "claude-haiku-5-5",
+    personas: [],
+    playbooks: [],
+    holdScript: "scripts/hold.sh",
+  };
+  const ownerLines = (output: string) =>
+    output.split("\n").filter((line) => line.trimStart().startsWith("Owner "));
+
+  it("names the owner the home was built with", () => {
+    const output = formatInstructions({
+      paths,
+      manifest: { ...built, ownerName: "Test owner" },
+      facts,
+      pairingUrl: "http://localhost:5000/pair#token=T",
+    });
+    assert.deepEqual(ownerLines(output), ["  Owner         Test owner"]);
+    assert.include(output, 'guest "<name>"');
+  });
+
+  it("names each server's owner in a peer build", () => {
+    const output = formatInstructions({
+      paths,
+      manifest: { ...built, mode: "peer", ownerName: "Local owner" },
+      facts,
+      pairingUrl: undefined,
+      remote: { facts, ownerName: "Remote owner", addToBrowserUrl: undefined, peered: true },
+    });
+    assert.deepEqual(ownerLines(output), [
+      "  Owner         Local owner",
+      "  Owner         Remote owner",
+    ]);
+  });
+
+  it("has no owner line for a home built without one, and no guest command for a fresh home", () => {
+    // A home an older generator built, as a base checkout's can be.
+    assert.deepEqual(
+      ownerLines(formatInstructions({ paths, manifest: built, facts, pairingUrl: undefined })),
+      [],
+    );
+    const fresh = formatInstructions({
+      paths,
+      manifest: { mode: "fresh" },
+      facts,
+      pairingUrl: undefined,
+    });
+    assert.deepEqual(ownerLines(fresh), []);
+    assert.notInclude(fresh, "guest");
+  });
+});
+
+describe("parseGuest", () => {
+  it("defaults to a view grant on the test project", () => {
+    assert.deepEqual(parseGuest(["Priya"]), { name: "Priya", level: "view" });
+  });
+
+  it("takes a thread or a project, and a level", () => {
+    assert.deepEqual(parseGuest(["Sam (QA)", "--thread", "t-1", "--level", "collaborate"]), {
+      name: "Sam (QA)",
+      level: "collaborate",
+      target: { kind: "thread", id: "t-1" },
+    });
+    assert.deepEqual(parseGuest(["--project", "p-1", "Priya"]), {
+      name: "Priya",
+      level: "view",
+      target: { kind: "project", id: "p-1" },
+    });
+  });
+
+  it("refuses no name, two names, both targets, an unknown level and an unknown flag", () => {
+    for (const args of [
+      [],
+      ["  "],
+      ["Priya", "Sam"],
+      ["Priya", "--thread", "t-1", "--project", "p-1"],
+      ["Priya", "--level", "admin"],
+      ["Priya", "--fresh"],
+      // Guests go to Local in every mode.
+      ["Priya", "--remote"],
+    ]) {
+      assert.throws(() => parseGuest(args), LiveTestRefusal, /Usage: .* guest "<name>"/);
+    }
+  });
+
+  it("refuses the base server", () => {
+    assert.throws(() => parseGuest(["Priya", "--base"]), LiveTestRefusal, /head server only/);
+  });
+});
+
+describe("guestRefusal", () => {
+  const startCommand = "node script";
+  const ask = (built: LiveTestMode | undefined, serving = true) =>
+    guestRefusal({ built, serving, startCommand });
+
+  it("lets a guest be added to a running default, base or peer server", () => {
+    for (const built of ["default", "base", "peer", "peer-poll"] as const) {
+      assert.isUndefined(ask(built));
+    }
+  });
+
+  it("refuses a fresh home and a server for the developer, running or not", () => {
+    assert.include(ask("fresh"), "--fresh");
+    assert.include(ask("for-dev", false), "--for-dev");
+  });
+
+  it("refuses when no server is running, and says how to start one", () => {
+    assert.include(ask("default", false), "Start it with: node script");
+    assert.include(ask(undefined, false), "Start it with: node script");
+    assert.include(ask("peer", false), "Start it with: node script");
+  });
+});
+
+describe("formatGuest", () => {
+  const added = {
+    personId: "human:1",
+    displayName: "Priya",
+    level: "view",
+    target: { kind: "project", id: "p-1" },
+    pairingUrl: "http://localhost:5000/pair#token=T&j5share=1",
+  } as const;
+
+  it("states who was added, the level, the URL and how to open it, and nothing else", () => {
+    assert.equal(
+      formatGuest({ ...added, peer: false }),
+      `Added a guest to the live-test server:
+
+  Name          Priya
+  Person id     human:1
+  Granted       view on project p-1
+  Pairing URL   http://localhost:5000/pair#token=T&j5share=1
+
+Open the pairing URL in a new incognito tab, one tab per person.
+`,
+    );
+  });
+
+  it("in a peer build says the guest went to Local, and that Remote is not reached", () => {
+    const output = formatGuest({ ...added, peer: true });
+    assert.include(output, "Added a guest to the live-test server Local:");
+    assert.include(output, "Guests are added to Local only; this command does not reach Remote.");
   });
 });

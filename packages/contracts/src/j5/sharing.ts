@@ -308,6 +308,35 @@ export const SharingLink = Schema.Struct({
 });
 export type SharingLink = typeof SharingLink.Type;
 
+/**
+ * The mark J5 puts on every share link it makes, in the fragment beside upstream's `token`. The
+ * page that opens the link reads it to know the link is a guest's before asking the server
+ * anything, so a share link that no longer works is told apart from a pairing token the server
+ * simply does not describe. Upstream reads the fragment as parameters and takes only `token`.
+ */
+const SHARE_LINK_MARK = "j5share";
+
+/**
+ * A pairing address marked as a share link's. Everything that hands out a share link marks it
+ * here: the Share dialog, and the live-test rig's `guest` command.
+ */
+export function markedAsShareLink(address: string): string {
+  const url = new URL(address);
+  const fragment = new URLSearchParams(url.hash.replace(/^#/u, ""));
+  fragment.set(SHARE_LINK_MARK, "1");
+  url.hash = fragment.toString();
+  return url.toString();
+}
+
+/** Whether an address carries J5's mark. */
+export function isMarkedShareLink(address: string): boolean {
+  try {
+    return new URLSearchParams(new URL(address).hash.replace(/^#/u, "")).has(SHARE_LINK_MARK);
+  } catch {
+    return false;
+  }
+}
+
 /** An open link as a member sees it. Its token is shown only when it is made. */
 export const SharingOpenLink = Schema.Struct({
   linkId: TrimmedNonEmptyString,
