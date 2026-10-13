@@ -1,6 +1,10 @@
 import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { J5_SHARING_WS_METHODS, type SharingPromptAnswer } from "@t3tools/contracts/j5";
+import {
+  J5_SHARING_WS_METHODS,
+  type SharingMessageAuthor,
+  type SharingPromptAnswer,
+} from "@t3tools/contracts/j5";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -84,6 +88,18 @@ export function useThreadAuthors(
   return useMemo(() => ({ ...result, unrecorded }), [result, unrecorded]);
 }
 
+// Whose each queued message was, by thread and typed words. A queued message is given a new id
+// when its turn starts, so for the moment before the record is read for that id the timeline
+// would not know whose it is; the queue did, and this carries it across. Bounded: the oldest
+// entries go first.
+const queuedAuthors = new Map<string, SharingMessageAuthor>();
+const QUEUED_AUTHORS_KEPT = 200;
+const queuedAuthorKey = (threadId: string, typed: string) => `${threadId}\n${typed}`;
+
+/** Whose a message just started from the queue was, as the queue knew it; nothing otherwise. */
+export const authorWhileQueued = (threadId: string, typed: string) =>
+  queuedAuthors.get(queuedAuthorKey(threadId, typed));
+
 /**
  * The queue of a shared conversation as one person may use it: each message with the words its
  * author typed, a name on someone else's, and whether this person may change or withdraw it. A
@@ -111,6 +127,14 @@ export function useSharedQueue<
     const { typed, shown } = waiting
       ? { typed: withoutAuthorLine(item.text), shown: withoutAuthorLine(item.text) }
       : queuedMessageTexts(item.text, author);
+    if (author !== undefined) {
+      const key = queuedAuthorKey(threadId, typed);
+      queuedAuthors.delete(key);
+      queuedAuthors.set(key, author);
+      if (queuedAuthors.size > QUEUED_AUTHORS_KEPT) {
+        queuedAuthors.delete(queuedAuthors.keys().next().value as string);
+      }
+    }
     // `text` goes to the editor and back to the server; `preview` is only ever drawn.
     return { ...item, text: typed, preview: shown, ...queuedMessageRules({ isGuest, author }) };
   });

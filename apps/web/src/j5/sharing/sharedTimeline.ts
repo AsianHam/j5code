@@ -2,7 +2,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
-import { useThreadAuthors } from "./sharedConversation";
+import { authorWhileQueued, useThreadAuthors } from "./sharedConversation";
 import {
   mayHaveAuthorLine,
   messageStanding,
@@ -94,7 +94,14 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
     if (!messages.some((message) => mayHaveAuthorLine(message.text))) return entries;
     return entries.map((entry) => {
       if (entry.message === undefined || entry.message.role !== "user") return entry;
-      const author = record.authors.get(entry.message.id);
+      const typed = withoutAuthorLine(entry.message.text);
+      // The record's own answer, or for the moment before it, what the queue knew of a message
+      // that has just started from it.
+      const author =
+        record.authors.get(entry.message.id) ??
+        (record.unrecorded.has(entry.message.id) || threadRef === null
+          ? undefined
+          : authorWhileQueued(threadRef.threadId, typed));
       const standing = messageStanding({
         looksAuthored: mayHaveAuthorLine(entry.message.text),
         recorded: author !== undefined,
@@ -102,12 +109,12 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
         typedHere: typedHere.current.has(entry.message.id),
       });
       if (standing === "plain") return entry;
-      const message = { ...entry.message, text: withoutAuthorLine(entry.message.text) };
+      const message = { ...entry.message, text: typed };
       // Until the record answers, the reader's own message stays their own bubble and anyone
       // else's is a card with no name yet; neither shows the line meant for the agent.
       if (author !== undefined) authorOfMessage.set(message, author);
       else if (standing === "waiting-unknown") authorOfMessage.set(message, "waiting");
       return { ...entry, message };
     });
-  }, [entries, messages, record.authors, record.unrecorded]);
+  }, [entries, messages, record.authors, record.unrecorded, threadRef]);
 }
