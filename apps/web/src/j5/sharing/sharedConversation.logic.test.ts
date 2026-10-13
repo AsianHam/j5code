@@ -9,8 +9,20 @@ import {
   withoutAuthorLine,
 } from "./sharedConversation.logic";
 
-const priya = { messageId: "m1", displayName: "Priya", kind: "guest", you: false } as const;
-const me = { messageId: "m2", displayName: "Jackson M.", kind: "member", you: true } as const;
+const priya = {
+  messageId: "m1",
+  displayName: "Priya",
+  kind: "guest",
+  you: false,
+  note: null,
+} as const;
+const me = {
+  messageId: "m2",
+  displayName: "Jackson M.",
+  kind: "member",
+  you: true,
+  note: null,
+} as const;
 
 describe("the author line", () => {
   it("is taken off every shape the server writes", () => {
