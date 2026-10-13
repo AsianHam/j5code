@@ -152,6 +152,10 @@ export const guestCommand = (command: OrchestrationV2Command): GuestCommandDecis
       ) {
         return refuse("A guest answers a question in text.");
       }
+      // One or the other: upstream takes a response that carries neither, or both.
+      if ((command.decision === undefined) === (command.answers === undefined)) {
+        return refuse("A guest answers a prompt with a decision or with words, not both.");
+      }
       if (command.decision !== undefined && !GUEST_DECISIONS.has(command.decision)) {
         return refuse("A guest can approve or decline this one request; a member decides more.");
       }

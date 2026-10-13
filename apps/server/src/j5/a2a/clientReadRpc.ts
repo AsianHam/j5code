@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
 import { ClientReadsService } from "./ClientReadsService.ts";
-import { withoutHostPaths } from "./CrewProposalService.ts";
+import { proposalForGuest } from "./CrewProposalService.ts";
 import { ParticipantId } from "./contracts.ts";
 import { PeerAdminService } from "./PeerAdminService.ts";
 import { ReadChanges } from "./ReadChanges.ts";
@@ -95,13 +95,7 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
         reads.threadRosters(input.threadId).pipe(
           Effect.map(({ proposals }) =>
             options?.forGuest === true
-              ? {
-                  proposals: proposals.map((proposal) => ({
-                    ...proposal,
-                    requestedSeats: proposal.requestedSeats.map(withoutHostPaths),
-                    approvedSeats: proposal.approvedSeats?.map(withoutHostPaths) ?? null,
-                  })),
-                }
+              ? { proposals: proposals.map(proposalForGuest) }
               : { proposals },
           ),
           Effect.catch(failed("Reading crew proposals failed.")),

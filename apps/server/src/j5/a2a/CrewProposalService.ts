@@ -1,4 +1,5 @@
 import type {
+  CrewProposal as ClientCrewProposal,
   CrewSeatWorkspace,
   CrewPersonaSwap,
   CrewProposalPreviewRequest,
@@ -168,6 +169,24 @@ export const withoutHostPaths = <S extends { readonly workspace?: CrewSeatWorksp
   seat.workspace?.type === "existing_worktree"
     ? { ...seat, workspace: { ...seat.workspace, worktreePath: GUEST_PLACEHOLDER_PATH } }
     : seat;
+
+/**
+ * A proposal as a guest is shown it: its seats without the host's folders, and a problem with
+ * its playbook said without the reader's own words, which can name a file on the host.
+ */
+export const proposalForGuest = (proposal: ClientCrewProposal): ClientCrewProposal => ({
+  ...proposal,
+  requestedSeats: proposal.requestedSeats.map(withoutHostPaths),
+  approvedSeats: proposal.approvedSeats?.map(withoutHostPaths) ?? null,
+  ...(proposal.playbook == null || proposal.playbook.issue == null
+    ? {}
+    : {
+        playbook: {
+          ...proposal.playbook,
+          issue: "This roster's playbook has a problem. A member can see what it is.",
+        },
+      }),
+});
 
 export interface CrewProposalServiceShape {
   readonly preview: (

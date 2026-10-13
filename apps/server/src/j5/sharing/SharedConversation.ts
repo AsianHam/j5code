@@ -1,15 +1,19 @@
+// @effect-diagnostics nodeBuiltinImport:off - a random id for a command of the platform's own.
 import {
   AuthOrchestrationOperateScope,
   CommandId,
   EnvironmentAuthorizationError,
   type MessageId,
   type OrchestrationV2Command,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2StoredEvent,
   type RunId,
   type ThreadId,
   authScopeRequiredResponse,
 } from "@t3tools/contracts";
 import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
+import * as NodeCrypto from "node:crypto";
+
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -136,16 +140,21 @@ const toAuthor = (row: AuthorRow): Author & { readonly note: string | null } => 
   note: row.note,
 });
 
-/**
- * What a message that carries a note told the agent: who can write, and `after`, the carrier
- * that note was worked out against. A change note says only what changed since `after`, so it
- * tells the agent the truth only if `after` reached the agent too.
- */
-const Told = Schema.fromJsonString(
-  Schema.Struct({ writers: Schema.Array(Writer), after: Schema.NullOr(Schema.String) }),
-);
+/** Who a message that carries a note told the agent can write. */
+const Told = Schema.fromJsonString(Schema.Array(Writer));
 const decodeTold = Schema.decodeEffect(Told);
 const encodeTold = Schema.encodeEffect(Told);
+
+/**
+ * The id a guest's command goes on to upstream under: the client's own, inside a space that is
+ * that one person's. Upstream answers "accepted" for any command id it already has a receipt
+ * for on the thread and does nothing more, which is how an honest retry works. A guest who
+ * could name any id could therefore name one the platform, a member or upstream's own recovery
+ * has used or will use: its command would be taken as already done, or theirs would. Under
+ * this id a guest's retry still finds its own receipt, and no one else's id can be named.
+ */
+export const guestCommandId = (personId: string, commandId: CommandId) =>
+  CommandId.make(`command:j5:guest:${personId}:${commandId}`);
 
 /**
  * The event upstream logs when a prompt is answered. Typed against upstream's own event union,
@@ -153,6 +162,9 @@ const encodeTold = Schema.encodeEffect(Told);
  */
 const PROMPT_SETTLED_EVENT =
   "runtime-request.updated" satisfies OrchestrationV2StoredEvent["event"]["type"];
+
+/** The kind of prompt that is a question, answered in words; typed against upstream's kinds. */
+const QUESTION_KIND = "user_input" satisfies OrchestrationV2RuntimeRequest["kind"];
 
 /** A message's run as upstream records it, read beside a message that carried a note. */
 interface CarrierRun {
@@ -212,8 +224,11 @@ const make = <E>(
         (run) =>
           dispatch({
             type: "queued-run.cancel",
-            // One withdrawal per run, however many times the change is told.
-            commandId: CommandId.make(`command:j5:shared-conversation-withdraw:${run.run_id}`),
+            // An id no one can have used before: upstream takes a command whose id it has
+            // seen as already done.
+            commandId: CommandId.make(
+              `command:j5:shared-conversation-withdraw:${run.run_id}:${NodeCrypto.randomUUID()}`,
+            ),
             threadId: run.thread_id as ThreadId,
             runId: run.run_id as RunId,
           }).pipe(
@@ -226,6 +241,19 @@ const make = <E>(
           ),
         { discard: true },
       );
+      // Upstream said it was done; its own record of each run is what counts.
+      if (stranded.length > 0) {
+        const left = yield* sql<{ readonly run_id: string }>`
+          SELECT run_id FROM orchestration_v2_projection_runs
+          WHERE status = 'queued' AND run_id IN ${sql.in(stranded.map((run) => run.run_id))}
+        `;
+        if (left.length > 0) {
+          yield* Effect.logError(
+            "J5 shared conversation withdrew a guest's queued messages and they are still queued",
+            { personId, runIds: left.map((run) => run.run_id) },
+          );
+        }
+      }
     },
     Effect.catch((cause) =>
       Effect.logError("J5 shared conversation could not read a person's queued messages", {
@@ -342,23 +370,24 @@ const make = <E>(
   });
 
   /**
-   * Who the agent was last told can write to a thread, and by which message: the newest message
-   * that carried a note which reached the agent, as did every note it was worked out against.
-   * `null` for an agent that has been told nothing that still stands.
+   * Who the agent was last told can write to a thread: what the newest message known to have
+   * reached it with a note said. `null` for an agent that has been told nothing that still
+   * stands. A note on a message still waiting in the queue has told the agent nothing yet, and
+   * may never: its author can withdraw it. So until one is known to have run, every message
+   * carries the note, and the agent may read it more than once. That way no person's message
+   * reaches an agent that has not been told the thread is shared and where guests stand.
    *
    * Read from upstream's own records by SQL: a message's `run_id`, a run's `status` and the
    * `startedAt` in its payload (`SharedConversation.integration.test.ts` fails if upstream
    * reshapes them). It is asked when the next message arrives, so every way a message can be
-   * lost is covered without a hook on any of them. A thread has one row here for each time who
-   * can write changed.
+   * lost is covered without a hook on any of them. A thread has one row here for each message
+   * that carried a note.
    */
   const lastTold = Effect.fn("j5.sharing.sharedConversation.lastTold")(function* (
     threadId: ThreadId,
   ) {
-    const rows = yield* sql<
-      CarrierRun & { readonly message_id: string; readonly told_json: string }
-    >`
-      SELECT author.message_id, author.told_json, message.message_id AS carried,
+    const rows = yield* sql<CarrierRun & { readonly told_json: string }>`
+      SELECT author.told_json, message.message_id AS carried,
         run.status AS status, json_extract(run.payload_json, '$.startedAt') AS started_at
       FROM j5_a2a_message_author AS author
       LEFT JOIN orchestration_v2_projection_messages AS message
@@ -367,19 +396,8 @@ const make = <E>(
       WHERE author.thread_id = ${threadId} AND author.told_json IS NOT NULL
       ORDER BY author.rowid DESC
     `;
-    const carriers = yield* Effect.forEach(rows, (row) =>
-      decodeTold(row.told_json).pipe(
-        Effect.map((told) => ({ ...told, messageId: row.message_id, lost: lost(row) })),
-      ),
-    );
-    const byId = new Map(carriers.map((carrier) => [carrier.messageId, carrier]));
-    const stands = (carrier: (typeof carriers)[number]): boolean => {
-      if (carrier.lost) return false;
-      if (carrier.after === null) return true;
-      const after = byId.get(carrier.after);
-      return after !== undefined && stands(after);
-    };
-    return carriers.find(stands) ?? null;
+    const reached = rows.find((row) => !lost(row) && row.status !== "queued");
+    return reached === undefined ? null : yield* decodeTold(reached.told_json);
   });
 
   /**
@@ -401,8 +419,8 @@ const make = <E>(
     if (last === null && !shared) return { shared, note: null, told: null };
     const now = shared ? yield* writers(threadId) : [];
     // A thread shared again after it stopped being one is told as a thread newly shared.
-    const wasShared = last !== null && last.writers.some((writer) => writer.kind === "guest");
-    const note = wasShared ? changeNote(last.writers, now) : shared ? firstNote(now) : null;
+    const wasShared = last !== null && last.some((writer) => writer.kind === "guest");
+    const note = wasShared ? changeNote(last, now) : shared ? firstNote(now) : null;
     // The agent is told who answered its approval prompts while its thread was shared, on the
     // same block: the first note carries any answered before a person's first message, and
     // the last note of a thread that has stopped being shared carries what is left.
@@ -410,8 +428,7 @@ const make = <E>(
     return {
       shared,
       note: withApprovals(note, approvals),
-      told:
-        note === null ? null : yield* encodeTold({ writers: now, after: last?.messageId ?? null }),
+      told: note === null ? null : yield* encodeTold(now),
     };
   });
 
@@ -532,9 +549,8 @@ const make = <E>(
   ) {
     const decision = guestCommand(received);
     if (!decision.allowed) return yield* refused(decision.reason);
-    const command = decision.command;
     // The gate asked the same before this ran; this holds for any other caller.
-    if ((yield* access.threadAccess(session, command.threadId)) !== "collaborate") {
+    if ((yield* access.threadAccess(session, decision.command.threadId)) !== "collaborate") {
       return yield* refused("This is not shared with you to write to.");
     }
     const author = yield* sessionAuthor(session);
@@ -542,6 +558,10 @@ const make = <E>(
     if (author === null || author.kind !== "guest" || author.nameSelfGiven) {
       return yield* refused("A member has to confirm your name before you can write here.");
     }
+    const command = {
+      ...decision.command,
+      commandId: guestCommandId(author.personId, decision.command.commandId),
+    };
     // A seat's request for approval reaches members only (AC12), whatever grant covers its thread.
     if (
       (command.type === "runtime-request.respond" ||
@@ -575,10 +595,27 @@ const make = <E>(
           ? command
           : { ...command, text: stampEdit(command.text, original, author) };
       }
-      case "runtime-request.respond":
+      case "runtime-request.respond": {
+        // Upstream marks a prompt resolved by whatever it is sent, and an approval resolved by
+        // words is one the provider never hears of: its tool call waits for good. So a
+        // question is answered in words and anything else by a decision. A request upstream
+        // does not have is left for upstream to refuse.
+        const requests = yield* sql<{ readonly kind: string }>`
+          SELECT kind FROM orchestration_v2_projection_runtime_requests
+          WHERE runtime_request_id = ${command.requestId} AND thread_id = ${command.threadId}
+        `;
+        const kind = requests[0]?.kind;
+        if (kind !== undefined && (kind === QUESTION_KIND) !== (command.answers !== undefined)) {
+          return yield* refused(
+            kind === QUESTION_KIND
+              ? "A question is answered in words."
+              : "This prompt is answered by approving or declining it.",
+          );
+        }
         return command.answers === undefined
           ? command
           : { ...command, answers: answersFrom(command.answers, author) };
+      }
       default:
         return command;
     }

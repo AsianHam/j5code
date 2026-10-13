@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
 import { ClientActionsService } from "./ClientActionsService.ts";
+import { proposalForGuest } from "./CrewProposalService.ts";
 import { PeerAdminService, peerAdminRefusal } from "./PeerAdminService.ts";
 
 const METHODS = J5_CLIENT_ACTION_WS_METHODS;
@@ -88,6 +89,11 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
       [METHODS.resolveCrewProposal]: (input: CrewProposalResolveRequest) =>
         (options?.rosterDecider(input.proposalId) ?? Effect.succeed(null)).pipe(
           Effect.flatMap((decidedBy) => actions.resolveCrewProposal(input, decidedBy)),
+          Effect.map((result) =>
+            options?.forGuest === true
+              ? { ...result, proposal: proposalForGuest(result.proposal) }
+              : result,
+          ),
           Effect.catch(proposalFailure),
         ),
       [METHODS.stopCrew]: (input: CrewStopRequest) =>

@@ -31,9 +31,15 @@ const note = (paragraphs: ReadonlyArray<string>) =>
 
 const names = (writers: ReadonlyArray<Writer>) => writers.map((writer) => writer.label).join(", ");
 
-// One line, however the member typed it; `null` when there is none.
+// One line, however the member typed it; `null` when there is none. It sits inside the
+// platform's note, so what could close the note or open a tag is escaped, as a Crew gate
+// notice escapes its fields.
 const purposeOf = (writer: Writer) => {
-  const purpose = writer.purpose?.replace(/\s+/g, " ").trim() ?? "";
+  const purpose =
+    writer.purpose
+      ?.replace(/\s+/g, " ")
+      .replace(/[&<>]/g, (character) => `&#${character.charCodeAt(0)};`)
+      .trim() ?? "";
   return purpose.length === 0 ? null : purpose;
 };
 

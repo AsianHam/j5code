@@ -68,6 +68,7 @@ import {
   CrewProposalService,
   layer as crewProposalLayer,
   type ResolveCrewProposalInput,
+  proposalForGuest,
   withoutHostPaths,
 } from "./CrewProposalService.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
@@ -1287,6 +1288,34 @@ it.effect(
             workspace: { type: "existing_worktree", worktreePath: "/", branch: "fix" },
           },
         );
+        // What a guest is handed back after answering is reduced the same way, and a problem
+        // reading the playbook is said without the reader's words, which can name a file.
+        const reduced = proposalForGuest({
+          ...open.proposal,
+          requestedSeats: [
+            {
+              ...open.proposal.requestedSeats[0]!,
+              workspace: {
+                type: "existing_worktree",
+                worktreePath: "/home/owner/repo-wt",
+                branch: "fix",
+              },
+            },
+          ],
+          playbook: {
+            name: "review",
+            title: "review",
+            steps: [],
+            issue: "ENOENT: no such file, open '/home/owner/repo/.j5/playbooks/review.yaml'",
+          },
+        });
+        assert.deepStrictEqual(reduced.requestedSeats[0]?.workspace, {
+          type: "existing_worktree",
+          worktreePath: "/",
+          branch: "fix",
+        });
+        assert.isFalse(JSON.stringify(reduced).includes("/home/owner"));
+        assert.isTrue(reduced.playbook?.issue?.startsWith("This roster's playbook has a problem"));
         assert.deepStrictEqual(first.seats[0]?.workspace, {
           type: "worktree",
           baseRef: "release",
