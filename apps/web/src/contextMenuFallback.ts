@@ -134,6 +134,13 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "line", attrs: { x1: "10", x2: "10", y1: "11", y2: "17" } },
     { tag: "line", attrs: { x1: "14", x2: "14", y1: "11", y2: "17" } },
   ],
+  // J5 (case 71): "Share thread…" in the thread menu.
+  users: [
+    { tag: "path", attrs: { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" } },
+    { tag: "path", attrs: { d: "M16 3.128a4 4 0 0 1 0 7.744" } },
+    { tag: "path", attrs: { d: "M22 21v-2a4 4 0 0 0-3-3.87" } },
+    { tag: "circle", attrs: { cx: "9", cy: "7", r: "4" } },
+  ],
 };
 
 function createIconElement(name: string, tone: "neutral" | "destructive"): SVGSVGElement | null {

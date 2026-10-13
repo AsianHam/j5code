@@ -149,6 +149,7 @@ vi.mock("./useThreadActions", () => ({
     ),
 }));
 
+import { closeSharingDialog, sharingDialogStore } from "../j5/sharing/sharingDialogs";
 import { useThreadActionMenu } from "./useThreadActionMenu";
 
 const target = {
@@ -222,5 +223,28 @@ describe("thread menu permissions", () => {
     createMenu().openMenu(position);
     await state.completed.promise;
     expect(state.effects).toEqual([effect]);
+  });
+});
+
+// J5 (case 71): "Share thread…" is J5's item in upstream's menu.
+describe("the Share thread item", () => {
+  it("is offered after Copy", () => {
+    createMenu().openMenu(position);
+    const labels = state.show.mock.calls[0]![0].map((item) => item.label);
+    expect(labels[labels.indexOf("Copy") + 1]).toBe("Share thread…");
+  });
+
+  it("opens the Share dialog and never reaches upstream's actions", async () => {
+    state.show.mockResolvedValue("j5:share-thread" as ThreadActionMenuId);
+    createMenu().openMenu(position);
+    await vi.waitFor(() =>
+      expect(sharingDialogStore.read().request).toEqual({
+        kind: "share",
+        environmentId: target.environmentId,
+        target: { kind: "thread", threadId: target.threadId },
+      }),
+    );
+    expect(state.effects).toEqual([]);
+    closeSharingDialog();
   });
 });

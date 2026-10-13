@@ -20,6 +20,7 @@ import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
+import { SharingDialogHost } from "../j5/sharing/SharingDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -236,6 +237,7 @@ function RootRouteView() {
           <ThreadNotificationCoordinator />
           <ReopenClosedViewShortcut />
           <ConfirmDialogHost />
+          <SharingDialogHost />
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />

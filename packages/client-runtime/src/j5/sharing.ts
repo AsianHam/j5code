@@ -1,6 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   J5_SHARING_WS_METHODS,
+  type SharingConnectionAccess,
   type SharingConnectionKind,
   type SharingThreadLevel,
 } from "@t3tools/contracts/j5";
@@ -34,7 +35,7 @@ export const sharingAllowsOperate = (input: {
 interface ConnectionKindAnswer {
   /** `null` until the server has answered. */
   kind: SharingConnectionKind | null;
-  readonly ask: Effect.Effect<SharingConnectionKind>;
+  readonly ask: Effect.Effect<SharingConnectionAccess>;
 }
 const connectionKinds = new WeakMap<RpcSession, ConnectionKindAnswer>();
 
@@ -48,12 +49,12 @@ const connectionKindAnswer = Effect.gen(function* () {
     kind: null,
     ask: yield* Effect.cached(
       request(J5_SHARING_WS_METHODS.getConnectionAccess, {}).pipe(
-        Effect.map((access) => access.kind),
-        // A server that cannot answer, such as one from before sharing, has no guests.
-        Effect.catchCause(() => Effect.succeed("member" as const)),
-        Effect.tap((kind) =>
+        // A server that cannot answer, such as one from before sharing, has no guests. It says
+        // nothing of an owner's name either, so no one is asked for one.
+        Effect.catchCause(() => Effect.succeed<SharingConnectionAccess>({ kind: "member" })),
+        Effect.tap((access) =>
           Effect.sync(() => {
-            answer.kind = kind;
+            answer.kind = access.kind;
           }),
         ),
         Effect.provideService(EnvironmentSupervisor, supervisor),
@@ -64,11 +65,14 @@ const connectionKindAnswer = Effect.gen(function* () {
   return answer;
 });
 
-/** Whether the environment's connection is a member's or a guest's, asked once per connection. */
-export const sharingConnectionKind = Effect.gen(function* () {
+/** What the server says of the environment's connection, asked once per connection. */
+export const sharingConnectionAccess = Effect.gen(function* () {
   const answer = yield* connectionKindAnswer;
-  return answer === null ? ("member" as const) : yield* answer.ask;
+  return answer === null ? ({ kind: "member" } as SharingConnectionAccess) : yield* answer.ask;
 });
+
+/** Whether the environment's connection is a member's or a guest's, from the same one answer. */
+export const sharingConnectionKind = Effect.map(sharingConnectionAccess, (access) => access.kind);
 
 /**
  * Whether the connection is already known to be a guest's. It never waits for the server: a
@@ -93,7 +97,7 @@ export function createSharingEnvironmentAtoms<R, E>(
   const connectionAccess = createEnvironmentQueryAtomFamily(runtime, {
     label: "j5:sharing:connection",
     staleTimeMs: Number.MAX_SAFE_INTEGER,
-    execute: (_input: Record<string, never>) => sharingConnectionKind,
+    execute: (_input: Record<string, never>) => sharingConnectionAccess,
   });
   // Only a guest's client opens this; the server sends the level again when a grant changes it.
   const threadAccess = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -103,9 +107,25 @@ export function createSharingEnvironmentAtoms<R, E>(
 
   /** `null` until the server has answered for this connection. */
   const connectionKind = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get): SharingConnectionKind | null =>
-      Option.getOrNull(AsyncResult.value(get(connectionAccess({ environmentId, input: {} })))),
+    Atom.make(
+      (get): SharingConnectionKind | null =>
+        Option.getOrNull(AsyncResult.value(get(connectionAccess({ environmentId, input: {} }))))
+          ?.kind ?? null,
     ).pipe(Atom.withLabel(`j5:sharing:connection-kind:${environmentId}`)),
+  );
+
+  /**
+   * The name of the person the server belongs to, as a member's connection was told it when it
+   * connected: a name, `null` when none is set, and `undefined` while the server has not
+   * answered, for a guest's connection, and for a server that does not say.
+   */
+  const ownerName = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): string | null | undefined => {
+      const access = Option.getOrNull(
+        AsyncResult.value(get(connectionAccess({ environmentId, input: {} }))),
+      );
+      return access?.kind === "member" ? access.ownerName : undefined;
+    }).pipe(Atom.withLabel(`j5:sharing:owner-name:${environmentId}`)),
   );
 
   const threadOperable = Atom.family((key: string) => {
@@ -133,6 +153,7 @@ export function createSharingEnvironmentAtoms<R, E>(
 
   return {
     connectionKind,
+    ownerName,
     isGuest,
     /**
      * The same answer for code that is not rendering, such as a menu built when it is opened.

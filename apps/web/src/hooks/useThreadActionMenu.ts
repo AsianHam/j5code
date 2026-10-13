@@ -24,6 +24,7 @@ import {
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import { runSharingMenuAction, withSharingMenuItems } from "../j5/sharing/sharingMenu";
 import { readCanOperateThread } from "../j5/sharing/threadOperability";
 import { readEnvironmentScope } from "../state/session";
 import {
@@ -164,8 +165,12 @@ export function useThreadActionMenu(input: {
           supports,
           snoozePresets,
         });
-        const clicked = await settlePromise(() => api.contextMenu.show(items, position));
+        // J5 (case 71): "Share thread…" joins the built list, and is handled here when picked.
+        const clicked = await settlePromise(() =>
+          api.contextMenu.show(withSharingMenuItems(items, threadRef), position),
+        );
         if (clicked._tag === "Failure" || clicked.value === null) return;
+        if (runSharingMenuAction(clicked.value, threadRef)) return;
         const action: ThreadActionMenuId = clicked.value;
         if (
           threadActionRequiresOperate(action) &&

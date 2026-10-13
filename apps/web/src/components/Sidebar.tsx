@@ -175,6 +175,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
+import { buildWithSharingMenuItems, runSharingMenuAction } from "../j5/sharing/sharingMenu";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
@@ -4670,7 +4671,11 @@ export default function Sidebar() {
           ) ?? null;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            buildThreadActionMenuItems({
+            // J5 (case 71): "Share thread…" joins the built list, and is handled below when picked.
+            buildWithSharingMenuItems(
+              buildThreadActionMenuItems,
+              threadRef,
+            )({
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
@@ -4702,6 +4707,7 @@ export default function Sidebar() {
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
+        if (runSharingMenuAction(clicked.value, threadRef)) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
