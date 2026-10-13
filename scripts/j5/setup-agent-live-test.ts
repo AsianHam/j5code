@@ -102,6 +102,8 @@ interface DefaultManifest {
   }>;
   readonly playbooks: ReadonlyArray<string>;
   readonly holdScript: string;
+  /** Titles of the threads left in a pre-made state. Absent in a home built before the generator made any. */
+  readonly stateThreads?: ReadonlyArray<string>;
 }
 /** Marks a finished build and records its mode. */
 type Manifest = DefaultManifest | { readonly mode: "fresh" } | { readonly mode: "for-dev" };
@@ -549,7 +551,11 @@ Personas: ${manifest.personas
             `${persona.id} (${persona.model}${persona.fallbackModel === undefined ? "" : `, or ${persona.fallbackModel} as its second route`})`,
         )
         .join("; ")}
-Playbooks: ${manifest.playbooks.join(", ")}
+Playbooks: ${manifest.playbooks.join(", ")}${
+        manifest.stateThreads === undefined || manifest.stateThreads.length === 0
+          ? ""
+          : `\nThreads in a pre-made state: ${manifest.stateThreads.map((title) => `"${title}"`).join(", ")}`
+      }
 
 Hold a turn open by asking the agent to run: ${manifest.holdScript}
 Release it with: touch ${NodePath.join(paths.testRepo, HOLD_RELEASE_FILE)}`

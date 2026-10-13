@@ -192,3 +192,84 @@ it.live(
     }).pipe(Effect.scoped),
   60_000,
 );
+
+it.live(
+  "leaves a message with an image and a question waiting for an answer",
+  () =>
+    Effect.gen(function* () {
+      const root = NodeFS.realpathSync(
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j5-live-test-home-")),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+      );
+      const manifest = yield* buildLiveTestHome({
+        root,
+        ownerName: "Test owner",
+        replays: [
+          ["simple", "claudeAgent", "image"],
+          ["simple", "codex", "question"],
+        ],
+      }).pipe(Effect.provide(Logger.layer([], { mergeWithExisting: false })));
+      assert.deepEqual(manifest.stateThreads, [
+        "Message with an image",
+        "Question waiting for an answer",
+      ]);
+
+      const stateDir = NodePath.join(manifest.home, "userdata");
+      const database = new NodeSqlite.DatabaseSync(`${stateDir}/statev2.sqlite`, {
+        readOnly: true,
+      });
+      try {
+        const threadId = (title: string) =>
+          database
+            .prepare("SELECT thread_id FROM orchestration_v2_projection_threads WHERE title = ?")
+            .get(title)?.thread_id ?? null;
+        const payloads = (sql: string, title: string) =>
+          database
+            .prepare(sql)
+            .all(threadId(title))
+            .map((row) => JSON.parse(String(row.payload_json)));
+
+        // The timeline reads the turn item and the message list reads the message.
+        const [message, ...otherMessages] = payloads(
+          "SELECT payload_json FROM orchestration_v2_projection_messages WHERE thread_id = ? AND role = 'user'",
+          "Message with an image",
+        );
+        const [item] = payloads(
+          "SELECT payload_json FROM orchestration_v2_projection_turn_items WHERE thread_id = ? AND type = 'user_message'",
+          "Message with an image",
+        );
+        assert.deepEqual(otherMessages, []);
+        assert.deepEqual(item.attachments, message.attachments);
+        const [attachment] = message.attachments;
+        assert.deepInclude(attachment, { type: "image", mimeType: "image/png" });
+        // The server serves an attachment from the file its id names.
+        const stored = NodeFS.readFileSync(`${stateDir}/attachments/${attachment.id}.png`);
+        assert.equal(stored.byteLength, attachment.sizeBytes);
+        assert.equal(stored.subarray(1, 4).toString(), "PNG");
+
+        // Startup recovery expires every pending request but one answered by message.
+        const requests = payloads(
+          "SELECT payload_json FROM orchestration_v2_projection_runtime_requests WHERE thread_id = ?",
+          "Question waiting for an answer",
+        );
+        assert.equal(requests.length, 1);
+        assert.equal(requests[0].status, "pending");
+        assert.equal(requests[0].responseCapability.type, "message");
+        // The question stands in for the agent's reply; it is not shown beside one.
+        const items = payloads(
+          "SELECT payload_json FROM orchestration_v2_projection_turn_items WHERE thread_id = ? ORDER BY ordinal",
+          "Question waiting for an answer",
+        );
+        assert.deepEqual(
+          items.map((entry) => entry.type),
+          ["user_message", "user_input_request", "checkpoint"],
+        );
+        assert.include(JSON.stringify(items[1]), "Which colour should the banner be?");
+      } finally {
+        database.close();
+      }
+    }).pipe(Effect.scoped),
+  60_000,
+);

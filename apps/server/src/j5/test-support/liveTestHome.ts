@@ -8,7 +8,8 @@
  * origin, and `home`, a J5 home holding one project, replayed Claude and Codex
  * threads from upstream's provider replay kit, J5's delivery seed, two light
  * personas, Claude Haiku as the default model, and an owner who already has a
- * name, so sharing works without the startup dialog. It finishes by writing
+ * name, so sharing works without the startup dialog. Two of the threads are
+ * finished into a state no recording has (see `ReplayState`). It finishes by writing
  * `<root>/manifest.json`, which is what `scripts/j5/setup-agent-live-test.ts`
  * reads. Nothing in the home points outside `<root>`.
  *
@@ -17,7 +18,9 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ChatAttachmentId,
   ProjectId,
+  type ChatAttachment,
   type ModelSelection,
   type OrchestrationV2Command,
   type ProviderReplayTranscript,
@@ -41,6 +44,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
+import { attachmentRelativePath, createDeterministicAttachmentId } from "../../attachmentStore.ts";
 import { ClaudeOrchestratorReplayHarness } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import { provideDeterministicTestRuntime } from "../../orchestration-v2/testkit/DeterministicRuntime.ts";
@@ -71,8 +75,36 @@ import {
 
 type ReplayDriver = "claudeAgent" | "codex";
 
-/** [fixture, driver], oldest first. Chosen for variety in what the timeline has to render. */
-const LIVE_TEST_REPLAYS: ReadonlyArray<readonly [fixture: string, driver: ReplayDriver]> = [
+/**
+ * A state a replayed thread is left in that no recording has.
+ * - `image`: the user's message carries an image. Display only: the event log
+ *   has no attachment and the provider never saw one.
+ * - `question`: Codex asked a question without holding its turn open, which is
+ *   the one kind of pending request that startup recovery keeps. It can be
+ *   answered once; the answer starts a real turn in a new provider conversation.
+ *
+ * A pending approval cannot be pre-made: recovery expires every other request.
+ */
+type ReplayState = "image" | "question";
+/** The title each state's thread gets, which is how a tester finds it. */
+const LIVE_TEST_STATE_TITLES = {
+  image: "Message with an image",
+  question: "Question waiting for an answer",
+} as const satisfies Record<ReplayState, string>;
+const LIVE_TEST_QUESTION = {
+  title: "Which colour should the banner be?",
+  options: ["Blue", "Green"],
+};
+const LIVE_TEST_IMAGE = NodePath.join(import.meta.dirname, "liveTestImage.png");
+
+type LiveTestReplay = readonly [fixture: string, driver: ReplayDriver, state?: ReplayState];
+
+/**
+ * [fixture, driver], oldest first. Chosen for variety in what the timeline has
+ * to render. Each pair appears once: a recording's native item ids become its
+ * turn item ids, so a second replay of it would take the first one's rows.
+ */
+const LIVE_TEST_REPLAYS: ReadonlyArray<LiveTestReplay> = [
   ["multi_turn", "claudeAgent"],
   ["multi_turn", "codex"],
   ["turn_interrupt", "claudeAgent"],
@@ -88,6 +120,8 @@ const LIVE_TEST_REPLAYS: ReadonlyArray<readonly [fixture: string, driver: Replay
   ["proposed_plan", "codex"],
   ["web_search", "codex"],
   ["claude_mcp_tool_presentation", "claudeAgent"],
+  ["simple", "claudeAgent", "image"],
+  ["simple", "codex", "question"],
 ];
 
 const LIVE_TEST_PROJECT_TITLE = "Live test repo";
@@ -150,6 +184,8 @@ export interface LiveTestHomeManifest {
   readonly holdReleaseFile: string;
   readonly replayedThreads: number;
   readonly seedThreads: number;
+  /** Titles of the threads left in a pre-made state, such as a question waiting. */
+  readonly stateThreads: ReadonlyArray<string>;
 }
 
 const liveTestHomePaths = (root: string) => ({
@@ -207,9 +243,92 @@ function registerProject(input: {
   }
 }
 
+const isAgentMessage = Schema.is(Schema.Struct({ type: Schema.Literal("agentMessage") }));
+const isAgentMessageStart = Schema.is(
+  Schema.Struct({
+    label: Schema.Literal("item/started"),
+    frame: Schema.Struct({
+      params: Schema.Struct({ item: Schema.Struct({ type: Schema.Literal("agentMessage") }) }),
+    }),
+  }),
+);
+
+/**
+ * A Codex recording with each agent message turned into `LIVE_TEST_QUESTION`,
+ * asked the way Codex asks without holding its turn open. The message's start
+ * and streamed text go: they would be stored under the question's turn item id
+ * and replace it.
+ */
+function asAsyncQuestion(recorded: ProviderReplayTranscript): ProviderReplayTranscript {
+  const entries = recorded.entries.filter(
+    (entry) =>
+      !("label" in entry && entry.label === "item/agentMessage/delta") &&
+      !isAgentMessageStart(entry),
+  );
+  if (entries.length === recorded.entries.length) {
+    throw new Error(`${recorded.scenario} records no agent message to turn into a question.`);
+  }
+  return {
+    ...recorded,
+    entries: JSON.parse(JSON.stringify(entries), (_key, value: unknown) =>
+      isAgentMessage(value)
+        ? { ...value, delivery: "async", questions: [LIVE_TEST_QUESTION] }
+        : value,
+    ),
+  };
+}
+
+/**
+ * Puts the image on the thread's one user message, as stored. Replaying a
+ * message that carries an attachment fails its turn: the recorded prompt has
+ * none, and the replay harness keeps attachments in a temporary directory of
+ * its own. So the file goes into the home and the reference onto the two
+ * projection rows the client reads.
+ */
+function attachLiveTestImage(input: {
+  readonly home: string;
+  readonly databasePath: string;
+  readonly threadId: string;
+}): void {
+  const id = createDeterministicAttachmentId(input.threadId, "live-test-image");
+  if (id === null) throw new Error(`No attachment id for thread ${input.threadId}.`);
+  const bytes = NodeFS.readFileSync(LIVE_TEST_IMAGE);
+  const attachment: ChatAttachment = {
+    type: "image",
+    id: ChatAttachmentId.make(id),
+    name: NodePath.basename(LIVE_TEST_IMAGE),
+    mimeType: "image/png",
+    sizeBytes: bytes.byteLength,
+  };
+  const relativePath = attachmentRelativePath(attachment);
+  if (relativePath === null) throw new Error(`No attachment path for ${id}.`);
+  const attachmentsDir = NodePath.join(input.home, "userdata", "attachments");
+  NodeFS.mkdirSync(attachmentsDir, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(attachmentsDir, relativePath), bytes);
+  const database = new NodeSqlite.DatabaseSync(input.databasePath);
+  try {
+    for (const [table, where] of [
+      ["orchestration_v2_projection_messages", "role = 'user'"],
+      ["orchestration_v2_projection_turn_items", "type = 'user_message'"],
+    ] as const) {
+      const { changes } = database
+        .prepare(
+          `UPDATE ${table} SET payload_json = json_set(payload_json, '$.attachments', json(?))
+           WHERE thread_id = ? AND ${where}`,
+        )
+        .run(JSON.stringify([attachment]), input.threadId);
+      if (changes !== 1) {
+        throw new Error(`Expected one user message in ${table}, changed ${changes}.`);
+      }
+    }
+  } finally {
+    database.close();
+  }
+}
+
 /**
  * Replays one recorded provider transcript into the home's database as a
- * thread of `projectId`.
+ * thread of `projectId`, and returns that thread's id.
  *
  * Adapted from `runFixtureProvider` in upstream's
  * `orchestration-v2/testkit/OrchestratorReplayFixtures.integration.test.ts`,
@@ -229,10 +348,12 @@ const replayFixture = Effect.fn("liveTestHome.replayFixture")(function* <
   readonly testRepo: string;
   readonly databasePath: string;
   readonly startAtMs: number;
+  readonly state: ReplayState | undefined;
 }) {
-  const recorded = yield* readProviderReplayTranscript(input.variant.transcriptFile).pipe(
+  const read = yield* readProviderReplayTranscript(input.variant.transcriptFile).pipe(
     Effect.provide(NodeServices.layer),
   );
+  const recorded = input.state === "question" ? asAsyncQuestion(read) : read;
   const lastLabel = input.variant.transcriptEntriesThroughLabel;
   const lastIndex = recorded.entries.findIndex(
     (entry) => entry.type === "emit_inbound" && entry.label === lastLabel,
@@ -259,12 +380,16 @@ const replayFixture = Effect.fn("liveTestHome.replayFixture")(function* <
   }).pipe(Effect.provide(IdAllocator.layer));
   // The fixture allocates a project id that nothing creates; its commands go to
   // ours instead. Both drivers of a fixture share a title, so name the driver.
+  const title = (recordedTitle: string) =>
+    input.state === undefined
+      ? `${recordedTitle} (${input.variant.driver === "codex" ? "Codex" : "Claude"})`
+      : LIVE_TEST_STATE_TITLES[input.state];
   const retarget = (command: OrchestrationV2Command): OrchestrationV2Command =>
     command.type === "thread.create"
       ? {
           ...command,
           projectId: input.projectId,
-          title: `${command.title} (${input.variant.driver === "codex" ? "Codex" : "Claude"})`,
+          title: title(command.title),
         }
       : "projectId" in command
         ? { ...command, projectId: input.projectId }
@@ -291,9 +416,11 @@ const replayFixture = Effect.fn("liveTestHome.replayFixture")(function* <
       },
     );
   }).pipe(provideDeterministicTestRuntime);
-  if (result.projections.size === 0) {
+  const threadId = materialized.projectionThreadIds[0];
+  if (threadId === undefined || !result.projections.has(threadId)) {
     return yield* Effect.die(`${input.fixture.name}/${input.variant.driver} replayed no thread.`);
   }
+  return threadId;
 });
 
 function writeSettingsAndPersonas(home: string): void {
@@ -358,7 +485,7 @@ function writeManifest(manifestPath: string, manifest: LiveTestHomeManifest): vo
 export const buildLiveTestHome = Effect.fn("buildLiveTestHome")(function* (input: {
   readonly root: string;
   readonly ownerName: string;
-  readonly replays?: ReadonlyArray<readonly [fixture: string, driver: ReplayDriver]>;
+  readonly replays?: ReadonlyArray<LiveTestReplay>;
 }) {
   const ownerName = yield* checkedPersonName(input.ownerName);
   const paths = liveTestHomePaths(input.root);
@@ -378,12 +505,12 @@ export const buildLiveTestHome = Effect.fn("buildLiveTestHome")(function* (input
 
   const replays = input.replays ?? LIVE_TEST_REPLAYS;
   const now = (yield* fixedNow) ?? (yield* Clock.currentTimeMillis);
-  const finishReplay = <Error>(name: string, replay: Effect.Effect<void, Error, Scope.Scope>) =>
+  const finishReplay = <Error>(name: string, replay: Effect.Effect<string, Error, Scope.Scope>) =>
     replay.pipe(
       Effect.scoped,
       Effect.mapError((cause) => new LiveTestHomeReplayError({ name, cause })),
     );
-  for (const [index, [fixtureName, driver]] of replays.entries()) {
+  for (const [index, [fixtureName, driver, state]] of replays.entries()) {
     const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((entry) => entry.name === fixtureName);
     const variant = fixture?.providers.find((provider) => provider.driver === driver);
     if (fixture === undefined || variant === undefined) {
@@ -396,14 +523,16 @@ export const buildLiveTestHome = Effect.fn("buildLiveTestHome")(function* (input
       testRepo,
       databasePath,
       startAtMs: now - (replays.length - index) * REPLAY_SPACING_MS,
+      state,
     };
     const name = `${fixtureName}/${driver}`;
-    yield* driver === "codex"
+    const threadId = yield* driver === "codex"
       ? finishReplay(name, replayFixture({ ...scenario, harness: CodexOrchestratorReplayHarness }))
       : finishReplay(
           name,
           replayFixture({ ...scenario, harness: ClaudeOrchestratorReplayHarness }),
         );
+    if (state === "image") attachLiveTestImage({ home, databasePath, threadId });
   }
 
   const seed = yield* runDevDeliverySeed(home, {
@@ -430,6 +559,9 @@ export const buildLiveTestHome = Effect.fn("buildLiveTestHome")(function* (input
     holdReleaseFile: NodePath.join(testRepo, LIVE_TEST_HOLD_RELEASE_FILE),
     replayedThreads: replays.length,
     seedThreads: Object.keys(seed.threads).length,
+    stateThreads: replays.flatMap(([, , state]) =>
+      state === undefined ? [] : [LIVE_TEST_STATE_TITLES[state]],
+    ),
   };
   writeManifest(manifestPath, manifest);
   return manifest;

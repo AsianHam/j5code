@@ -142,6 +142,11 @@ A worktree holds one setup at a time. Pass a flag to the first start, or to
   repository. It blocks until you create `.hold-release` in the test
   repository's root, deletes that file, and exits. It gives up after nine
   minutes.
+- The thread "Question waiting for an answer" can be answered once; `rebuild`
+  brings it back. The image in "Message with an image" is display only.
+- A pending approval or a question from Claude does not survive a restart, so
+  make one live: set a new thread's access to "Supervised" and ask for a file
+  edit, or ask the agent to ask you a question with two options.
 
 ### Restarts
 
