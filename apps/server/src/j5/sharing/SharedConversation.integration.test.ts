@@ -6,12 +6,14 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2Command,
+  type OrchestrationV2ThreadLaunchInput,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { makeHarness, modelSelection, projectId } from "../test-support/threadLaunchHarness.ts";
 import * as PersonAccess from "./PersonAccess.ts";
@@ -365,6 +367,92 @@ it.effect(
       const third = message("Where were we?", on);
       yield* send(MEMBER, third);
       assert.strictEqual(yield* note(third.messageId), told);
+    }).pipe(Effect.provide(layerFor(harness)));
+  },
+);
+
+it.effect(
+  "a thread started in a shared project is a shared conversation from its first message",
+  () => {
+    const harness = makeHarness();
+    const on = ThreadId.make("thread:shared-born");
+    return Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const conversation = yield* sharedConversation;
+      const threads = yield* ThreadManagementService;
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* access.setOperatorName("Jackson");
+      const priya = yield* access.createGuest({ displayName: "Priya" });
+      yield* access.bindSession({ sessionId: GUEST.sessionId, personId: priya.personId });
+      yield* access.putGrant({
+        personId: priya.personId,
+        target: { kind: "project", projectId },
+        level: "collaborate",
+      });
+
+      // A new thread's first message comes in upstream's launch request, not as a command, and
+      // the thread has no record yet when it is taken in.
+      const launch = {
+        commandId: CommandId.make("command:live:launch"),
+        threadId: on,
+        projectId,
+        title: "Review the plan",
+        generateTitle: true,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        initialMessage: {
+          messageId: MessageId.make("message:live:launch"),
+          text: "Let us review the plan.",
+          attachments: [],
+        },
+      } as const satisfies OrchestrationV2ThreadLaunchInput;
+      const admitted = yield* conversation.admitLaunch(MEMBER, launch);
+      yield* launches.launch({
+        ...launch,
+        initialMessage: { ...launch.initialMessage, text: admitted.initialMessage!.text },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const text = (messageId: string) =>
+        threads
+          .getThreadProjection(on)
+          .pipe(
+            Effect.map(
+              (projection) => projection.messages.find((message) => message.id === messageId)?.text,
+            ),
+          );
+      const first = yield* text(launch.initialMessage.messageId);
+      assert.isTrue(
+        first?.startsWith("<j5_shared_conversation>\nThis thread is now a shared"),
+        first,
+      );
+      assert.isTrue(first?.includes("Who can write: Jackson (member), Priya (guest)."));
+      assert.isTrue(
+        first?.endsWith("\n[Message from Jackson (member)]\n\nLet us review the plan."),
+      );
+      // The guest's own message on the thread is named, and a guest cannot start a thread.
+      const reply = message("What does the plan change?", on);
+      yield* send(GUEST, reply);
+      assert.isTrue(
+        (yield* text(reply.messageId))?.endsWith(
+          "[Message from Priya (guest)]\n\nWhat does the plan change?",
+        ),
+      );
+      assert.strictEqual(
+        (yield* Effect.flip(conversation.admitLaunch(GUEST, launch)))._tag,
+        "EnvironmentAuthorizationError",
+      );
+
+      // In a project no guest can write to, a launch goes on exactly as it was sent.
+      yield* access.putGrant({
+        personId: priya.personId,
+        target: { kind: "project", projectId },
+        level: "view",
+      });
+      const alone = { ...launch, threadId: ThreadId.make("thread:born-alone") };
+      assert.strictEqual(yield* conversation.admitLaunch(MEMBER, alone), alone);
     }).pipe(Effect.provide(layerFor(harness)));
   },
 );

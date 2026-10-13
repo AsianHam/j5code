@@ -192,7 +192,11 @@ export interface PersonAccessShape {
    * itself, on a thread above it, or on its project. Members reach every thread and are listed
    * apart.
    */
-  readonly threadPeople: (threadId: ThreadId) => Effect.Effect<
+  readonly threadPeople: (
+    threadId: ThreadId,
+    /** The project of a thread being created, which has no record yet. */
+    launchingIn?: ProjectId | null,
+  ) => Effect.Effect<
     {
       readonly members: ReadonlyArray<Person>;
       readonly guests: ReadonlyArray<{
@@ -419,8 +423,14 @@ export const isCrewSeatThread = (sql: SqlClient.SqlClient, threadId: ThreadId) =
 /**
  * Every grant a guest holds that covers a thread: on the thread itself, on a thread above it, or
  * on its project. The same walk up from the thread as `threadLevels`, for everyone at once.
+ * `launchingIn` is the project of a thread that is being created and has no record yet; a
+ * thread's own record of its project always stands over it.
  */
-const guestGrantsOnThread = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+const guestGrantsOnThread = (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+  launchingIn: ProjectId | null = null,
+) =>
   sql<PersonRow & GrantRow>`
         WITH RECURSIVE chain(thread_id, depth) AS (
           SELECT ${threadId}, 0
@@ -459,9 +469,12 @@ const guestGrantsOnThread = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
         WHERE (held.target_kind = 'thread' AND held.target_id IN (
             SELECT thread_id FROM chain WHERE thread_id IS NOT NULL
           ))
-          OR (held.target_kind = 'project' AND held.target_id = (
-            SELECT project_id FROM orchestration_v2_projection_threads
-            WHERE thread_id = ${threadId}
+          OR (held.target_kind = 'project' AND held.target_id = COALESCE(
+            (
+              SELECT project_id FROM orchestration_v2_projection_threads
+              WHERE thread_id = ${threadId}
+            ),
+            ${launchingIn}
           ))
         ORDER BY person.created_at, person.person_id, held.target_kind DESC, held.target_id
       `;
@@ -474,13 +487,15 @@ const guestGrantsOnThread = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
 export const isSharedConversation = Effect.fn("j5.sharing.isSharedConversation")(function* (
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
+  /** The project of a thread being created, which has no record yet. */
+  launchingIn: ProjectId | null = null,
 ) {
   // A server where no guest holds Collaborate on anything, which is most, is asked no more.
   const any = yield* sql<{ readonly found: number }>`
     SELECT 1 AS found FROM j5_a2a_person_grant WHERE level = 'collaborate' LIMIT 1
   `;
   if (any.length === 0) return false;
-  return (yield* guestGrantsOnThread(sql, threadId)).some(
+  return (yield* guestGrantsOnThread(sql, threadId, launchingIn)).some(
     (row) => row.level === "collaborate" && grantWrites(row, threadId),
   );
 });
@@ -770,8 +785,8 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
       ),
 
       threadPeople: Effect.fn("j5.sharing.personAccess.threadPeople")(
-        function* (threadId) {
-          const rows = yield* guestGrantsOnThread(sql, threadId);
+        function* (threadId, launchingIn) {
+          const rows = yield* guestGrantsOnThread(sql, threadId, launchingIn ?? null);
           const members = yield* sql<PersonRow>`
             SELECT person_id, kind, display_name, name_self_given, joined_open_link_id
             FROM j5_a2a_human_person

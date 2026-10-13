@@ -1035,6 +1035,32 @@ const each = <A, E>(
       assert.strictEqual(notes.length, 6);
     }),
   );
+  each("a rewind to the thread's first message, which carried the first note, tells it again", () =>
+    Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* thread("thread:rewound-first");
+      yield* access.setOperatorName("Jackson");
+      yield* guest(PRIYA, "Priya", threadId, "collaborate");
+      // The first message runs with the first note; a second runs after it.
+      const first = message(threadId, "Hello.");
+      yield* send(MEMBER, first);
+      const second = message(threadId, "Carry on.");
+      yield* send(MEMBER, second);
+      yield* queued(threadId, "run:first:1", first.messageId);
+      yield* queued(threadId, "run:first:2", second.messageId);
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE thread_id = ${threadId}`;
+      assert.strictEqual(notes.length, 1);
+      // "Edit from here" on the first message: upstream marks every run after the thread's
+      // start rolled back and keeps the messages. The message sent in its place has the note.
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'rolled_back' WHERE thread_id = ${threadId}`;
+      const resent = (yield* send(MEMBER, message(threadId, "Hello, again."))) as { text: string };
+      assert.strictEqual(notes.length, 2);
+      assert.isTrue(notes[1]!.text.includes("This thread is now a shared conversation"));
+      assert.strictEqual(resent.text, "[Message from Jackson (member)]\n\nHello, again.");
+    }),
+  );
+
   each("a refused command tells the agent nothing", () =>
     Effect.gen(function* () {
       const threadId = yield* thread("thread:quiet");

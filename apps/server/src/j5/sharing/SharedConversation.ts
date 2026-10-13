@@ -2,13 +2,15 @@
 import {
   AuthOrchestrationOperateScope,
   CommandId,
+  MessageId,
   EnvironmentAuthorizationError,
-  type MessageId,
   type OrchestrationV2Command,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2StoredEvent,
+  type OrchestrationV2ThreadLaunchInput,
+  type ProjectId,
   type RunId,
-  type ThreadId,
+  ThreadId,
   authScopeRequiredResponse,
 } from "@t3tools/contracts";
 import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
@@ -268,10 +270,11 @@ const make = <E>(
    */
   const writers = Effect.fn("j5.sharing.sharedConversation.writers")(function* (
     threadId: ThreadId,
+    launchingIn: ProjectId | null,
   ) {
     // The owner is recorded before they are first needed as a member of the thread.
     yield* ensureLocalOperatorHumanPerson(sql);
-    const people = yield* access.threadPeople(threadId);
+    const people = yield* access.threadPeople(threadId, launchingIn);
     const guests = people.guests.filter((guest) =>
       guest.grants.some((grant) => grant.level === "collaborate" && writesVia(grant.via)),
     );
@@ -413,11 +416,13 @@ const make = <E>(
   const announce = Effect.fn("j5.sharing.sharedConversation.announce")(function* (
     threadId: ThreadId,
     carrier: MessageId,
+    /** The project of a thread this message is creating, which has no record yet. */
+    launchingIn: ProjectId | null = null,
   ) {
-    const shared = yield* isSharedConversation(sql, threadId);
+    const shared = yield* isSharedConversation(sql, threadId, launchingIn);
     const last = yield* lastTold(threadId);
     if (last === null && !shared) return { shared, note: null, told: null };
-    const now = shared ? yield* writers(threadId) : [];
+    const now = shared ? yield* writers(threadId, launchingIn) : [];
     // A thread shared again after it stopped being one is told as a thread newly shared.
     const wasShared = last !== null && last.some((writer) => writer.kind === "guest");
     const note = wasShared ? changeNote(last, now) : shared ? firstNote(now) : null;
@@ -791,6 +796,82 @@ const make = <E>(
             ),
           )
       ).pipe(Effect.tap((admitted) => recordAnswer(session, admitted))),
+    /**
+     * A client's request to start a thread as it goes on to upstream. A new thread's first
+     * message does not come as a command: upstream's launch creates the thread and sends the
+     * message itself, so it is taken in here, as `admit` takes in a message. A thread born in a
+     * project a guest holds Collaborate on is a shared conversation from its first message,
+     * which carries the first note and its author's line. Any other launch is returned as
+     * received. Starting a thread is a member's to do; a guest's request is refused before
+     * this by the gate, and here for any other caller.
+     */
+    admitLaunch: (
+      session: SessionIdentity,
+      input: OrchestrationV2ThreadLaunchInput,
+    ): Effect.Effect<OrchestrationV2ThreadLaunchInput, EnvironmentAuthorizationError> =>
+      Effect.gen(function* () {
+        if (session.subject === GUEST_SESSION_SUBJECT) {
+          return yield* refused("A guest cannot start a thread.");
+        }
+        const first = input.initialMessage;
+        if (first === undefined) return input;
+        const shared =
+          input.threadId === undefined
+            ? // No thread can be named, so only the project says whether it will be shared.
+              yield* isSharedConversation(
+                sql,
+                ThreadId.make(`thread:j5:unborn:${NodeCrypto.randomUUID()}`),
+                input.projectId,
+              )
+            : yield* isSharedConversation(sql, input.threadId, input.projectId);
+        if (!shared && (input.threadId === undefined || !(yield* everShared(input.threadId)))) {
+          return input;
+        }
+        // The message is recorded under its thread, which upstream would otherwise name.
+        if (input.threadId === undefined) {
+          return yield* refused("A thread in a shared project is started with its id.");
+        }
+        const author = yield* sessionAuthor(session);
+        if (author === null) return input;
+        const messageId =
+          first.messageId ?? MessageId.make(`message:j5:launch:${NodeCrypto.randomUUID()}`);
+        const carried = yield* announce(input.threadId, messageId, input.projectId);
+        if (!carried.shared && carried.note === null) return input;
+        yield* recordAuthor(input.threadId, messageId, author, carried);
+        return {
+          ...input,
+          initialMessage: {
+            ...first,
+            messageId,
+            text: stamped(first.text, author, carried.note),
+          },
+        };
+      }).pipe(
+        // As for a member's command: a fault of J5's own stops a launch only where a guest
+        // can write, and if even that cannot be read the launch goes on as upstream has it.
+        Effect.catch((cause) =>
+          cause._tag === "EnvironmentAuthorizationError"
+            ? Effect.fail(cause)
+            : (input.threadId === undefined
+                ? Effect.succeed(false)
+                : isSharedConversation(sql, input.threadId, input.projectId).pipe(
+                    Effect.orElseSucceed(() => false),
+                  )
+              ).pipe(
+                Effect.tap((shared) =>
+                  Effect.logError(
+                    shared
+                      ? "J5 shared conversation could not admit a launch; refusing"
+                      : "J5 shared conversation failed on a launch; sending it on as upstream does",
+                    { cause },
+                  ),
+                ),
+                Effect.flatMap((shared) =>
+                  shared ? Effect.fail(notAdmitted) : Effect.succeed(input),
+                ),
+              ),
+        ),
+      ),
     /**
      * Who wrote each message a person sent while the thread was shared, for a connection that
      * can read the thread. It says a name and whether they are a member or a guest, no more.

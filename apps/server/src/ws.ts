@@ -41,6 +41,7 @@ import {
   type FileManagerRevealKind,
   type OrchestrationClientOrigin,
   type OrchestrationV2Command,
+  type OrchestrationV2ThreadLaunchInput,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type MessageId,
@@ -3150,6 +3151,10 @@ const layerWsRpc = (
           j5Conversation
             .admit(currentSession, command)
             .pipe(Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand])),
+        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input: OrchestrationV2ThreadLaunchInput) =>
+          j5Conversation
+            .admitLaunch(currentSession, input)
+            .pipe(Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.launchThread])),
       };
     }),
   );
