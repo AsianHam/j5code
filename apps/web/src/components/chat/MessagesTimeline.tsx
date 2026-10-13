@@ -1,4 +1,5 @@
 import { useIsGuest } from "../../j5/sharing/guestAccess";
+import { useSharedConversationEntries } from "../../j5/sharing/sharedTimeline";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
@@ -597,7 +598,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   isCompacting = false,
   awaitingUser = false,
   listRef,
-  timelineEntries,
+  timelineEntries: timelineEntriesAsBuilt,
   findExpanded = false,
   findQuery = "",
   activeFindMatch = null,
@@ -685,6 +686,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setExpandedAttemptIds(paintedExpandedAttemptIds);
   }
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
+  // J5: in a shared conversation a person's message is shown without the author line the agent reads.
+  const timelineEntries = useSharedConversationEntries(citationThreadRef, timelineEntriesAsBuilt);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const expandCitedRun = useCallback((runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
