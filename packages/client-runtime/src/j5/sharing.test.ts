@@ -6,6 +6,7 @@ import {
   type SharingConnectionKind,
   type SharingThreadLevel,
 } from "@t3tools/contracts/j5";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -59,6 +60,7 @@ const environments = Effect.fn(function* (
   const asked: Array<string> = [];
   const fleetReads: Array<EnvironmentId> = [];
   const otherReads: Array<string> = [];
+  const inboxHolds: Array<Effect.Effect<void>> = [];
   const supervisor = Effect.fn(function* (
     environmentId: EnvironmentId,
     kind: SharingConnectionKind,
@@ -94,7 +96,12 @@ const environments = Effect.fn(function* (
             },
             [J5_CLIENT_READ_WS_METHODS.readOpenInboxCount]: () => {
               otherReads.push(`${environmentId}:inbox`);
-              return Effect.succeed({ personId: "human:local-operator", count: 0 });
+              const count = otherReads.length;
+              // The next hold, if a test queued one, keeps this read out until it is released.
+              return Effect.as(inboxHolds.shift() ?? Effect.void, {
+                personId: "human:local-operator",
+                count,
+              });
             },
             [J5_CLIENT_READ_WS_METHODS.listCrewProposals]: () => {
               otherReads.push(`${environmentId}:crew`);
@@ -148,7 +155,7 @@ const environments = Effect.fn(function* (
     Effect.sync(() => AtomRegistry.make()),
     (registry) => Effect.sync(() => registry.dispose()),
   );
-  return { layer, registry, viewedLevel, asked, fleetReads, otherReads };
+  return { layer, registry, viewedLevel, asked, fleetReads, otherReads, inboxHolds };
 });
 
 /** Waits for the atom to hold `expected`; a value that never arrives fails the test by timeout. */
@@ -302,6 +309,41 @@ describe("a guest's connection", () => {
       );
       expect(otherReads).toEqual([`${SHARED_SERVER}:artifacts`, `${SHARED_SERVER}:rosters`]);
       expect(fleetReads).toEqual([]);
+    }),
+  );
+});
+
+describe("asking a read again while it is still out", () => {
+  it.effect("sends it again, and the earlier read's answer never replaces the later one", () =>
+    Effect.gen(function* () {
+      const { layer, registry, otherReads, inboxHolds } = yield* environments();
+      const atoms = createJ5EnvironmentAtoms(Atom.runtime(layer));
+      const held = yield* Deferred.make<void>();
+      inboxHolds.push(Deferred.await(held));
+      const count = atoms.openCount({ environmentId: MEMBER_SERVER, input: {} });
+      const seen: Array<number> = [];
+      yield* AtomRegistry.toStream(registry, count).pipe(
+        Stream.runForEach((result) =>
+          Effect.sync(() => {
+            const value = Option.getOrNull(AsyncResult.value(result));
+            if (value !== null) seen.push(value.count);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow.pipe(
+        Effect.repeat({ until: () => otherReads.length > 0, times: 200 }),
+      );
+      expect(otherReads).toEqual([`${MEMBER_SERVER}:inbox`]);
+      // The first read has not answered. Asking again is not dropped as a duplicate.
+      registry.refresh(count);
+      expect((yield* AtomRegistry.getResult(registry, count)).count).toBe(2);
+      expect(otherReads).toHaveLength(2);
+      // The first read is let go only now; what it would have answered is never shown.
+      yield* Deferred.succeed(held, undefined);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      expect(seen).toEqual([2]);
     }),
   );
 });

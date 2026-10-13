@@ -5,11 +5,11 @@ import {
   authoredMessageIds,
   authorsByMessage,
   isSettledPrompt,
-  messageStanding,
-  messagesToAskAgainAbout,
   mayHaveAuthorLine,
+  messageStanding,
+  messagesTheRecordDoesNotHold,
   queuedMessageRules,
-  queuedMessageText,
+  queuedMessageTexts,
   settledPromptSignal,
   sharedConversationNote,
   withoutAuthorLine,
@@ -39,6 +39,32 @@ describe("the author line", () => {
     expect(
       withoutAuthorLine("[Message from Priya (guest), edited by Jackson M. (member)]\n\nfixed"),
     ).toBe("fixed");
+  });
+
+  it("matches every form the server writes", () => {
+    for (const line of [
+      "[Message from Priya (guest)]",
+      "[Message from Jackson M. (member)]",
+      "[Message from a member]",
+      "[Message from a guest]",
+      "[Message from Priya (guest), edited by Jackson M. (member)]",
+      "[Message from a guest, edited by a member]",
+    ]) {
+      expect(mayHaveAuthorLine(`${line}\n\nwords`)).toBe(true);
+      expect(withoutAuthorLine(`${line}\n\nwords`)).toBe("words");
+    }
+  });
+
+  it("does not match J5's older envelopes, which also begin with Message from", () => {
+    for (const envelope of [
+      // A person's inbox reply, an automation's message, an outside agent's message.
+      "[Message from human:local-operator]\n\nyes, go ahead\n\n",
+      "[Message from automation task:nightly in project Billing]\n\nrun it\n\n",
+      "[Message from outside agent Reviewer (outside:42)]\n\nlooks fine\n\n",
+    ]) {
+      expect(mayHaveAuthorLine(envelope)).toBe(false);
+      expect(withoutAuthorLine(envelope)).toBe(envelope);
+    }
   });
 
   it("leaves alone a text that only mentions one", () => {
@@ -76,23 +102,38 @@ describe("a queued message in a shared conversation", () => {
   });
 
   it("shows the person's own words, with a name on someone else's", () => {
-    expect(queuedMessageText("[Message from Jackson M. (member)]\n\nmine", me)).toBe("mine");
-    expect(queuedMessageText("[Message from Priya (guest)]\n\nhers", priya)).toBe("Priya: hers");
+    expect(queuedMessageTexts("[Message from Jackson M. (member)]\n\nmine", me).shown).toBe("mine");
+    expect(queuedMessageTexts("[Message from Priya (guest)]\n\nhers", priya).shown).toBe(
+      "Priya: hers",
+    );
     expect(
-      queuedMessageText("[Message from a guest]\n\ntheirs", { ...priya, displayName: null }),
+      queuedMessageTexts("[Message from a guest]\n\ntheirs", { ...priya, displayName: null }).shown,
     ).toBe("A guest: theirs");
+  });
+
+  it("hands an editor what the author typed, never the name the queue shows", () => {
+    // A member who edits a guest's queued message sends back the guest's words, edited.
+    expect(queuedMessageTexts("[Message from Priya (guest)]\n\nhers", priya).typed).toBe("hers");
+    expect(
+      queuedMessageTexts(
+        "[Message from Priya (guest), edited by Jackson M. (member)]\n\nhers, fixed",
+        priya,
+      ).typed,
+    ).toBe("hers, fixed");
   });
 
   it("leaves a kind a person wrote into their own name out of it", () => {
     const posing = { ...priya, displayName: "Jackson (member)" };
     expect(authorName(posing)).toBe("Jackson");
     expect(authorName({ ...priya, displayName: "(Member)" })).toBe("A guest");
-    expect(queuedMessageText("[Message from Jackson (guest)]\n\nhi", posing)).toBe("Jackson: hi");
+    expect(queuedMessageTexts("[Message from Jackson (guest)]\n\nhi", posing).shown).toBe(
+      "Jackson: hi",
+    );
   });
 
   it("shows a text the server holds no author for as it is", () => {
     const typed = "[Message from Priya (guest)]\n\ntyped before sharing";
-    expect(queuedMessageText(typed, undefined)).toBe(typed);
+    expect(queuedMessageTexts(typed, undefined)).toEqual({ typed, shown: typed });
   });
 });
 
@@ -111,15 +152,22 @@ describe("what tells the client to ask the server's record again", () => {
     expect(authoredMessageIds([{ id: null, text: authoredText }])).toEqual([]);
   });
 
-  it("asks once more about a message a read missed, and never a third time", () => {
+  it("takes a message the record does not hold for a typed line, once a later read says so", () => {
+    const first = { read: 1 };
+    const later = { read: 2 };
+    const seenUnder = new Map([
+      ["m1", first],
+      ["m2", first],
+    ]);
     const recorded = new Set(["m1"]);
+    // The read the client held when the message appeared says nothing about it yet.
     expect(
-      messagesToAskAgainAbout({ authored: ["m1", "m2"], recorded, askedAgain: new Set() }),
-    ).toEqual(["m2"]);
-    // Still unrecorded after that: a line someone typed before the thread was shared.
-    expect(
-      messagesToAskAgainAbout({ authored: ["m1", "m2"], recorded, askedAgain: new Set(["m2"]) }),
+      messagesTheRecordDoesNotHold({ authored: ["m1", "m2"], recorded, seenUnder, record: first }),
     ).toEqual([]);
+    // A read made since does: m2 is a line someone typed before the thread was shared.
+    expect(
+      messagesTheRecordDoesNotHold({ authored: ["m1", "m2"], recorded, seenUnder, record: later }),
+    ).toEqual(["m2"]);
   });
 
   it("moves when a prompt settles, and not for one still open or for the agent's own work", () => {

@@ -117,16 +117,28 @@ export function authoredMessageIds(
 }
 
 /**
- * The authored-looking messages the record just read does not hold and that have not been asked
- * about before. Each is asked about once more, since a read can cross the message on its way;
- * after that it is a line someone typed, and stays as it is.
+ * The authored-looking messages the record does not hold, now that it has been read since each
+ * one appeared: lines someone typed, such as before the thread was shared. `seenUnder` is the
+ * record the client held when it first saw each message; a different record now is a later read.
+ * One read settles it: the server writes a message's author before the message itself, and a
+ * read asked for while another is out is sent again, so a read made after a message arrived
+ * cannot miss its author.
  */
-export function messagesToAskAgainAbout(input: {
+export function messagesTheRecordDoesNotHold<Record>(input: {
   readonly authored: ReadonlyArray<string>;
   readonly recorded: { has(messageId: string): boolean };
-  readonly askedAgain: { has(messageId: string): boolean };
+  readonly seenUnder: {
+    has(messageId: string): boolean;
+    get(messageId: string): Record | undefined;
+  };
+  readonly record: Record;
 }): ReadonlyArray<string> {
-  return input.authored.filter((id) => !input.recorded.has(id) && !input.askedAgain.has(id));
+  return input.authored.filter(
+    (id) =>
+      !input.recorded.has(id) &&
+      input.seenUnder.has(id) &&
+      input.seenUnder.get(id) !== input.record,
+  );
 }
 
 /**

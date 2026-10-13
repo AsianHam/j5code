@@ -9,9 +9,10 @@ import { useIsGuest } from "./guestAccess";
 import {
   authoredMessageIds,
   authorsByMessage,
-  messagesToAskAgainAbout,
+  mayHaveAuthorLine,
+  messagesTheRecordDoesNotHold,
   queuedMessageRules,
-  queuedMessageText,
+  queuedMessageTexts,
   withoutAuthorLine,
   type AuthorsByMessage,
 } from "./sharedConversation.logic";
@@ -60,32 +61,26 @@ export function useThreadAuthors(
           },
     [record],
   );
-  // A read can cross a message on its way in; what it missed is asked about once more. What a
-  // second read still does not hold is a line someone typed, and is said to be so.
-  const askedAgain = useRef(new Map<string, unknown>());
+  // What the record turns out not to hold is a line someone typed, and is said to be so once a
+  // read made after the message appeared has come back without it.
+  const seenUnder = useRef(new Map<string, typeof record>());
   const [unrecorded, setUnrecorded] = useState<ReadonlySet<string>>(NO_IDS);
   useEffect(() => {
-    if (record === null || record === undefined) return;
     const authoredIds = authoredKey === "" ? [] : authoredKey.split("|");
-    const missed = messagesToAskAgainAbout({
+    for (const id of authoredIds) {
+      if (!seenUnder.current.has(id)) seenUnder.current.set(id, record);
+    }
+    if (record === null || record === undefined) return;
+    const typed = messagesTheRecordDoesNotHold({
       authored: authoredIds,
       recorded: result.authors,
-      askedAgain: askedAgain.current,
+      seenUnder: seenUnder.current,
+      record,
     });
-    for (const id of missed) askedAgain.current.set(id, record);
-    if (missed.length > 0) refresh();
-    const settledAsTyped = authoredIds.filter(
-      (id) =>
-        !result.authors.has(id) &&
-        askedAgain.current.has(id) &&
-        askedAgain.current.get(id) !== record,
-    );
     setUnrecorded((current) =>
-      settledAsTyped.every((id) => current.has(id))
-        ? current
-        : new Set([...current, ...settledAsTyped]),
+      typed.every((id) => current.has(id)) ? current : new Set([...current, ...typed]),
     );
-  }, [authoredKey, record, refresh, result.authors]);
+  }, [authoredKey, record, result.authors]);
   return useMemo(() => ({ ...result, unrecorded }), [result, unrecorded]);
 }
 
@@ -107,15 +102,17 @@ export function useSharedQueue<
   );
   const items = queued.map((item) => {
     const author = item.messageId === null ? undefined : authors.get(item.messageId);
-    return {
-      ...item,
-      // Until the record answers for a message, its line for the agent is kept off the queue.
-      text:
-        author === undefined && item.messageId !== null && !unrecorded.has(item.messageId)
-          ? withoutAuthorLine(item.text)
-          : queuedMessageText(item.text, author),
-      ...queuedMessageRules({ isGuest, author }),
-    };
+    // Until the record answers for a message, its line for the agent is kept off the queue.
+    const waiting =
+      author === undefined &&
+      item.messageId !== null &&
+      !unrecorded.has(item.messageId) &&
+      mayHaveAuthorLine(item.text);
+    const { typed, shown } = waiting
+      ? { typed: withoutAuthorLine(item.text), shown: withoutAuthorLine(item.text) }
+      : queuedMessageTexts(item.text, author);
+    // `text` goes to the editor and back to the server; `preview` is only ever drawn.
+    return { ...item, text: typed, preview: shown, ...queuedMessageRules({ isGuest, author }) };
   });
   return { items, mayReorder: !isGuest };
 }
