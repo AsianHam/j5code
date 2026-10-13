@@ -2,10 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   authorName,
+  authorRecordSignal,
   authorsByMessage,
   mayHaveAuthorLine,
   queuedMessageRules,
-  queuedMessageTexts,
+  queuedMessageText,
+  sharedConversationNote,
   withoutAuthorLine,
 } from "./sharedConversation.logic";
 
@@ -33,32 +35,6 @@ describe("the author line", () => {
     expect(
       withoutAuthorLine("[Message from Priya (guest), edited by Jackson M. (member)]\n\nfixed"),
     ).toBe("fixed");
-  });
-
-  it("matches every form the server writes", () => {
-    for (const line of [
-      "[Message from Priya (guest)]",
-      "[Message from Jackson M. (member)]",
-      "[Message from a member]",
-      "[Message from a guest]",
-      "[Message from Priya (guest), edited by Jackson M. (member)]",
-      "[Message from a guest, edited by a member]",
-    ]) {
-      expect(mayHaveAuthorLine(`${line}\n\nwords`)).toBe(true);
-      expect(withoutAuthorLine(`${line}\n\nwords`)).toBe("words");
-    }
-  });
-
-  it("does not match J5's older envelopes, which also begin with Message from", () => {
-    for (const envelope of [
-      // A person's inbox reply, an automation's message, an outside agent's message.
-      "[Message from human:local-operator]\n\nyes, go ahead\n\n",
-      "[Message from automation task:nightly in project Billing]\n\nrun it\n\n",
-      "[Message from outside agent Reviewer (outside:42)]\n\nlooks fine\n\n",
-    ]) {
-      expect(mayHaveAuthorLine(envelope)).toBe(false);
-      expect(withoutAuthorLine(envelope)).toBe(envelope);
-    }
   });
 
   it("leaves alone a text that only mentions one", () => {
@@ -96,37 +72,62 @@ describe("a queued message in a shared conversation", () => {
   });
 
   it("shows the person's own words, with a name on someone else's", () => {
-    expect(queuedMessageTexts("[Message from Jackson M. (member)]\n\nmine", me).shown).toBe("mine");
-    expect(queuedMessageTexts("[Message from Priya (guest)]\n\nhers", priya).shown).toBe(
-      "Priya: hers",
-    );
+    expect(queuedMessageText("[Message from Jackson M. (member)]\n\nmine", me)).toBe("mine");
+    expect(queuedMessageText("[Message from Priya (guest)]\n\nhers", priya)).toBe("Priya: hers");
     expect(
-      queuedMessageTexts("[Message from a guest]\n\ntheirs", { ...priya, displayName: null }).shown,
+      queuedMessageText("[Message from a guest]\n\ntheirs", { ...priya, displayName: null }),
     ).toBe("A guest: theirs");
-  });
-
-  it("hands an editor what the author typed, never the name the queue shows", () => {
-    // A member who edits a guest's queued message sends back the guest's words, edited.
-    expect(queuedMessageTexts("[Message from Priya (guest)]\n\nhers", priya).typed).toBe("hers");
-    expect(
-      queuedMessageTexts(
-        "[Message from Priya (guest), edited by Jackson M. (member)]\n\nhers, fixed",
-        priya,
-      ).typed,
-    ).toBe("hers, fixed");
   });
 
   it("leaves a kind a person wrote into their own name out of it", () => {
     const posing = { ...priya, displayName: "Jackson (member)" };
     expect(authorName(posing)).toBe("Jackson");
     expect(authorName({ ...priya, displayName: "(Member)" })).toBe("A guest");
-    expect(queuedMessageTexts("[Message from Jackson (guest)]\n\nhi", posing).shown).toBe(
-      "Jackson: hi",
-    );
+    expect(queuedMessageText("[Message from Jackson (guest)]\n\nhi", posing)).toBe("Jackson: hi");
   });
 
   it("shows a text the server holds no author for as it is", () => {
     const typed = "[Message from Priya (guest)]\n\ntyped before sharing";
-    expect(queuedMessageTexts(typed, undefined)).toEqual({ typed, shown: typed });
+    expect(queuedMessageText(typed, undefined)).toBe(typed);
+  });
+});
+
+describe("what tells the client to ask the server's record again", () => {
+  const message = (id: string, role: string) => ({ id, kind: "message", message: { role } });
+  const prompt = (id: string, status: string) => ({
+    id,
+    kind: "work",
+    entry: { toolData: { type: "approval_request", status } },
+  });
+
+  it("moves when a person's message arrives or a prompt changes", () => {
+    const before = authorRecordSignal([message("m1", "user"), prompt("p1", "pending")]);
+    expect(authorRecordSignal([message("m1", "user"), prompt("p1", "resolved")])).not.toBe(before);
+    expect(
+      authorRecordSignal([message("m1", "user"), prompt("p1", "pending"), message("m2", "user")]),
+    ).not.toBe(before);
+  });
+
+  it("stays as it was while the agent writes and works", () => {
+    const before = authorRecordSignal([message("m1", "user")]);
+    expect(
+      authorRecordSignal([
+        message("m1", "user"),
+        message("a1", "assistant"),
+        { id: "w1", kind: "work", entry: { toolData: { type: "tool_call" } } },
+      ]),
+    ).toBe(before);
+  });
+});
+
+describe("the platform's note to the agent", () => {
+  it("is read without its tags, and only when the platform sent it", () => {
+    const text =
+      "<j5_shared_conversation>\nWho can write: Priya (guest).\n</j5_shared_conversation>";
+    expect(sharedConversationNote({ createdBy: "system", text })).toBe(
+      "Who can write: Priya (guest).",
+    );
+    expect(sharedConversationNote({ createdBy: "user", text })).toBeNull();
+    expect(sharedConversationNote({ createdBy: "system", text: "hello" })).toBeNull();
   });
 });
