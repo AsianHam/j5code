@@ -1630,10 +1630,17 @@ const each = <A, E>(
       const line = (text: string) =>
         ["<j5_shared_conversation>", text, "</j5_shared_conversation>"].join("\n");
 
-      // The first message tells the agent the thread is shared, and nothing of approvals.
+      // A guest's first act on a shared thread can be an approval. The first message a person
+      // sends tells the agent the thread is shared and who answered, in one block.
+      yield* answer(PRIYA, { decision: "accept" });
       yield* send(MEMBER, message(threadId, "Let us begin."));
       assert.strictEqual(notes.length, 1);
-      assert.isFalse(notes[0]!.text.includes("Approval prompts"));
+      assert.isTrue(notes[0]!.text.startsWith("<j5_shared_conversation>\nThis thread is now a"));
+      assert.isTrue(
+        notes[0]!.text.endsWith(
+          "Approval prompts answered since you were last told: Priya (guest) approved 1.\n</j5_shared_conversation>",
+        ),
+      );
 
       yield* answer(PRIYA, { decision: "accept" });
       yield* answer(PRIYA, { decision: "accept" });

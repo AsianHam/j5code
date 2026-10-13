@@ -12,7 +12,8 @@ export default Effect.gen(function* () {
   // answered with; a question has none. `settled` is set once upstream's log shows the answer
   // settled the prompt. An approval is told to the agent in the note at the top of the next
   // message a person sends: `told_message_id` is that message, and `told_delivered` is set
-  // once the message is known to have reached the agent. The row is written before upstream
+  // once the message is known to have reached the agent, and from the start for an approval
+  // answered while the thread was not shared, which the agent is never told of. The row is written before upstream
   // takes the answer, so it is there when the prompt is seen to settle; `command_id` is the
   // answer it was written for, by which it is taken back if upstream refuses that answer.
   yield* sql`
