@@ -6,7 +6,9 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { ParticipantId } from "../a2a/contracts.ts";
@@ -127,6 +129,15 @@ export interface PersonAccessShape {
     session: SessionIdentity,
     projectId: ProjectId,
   ) => Effect.Effect<Access, PersonAccessStorageError>;
+  /**
+   * The guest whose grants just changed, each time `putGrant` or `removeGrant` commits. A feed
+   * already open for that guest subscribes so the change reaches them without reconnecting.
+   */
+  readonly subscribeGrantChanges: Effect.Effect<
+    PubSub.Subscription<ParticipantId>,
+    never,
+    Scope.Scope
+  >;
 }
 
 export class PersonAccess extends Context.Service<PersonAccess, PersonAccessShape>()(
@@ -181,6 +192,10 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
   PersonAccess,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const grantChanges = yield* Effect.acquireRelease(
+      PubSub.sliding<ParticipantId>(256),
+      (pubsub) => PubSub.shutdown(pubsub),
+    );
     // This module's own errors pass through; anything else is the database.
     const storage =
       (operation: string) =>
@@ -307,6 +322,7 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
           ON CONFLICT (person_id, target_kind, target_id)
           DO UPDATE SET level = excluded.level, updated_at = excluded.updated_at
         `;
+          yield* PubSub.publish(grantChanges, grant.personId);
         },
         Effect.mapError(storage("record a grant")),
       ),
@@ -320,6 +336,7 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
             AND target_kind = ${target.kind}
             AND target_id = ${target.id}
         `;
+          yield* PubSub.publish(grantChanges, input.personId);
         },
         Effect.mapError(storage("remove a grant")),
       ),
@@ -377,6 +394,8 @@ export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = Laye
         },
         Effect.mapError(storage("read a person's access to a project")),
       ),
+
+      subscribeGrantChanges: PubSub.subscribe(grantChanges),
     });
   }),
 );

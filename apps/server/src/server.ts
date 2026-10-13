@@ -121,6 +121,7 @@ import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import { j5AuthenticatedRoutesLayer } from "./j5/a2a/J5AuthenticatedRoutes.ts";
+import { gateEnvironmentAuth } from "./j5/sharing/GuestGate.ts";
 import { J5A2AAuxiliaryLayer, J5ThreadRegistrationLayer } from "./j5/a2a/runtimeLayer.ts";
 import { layer as J5ArtifactRunFinalizationObserverLive } from "./j5/artifacts/ArtifactRunFinalizationObserver.ts";
 import { layer as J5ArtifactWorkspaceLive } from "./j5/artifacts/ArtifactWorkspace.ts";
@@ -437,10 +438,13 @@ const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
 
 const layerServerEnvironment = ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer));
 
-const layerAuth = EnvironmentAuth.layer.pipe(
-  Layer.provideMerge(layerPersistence),
-  Layer.provide(layerServerEnvironment),
-  Layer.provide(ServerSecretStore.layer),
+// J5: a guest's connection is refused everything its grants do not cover (FORK.md case 69).
+const layerAuth = gateEnvironmentAuth(
+  EnvironmentAuth.layer.pipe(
+    Layer.provideMerge(layerPersistence),
+    Layer.provide(layerServerEnvironment),
+    Layer.provide(ServerSecretStore.layer),
+  ),
 );
 
 const layerCloudManagedEndpointRuntime = Layer.mergeAll(

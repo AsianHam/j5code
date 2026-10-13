@@ -175,6 +175,8 @@ import {
 } from "./j5/a2a/crewSeatArchiveGuard.ts";
 import { refreshSkillProviders } from "./j5/skills/skillProviderRefresh.ts";
 import { PlaybookStore } from "./j5/playbooks/PlaybookStore.ts";
+import { layerRpcAuthorization as j5LayerRpcAuthorization } from "./j5/sharing/GuestGate.ts";
+import { connectionView as j5ConnectionView } from "./j5/sharing/GuestView.ts";
 import { J5_WS_RPC_METHODS, j5WsRpcServices, layerJ5WsRpc } from "./j5/wsRpc.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
@@ -1207,6 +1209,8 @@ const layerWsRpc = (
   UpstreamWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      // J5: a guest's connection is given reduced answers; a member's, upstream's (FORK.md case 69).
+      const j5View = yield* j5ConnectionView(currentSession);
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -2052,7 +2056,7 @@ const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: (_input) =>
           Stream.unwrap(subscribeOrchestrationV2ArchivedShell()),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
-          Stream.unwrap(subscribeOrchestrationV2Shell(input)),
+          j5View.shellStream(input, (input) => Stream.unwrap(subscribeOrchestrationV2Shell(input))),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
@@ -2093,7 +2097,8 @@ const layerWsRpc = (
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
-        [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig({ usageLimitsCommand: false }),
+        [WS_METHODS.serverGetConfig]: (_input) =>
+          loadServerConfig({ usageLimitsCommand: false }).pipe(Effect.map(j5View.config)),
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
           acpRegistryCatalog
             .search(input)
@@ -3069,7 +3074,7 @@ const layerWsRpc = (
                 withLateEditorConfig(config, liveUpdates, externalLauncher),
               );
             }),
-          ),
+          ).pipe(j5View.configStream),
         [WS_METHODS.subscribeServerLifecycle]: (_input) =>
           Stream.unwrap(
             Effect.gen(function* () {
@@ -3089,7 +3094,7 @@ const layerWsRpc = (
               );
               return Stream.concat(rpcInitialItems(snapshotEvents), liveEvents);
             }),
-          ),
+          ).pipe(j5View.lifecycleStream),
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
           Stream.unwrap(
             Effect.gen(function* () {
@@ -3199,7 +3204,11 @@ export const layer = Layer.unwrap(
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
             Effect.provide(
-              Layer.merge(RpcAuthorization.layer(session.scopes), rpcInstrumentationLayer),
+              Layer.merge(
+                // J5: a guest's connection is checked against its grants first (FORK.md case 69).
+                j5LayerRpcAuthorization(session, RpcAuthorization.layer(session.scopes)),
+                rpcInstrumentationLayer,
+              ),
             ),
             Effect.forkScoped,
           );

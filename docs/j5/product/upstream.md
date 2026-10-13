@@ -357,6 +357,20 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths. The 
 
 **Decided:** Jackson, 2026-10-11 ([#545](https://github.com/Jacksondr5/j5code/issues/545)). Recorded in FORK.md case 67.
 
+### Access
+
+#### D33. A guest's connection reaches only what it was granted
+
+**Upstream:** a connection's permissions cover the whole server. A paired device that may read conversations may read every thread and project, and is sent the server's full configuration: its folders, network addresses, provider accounts and settings.
+
+**J5:** a connection paired as a guest is narrowed to its grants. Every HTTP route and WebSocket request is refused unless J5 has listed it, and a listed thread request is checked against the guest's grants. Three answers a client cannot connect without are given in a reduced form: the configuration and the lifecycle welcome name nothing of the host, and the sidebar holds only the threads the guest's grants cover, with their projects reduced to an id and a title and each thread's worktree path replaced. A member's connection gets upstream's answers unchanged.
+
+**Why:** [Shared server](features/shared-server.md) lets a person who is not a member see one thread or project. Upstream has no notion of a person or of access below the whole server, so pairing a guest with upstream's permissions would show them everything. Both lists refuse by default so that what upstream adds later is closed to a guest until someone decides otherwise. Requests keyed by a folder the client names are refused outright rather than checked against the thread's checkout.
+
+**Consequences:** a few lines in three upstream files (`FORK.md` case 69), carried through every advance; the rest is J5's own code. Each advance checks whether upstream added another place that sends configuration, lifecycle events or sidebar items. A guest's client still asks for things it is refused and shows the refusals, until the client learns what a guest is ([#533](https://github.com/Jacksondr5/j5code/issues/533)). A guest's sidebar feed always starts from a full snapshot rather than resuming, and starts again when the guest's grants change. A guest sees no provider list, so no models to choose from, and no archived threads. Watching the preview browser is not open to guests yet ([#540](https://github.com/Jacksondr5/j5code/issues/540)). The alternatives were to follow upstream, which means no guests; to run a second server per guest, which gives up the shared conversation; and to check each request against a deny-list, which fails open when upstream adds a request.
+
+**Decided:** Jackson, 2026-10-09 ([multi-player session](../worklog/2026-10-09-multi-player-session.md)) and 2026-10-11 ([#531](https://github.com/Jacksondr5/j5code/issues/531), [#532](https://github.com/Jacksondr5/j5code/issues/532): folder-keyed requests refused, a reduced configuration, the preview browser set aside). Recorded in FORK.md case 68.
+
 ### Awaiting a decision
 
 These already diverge on `j5/main`, but no human ruling is on record. Each landed as an implementer's call inside a merged PR. The person rules on each one; an approved entry moves up into its section, and a rejected one becomes a fix.
@@ -440,3 +454,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-11 — D4 narrowed to the default: a sender may ask for a steer or a restart (Jackson, [#519](https://github.com/Jacksondr5/j5code/issues/519)).
 - 2026-10-11 — D22: an agent spawned into another project stays at the top level of the sidebar (Jackson, [#519](https://github.com/Jacksondr5/j5code/issues/519)).
 - 2026-10-12 — D2 and D22: an outside agent starts agents with `j5_spawn_agent`, capped by its sign-in level, and they stay at the top level of the sidebar (Jackson, 2026-10-11; [#498](https://github.com/Jacksondr5/j5code/issues/498)).
+- 2026-10-12 — D33 added: a guest's connection reaches only what it was granted (Jackson, [#532](https://github.com/Jacksondr5/j5code/issues/532)).
