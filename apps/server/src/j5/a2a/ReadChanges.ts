@@ -40,6 +40,7 @@ const make = Effect.gen(function* () {
     crew: startedAt,
     fleet: startedAt,
     runtimeRequests: startedAt,
+    peers: startedAt,
   });
   return ReadChanges.of({
     notify: (...keys) =>

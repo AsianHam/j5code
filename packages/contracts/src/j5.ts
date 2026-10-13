@@ -1139,6 +1139,8 @@ export const J5ReadRevisions = Schema.Struct({
   fleet: Schema.Int,
   /** Provider approvals on threads. */
   runtimeRequests: Schema.Int,
+  /** The peer list: each peer's link, heartbeat, last error, session and waiting messages. */
+  peers: Schema.Int,
 });
 export type J5ReadRevisions = typeof J5ReadRevisions.Type;
 export type J5ReadRevisionKey = keyof J5ReadRevisions;

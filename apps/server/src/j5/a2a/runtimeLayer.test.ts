@@ -178,9 +178,11 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
       // The Crew store is given its `ReadChanges` apart from the one the routes are handed; a
       // write through it must move the revisions a client is streamed.
       let routeReadChanges: ReadChanges["Service"] | undefined;
+      let routePeers: PeerRegistryService["Service"] | undefined;
       const readChangesConsumer = Layer.effectDiscard(
         Effect.gen(function* () {
           routeReadChanges = yield* ReadChanges;
+          routePeers = yield* PeerRegistryService;
           yield* (yield* AgentCrewInstanceService).markArchived(
             "crew:none",
             "2026-10-12T00:00:00.000Z",
@@ -285,11 +287,21 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
       assert.equal(outboxes.size, 1);
       // The start guard holds only if j5_spawn_agent and CrewLaunch share one workspace service.
       assert.equal(spawnWorkspaces.size, 1);
-      assert.equal(
-        (yield* settledReadRevisions.pipe(Effect.provideService(ReadChanges, routeReadChanges!)))
-          .crew,
-        1,
+      // The peer registry's writes are followed by the feeds, which hold the same `ReadChanges`:
+      // a store peer adopted through the registry the routes are handed moves `peers`.
+      const laptop = {
+        environmentId: "environment-laptop",
+        sessionId: "auth-session:laptop-store",
+      };
+      yield* routePeers!.grantStore({ ...laptop, issuedAt: "2026-10-12T00:00:00.000Z" });
+      assert.isTrue(
+        yield* routePeers!.adoptStorePeer({ ...laptop, at: "2026-10-12T00:00:00.000Z" }),
       );
+      const revisions = yield* settledReadRevisions.pipe(
+        Effect.provideService(ReadChanges, routeReadChanges!),
+      );
+      assert.equal(revisions.crew, 1);
+      assert.equal(revisions.peers, 1);
       const sql = Context.get(databaseContext, SqlClient.SqlClient);
       const people = yield* sql<{
         readonly is_local_operator: number;

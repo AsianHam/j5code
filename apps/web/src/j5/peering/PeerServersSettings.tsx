@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
 import { Button } from "../../components/ui/button";
@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts/j5";
 import { removalConfirmation } from "@t3tools/client-runtime/j5/peering";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { useVisibleRefresh } from "../useVisibleRefresh";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 
 /**
@@ -38,6 +39,12 @@ export function PeerServersSettings({
   const peers = useEnvironmentQuery(
     primaryEnvironmentId === null ? null : peersQueryAtom(primaryEnvironmentId),
   );
+  // A peer's session revoked or expired elsewhere moves no revision, and a server too old to
+  // have the change stream moves none at all; reading again on focus covers both.
+  const refreshOnFocus = useCallback(() => {
+    if (primaryEnvironmentId !== null) refreshPeers(primaryEnvironmentId);
+  }, [primaryEnvironmentId]);
+  useVisibleRefresh(refreshOnFocus, primaryEnvironmentId !== null);
   const { environments } = useEnvironments();
   const [dialogOpen, setDialogOpen] = useState(false);
   // Each opening mounts a fresh dialog, so a previous introduction's fields and steps never carry over.
@@ -189,13 +196,16 @@ function PeerRow({
   );
 }
 
+/** The real time, read when the minute clock ticks. */
+const timeAtMinute = (_minute: string) => Date.now();
+
 /** How messages travel, in the dialog's words, and the health that matters for that way. */
 function PeerStatus({ peer }: { readonly peer: PeerRecord }) {
-  // Re-rendered each minute, so "online" turns to "offline since" between the list's refreshes.
-  // The minute only triggers the render: it is up to 59 s behind, and the online
-  // window is measured against the real time, as the CLI measures it.
-  useNowMinute();
-  const state = peerPollState(peer, Date.now());
+  // Re-rendered each minute, so "online" turns to "offline since" with no read: a peer that
+  // stopped polling sends nothing to re-read for. The minute is up to 59 s behind, so the online
+  // window is measured against the real time, as the CLI measures it; the minute is passed in
+  // so the compiler's memoization recomputes the state on each tick.
+  const state = peerPollState(peer, timeAtMinute(useNowMinute()));
   const travel =
     peer.linkMode === "store"
       ? "Polls this server for its A2A messages"

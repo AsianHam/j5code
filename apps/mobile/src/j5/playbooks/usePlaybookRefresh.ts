@@ -1,12 +1,15 @@
 import { useEffect, useRef } from "react";
 import { AppState } from "react-native";
 
-/** Refresh on playbook changes, thread turns, and return; only an active run keeps a foreground timer. */
-export function useActivePlaybookRefresh(input: {
+/**
+ * Refreshes the playbook read when the screen is focused, when the app returns to the foreground,
+ * and when `refreshKey` changes: the server's playbook revision, which a run and the YAML of an
+ * active run both move, and the thread's turn. No timer.
+ */
+export function usePlaybookRefresh(input: {
   focused: boolean;
   connected: boolean;
   supported: boolean;
-  activeRun: boolean;
   isPending: boolean;
   refreshKey: string;
   refresh: () => void;
@@ -18,30 +21,16 @@ export function useActivePlaybookRefresh(input: {
   });
   useEffect(() => {
     if (!input.focused || !input.connected || !input.supported) return;
-    let timer: ReturnType<typeof setInterval> | undefined;
     const refresh = () => {
       if (AppState.currentState === "active" && !latest.current.isPending) {
         lastRefreshKey.current = latest.current.refreshKey;
         latest.current.refresh();
       }
     };
-    const sync = () => {
-      clearInterval(timer);
-      if (input.activeRun && AppState.currentState === "active")
-        timer = setInterval(refresh, 30_000);
-    };
-    const onAppState = () => {
-      sync();
-      refresh();
-    };
-    sync();
     refresh();
-    const subscription = AppState.addEventListener("change", onAppState);
-    return () => {
-      clearInterval(timer);
-      subscription.remove();
-    };
-  }, [input.focused, input.connected, input.supported, input.activeRun]);
+    const subscription = AppState.addEventListener("change", refresh);
+    return () => subscription.remove();
+  }, [input.focused, input.connected, input.supported]);
   useEffect(() => {
     if (
       !input.focused ||

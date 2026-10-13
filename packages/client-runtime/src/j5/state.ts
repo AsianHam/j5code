@@ -257,13 +257,12 @@ export function createJ5EnvironmentAtoms<R, E>(
       "j5:answer-exchange",
       J5_CLIENT_ACTION_WS_METHODS.answerHumanExchange,
     ),
-    // Polls, backlogs and errors change while Connections stays open, and
-    // nothing pushes them (peering moves none of the read revisions), so the list
-    // is read again on an interval well inside the two-minute online window.
+    // Polls, backlogs and errors change while Connections stays open; each moves the `peers`
+    // revision. A polling peer's heartbeat moves it well inside the two-minute online window.
     peers: createEnvironmentQueryAtomFamily(runtime, {
       label: "j5:peers",
       staleTimeMs: 30_000,
-      refreshIntervalMs: 30_000,
+      refreshTrigger: rereadOn("peers"),
       execute: (_input: Record<string, never>) =>
         j5Read(J5_CLIENT_READ_WS_METHODS.listPeers, {}).pipe(
           Effect.map((response) => response.peers),

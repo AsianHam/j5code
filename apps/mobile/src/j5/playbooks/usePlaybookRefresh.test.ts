@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { useActivePlaybookRefresh } from "./useActivePlaybookRefresh";
+import { usePlaybookRefresh } from "./usePlaybookRefresh";
 
 const appState = vi.hoisted(() => ({
   currentState: "active",
@@ -17,14 +17,13 @@ const input = {
   focused: true,
   connected: true,
   supported: true,
-  activeRun: false,
   isPending: false,
   refreshKey: "turn-1:running:0",
   refresh: vi.fn(),
 };
 let renderer: ReactTestRenderer | undefined;
 function Consumer(props: typeof input) {
-  useActivePlaybookRefresh(props);
+  usePlaybookRefresh(props);
   return null;
 }
 async function render(overrides: Partial<typeof input> = {}) {
@@ -51,7 +50,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("discovers the first run within the same turn without idle polling, deferring changes during a read", async () => {
+it("discovers the first run within the same turn without polling, deferring changes during a read", async () => {
   await render();
   input.refresh.mockClear();
   vi.advanceTimersByTime(60_000);
@@ -69,29 +68,29 @@ it("discovers the first run within the same turn without idle polling, deferring
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("keeps the active-run timer stable through reads and pauses in the background", async () => {
+it("refreshes on return to the foreground, and holds no timer while a run is active", async () => {
   const schedule = vi.spyOn(globalThis, "setInterval");
-  await render({ activeRun: true });
+  await render();
   input.refresh.mockClear();
-  await render({ activeRun: true, isPending: true });
-  vi.advanceTimersByTime(30_000);
+  // A read in flight is left to finish, and time alone refreshes nothing.
+  await render({ isPending: true });
+  appState.listeners.forEach((listener) => listener());
+  vi.advanceTimersByTime(60_000);
   expect(input.refresh).not.toHaveBeenCalled();
-  await render({ activeRun: true });
-  vi.advanceTimersByTime(30_000);
-  expect(input.refresh).toHaveBeenCalledTimes(1);
-  expect(schedule).toHaveBeenCalledTimes(1);
+  await render();
 
   appState.currentState = "background";
   appState.listeners.forEach((listener) => listener());
-  await render({ activeRun: true, refreshKey: "turn-1:running:2" });
+  await render({ refreshKey: "turn-1:running:2" });
   vi.advanceTimersByTime(60_000);
-  expect(input.refresh).toHaveBeenCalledTimes(1);
-  expect(vi.getTimerCount()).toBe(0);
+  expect(input.refresh).not.toHaveBeenCalled();
+  // The return reads once, and takes the change that arrived in the background with it.
   appState.currentState = "active";
   appState.listeners.forEach((listener) => listener());
-  expect(input.refresh).toHaveBeenCalledTimes(2);
-  expect(vi.getTimerCount()).toBe(1);
+  expect(input.refresh).toHaveBeenCalledTimes(1);
   await render({ refreshKey: "turn-1:running:2" });
+  expect(input.refresh).toHaveBeenCalledTimes(1);
+  expect(schedule).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
 

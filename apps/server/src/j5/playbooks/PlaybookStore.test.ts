@@ -1321,3 +1321,55 @@ it.effect("reads a playbook without creating a run or moving an active one", () 
     assert.equal((yield* Effect.flip(store.read(workspaceRoot, "../demo"))).code, "invalid_name");
   }).pipe(Effect.scoped, Effect.provide(MemoryLayer)),
 );
+
+it.effect(
+  "moves its revision for each change a run's views show, and for no read that changed nothing",
+  () =>
+    Effect.gen(function* () {
+      const { store, workspaceRoot, path, write } = yield* makeFixture;
+      const sql = yield* SqlClient.SqlClient;
+      const revision = store.changes.pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+      /** Runs a store call and says how far it moved the revision. */
+      const moved = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.gen(function* () {
+          const before = yield* revision;
+          yield* effect;
+          return (yield* revision) - before;
+        });
+
+      // A playbook's title is shown on every run of it, active or finished.
+      assert.equal(yield* moved(store.renameDefinition(workspaceRoot, "demo", "Renamed")), 1);
+      assert.equal(yield* moved(store.renameDefinition(workspaceRoot, "demo", "Renamed")), 0);
+      yield* write("unused");
+      assert.equal(yield* moved(store.removeDefinition(workspaceRoot, "unused")), 1);
+      assert.equal(yield* moved(Effect.flip(store.removeDefinition(workspaceRoot, "unused"))), 0);
+
+      // A Crew-linked run's landing gets its target once; Fleet shows the seat it is headed to.
+      assert.deepStrictEqual(yield* store.activeDefinitionDirectories(), []);
+      const run = yield* store.start(owner, workspaceRoot, "demo", "start", {
+        crewInstanceId: "crew:watch",
+      });
+      assert.deepStrictEqual(yield* store.activeDefinitionDirectories(), [
+        path.join(workspaceRoot, ".j5", "playbooks"),
+      ]);
+      const target = { seat: "builder", threadId: "thread:builder" };
+      assert.equal(yield* moved(store.targetLanding(run.runId, "start", target)), 1);
+      assert.equal(
+        yield* moved(store.targetLanding(run.runId, "start", { seat: null, threadId: "thread:x" })),
+        0,
+        "a later call keeps the first target",
+      );
+
+      // Reads cancel a run whose owner is gone. One that cancelled nothing moves nothing, or every
+      // read would cause the next.
+      assert.equal(yield* moved(store.listAll({})), 0);
+      assert.equal(yield* moved(store.listForThread(owner)), 0);
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = '2026-09-23' WHERE thread_id = ${owner}`;
+      assert.equal(yield* moved(store.listAll({})), 1);
+      assert.equal(yield* moved(store.listAll({})), 0);
+      assert.deepStrictEqual(yield* store.activeDefinitionDirectories(), []);
+
+      // A file changed on disk is said by whoever watches it.
+      assert.equal(yield* moved(store.definitionsChanged), 1);
+    }).pipe(Effect.scoped, Effect.provide(MemoryLayer)),
+);

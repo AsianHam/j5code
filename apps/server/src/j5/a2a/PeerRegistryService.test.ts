@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -291,6 +292,7 @@ it.effect("keeps a known peer's origin unless the caller says to move it", () =>
     yield* Effect.gen(function* () {
       yield* runJ5A2AMigrations();
       const registry = yield* PeerRegistryService;
+      const listChanges = yield* Stream.toPull(yield* registry.subscribeListChanges);
       yield* registry.add({
         origin: homeOrigin,
         credential: "t1",
@@ -317,6 +319,8 @@ it.effect("keeps a known peer's origin unless the caller says to move it", () =>
       `;
       assert.deepStrictEqual(stored, [{ credential: "t2" }]);
       assert.equal((yield* registry.get(home))?.label, "Home");
+      // The kept credential carries its own expiry, which the peer list shows.
+      assert.lengthOf(yield* listChanges, 2, "the peer recorded, then its credential replaced");
 
       const moved = yield* registry.add({
         origin: movedOrigin,
@@ -328,6 +332,7 @@ it.effect("keeps a known peer's origin unless the caller says to move it", () =>
       assert.isFalse(moved.created);
       assert.equal(moved.peer.origin, movedOrigin);
     }).pipe(
+      Effect.scoped,
       Effect.provide(
         makeTestLayer({
           replies: {
@@ -351,6 +356,7 @@ it.effect("keeps the recorded credential when a different server claims the same
     yield* Effect.gen(function* () {
       yield* runJ5A2AMigrations();
       const registry = yield* PeerRegistryService;
+      const listChanges = yield* Stream.toPull(yield* registry.subscribeListChanges);
       yield* registry.add({
         origin: homeOrigin,
         credential: "t1",
@@ -376,7 +382,11 @@ it.effect("keeps the recorded credential when a different server claims the same
         SELECT credential FROM j5_a2a_peer WHERE environment_id = ${home}
       `;
       assert.deepStrictEqual(stored, [{ credential: "t1" }], "the working credential survives");
-    }).pipe(Effect.provide(makeTestLayer({ replies, liveSubjects: [`peer:${home}`] })));
+      assert.lengthOf(yield* listChanges, 1, "only the peer recorded: the refusal wrote nothing");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(makeTestLayer({ replies, liveSubjects: [`peer:${home}`] })),
+    );
   }),
 );
 
@@ -922,6 +932,122 @@ it.effect("keeps a poller's stop until it polls again, whatever else is recorded
           },
         },
         liveSubjects: [],
+      }),
+    ),
+  ),
+);
+
+it.effect("says the peer list changed after each write the list shows, and after no other", () =>
+  Effect.gen(function* () {
+    yield* runJ5A2AMigrations();
+    const registry = yield* PeerRegistryService;
+    const pull = yield* Stream.toPull(yield* registry.subscribeListChanges);
+    /** How many signals are waiting; it must be asked only when at least one is. */
+    const signals = pull.pipe(Effect.map((heard) => heard.length));
+    const laptop = "environment-laptop";
+
+    // Recording a peer, and rotating its credential by adding it again.
+    const add = registry.add({
+      origin: homeOrigin,
+      credential: "home-issued-token",
+      linkMode: "poll",
+      replaceOrigin: false,
+      acceptedAt: timestamp,
+    });
+    yield* add;
+    assert.equal(yield* signals, 1, "a peer recorded");
+    yield* add;
+    assert.equal(yield* signals, 1, "a peer recorded again");
+
+    // The heartbeat and the last error, each only when a row changed.
+    yield* registry.recordPolled(home, "2026-10-02T12:00:00.000Z");
+    assert.equal(yield* signals, 1, "a heartbeat");
+    // A client reads online from the last heartbeat it was given against a two-minute window,
+    // so it is told of one a minute, not of each.
+    yield* registry.recordPolled(home, "2026-10-02T12:00:25.000Z");
+    yield* registry.recordPolled(home, "2026-10-02T12:00:50.000Z");
+    yield* registry.recordPolled(home, "2026-10-02T12:01:15.000Z");
+    assert.equal(yield* signals, 1, "the next heartbeat a minute on, and none between");
+    yield* registry.recordPolled("environment-unknown", timestamp);
+    yield* registry.recordLastError(home, null);
+    yield* registry.recordLastError(home, "could not reach Home: ECONNREFUSED");
+    assert.equal(
+      yield* signals,
+      1,
+      "an error recorded, after an unknown peer and no error to clear",
+    );
+    yield* registry.recordLastError(home, "could not reach Home: ECONNREFUSED");
+    yield* registry.recordLastError(home, null);
+    assert.equal(yield* signals, 1, "an error cleared, after the same error again");
+
+    // A peer's name, only when it reported a new one.
+    yield* registry.recordLabel(home, "Home");
+    yield* registry.recordLabel(home, undefined);
+    yield* registry.recordLabel(home, "Home office");
+    assert.equal(yield* signals, 1, "a new name, after the same name and none");
+
+    // The list shows neither a peer's capabilities nor a store credential not yet presented.
+    yield* registry.recordCapabilities(home, { poll: true });
+    yield* registry.grantStore({
+      environmentId: laptop,
+      sessionId: "auth-session:laptop-store",
+      issuedAt: timestamp,
+    });
+    assert.isFalse(
+      yield* registry.adoptStorePeer({
+        environmentId: laptop,
+        sessionId: "auth-session:something-else",
+        at: timestamp,
+      }),
+    );
+    const adopt = registry.adoptStorePeer({
+      environmentId: laptop,
+      sessionId: "auth-session:laptop-store",
+      at: timestamp,
+    });
+    assert.isTrue(yield* adopt);
+    assert.equal(yield* signals, 1, "a store peer adopted, after writes the list does not show");
+    assert.isTrue(yield* adopt);
+
+    // A poll is the storing server's heartbeat; one from no recorded peer changes nothing.
+    const poll = (environmentId: string) =>
+      registry.recordPoll({
+        environmentId,
+        receivedAt: "2026-10-02T12:01:00.000Z",
+        protocolVersion: 1,
+        label: undefined,
+        capabilities: undefined,
+        roster: undefined,
+      });
+    yield* poll("environment-unknown");
+    yield* poll(laptop);
+    assert.equal(yield* signals, 1, "a poll, after a second adoption and an unknown poller");
+
+    // A session issued for a peer is the auth database's write, said by whoever issued it.
+    yield* registry.sessionChanged;
+    assert.equal(yield* signals, 1, "a session issued");
+
+    yield* registry.remove("environment-unknown");
+    yield* registry.remove(laptop);
+    assert.equal(yield* signals, 1, "a peer removed, after removing one never recorded");
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      makeTestLayer({
+        replies: {
+          [homeOrigin]: {
+            status: 200,
+            body: {
+              environmentId: home,
+              subject: `peer:${work}`,
+              credentialExpiresAt: homeExpiry,
+              server: { version: "0.0.0-test" },
+              label: "Home",
+              peerProtocolVersion: 2,
+              capabilities: { poll: true },
+            },
+          },
+        },
       }),
     ),
   ),

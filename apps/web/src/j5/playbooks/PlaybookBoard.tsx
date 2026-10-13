@@ -11,7 +11,10 @@ import { PlaybookStepStrip } from "./PlaybookStepStrip";
 import { useVisibleRefresh } from "../useVisibleRefresh";
 import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 
-/** The visible thread owns this bounded live read; hidden tabs do no polling. */
+/**
+ * The visible thread owns this bounded read. It reads again when the server says a playbook run
+ * or the YAML of an active one changed, when the thread's turn does, and on focus. No timer.
+ */
 export function PlaybookBoard(props: { environmentId: EnvironmentId; threadId: ThreadId }) {
   const environment = useEnvironment(props.environmentId);
   const thread = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
@@ -35,7 +38,6 @@ export function PlaybookBoard(props: { environmentId: EnvironmentId; threadId: T
   const runs = query.data?.runs ?? [];
   useVisibleRefresh(
     query.refresh,
-    runs.some((run) => run.status === "active") ? 30_000 : null,
     environment?.connection.phase === "connected" && !unsupported && !query.isPending,
     `${thread?.latestRun?.runId}:${thread?.latestRun?.status}:${changes.data}`,
   );

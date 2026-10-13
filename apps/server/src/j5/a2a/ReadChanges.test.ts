@@ -17,6 +17,7 @@ it.effect(
         crew: 0,
         fleet: 0,
         runtimeRequests: 0,
+        peers: 0,
       });
       yield* changes.notify("inbox");
       yield* changes.notify("crew", "fleet");
@@ -26,6 +27,7 @@ it.effect(
         crew: 1,
         fleet: 1,
         runtimeRequests: 0,
+        peers: 0,
       });
     }).pipe(Effect.provide(layer)),
 );
@@ -44,8 +46,8 @@ it.effect("tells a subscriber once about a burst of writes", () =>
     yield* changes.notify("runtimeRequests");
     yield* TestClock.adjust(COALESCE_WINDOW);
     assert.deepStrictEqual(yield* Fiber.join(heard), [
-      { inbox: 0, crew: 0, fleet: 0, runtimeRequests: 0 },
-      { inbox: 2, crew: 0, fleet: 0, runtimeRequests: 1 },
+      { inbox: 0, crew: 0, fleet: 0, runtimeRequests: 0, peers: 0 },
+      { inbox: 2, crew: 0, fleet: 0, runtimeRequests: 1, peers: 0 },
     ]);
   }).pipe(Effect.provide(layer)),
 );

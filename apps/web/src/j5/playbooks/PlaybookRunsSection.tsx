@@ -186,7 +186,6 @@ function EnvironmentRuns({
   );
   useVisibleRefresh(
     query.refresh,
-    data?.runs.some((run) => run.status === "active") ? 30_000 : null,
     connected && !unsupported && !query.isPending,
     JSON.stringify([
       changes.data,

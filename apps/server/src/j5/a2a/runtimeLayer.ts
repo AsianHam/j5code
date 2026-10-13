@@ -1,6 +1,7 @@
 import * as Layer from "effect/Layer";
 import { layerEventSink as OrchestrationV2EventSinkLayerLive } from "../../orchestration-v2/runtimeLayer.ts";
 import { layer as playbookCrewRelayLayer } from "../playbooks/PlaybookCrewRelay.ts";
+import { layer as playbookDefinitionWatchLayer } from "../playbooks/PlaybookDefinitionWatch.ts";
 import { playbookStoreLayer } from "../playbooks/PlaybookStore.ts";
 import { FetchHttpClient } from "effect/http";
 
@@ -237,7 +238,10 @@ export const makeJ5A2AAuxiliaryLayer = (
     fleetSnapshotLayer,
     // Exported to the routes so the J5 WebSocket handler streams the revisions the writers move.
     readChangesLayer,
+    // The feeds follow the one peer registry, provided below, whose writes move `peers`.
     readChangeFeedsLayer.pipe(Layer.provide(readChangesLayer), Layer.provide(playbookStoreLayer)),
+    // Moves the one store's revision when the YAML of an active run changes on disk.
+    playbookDefinitionWatchLayer.pipe(Layer.provide(playbookStoreLayer)),
   ).pipe(Layer.provideMerge(peerRegistryProvided));
   // The person's permanent artifact delete, which also marks a handoff that pointed at the file.
   const artifactDeletionProvided = artifactDeletionLayer.pipe(

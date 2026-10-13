@@ -49,6 +49,7 @@ const fixture = Effect.gen(function* () {
       crew: 0,
       fleet: 0,
       runtimeRequests: 0,
+      peers: 0,
     });
     readRevisions.set(environmentId, readRevision);
     const answer =
@@ -222,10 +223,11 @@ it.effect(
 
 it.effect("reads again when the server says a read's own revision moved, and only then", () =>
   Effect.gen(function* () {
-    const { atoms, calls, followReadChanges, readRevisions, registry } = yield* fixture;
+    const { atoms, calls, followReadChanges, readRevisions, registry, settle } = yield* fixture;
     yield* followReadChanges(bravoId);
     const count = atoms.openCount({ environmentId: bravoId, input: {} });
     const proposals = atoms.crewProposals({ environmentId: bravoId, input: {} });
+    const peers = atoms.peers({ environmentId: bravoId, input: {} });
     const readsOf = (method: string) => calls.filter((call) => call[1] === method).length;
     /** Waits for the read the registry starts when a revision moves to be made. */
     const rereadTo = <A, E>(
@@ -256,6 +258,13 @@ it.effect("reads again when the server says a read's own revision moved, and onl
     yield* move("crew");
     yield* rereadTo(proposals, READS.listCrewProposals, 2);
     expect(readsOf(READS.readOpenInboxCount)).toBe(2);
+
+    // The peer list has no timer: a peer's heartbeat, error or backlog moves its own revision.
+    yield* settle(peers);
+    expect(readsOf(READS.listPeers)).toBe(1);
+    yield* move("peers");
+    yield* rereadTo(peers, READS.listPeers, 2);
+    expect([readsOf(READS.readOpenInboxCount), readsOf(READS.listCrewProposals)]).toEqual([2, 2]);
     // Another environment's server moving a revision is not this one's.
     expect(calls.every(([environmentId]) => environmentId === bravoId)).toBe(true);
   }).pipe(Effect.scoped),

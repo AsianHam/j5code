@@ -371,6 +371,7 @@ it.effect("streams the read revisions, starting with where they stand", () =>
         crew: 1,
         fleet: 0,
         runtimeRequests: 0,
+        peers: 0,
       }),
     );
   }).pipe(Effect.provide(readChangesLayer)),

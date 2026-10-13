@@ -153,8 +153,9 @@ export const makePlaybookStore = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const personas = yield* makeAgentPersonaLibrary;
   const revision = yield* SubscriptionRef.make(0);
+  const bumpRevision = SubscriptionRef.update(revision, (value) => value + 1);
   const notifyChange = (result: PlaybookStepResponse) =>
-    result.replayed ? Effect.void : SubscriptionRef.update(revision, (value) => value + 1);
+    result.replayed ? Effect.void : bumpRevision;
   // Serialize definition edits and run mutations within this environment.
   const permit = yield* Semaphore.make(1);
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -215,13 +216,17 @@ export const makePlaybookStore = Effect.gen(function* () {
     return (yield* readDefinitionDocument(definitionPath)).definition;
   });
 
+  /** Runs inside reads, so it moves the revision only when it cancelled a run: a read that changed nothing must not cause another. */
   const cancelOrphans = Effect.fn("PlaybookStore.cancelOrphans")(function* () {
     const timestamp = yield* now;
-    yield* sql`UPDATE j5_playbook_run SET status = 'cancelled', updated_at = ${timestamp}
+    const cancelled =
+      yield* sql`UPDATE j5_playbook_run SET status = 'cancelled', updated_at = ${timestamp}
       WHERE status = 'active' AND NOT EXISTS (
         SELECT 1 FROM orchestration_v2_projection_threads AS thread
         WHERE thread.thread_id = owner_thread_id AND thread.deleted_at IS NULL
-      )`;
+      )
+      RETURNING run_id`;
+    if (cancelled.length > 0) yield* bumpRevision;
   });
   const requireOwner = Effect.fn("PlaybookStore.requireOwner")(function* (owner: ThreadId) {
     const rows = yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads
@@ -452,6 +457,8 @@ export const makePlaybookStore = Effect.gen(function* () {
           `Run '${active[0].run_id}' is active. Complete or cancel it before deleting this playbook.`,
         );
       yield* fs.remove(filename);
+      // A finished run is still shown by its playbook's title, which went with the file.
+      yield* bumpRevision;
       return { deleted: true };
     }).pipe(permit.withPermits(1));
   }, Effect.mapError(storageError));
@@ -491,6 +498,8 @@ export const makePlaybookStore = Effect.gen(function* () {
       if (definition.title === nextTitle) return { renamed: false };
       document.set("title", nextTitle);
       yield* fs.writeFileString(filename, document.toString());
+      // Every run of this playbook is shown by its title.
+      yield* bumpRevision;
       return { renamed: true };
     }).pipe(permit.withPermits(1));
   }, Effect.mapError(storageError));
@@ -765,9 +774,12 @@ export const makePlaybookStore = Effect.gen(function* () {
     requestId: string,
     target: { readonly seat: string | null; readonly threadId: string },
   ) {
-    yield* sql`UPDATE j5_playbook_step_delivery
+    const targeted = yield* sql`UPDATE j5_playbook_step_delivery
       SET target_seat = ${target.seat}, target_thread_id = ${target.threadId}
-      WHERE run_id = ${runId} AND request_id = ${requestId} AND target_thread_id IS NULL`;
+      WHERE run_id = ${runId} AND request_id = ${requestId} AND target_thread_id IS NULL
+      RETURNING run_id`;
+    // Fleet shows the seat a pending hand-off is headed to.
+    if (targeted.length > 0) yield* bumpRevision;
     return (yield* landing(runId, requestId))!;
   }, Effect.mapError(storageError));
   const resolveLanding = Effect.fn("PlaybookStore.resolveLanding")(function* (
@@ -781,7 +793,7 @@ export const makePlaybookStore = Effect.gen(function* () {
       WHERE run_id = ${runId} AND request_id = ${requestId} AND resolved_at IS NULL
       RETURNING run_id`;
     // Fleet shows who holds the step, so a resolved hand-off refreshes it.
-    if (rows.length > 0) yield* SubscriptionRef.update(revision, (value) => value + 1);
+    if (rows.length > 0) yield* bumpRevision;
     return (yield* landing(runId, requestId))!;
   }, Effect.mapError(storageError));
   /** Archiving a Crew cancels its active run; idempotent, so an archive retry repairs a crash. */
@@ -801,9 +813,7 @@ export const makePlaybookStore = Effect.gen(function* () {
         }),
       )
       .pipe(
-        Effect.tap((runs) =>
-          runs.length > 0 ? SubscriptionRef.update(revision, (value) => value + 1) : Effect.void,
-        ),
+        Effect.tap((runs) => (runs.length > 0 ? bumpRevision : Effect.void)),
         Effect.tap((runs) =>
           Effect.forEach(runs, (run) => recordFinished(run, "crew_archive", null), {
             discard: true,
@@ -821,9 +831,24 @@ export const makePlaybookStore = Effect.gen(function* () {
       WHERE crew_instance_id = ${crewInstanceId} AND status = 'active' LIMIT 1`;
     return rows[0] ? yield* view(fromRow(rows[0])) : null;
   }, Effect.mapError(storageError));
+  /** The directories that hold the definition of an active run, each once. */
+  const activeDefinitionDirectories = Effect.fn("PlaybookStore.activeDefinitionDirectories")(
+    function* () {
+      const rows = yield* sql<{ definition_path: string }>`SELECT DISTINCT definition_path
+        FROM j5_playbook_run WHERE status = 'active'`;
+      return [...new Set(rows.map((row) => path.dirname(row.definition_path)))];
+    },
+    Effect.mapError(storageError),
+  );
   return {
     // Include the current revision so subscribing after a mutation still refreshes the view.
     changes: SubscriptionRef.changes(revision),
+    /**
+     * Says a definition file changed outside this store: a run is shown from its live YAML, so
+     * its views read again. `PlaybookDefinitionWatch` calls it for the directories it watches.
+     */
+    definitionsChanged: bumpRevision,
+    activeDefinitionDirectories,
     discover,
     definitionPathFor,
     read,

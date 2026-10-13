@@ -13,6 +13,7 @@ import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
 import { PlaybookStore } from "../playbooks/PlaybookStore.ts";
 import { ParticipantId, type CommEventKind, type StoredCommEvent } from "./contracts.ts";
 import { A2ALedger } from "./LedgerService.ts";
+import { PeerRegistryService } from "./PeerRegistryService.ts";
 import { changesRuntimeRequests, layer, readsChangedByLedgerEvent } from "./ReadChangeFeeds.ts";
 import { ReadChanges } from "./ReadChanges.ts";
 
@@ -20,8 +21,11 @@ const agent = ParticipantId.make("agent:j5:a2a:thread:builder");
 const person = ParticipantId.make("human:local-operator");
 
 /** Only the fields the feed reads; the rest of a stored ledger event does not decide anything. */
-const ledgerEvent = (kind: CommEventKind, receiver: ParticipantId | null = agent) =>
-  ({ kind, receiver, payload: {} }) as unknown as StoredCommEvent;
+const ledgerEvent = (
+  kind: CommEventKind,
+  receiver: ParticipantId | null = agent,
+  payload: object = {},
+) => ({ kind, receiver, payload }) as unknown as StoredCommEvent;
 
 const storedEvent = (type: string, payload: object = {}) =>
   ({
@@ -49,13 +53,21 @@ it("maps each ledger event to the reads it puts out of date", () => {
     "message.cancelled",
     "message.delivery_failed",
   ] as const) {
-    assert.deepStrictEqual(changed(kind, person), ["inbox"], kind);
-    assert.deepStrictEqual(changed(kind, agent), [], kind);
+    // An outcome does not say whether its message waited for a peer, so each moves the peer list.
+    assert.deepStrictEqual(changed(kind, person), ["inbox", "peers"], kind);
+    assert.deepStrictEqual(changed(kind, agent), ["peers"], kind);
     // An event that names no receiver is counted rather than missed.
-    assert.deepStrictEqual(changed(kind, null), ["inbox"], kind);
+    assert.deepStrictEqual(changed(kind, null), ["inbox", "peers"], kind);
   }
   for (const kind of ["message.sent", "message.received", "silence.notice"] as const)
     assert.deepStrictEqual(changed(kind, person), [], kind);
+  // A send to an agent on a peer server waits in that peer's row until it is delivered.
+  assert.deepStrictEqual(
+    readsChangedByLedgerEvent(
+      ledgerEvent("message.sent", agent, { receiverEnvironmentId: "environment-home" }),
+    ),
+    ["peers"],
+  );
 });
 
 it("counts an approval among the turn items, and no other turn item", () => {
@@ -71,75 +83,95 @@ it("counts an approval among the turn items, and no other turn item", () => {
   assert.isFalse(changesRuntimeRequests(storedEvent("run.updated")));
 });
 
-it.effect("notifies from the ledger, the event store and the playbook store", () =>
-  Effect.gen(function* () {
-    const notified = yield* Queue.unbounded<ReadonlyArray<J5ReadRevisionKey>>();
-    const committed = yield* Queue.unbounded<StoredCommEvent>();
-    const stored = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
-    const playbookRevisions = yield* Queue.unbounded<number>();
-    const followed: Array<{ readonly afterSequence?: number; readonly eventType?: string }> = [];
-    yield* Layer.build(
-      layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            // Each notify is awaited by the test, so nothing here waits on the coalescing window.
-            Layer.succeed(
-              ReadChanges,
-              ReadChanges.of({
-                notify: (...keys) =>
-                  keys.length === 0 ? Effect.void : Queue.offer(notified, keys).pipe(Effect.asVoid),
-                changes: Stream.never,
+it.effect(
+  "notifies from the ledger, the event store, the playbook store and the peer registry",
+  () =>
+    Effect.gen(function* () {
+      const notified = yield* Queue.unbounded<ReadonlyArray<J5ReadRevisionKey>>();
+      const committed = yield* Queue.unbounded<StoredCommEvent>();
+      const stored = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const playbookRevisions = yield* Queue.unbounded<number>();
+      const peerListChanges = yield* Queue.unbounded<void>();
+      let recordedPeers = false;
+      const followed: Array<{ readonly afterSequence?: number; readonly eventType?: string }> = [];
+      yield* Layer.build(
+        layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              // Each notify is awaited by the test, so nothing here waits on the coalescing window.
+              Layer.succeed(
+                ReadChanges,
+                ReadChanges.of({
+                  notify: (...keys) =>
+                    keys.length === 0
+                      ? Effect.void
+                      : Queue.offer(notified, keys).pipe(Effect.asVoid),
+                  changes: Stream.never,
+                }),
+              ),
+              Layer.mock(A2ALedger)({
+                subscribeCommitted: Effect.succeed(Stream.fromQueue(committed)),
+              }),
+              Layer.mock(EventSinkV2)({
+                latestSequence: () => Effect.succeed(41),
+                stream: (input) => {
+                  followed.push({ ...input });
+                  return input?.eventType === "turn-item.updated"
+                    ? Stream.fromQueue(stored)
+                    : Stream.never;
+                },
+              }),
+              Layer.mock(PlaybookStore)({
+                changes: Stream.concat(Stream.make(7), Stream.fromQueue(playbookRevisions)),
+              }),
+              Layer.mock(PeerRegistryService)({
+                subscribeListChanges: Effect.succeed(Stream.fromQueue(peerListChanges)),
+                // No peer at first; the registry's change below is its first.
+                hasPeers: Effect.sync(() => recordedPeers),
               }),
             ),
-            Layer.mock(A2ALedger)({
-              subscribeCommitted: Effect.succeed(Stream.fromQueue(committed)),
-            }),
-            Layer.mock(EventSinkV2)({
-              latestSequence: () => Effect.succeed(41),
-              stream: (input) => {
-                followed.push({ ...input });
-                return input?.eventType === "turn-item.updated"
-                  ? Stream.fromQueue(stored)
-                  : Stream.never;
-              },
-            }),
-            Layer.mock(PlaybookStore)({
-              changes: Stream.concat(Stream.make(7), Stream.fromQueue(playbookRevisions)),
-            }),
           ),
         ),
-      ),
-    );
+      );
 
-    // A delivery to an agent changes no Inbox; the person's delivery behind it is the first heard.
-    yield* Queue.offer(committed, ledgerEvent("message.delivered", agent));
-    yield* Queue.offer(committed, ledgerEvent("message.delivered", person));
-    assert.deepStrictEqual(yield* Queue.take(notified), ["inbox"]);
-    yield* Queue.offer(committed, ledgerEvent("participant.joined"));
-    assert.deepStrictEqual(yield* Queue.take(notified), ["fleet"]);
+      // A plain send changes no read; the delivery to a person behind it is the first heard.
+      // With no peer recorded, a delivery has no peer list to change.
+      yield* Queue.offer(committed, ledgerEvent("message.sent", agent));
+      yield* Queue.offer(committed, ledgerEvent("message.delivered", person));
+      assert.deepStrictEqual(yield* Queue.take(notified), ["inbox"]);
+      yield* Queue.offer(committed, ledgerEvent("participant.joined"));
+      assert.deepStrictEqual(yield* Queue.take(notified), ["fleet"]);
 
-    // A command's turn item is not an approval; the approval behind it is the first heard.
-    yield* Queue.offer(stored, storedEvent("turn-item.updated", { type: "command_execution" }));
-    yield* Queue.offer(stored, storedEvent("turn-item.updated", { type: "approval_request" }));
-    assert.deepStrictEqual(yield* Queue.take(notified), ["runtimeRequests"]);
-    assert.equal(yield* Queue.size(notified), 0);
-    // The store is followed from where it stood at boot, one filtered stream per type.
-    assert.deepStrictEqual(
-      followed.toSorted((left, right) => left.eventType!.localeCompare(right.eventType!)),
-      [
-        "runtime-request.updated",
-        "thread.archived",
-        "thread.deleted",
-        "thread.metadata-updated",
-        "thread.unarchived",
-        "turn-item.updated",
-      ].map((eventType) => ({ afterSequence: 41, eventType })),
-    );
+      // A command's turn item is not an approval; the approval behind it is the first heard.
+      yield* Queue.offer(stored, storedEvent("turn-item.updated", { type: "command_execution" }));
+      yield* Queue.offer(stored, storedEvent("turn-item.updated", { type: "approval_request" }));
+      assert.deepStrictEqual(yield* Queue.take(notified), ["runtimeRequests"]);
+      assert.equal(yield* Queue.size(notified), 0);
+      // The store is followed from where it stood at boot, one filtered stream per type.
+      assert.deepStrictEqual(
+        followed.toSorted((left, right) => left.eventType!.localeCompare(right.eventType!)),
+        [
+          "runtime-request.updated",
+          "thread.archived",
+          "thread.deleted",
+          "thread.metadata-updated",
+          "thread.unarchived",
+          "turn-item.updated",
+        ].map((eventType) => ({ afterSequence: 41, eventType })),
+      );
 
-    // The playbook store's standing revision is not a change; its next one is.
-    yield* Queue.offer(playbookRevisions, 8);
-    assert.deepStrictEqual(yield* Queue.take(notified), ["fleet"]);
-  }).pipe(Effect.scoped),
+      // The playbook store's standing revision is not a change; its next one is.
+      yield* Queue.offer(playbookRevisions, 8);
+      assert.deepStrictEqual(yield* Queue.take(notified), ["fleet"]);
+
+      // The registry says one of its writes changed what the peer list reports: a peer was added.
+      recordedPeers = true;
+      yield* Queue.offer(peerListChanges, undefined);
+      assert.deepStrictEqual(yield* Queue.take(notified), ["peers"]);
+      // From then on a delivery may change how many messages wait for a peer.
+      yield* Queue.offer(committed, ledgerEvent("message.delivered", agent));
+      assert.deepStrictEqual(yield* Queue.take(notified), ["peers"]);
+    }).pipe(Effect.scoped),
 );
 
 it.effect(
@@ -176,6 +208,10 @@ it.effect(
                 },
               }),
               Layer.mock(PlaybookStore)({ changes: Stream.never }),
+              Layer.mock(PeerRegistryService)({
+                subscribeListChanges: Effect.succeed(Stream.never),
+                hasPeers: Effect.succeed(false),
+              }),
             ),
           ),
         ),

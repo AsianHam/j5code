@@ -240,6 +240,8 @@ const make = Effect.gen(function* () {
           ),
       )
       .pipe(Effect.mapError((cause) => new PeerAdminOperationError({ operation: "issue", cause })));
+    // A recorded peer whose session had gone now holds a live one, which the peer list shows.
+    yield* peers.sessionChanged;
     return {
       environmentId: ourEnvironmentId,
       credential: issued.token,

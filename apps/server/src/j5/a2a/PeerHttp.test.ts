@@ -98,6 +98,8 @@ const makeHandler = (input: {
   readonly grants?: Array<string>;
   /** Environments recorded as store peers by their first proof. */
   readonly adoptions?: Array<string>;
+  /** How often the registry was told a peer's session here changed. */
+  readonly sessionChanges?: { count: number };
 }) => {
   const auth = Layer.mock(EnvironmentAuth.EnvironmentAuth)({
     authenticateHttpRequest: () =>
@@ -200,6 +202,9 @@ const makeHandler = (input: {
           Effect.sync(() => {
             input.grants?.push(environmentId);
           }),
+        sessionChanged: Effect.sync(() => {
+          if (input.sessionChanges) input.sessionChanges.count += 1;
+        }),
         list: () => Effect.succeed([homePeer]),
         remove: (environmentId) =>
           Effect.sync(() => {
@@ -394,11 +399,13 @@ it("refuses hello without the peer scope and refuses admin routes to a peer cred
 it("issues a peer credential bound to the peer's subject with only a2a:peer and a ten-year life, without revoking the one in use", async () => {
   const issued: Array<IssuedSession> = [];
   const revoked: Array<string> = [];
+  const sessionChanges = { count: 0 };
   const { dispose, handler } = makeHandler({
     subject: "admin",
     scopes: [AuthAccessWriteScope],
     issued,
     revoked,
+    sessionChanges,
     existingSessions: [
       { sessionId: AuthSessionId.make("auth-session:old-home"), subject: `peer:${home}` },
       { sessionId: AuthSessionId.make("auth-session:other"), subject: "peer:environment-other" },
@@ -422,10 +429,12 @@ it("issues a peer credential bound to the peer's subject with only a2a:peer and 
       [],
       "the older credential works until the peer proves the new one",
     );
+    assert.equal(sessionChanges.count, 1, "the peer list shows whether a peer holds a session");
 
     const self = await handler(post(J5_PEER_API_PATHS.credentials, { environmentId: work }));
     assert.equal(self.status, 400);
     assert.equal(((await self.json()) as { error: string }).error, "peer_is_self");
+    assert.equal(sessionChanges.count, 1, "a refused request issued nothing");
   } finally {
     await dispose();
   }

@@ -9,7 +9,7 @@ import { useEnvironmentServerConfig, useThreadShell } from "../../state/entities
 import { useEnvironmentQuery } from "../../state/query";
 import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
 import { j5Environment } from "../state";
-import { useActivePlaybookRefresh } from "./useActivePlaybookRefresh";
+import { usePlaybookRefresh } from "./usePlaybookRefresh";
 import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 
 const stepColor = {
@@ -44,11 +44,10 @@ export function PlaybookBoard(props: { environmentId: EnvironmentId; threadId: T
       ? j5Environment.playbookChanges({ environmentId: props.environmentId, input: {} })
       : null,
   );
-  useActivePlaybookRefresh({
+  usePlaybookRefresh({
     focused,
     connected: runtime?.connectionState === "connected",
     supported,
-    activeRun: query.data?.runs.some((run) => run.status === "active") === true,
     isPending: query.isPending,
     refreshKey: `${thread?.latestRun?.runId}:${thread?.latestRun?.status}:${changes.data}`,
     refresh: query.refresh,

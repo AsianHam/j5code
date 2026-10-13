@@ -93,7 +93,7 @@ afterEach(async () => {
 });
 
 it.each(["thread", "Fleet"] as const)(
-  "%s discovers a playbook started in the same running turn without polling empty views",
+  "%s discovers a playbook started in the same running turn, and holds no timer with or without an active run",
   async (surface) => {
     vi.useFakeTimers();
     const document = Object.assign(new EventTarget(), { visibilityState: "visible" });
@@ -151,6 +151,12 @@ it.each(["thread", "Fleet"] as const)(
     });
     expect(state.refresh).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(renderer!.toJSON())).toContain("Live demo");
+    // An active run is followed by the server's revision, which a file change moves too.
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(state.refresh).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
 
     // A terminal update arriving during a read must be fetched once that read finishes.
     await act(async () => {

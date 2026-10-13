@@ -286,6 +286,7 @@ it.effect(
         crew: 7,
         fleet: 0,
         runtimeRequests: 0,
+        peers: 0,
       });
     }).pipe(
       Effect.provide(
