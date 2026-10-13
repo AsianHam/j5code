@@ -127,14 +127,14 @@ it("refreshes idle views on focus and turn changes without polling, including ch
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("shares one timer among factory consumers and keeps per-instance refreshes independent", async () => {
+it("shares one focus refresh, with no timer, among factory consumers and keeps per-instance refreshes independent", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("document", Object.assign(new EventTarget(), { visibilityState: "visible" }));
   vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const shared = vi.fn();
   const instance = vi.fn();
-  const useSharedRefresh = createVisibleRefreshHook(shared, 7_500);
+  const useSharedRefresh = createVisibleRefreshHook(shared);
   function SharedConsumer() {
     useSharedRefresh();
     return null;
@@ -151,19 +151,27 @@ it("shares one timer among factory consumers and keeps per-instance refreshes in
   await act(async () => {
     renderer = create(createElement(Consumers, { second: true }));
   });
-  expect(vi.getTimerCount()).toBe(2);
+  // Only the per-instance refresh holds a timer; the shared one waits for focus.
+  expect(vi.getTimerCount()).toBe(1);
   await act(async () => {
     vi.advanceTimersByTime(7_500);
   });
-  expect(shared).toHaveBeenCalledTimes(1);
+  expect(shared).not.toHaveBeenCalled();
   expect(instance).toHaveBeenCalledTimes(1);
+  // Two consumers, one listener: a focus refreshes once.
+  await act(async () => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  expect(shared).toHaveBeenCalledTimes(1);
   await act(async () => renderer!.update(createElement(Consumers, { second: false })));
   await act(async () => {
     vi.advanceTimersByTime(7_500);
+    window.dispatchEvent(new Event("focus"));
   });
   expect(shared).toHaveBeenCalledTimes(2);
-  expect(instance).toHaveBeenCalledTimes(2);
   await act(async () => renderer!.unmount());
   renderer = undefined;
   expect(vi.getTimerCount()).toBe(0);
+  window.dispatchEvent(new Event("focus"));
+  expect(shared).toHaveBeenCalledTimes(2);
 });

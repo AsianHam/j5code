@@ -3,7 +3,7 @@ import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import type { CrewRuntimeRequestItem } from "@t3tools/contracts/j5";
 
 import {
-  crewApprovalPollPlan,
+  crewApprovalReadPlan,
   inboxBadgeCount,
   mergeCrewRuntimeRequestSources,
   toPendingApproval,
@@ -72,15 +72,15 @@ describe("Crew seat approvals in the Inbox", () => {
   });
 
   it("reads only environments with a thread waiting on an approval", () => {
-    expect(crewApprovalPollPlan([])).toEqual({ key: "", environmentIds: [] });
+    expect(crewApprovalReadPlan([])).toEqual({ key: "", environmentIds: [] });
     // Nothing pending anywhere, or only on an archived thread: no environment is read.
-    const idle = crewApprovalPollPlan([
+    const idle = crewApprovalReadPlan([
       shell(envA, "thread:1", false),
       shell(envB, "thread:2", true, "2026-09-24T12:00:00.000Z"),
     ]);
     expect(idle).toEqual({ key: "", environmentIds: [] });
 
-    const pending = crewApprovalPollPlan([
+    const pending = crewApprovalReadPlan([
       shell(envB, "thread:2", true),
       shell(envA, "thread:1", false),
       shell(envB, "thread:3", true),
@@ -89,7 +89,7 @@ describe("Crew seat approvals in the Inbox", () => {
 
     // The key moves when any thread's flag turns on or off, even within an environment already
     // read, and holds still when unrelated shells change.
-    const oneCleared = crewApprovalPollPlan([
+    const oneCleared = crewApprovalReadPlan([
       shell(envB, "thread:2", true),
       shell(envA, "thread:1", false),
       shell(envB, "thread:3", false),
@@ -97,7 +97,7 @@ describe("Crew seat approvals in the Inbox", () => {
     expect(oneCleared.environmentIds).toEqual([envB]);
     expect(oneCleared.key).not.toBe(pending.key);
     expect(
-      crewApprovalPollPlan([shell(envB, "thread:3", true), shell(envB, "thread:2", true)]).key,
+      crewApprovalReadPlan([shell(envB, "thread:3", true), shell(envB, "thread:2", true)]).key,
     ).toBe(pending.key);
   });
 

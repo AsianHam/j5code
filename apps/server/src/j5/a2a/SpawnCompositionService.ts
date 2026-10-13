@@ -14,6 +14,7 @@ import { A2ALedgerTransactionWriter } from "./LedgerService.ts";
 import { ParticipantPlacementTransactionWriter, type PlacementError } from "./PlacementService.ts";
 import type { CommCommandId, LedgerProjectId } from "./contracts.ts";
 import { recordOutsideAgentName } from "./outsideAgentNames.ts";
+import { ReadChanges } from "./ReadChanges.ts";
 import type {
   ParticipantPlacement,
   ParticipantProvenance,
@@ -58,6 +59,7 @@ export const layer: Layer.Layer<
   | A2AHomeRegistrationTransaction
   | A2ALedgerTransactionWriter
   | ParticipantPlacementTransactionWriter
+  | ReadChanges
   | SqlClient.SqlClient
 > = Layer.effect(
   SpawnCompositionService,
@@ -66,6 +68,7 @@ export const layer: Layer.Layer<
     const ledgerWriter = yield* A2ALedgerTransactionWriter;
     const placements = yield* ParticipantPlacementTransactionWriter;
     const sql = yield* SqlClient.SqlClient;
+    const changes = yield* ReadChanges;
 
     // Lifecycle writers share one total lock order:
     // drainPermit ≺ appendPermit ≺ mutationPermit ≺ DB. Spawn never drains: this
@@ -113,6 +116,9 @@ export const layer: Layer.Layer<
             )
             .pipe(
               Effect.tap((result) => ledgerWriter.publishCommitted(result.committedEvents)),
+              // A placement on a thread that was already registered commits no ledger event,
+              // so the Fleet would not hear of it from the ledger.
+              Effect.tap(() => changes.notify("fleet")),
               Effect.map(({ home, placement }) => ({ home, placement })),
             ),
         ),

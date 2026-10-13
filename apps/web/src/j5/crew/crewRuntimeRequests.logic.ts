@@ -28,7 +28,7 @@ export const toPendingApproval = (request: CrewRuntimeRequestItem): PendingAppro
   responseCapability: "live",
 });
 
-export interface CrewApprovalPollPlan {
+export interface CrewApprovalReadPlan {
   /** Changes whenever a thread's pending approval appears or clears; empty when none is pending. */
   readonly key: string;
   /** The environments worth reading: only those with a thread waiting on an approval. */
@@ -40,11 +40,11 @@ export interface CrewApprovalPollPlan {
  * thread's `hasPendingApprovals`, so an environment with no such thread has nothing to list and
  * costs no request.
  */
-export const crewApprovalPollPlan = (
+export const crewApprovalReadPlan = (
   shells: ReadonlyArray<
     Pick<EnvironmentThreadShell, "environmentId" | "id" | "hasPendingApprovals" | "archivedAt">
   >,
-): CrewApprovalPollPlan => {
+): CrewApprovalReadPlan => {
   const pending = shells
     .filter((shell) => shell.hasPendingApprovals && shell.archivedAt === null)
     .map((shell) => ({

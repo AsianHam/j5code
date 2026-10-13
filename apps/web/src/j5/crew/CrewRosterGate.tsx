@@ -17,7 +17,7 @@ import {
 /**
  * The Captain's roster proposal, answered where it was asked: above the composer of the thread
  * that launched the crew, like a planning question. Reads the thread's own environment and shares
- * the crew-gate poll with the bell, so ordinary threads pay nothing extra.
+ * the crew-gate read with the bell, so ordinary threads pay nothing extra.
  */
 export function CrewRosterGate(props: {
   readonly environmentId: EnvironmentId | undefined;

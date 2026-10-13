@@ -45,8 +45,8 @@ export function useKeyedThreadRefs(refs: ReadonlyArray<ScopedThreadRef>): KeyedT
 
 /**
  * Keeps the Crew chips and spawned children of the sidebar's rows read. Incremental: only rows
- * not yet answered for are fetched here, and the Fleet poll re-reads the involved rows on its own
- * cadence. `ThreadCardIdentity` and `SpawnedChildren` render what these reads return.
+ * not yet answered for are fetched here, and a Crew or Fleet change re-reads the involved rows
+ * (`useFleetRefresh`). `ThreadCardIdentity` and `SpawnedChildren` render what these reads return.
  */
 export function useThreadRowReads({ refs: requested }: KeyedThreadRefs) {
   const connections = useAtomValue(threadReadConnectionsAtom);

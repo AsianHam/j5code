@@ -1122,7 +1122,26 @@ export const J5_CLIENT_READ_WS_METHODS = {
   readPreArchiveFacts: "j5.archive.readFacts",
   readParticipantIdentities: "j5.participants.readIdentities",
   listPeers: "j5.peers.list",
+  subscribeReadChanges: "j5.reads.subscribeChanges",
 } as const;
+
+/**
+ * One counter per kind of J5 read, moved when something that read shows changed. It says which
+ * reads are out of date and never what changed: a client re-reads when the counter for a read
+ * it holds moves. The counters start from the time the server started.
+ */
+export const J5ReadRevisions = Schema.Struct({
+  /** Questions waiting on a person, and the answered ones. */
+  inbox: Schema.Int,
+  /** Crew proposals, Crews and their seats. */
+  crew: Schema.Int,
+  /** Participants, placements, open Exchanges and Crew playbook runs. */
+  fleet: Schema.Int,
+  /** Provider approvals on threads. */
+  runtimeRequests: Schema.Int,
+});
+export type J5ReadRevisions = typeof J5ReadRevisions.Type;
+export type J5ReadRevisionKey = keyof J5ReadRevisions;
 
 const clientRead = <
   const Tag extends string,
@@ -1169,4 +1188,12 @@ export const J5ClientReadRpcGroup = RpcGroup.make(
     ParticipantIdentitiesResponse,
   ),
   clientRead(J5_CLIENT_READ_WS_METHODS.listPeers, Schema.Struct({}), PeerListResponse),
+  // The whole record each time: a subscriber keeps only the latest element, so an event naming
+  // one source could hide another source's move.
+  Rpc.make(J5_CLIENT_READ_WS_METHODS.subscribeReadChanges, {
+    payload: Schema.Struct({}),
+    success: J5ReadRevisions,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  }),
 );

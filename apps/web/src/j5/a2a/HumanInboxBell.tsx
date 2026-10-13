@@ -18,10 +18,9 @@ import {
 } from "../state";
 import { createVisibleRefreshHook } from "../useVisibleRefresh";
 
-export const COUNT_POLL_INTERVAL_MS = 7_500;
 const useCountRefresh = createVisibleRefreshHook(() => {
   void refreshJ5Sources(inboxCountSourcesAtom, inboxCountQueryAtom);
-}, COUNT_POLL_INTERVAL_MS);
+});
 
 export const shouldShowOpenInboxCount = (count: number | null) => count !== null && count > 0;
 

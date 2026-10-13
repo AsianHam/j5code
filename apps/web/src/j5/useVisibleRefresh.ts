@@ -48,15 +48,19 @@ export function useVisibleRefresh(
   }, [refresh, enabled, refreshKey]);
 }
 
-/** A feature's consumers share one foreground timer, so another picker costs no extra poll. */
-export function createVisibleRefreshHook(refresh: () => void, intervalMs: number) {
+/**
+ * A refresh when the tab is focused or shown again, shared by a feature's consumers so another one
+ * costs no extra read. No timer: these reads follow the server's change stream, and this covers
+ * what that stream has no signal for.
+ */
+export function createVisibleRefreshHook(refresh: () => void) {
   let consumers = 0;
   let stop: (() => void) | undefined;
   return function useVisibleRefresh() {
     useEffect(() => {
       consumers += 1;
       if (consumers === 1) {
-        stop = startVisibleRefresh(refresh, intervalMs);
+        stop = startVisibleRefresh(refresh, null);
       }
       return () => {
         consumers -= 1;

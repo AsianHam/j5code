@@ -410,7 +410,7 @@ export async function refreshHumanInboxes(environmentId?: EnvironmentId, force =
 
 const useInboxRefresh = createVisibleRefreshHook(() => {
   void refreshJ5Sources(openInboxSourcesAtom, openInboxQueryAtom);
-}, 7_500);
+});
 
 export function HumanInboxPage() {
   const navigate = useNavigate();

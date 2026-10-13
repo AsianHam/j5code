@@ -65,8 +65,8 @@ const store = createScopedThreadReadStore<ThreadCrewMembership, CrewMembershipEn
 /**
  * Called by `useThreadRowReads` whenever the row set changes; incremental, so a shells or
  * connection change reads only the rows not yet answered for (an empty answer counts). A thread
- * can gain or lose a Crew at any time: the Fleet poll re-reads the rows the roster names as
- * involved.
+ * can gain or lose a Crew at any time: a Crew change re-reads the rows the roster names as
+ * involved (`createFleetRowRefresher`).
  */
 export const requestCrewMemberships = (
   refs: ReadonlyArray<ScopedThreadRef>,
@@ -78,7 +78,7 @@ export const requestCrewMemberships = (
 };
 
 /**
- * The Fleet poll's re-read: the rows the roster says sit in or command a Crew, plus every row
+ * The re-read a Crew change causes: the rows the roster says sit in or command a Crew, plus every row
  * still showing a chip, so a Captain whose last Crew retired (here or on another device) is
  * re-read once more and its chip clears rather than staying until reload.
  */

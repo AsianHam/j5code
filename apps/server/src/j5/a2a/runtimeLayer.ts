@@ -6,11 +6,11 @@ import { FetchHttpClient } from "effect/http";
 
 import { layer as artifactDeletionLayer } from "../artifacts/ArtifactDeletion.ts";
 import { layer as artifactWorkspaceLayer } from "../artifacts/ArtifactWorkspace.ts";
-import { layer as agentCrewInstanceLayer } from "./AgentCrewInstanceService.ts";
+import { layerNotifying as agentCrewInstanceNotifyingLayer } from "./AgentCrewInstanceService.ts";
 import { layer as archiveFactsLayer, placementFactsLayer } from "./ArchiveFactsService.ts";
 import { layer as archiveAgentLayer } from "./ArchiveAgentService.ts";
 import { layer as archiveCrewLayer } from "./ArchiveCrewService.ts";
-import { layer as agentCrewProposalLayer } from "./AgentCrewProposalService.ts";
+import { layerNotifying as agentCrewProposalNotifyingLayer } from "./AgentCrewProposalService.ts";
 import { manualLayer as crewLaunchReporterLayer } from "./CrewLaunchReporter.ts";
 import { layer as crewLaunchLayer } from "./CrewLaunchService.ts";
 import { layer as crewProposalLayer } from "./CrewProposalService.ts";
@@ -35,6 +35,8 @@ import { layer as peerStoreLayer } from "./PeerStoreService.ts";
 import { layer as peerPollerLayer } from "./PeerPoller.ts";
 import { layer as peerRemovalLayer } from "./PeerRemovalService.ts";
 import { layer as peerRegistryLayer } from "./PeerRegistryService.ts";
+import { layer as readChangeFeedsLayer } from "./ReadChangeFeeds.ts";
+import { layer as readChangesLayer } from "./ReadChanges.ts";
 import { layer as rosterLayer } from "./RosterService.ts";
 import { layer as sendServiceLayer } from "./SendService.ts";
 import { layer as silenceDetectorLayer } from "./SilenceDetector.ts";
@@ -53,6 +55,16 @@ import { layer as exchangeAnalyticsLayer } from "../analytics/ExchangeAnalytics.
 import { layer as fleetSnapshotLayer } from "../analytics/FleetSnapshot.ts";
 import { layer as turnAnalyticsLayer } from "../analytics/TurnAnalytics.ts";
 
+// One `ReadChanges` for the server: `readChangesLayer` is the same layer object wherever it is
+// provided below, so Effect memoizes one instance for the writers that notify it and the
+// WebSocket handler that streams it. The Crew stores are each one object for the same reason.
+const agentCrewInstanceLayer = agentCrewInstanceNotifyingLayer.pipe(
+  Layer.provide(readChangesLayer),
+);
+const agentCrewProposalLayer = agentCrewProposalNotifyingLayer.pipe(
+  Layer.provide(readChangesLayer),
+);
+
 /**
  * Registration, homes and placement. This subset has no ThreadManagement dependency, so
  * production provides it once to the V2 runtime (which `ThreadLineage` decorates) and the
@@ -62,7 +74,10 @@ export const makeJ5ThreadRegistrationLayer = (
   options: { readonly ledger?: typeof ledgerLayer } = {},
 ) => {
   const ledgerProvided = options.ledger ?? ledgerLayer;
-  return Layer.merge(threadRegistrationLayer, spawnCompositionLayer).pipe(
+  return Layer.merge(
+    threadRegistrationLayer,
+    spawnCompositionLayer.pipe(Layer.provide(readChangesLayer)),
+  ).pipe(
     Layer.provideMerge(homeRegistrationTransactionLayer),
     Layer.provideMerge(participantPlacementLayer),
     Layer.provideMerge(homeRegistrarLayer),
@@ -220,6 +235,9 @@ export const makeJ5A2AAuxiliaryLayer = (
     turnAnalyticsLayer.pipe(Layer.provide(agentCrewInstanceLayer)),
     exchangeAnalyticsLayer,
     fleetSnapshotLayer,
+    // Exported to the routes so the J5 WebSocket handler streams the revisions the writers move.
+    readChangesLayer,
+    readChangeFeedsLayer.pipe(Layer.provide(readChangesLayer), Layer.provide(playbookStoreLayer)),
   ).pipe(Layer.provideMerge(peerRegistryProvided));
   // The person's permanent artifact delete, which also marks a handoff that pointed at the file.
   const artifactDeletionProvided = artifactDeletionLayer.pipe(

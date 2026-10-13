@@ -9,7 +9,11 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
-import { J5_PLAYBOOK_WS_METHODS, J5_SHARING_WS_METHODS } from "@t3tools/contracts/j5";
+import {
+  J5_CLIENT_READ_WS_METHODS,
+  J5_PLAYBOOK_WS_METHODS,
+  J5_SHARING_WS_METHODS,
+} from "@t3tools/contracts/j5";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -66,6 +70,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribePreviewEvents
   | typeof J5_ARTIFACT_WS_METHODS.subscribeArtifactChanges
   | typeof J5_PLAYBOOK_WS_METHODS.subscribeChanges
+  | typeof J5_CLIENT_READ_WS_METHODS.subscribeReadChanges
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
   | typeof WS_METHODS.subscribeDeviceState
   | typeof WS_METHODS.subscribeResourceTelemetry

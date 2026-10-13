@@ -5,15 +5,22 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { AgentCrewInstanceService, layer as crewLayer } from "./AgentCrewInstanceService.ts";
+import {
+  AgentCrewInstanceService,
+  layer as crewLayer,
+  layerNotifying as crewNotifyingLayer,
+} from "./AgentCrewInstanceService.ts";
 import {
   AgentCrewProposalService,
   layer as proposalLayer,
+  layerNotifying as proposalNotifyingLayer,
   type CreateCrewProposalInput,
 } from "./AgentCrewProposalService.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
+import { layer as readChangesLayer } from "./ReadChanges.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
+import { settledReadRevisions } from "./test-support/readRevisions.ts";
 
 const database = NodeSqliteClient.layer({ filename: ":memory:" });
 const testLayer = Layer.mergeAll(
@@ -208,4 +215,85 @@ it.effect("a stored seat workspace this version can't read costs that seat its w
       ],
     );
   }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect(
+  "moves the crew revision for a write that changed a proposal or a Crew, and for no other",
+  () =>
+    Effect.gen(function* () {
+      yield* runJ5A2AMigrations();
+      yield* (yield* A2ALedger).ensureProject({ projectId: projectId, createdAt });
+      const crews = yield* AgentCrewInstanceService;
+      const proposals = yield* AgentCrewProposalService;
+      const crewRevision = settledReadRevisions.pipe(Effect.map((revisions) => revisions.crew));
+      const crewId = "crew:notifying";
+
+      yield* crews.record({
+        id: crewId,
+        projectId,
+        captainParticipantId: captain,
+        captainThreadId,
+        displayName: "Notifying",
+        brief: "Join in.",
+        createdAt,
+        members: [rosterMember(crewId, "first")],
+      });
+      assert.equal(yield* crewRevision, 1);
+
+      const request = addition("proposal:notifying", crewId, ["second"]);
+      assert.equal((yield* proposals.admit(request, { maxSeats: 12 })).status, "created");
+      assert.equal(yield* crewRevision, 2);
+      // A replayed request and one over the cap write nothing.
+      assert.equal((yield* proposals.admit(request, { maxSeats: 12 })).status, "existing");
+      assert.equal(
+        (yield* proposals.admit(addition("proposal:over", crewId, ["third"]), { maxSeats: 2 }))
+          .status,
+        "cap-exceeded",
+      );
+      assert.equal(yield* crewRevision, 2);
+
+      const decision = {
+        id: request.id,
+        decision: "approve" as const,
+        approvedSeats: request.requestedSeats,
+        resolvedAt: createdAt,
+      };
+      assert.isNotNull(yield* proposals.resolve(decision));
+      assert.equal(yield* crewRevision, 3);
+      // A second answer to a resolved proposal changes nothing.
+      assert.isNull(yield* proposals.resolve(decision));
+      assert.equal(yield* crewRevision, 3);
+
+      yield* crews.addMembers(crewId, [rosterMember(crewId, "second")]);
+      assert.equal(yield* crewRevision, 4);
+      assert.deepStrictEqual(yield* crews.removeMembers(crewId, ["nobody"]), []);
+      assert.equal(yield* crewRevision, 4);
+      assert.deepStrictEqual(yield* crews.removeMembers(crewId, ["second"]), ["second"]);
+      assert.equal(yield* crewRevision, 5);
+
+      yield* crews.markArchived(crewId, createdAt, { withCaptain: true });
+      assert.equal(yield* crewRevision, 6);
+      assert.isTrue(yield* crews.restoreWithCaptain(crewId));
+      assert.equal(yield* crewRevision, 7);
+      assert.isFalse(yield* crews.restoreWithCaptain(crewId));
+      assert.equal(yield* crewRevision, 7);
+
+      // Reads move nothing.
+      yield* crews.listLive();
+      yield* proposals.listOpen();
+      assert.deepStrictEqual(yield* settledReadRevisions, {
+        inbox: 0,
+        crew: 7,
+        fleet: 0,
+        runtimeRequests: 0,
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(crewNotifyingLayer, proposalNotifyingLayer).pipe(
+          Layer.provideMerge(readChangesLayer),
+          Layer.provideMerge(ledgerLayer),
+          Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+        ),
+      ),
+    ),
 );

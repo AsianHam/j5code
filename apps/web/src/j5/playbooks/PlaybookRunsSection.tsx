@@ -5,7 +5,7 @@ import { j5LedgerSupported } from "@t3tools/client-runtime/j5/readSources";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { PLAYBOOK_RUNS_PAGE_SIZE, type PlaybookProgress } from "@t3tools/contracts/j5";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { resolveThreadStatusPill } from "../../components/Sidebar.logic";
 import { Badge } from "../../components/ui/badge";
@@ -29,8 +29,6 @@ interface PlaybookRunCrewLinks {
   /** Crew names by `fleetCrewAnchorId`. */
   readonly crewNames?: ReadonlyMap<string, string>;
   readonly onShowCrew?: (anchorId: string) => void;
-  /** Called when an environment's playbooks change, so the Crews' step headers refresh too. */
-  readonly onPlaybookChange?: () => void;
 }
 
 function PlaybookRunCard({
@@ -160,7 +158,6 @@ function EnvironmentRuns({
   showEnvironmentLabel,
   crewNames,
   onShowCrew,
-  onPlaybookChange,
 }: {
   environment: EnvironmentPresentation;
   status: "active" | "all";
@@ -200,14 +197,6 @@ function EnvironmentRuns({
       ]),
     ]),
   );
-  // The first revision is the one the page loaded with; only later changes refresh Fleet.
-  const seenRevision = useRef<unknown>(undefined);
-  useEffect(() => {
-    if (changes.data === undefined || changes.data === null) return;
-    if (seenRevision.current !== undefined && seenRevision.current !== changes.data)
-      onPlaybookChange?.();
-    seenRevision.current = changes.data;
-  }, [changes.data, onPlaybookChange]);
   const runs = useMemo(() => sortPlaybookRuns(data?.runs ?? []), [data?.runs]);
   const providerEntries = useMemo(
     () =>

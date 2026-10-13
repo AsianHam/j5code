@@ -4,6 +4,7 @@ import {
   J5ActionError,
   J5_CLIENT_READ_WS_METHODS,
   J5_PLAYBOOK_WS_METHODS,
+  type J5ReadRevisions,
 } from "@t3tools/contracts/j5";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -38,10 +39,18 @@ const bravoId = EnvironmentId.make("bravo");
 const fixture = Effect.gen(function* () {
   const supervisors = new Map<EnvironmentId, EnvironmentSupervisor["Service"]>();
   const revisions = new Map<EnvironmentId, SubscriptionRef.SubscriptionRef<number>>();
+  const readRevisions = new Map<EnvironmentId, SubscriptionRef.SubscriptionRef<J5ReadRevisions>>();
   const calls: Array<readonly [EnvironmentId, string, unknown]> = [];
   for (const environmentId of [alphaId, bravoId]) {
     const revision = yield* SubscriptionRef.make(0);
     revisions.set(environmentId, revision);
+    const readRevision = yield* SubscriptionRef.make<J5ReadRevisions>({
+      inbox: 0,
+      crew: 0,
+      fleet: 0,
+      runtimeRequests: 0,
+    });
+    readRevisions.set(environmentId, readRevision);
     const answer =
       <A, E = never>(method: string, respond: () => Effect.Effect<A, E>) =>
       (input: unknown) =>
@@ -96,6 +105,10 @@ const fixture = Effect.gen(function* () {
                   ],
                 }),
               ),
+              [READS.subscribeReadChanges]: () => SubscriptionRef.changes(readRevision),
+              [READS.readOpenInboxCount]: answer(READS.readOpenInboxCount, () =>
+                Effect.succeed({ personId: "human:local-operator", count: 0 }),
+              ),
               [READS.listCrewProposals]: answer(READS.listCrewProposals, () =>
                 Effect.succeed({ proposals: [] }),
               ),
@@ -133,14 +146,35 @@ const fixture = Effect.gen(function* () {
     AtomRegistry.mount(registry, atom).pipe(
       Effect.andThen(Effect.exit(AtomRegistry.getResult(registry, atom))),
     );
-  return { atoms, calls, registry, revisions, settle, supervisors };
+  /**
+   * Holds an environment's change stream open and waits for where it stands, as an open app does;
+   * a query mounted before the stream's first value reads once more when that value arrives.
+   */
+  const followReadChanges = (environmentId: EnvironmentId) => {
+    const changes = atoms.readChanges({ environmentId, input: {} });
+    return AtomRegistry.mount(registry, changes).pipe(
+      Effect.andThen(AtomRegistry.getResult(registry, changes)),
+    );
+  };
+  return {
+    atoms,
+    calls,
+    followReadChanges,
+    readRevisions,
+    registry,
+    revisions,
+    settle,
+    supervisors,
+  };
 });
 
 it.effect(
   "reads each environment over its own socket, shares a read, and reads again on reconnect",
   () =>
     Effect.gen(function* () {
-      const { atoms, calls, registry, revisions, supervisors } = yield* fixture;
+      const { atoms, calls, followReadChanges, registry, revisions, supervisors } = yield* fixture;
+      yield* followReadChanges(alphaId);
+      yield* followReadChanges(bravoId);
       const alpha = atoms.fleet({ environmentId: alphaId, input: {} });
       const bravo = atoms.fleet({ environmentId: bravoId, input: {} });
       yield* AtomRegistry.mount(registry, alpha);
@@ -184,6 +218,47 @@ it.effect(
       expect(Option.isSome(refreshed)).toBe(true);
       expect(calls.filter(([id]) => id === bravoId)).toHaveLength(1);
     }).pipe(Effect.scoped),
+);
+
+it.effect("reads again when the server says a read's own revision moved, and only then", () =>
+  Effect.gen(function* () {
+    const { atoms, calls, followReadChanges, readRevisions, registry } = yield* fixture;
+    yield* followReadChanges(bravoId);
+    const count = atoms.openCount({ environmentId: bravoId, input: {} });
+    const proposals = atoms.crewProposals({ environmentId: bravoId, input: {} });
+    const readsOf = (method: string) => calls.filter((call) => call[1] === method).length;
+    /** Waits for the read the registry starts when a revision moves to be made. */
+    const rereadTo = <A, E>(
+      atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+      method: string,
+      reads: number,
+    ) =>
+      AtomRegistry.toStream(registry, atom).pipe(
+        Stream.filter((result) => !result.waiting && readsOf(method) === reads),
+        Stream.runHead,
+      );
+    yield* AtomRegistry.mount(registry, count);
+    yield* AtomRegistry.mount(registry, proposals);
+    yield* AtomRegistry.getResult(registry, count);
+    yield* AtomRegistry.getResult(registry, proposals);
+    expect([readsOf(READS.readOpenInboxCount), readsOf(READS.listCrewProposals)]).toEqual([1, 1]);
+
+    const move = (name: keyof J5ReadRevisions) =>
+      SubscriptionRef.update(readRevisions.get(bravoId)!, (current) => ({
+        ...current,
+        [name]: current[name] + 1,
+      }));
+    yield* move("inbox");
+    yield* rereadTo(count, READS.readOpenInboxCount, 2);
+    // Nothing a proposal shows changed, so the proposals are not read again.
+    expect(readsOf(READS.listCrewProposals)).toBe(1);
+
+    yield* move("crew");
+    yield* rereadTo(proposals, READS.listCrewProposals, 2);
+    expect(readsOf(READS.readOpenInboxCount)).toBe(2);
+    // Another environment's server moving a revision is not this one's.
+    expect(calls.every(([environmentId]) => environmentId === bravoId)).toBe(true);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("hands a list read's rows to its view, and a refusal in the server's own words", () =>

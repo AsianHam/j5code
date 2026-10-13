@@ -25,6 +25,7 @@ import {
   layer as placementLayer,
 } from "./PlacementService.ts";
 import { noneLayer as peerDirectoryNoneLayer } from "./PeerDirectory.ts";
+import { layer as readChangesLayer } from "./ReadChanges.ts";
 import { A2ASendService, layer as sendServiceLayer } from "./SendService.ts";
 import {
   SpawnCompositionService,
@@ -32,6 +33,7 @@ import {
 } from "./SpawnCompositionService.ts";
 import { CommCommandId, ParticipantId, LedgerProjectId } from "./contracts.ts";
 import { PlacementCommandId } from "./placementContracts.ts";
+import { settledReadRevisions } from "./test-support/readRevisions.ts";
 
 const createdAt = "2026-08-30T16:00:00.000Z";
 const database = NodeSqliteClient.layer({ filename: ":memory:" });
@@ -46,9 +48,11 @@ const composition = spawnCompositionLayer.pipe(
   Layer.provide(homeTransactions),
   Layer.provide(ledger),
   Layer.provide(placements),
+  Layer.provide(readChangesLayer),
   Layer.provide(database),
 );
 const TestLayer = Layer.mergeAll(
+  readChangesLayer,
   database,
   ledger,
   homes,
@@ -160,6 +164,28 @@ it.effect("commits joined home and placement facts in one transaction", () =>
         }
       }
     }
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("moves the fleet revision once the spawn's facts are committed", () =>
+  Effect.gen(function* () {
+    yield* runJ5A2AMigrations();
+    const service = yield* SpawnCompositionService;
+    const projectId = LedgerProjectId.make("project:spawn-composition:revision");
+    const spawnerId = yield* seedProjectAndSpawner(
+      projectId,
+      ThreadId.make("thread:spawn-composition:revision-spawner"),
+    );
+    assert.equal((yield* settledReadRevisions).fleet, 0);
+    yield* service.recordFacts(
+      inputFor({
+        name: "revision",
+        projectId,
+        threadId: ThreadId.make("thread:spawn-composition:revision-child"),
+        spawnedByParticipantId: spawnerId,
+      }),
+    );
+    assert.equal((yield* settledReadRevisions).fleet, 1);
   }).pipe(Effect.provide(TestLayer)),
 );
 
@@ -392,6 +418,7 @@ it.effect("waits for a DeliveryWorker ledger permit before entering the spawn tr
               Layer.succeed(A2ALedgerTransactionWriter, ledgerWriter),
               Layer.succeed(ParticipantPlacementTransactionWriter, placementWriter),
               Layer.succeed(SqlClient.SqlClient, instrumentedSql),
+              readChangesLayer,
             ),
           ),
         ),

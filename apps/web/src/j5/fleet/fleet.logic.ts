@@ -1,5 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ThreadId, type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
+import type { J5ReadRevisions } from "@t3tools/contracts/j5";
 
 import { classifyCrewSeat, type CrewSeatState, type CrewSeatThread } from "../crew/crewState";
 import type { FleetAgent, FleetCrew, FleetLedgerProject } from "./fleetClient";
@@ -314,12 +315,12 @@ export const originLabel = (agent: Pick<FleetAgent, "origin" | "outsideSpawner">
 
 /**
  * The sidebar rows the roster says are involved in a Crew or a spawn: every seat, every Captain
- * a seat names, and every agent with a placed child. The Fleet poll re-reads Crew chips and
- * children for these rows (and for the rows still showing one; see refreshCrewMembershipRows)
- * and no others, so that read's cost follows involvement, not the thread list. A Captain that
- * gained a Crew on another device is named here on the next poll. The live read carries no
- * retired Crew, so a Captain whose last Crew retired is not named here; its chip clears because
- * the row still holds one.
+ * a seat names, and every agent with a placed child. When the roster changes, Crew chips and
+ * children are re-read for these rows (and for the rows still showing one; see
+ * refreshCrewMembershipRows) and no others, so that read's cost follows involvement, not the
+ * thread list. A Captain that gained a Crew on another device is named here by the roster read
+ * that change causes. The live read carries no retired Crew, so a Captain whose last Crew
+ * retired is not named here; its chip clears because the row still holds one.
  */
 export function fleetInvolvedThreadRefs(
   projects: ReadonlyArray<FleetLedgerProject & { readonly environmentId: EnvironmentId }>,
@@ -342,4 +343,35 @@ export function fleetInvolvedThreadRefs(
     }
   }
   return [...refs.values()];
+}
+
+/**
+ * Re-reads the sidebar's Crew chips and spawned children when the server says they may have
+ * changed. Call it with each roster read an environment settles and the revisions that read was
+ * made under: a moved `crew` revision re-reads both for the rows the roster names, a moved `fleet`
+ * revision re-reads the children alone, and an unmoved pair re-reads nothing. The first read of
+ * an environment re-reads both.
+ */
+export function createFleetRowRefresher(refresh: {
+  readonly memberships: (refs: ReadonlyArray<ScopedThreadRef>) => void;
+  readonly children: (refs: ReadonlyArray<ScopedThreadRef>) => void;
+}) {
+  const readUnder = new Map<EnvironmentId, Pick<J5ReadRevisions, "crew" | "fleet">>();
+  return (
+    environmentId: EnvironmentId,
+    projects: ReadonlyArray<FleetLedgerProject>,
+    revisions: Pick<J5ReadRevisions, "crew" | "fleet">,
+  ) => {
+    const previous = readUnder.get(environmentId);
+    readUnder.set(environmentId, { crew: revisions.crew, fleet: revisions.fleet });
+    // The first revisions heard are not a baseline: the rows were read as their shells appeared,
+    // which can be before a change these revisions already count.
+    const crewMoved = previous?.crew !== revisions.crew;
+    if (!crewMoved && previous?.fleet === revisions.fleet) return;
+    const involved = fleetInvolvedThreadRefs(
+      projects.map((project) => ({ ...project, environmentId })),
+    );
+    if (crewMoved) refresh.memberships(involved);
+    refresh.children(involved);
+  };
 }

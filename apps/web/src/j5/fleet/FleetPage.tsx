@@ -258,11 +258,7 @@ export function FleetPage() {
                 <RetiredCrews retired={retired} {...tableProps} />
               </div>
             ) : null}
-            <PlaybookRunsSection
-              crewNames={crewNames}
-              onShowCrew={showCrew}
-              onPlaybookChange={refreshFleet}
-            />
+            <PlaybookRunsSection crewNames={crewNames} onShowCrew={showCrew} />
           </main>
         </ScrollArea>
       </div>

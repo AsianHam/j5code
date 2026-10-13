@@ -60,7 +60,7 @@ const store = createScopedThreadReadStore<SpawnedChildrenRow, RowEntry>({
   replace: replaceSpawnedChildren,
 });
 
-/** Incremental, from `useThreadRowReads`; the Fleet poll re-reads the involved rows. */
+/** Incremental, from `useThreadRowReads`; a Crew or Fleet change re-reads the involved rows. */
 export const requestSpawnedChildren = (
   refs: ReadonlyArray<ScopedThreadRef>,
   connections: ReadonlyMap<EnvironmentId, PreparedConnection | null>,
@@ -71,7 +71,7 @@ export const requestSpawnedChildren = (
 };
 
 /**
- * The Fleet poll's re-read: the rows the roster says have placed children or sit in a Crew, plus
+ * The re-read a Crew or Fleet change causes: the rows the roster says have placed children or sit in a Crew, plus
  * every row still showing children, so a parent whose children all archived loses them.
  */
 export const refreshSpawnedChildrenRows = (refs: ReadonlyArray<ScopedThreadRef>) =>

@@ -9,6 +9,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { CREW_NAME_MAX_CHARS, CREW_REASON_MAX_CHARS, CREW_TEXT_MAX_CHARS } from "./crewLimits.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
+import { ReadChanges } from "./ReadChanges.ts";
 import { SpawnWorkspaceChoice } from "./spawnWorkspace.ts";
 
 // The same bounds as the MCP verbs: the human's card edits arrive over HTTP and must not be the
@@ -348,3 +349,30 @@ export const layer: Layer.Layer<AgentCrewProposalService, never, SqlClient.SqlCl
       });
     }),
   );
+
+/**
+ * The layer the server runs: the store above, with every write that changed a proposal moving
+ * the `crew` revision clients re-read on. Each write commits before its method returns.
+ */
+export const layerNotifying = Layer.effect(
+  AgentCrewProposalService,
+  Effect.gen(function* () {
+    const store = yield* AgentCrewProposalService;
+    const changes = yield* ReadChanges;
+    const changed = changes.notify("crew");
+    return AgentCrewProposalService.of({
+      ...store,
+      create: (input) => store.create(input).pipe(Effect.tap(() => changed)),
+      admit: (input, options) =>
+        store
+          .admit(input, options)
+          .pipe(Effect.tap((outcome) => (outcome.status === "created" ? changed : Effect.void))),
+      resolve: (input) =>
+        store
+          .resolve(input)
+          .pipe(Effect.tap((proposal) => (proposal === null ? Effect.void : changed))),
+      attachInstance: (id, crewInstanceId) =>
+        store.attachInstance(id, crewInstanceId).pipe(Effect.tap(() => changed)),
+    });
+  }),
+).pipe(Layer.provide(layer));

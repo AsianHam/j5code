@@ -19,8 +19,6 @@ import { createVisibleRefreshHook } from "../useVisibleRefresh";
 
 export type { CrewProposal, CrewProposalSeat, ScopedCrewProposal } from "@t3tools/contracts/j5";
 
-export const CREW_PROPOSALS_POLL_INTERVAL_MS = 7_500;
-
 /** Every environment's open gates, each tagged with the environment it must be answered on. */
 export const mergeCrewProposalSources = (
   sources: J5ReadSources<ReadonlyArray<CrewProposal>>,
@@ -55,14 +53,14 @@ export async function resolveCrewProposal(
   return result.value;
 }
 
-/** Forced re-read after a decision, so the gate leaves the screen without waiting for the poll. */
+/** Forced re-read after a decision, so the gate leaves the screen as the answer returns. */
 export const refreshCrewProposals = (environmentId?: EnvironmentId) =>
   refreshJ5Sources(crewProposalSourcesAtom, crewProposalsQueryAtom, {
     force: true,
     ...(environmentId === undefined ? {} : { environmentId }),
   });
 
-/** The bell, the inbox page, and every composer's inline gate share this one foreground poll. */
+/** The bell, the inbox page, and every composer's inline gate share this one refresh on focus. */
 export const useCrewProposalsRefresh = createVisibleRefreshHook(() => {
   void refreshJ5Sources(crewProposalSourcesAtom, crewProposalsQueryAtom);
-}, CREW_PROPOSALS_POLL_INTERVAL_MS);
+});

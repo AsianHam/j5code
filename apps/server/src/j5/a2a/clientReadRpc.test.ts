@@ -9,9 +9,13 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { requiredScopeForRpcMethod } from "../../auth/RpcAuthorization.ts";
@@ -29,6 +33,7 @@ import { A2ALocalOperatorNotFoundError } from "./HumanPersonRegistry.ts";
 import { A2ALedger } from "./LedgerService.ts";
 import { PeerAdminService } from "./PeerAdminService.ts";
 import { ParticipantPlacementService } from "./PlacementService.ts";
+import { COALESCE_WINDOW, ReadChanges, layer as readChangesLayer } from "./ReadChanges.ts";
 import { A2AParticipantNotFoundError } from "./SendService.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
 
@@ -38,7 +43,7 @@ const database = NodeSqliteClient.layer({ filename: ":memory:" });
 /** The handlers over a given reads service; the peer list is not under test here. */
 const handlersOver = (reads: Layer.Layer<ClientReadsService, SqlError>) =>
   makeClientReadRpcHandlers().pipe(
-    Effect.provide(Layer.merge(reads, Layer.mock(PeerAdminService)({}))),
+    Effect.provide(Layer.mergeAll(reads, Layer.mock(PeerAdminService)({}), readChangesLayer)),
   );
 
 /**
@@ -79,7 +84,7 @@ const refusalOf = <A>(call: Effect.Effect<A, J5ActionError>) =>
     Effect.map(({ code, message }) => ({ code, message })),
   );
 
-it("requires read scope for every client read, and access:read for the peer list", () => {
+it("requires read scope for every client read and the change stream, and access:read for the peer list", () => {
   for (const method of Object.values(METHODS)) {
     assert.equal(
       requiredScopeForRpcMethod(method),
@@ -342,4 +347,31 @@ it.effect("tells a failed pre-archive read as a failure, never as a clean archiv
       { code: "A2AArchiveFactsError", message: "Pre-archive fact lookup failed." },
     );
   }),
+);
+
+it.effect("streams the read revisions, starting with where they stand", () =>
+  Effect.gen(function* () {
+    const changes = yield* ReadChanges;
+    yield* changes.notify("crew");
+    // The handlers stream the server's one instance, the one the writers notify.
+    const handlers = yield* makeClientReadRpcHandlers().pipe(
+      Effect.provide(
+        Layer.merge(Layer.mock(ClientReadsService)({}), Layer.mock(PeerAdminService)({})),
+      ),
+    );
+    const first = yield* handlers[METHODS.subscribeReadChanges]().pipe(
+      Stream.runHead,
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* TestClock.adjust(COALESCE_WINDOW);
+    assert.deepStrictEqual(
+      yield* Fiber.join(first),
+      Option.some({
+        inbox: 0,
+        crew: 1,
+        fleet: 0,
+        runtimeRequests: 0,
+      }),
+    );
+  }).pipe(Effect.provide(readChangesLayer)),
 );

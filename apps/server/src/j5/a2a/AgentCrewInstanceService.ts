@@ -10,6 +10,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import type { CrewPlaybookRef } from "./AgentCrewProposalService.ts";
 import { ParticipantId, type LedgerProjectId } from "./contracts.ts";
+import { ReadChanges } from "./ReadChanges.ts";
 
 export interface AgentCrewMember {
   readonly seatName: string;
@@ -548,3 +549,34 @@ export const layer: Layer.Layer<AgentCrewInstanceService, never, SqlClient.SqlCl
       });
     }),
   );
+
+/**
+ * The layer the server runs: the store above, with every write that changed a Crew or its seats
+ * moving the `crew` revision clients re-read on. Each write commits before its method returns.
+ */
+export const layerNotifying = Layer.effect(
+  AgentCrewInstanceService,
+  Effect.gen(function* () {
+    const store = yield* AgentCrewInstanceService;
+    const changes = yield* ReadChanges;
+    const changed = changes.notify("crew");
+    return AgentCrewInstanceService.of({
+      ...store,
+      record: (input) => store.record(input).pipe(Effect.tap(() => changed)),
+      addMembers: (id, members, options) =>
+        store
+          .addMembers(id, members, options)
+          .pipe(Effect.tap((outcome) => (outcome.status === "added" ? changed : Effect.void))),
+      removeMembers: (id, seatNames) =>
+        store
+          .removeMembers(id, seatNames)
+          .pipe(Effect.tap((removed) => (removed.length > 0 ? changed : Effect.void))),
+      markArchived: (id, archivedAt, options) =>
+        store.markArchived(id, archivedAt, options).pipe(Effect.tap(() => changed)),
+      restoreWithCaptain: (id) =>
+        store
+          .restoreWithCaptain(id)
+          .pipe(Effect.tap((restored) => (restored ? changed : Effect.void))),
+    });
+  }),
+).pipe(Layer.provide(layer));

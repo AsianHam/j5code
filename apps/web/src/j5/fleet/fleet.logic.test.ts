@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { EnvironmentId } from "@t3tools/contracts";
 
@@ -7,6 +7,7 @@ import {
   buildFleetTree,
   countFleetAlerts,
   countFleetProjects,
+  createFleetRowRefresher,
   fleetInvolvedThreadRefs,
   orderFleetRowsByProject,
   originLabel,
@@ -128,7 +129,7 @@ describe("fleet involvement", () => {
           // A plain spawner with one placed child, and the child itself is not involved.
           agent("spawner"),
           agent("helper", { placementParentId: "spawner" }),
-          // Human-created rows with no Crew and no children are never re-read on the poll.
+          // Human-created rows with no Crew and no children are never re-read on a change.
           agent("solo"),
           // A seat whose thread is unknown cannot name a row.
           agent("ghost", { threadId: null, crew: seat("ghost", "captain") }),
@@ -141,6 +142,64 @@ describe("fleet involvement", () => {
       ["env:a", "thread:critic"],
       ["env:a", "thread:spawner"],
     ]);
+  });
+});
+
+describe("sidebar rows following the roster", () => {
+  const environmentId = EnvironmentId.make("env:a");
+  const projects: ReadonlyArray<FleetLedgerProject> = [
+    {
+      id: "project-alpha",
+      title: "Alpha",
+      crews: [],
+      agents: [
+        agent("captain"),
+        agent("builder", { placementParentId: "captain", crew: seat("builder", "captain") }),
+        agent("solo"),
+      ],
+    },
+  ];
+  const involved = [
+    { environmentId, threadId: "thread:builder" },
+    { environmentId, threadId: "thread:captain" },
+  ];
+  const setup = () => {
+    const memberships = vi.fn();
+    const children = vi.fn();
+    return { memberships, children, refresh: createFleetRowRefresher({ memberships, children }) };
+  };
+
+  it("re-reads Crew chips and children for the involved rows when the crew revision moves", () => {
+    const { memberships, children, refresh } = setup();
+    // The first revisions heard may already count a change the rows were read before.
+    refresh(environmentId, projects, { crew: 3, fleet: 5 });
+    expect(memberships.mock.calls).toEqual([[involved]]);
+    expect(children.mock.calls).toEqual([[involved]]);
+    refresh(environmentId, projects, { crew: 4, fleet: 5 });
+    expect(memberships.mock.calls).toEqual([[involved], [involved]]);
+    expect(children.mock.calls).toEqual([[involved], [involved]]);
+  });
+
+  it("re-reads only the children when the fleet revision moves, and nothing when neither does", () => {
+    const { memberships, children, refresh } = setup();
+    refresh(environmentId, projects, { crew: 3, fleet: 5 });
+    refresh(environmentId, projects, { crew: 3, fleet: 6 });
+    expect(memberships).toHaveBeenCalledTimes(1);
+    expect(children).toHaveBeenCalledTimes(2);
+    // A roster read for any other reason, such as the tab's focus, is not a change.
+    refresh(environmentId, projects, { crew: 3, fleet: 6 });
+    expect(children).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps each environment's revisions apart", () => {
+    const { memberships, refresh } = setup();
+    const other = EnvironmentId.make("env:b");
+    const otherInvolved = involved.map((ref) => ({ ...ref, environmentId: other }));
+    refresh(environmentId, projects, { crew: 3, fleet: 5 });
+    // Another server counts from its own start.
+    refresh(other, projects, { crew: 0, fleet: 0 });
+    refresh(other, projects, { crew: 1, fleet: 0 });
+    expect(memberships.mock.calls).toEqual([[involved], [otherInvolved], [otherInvolved]]);
   });
 });
 

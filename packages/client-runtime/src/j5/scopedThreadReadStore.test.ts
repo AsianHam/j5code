@@ -62,7 +62,7 @@ it("keeps a negative answer loaded, re-reads only named rows, and keeps the snap
   store.request([scopeThreadRef(alpha, two), scopeThreadRef(alpha, one)]);
   store.request([scopeThreadRef(alpha, two)]);
   expect(load.mock.calls).toHaveLength(1);
-  // The poll names the involved row only; the read carries just that id and, being unchanged,
+  // The refresh names the involved row only; the read carries just that id and, being unchanged,
   // leaves the same snapshot in place so no subscriber re-renders.
   let notified = 0;
   store.subscribe(() => {
@@ -73,7 +73,7 @@ it("keeps a negative answer loaded, re-reads only named rows, and keeps the snap
   expect(load.mock.calls).toHaveLength(2);
   expect(load.mock.calls[1]?.[1]).toEqual([one]);
   expect(store.getSnapshot()).toBe(first);
-  // A row nobody asked for is not read on the poll's say-so.
+  // A row nobody asked for is not read on the refresh's say-so.
   store.refreshRows([scopeThreadRef(alpha, ThreadId.make("thread:unrequested"))]);
   expect(load.mock.calls).toHaveLength(2);
 });

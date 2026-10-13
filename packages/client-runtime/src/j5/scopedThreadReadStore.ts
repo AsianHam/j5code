@@ -145,7 +145,7 @@ export function createScopedThreadReadStore<Value, Entry>(options: {
   };
 
   /**
-   * Re-read only these rows, and only where a caller asked for them: the periodic poll names the
+   * Re-read only these rows, and only where a caller asked for them: the caller names the
    * rows some other read says are involved, so its cost follows that involvement rather than the
    * length of the thread list. With `held`, every requested row that currently holds a value is
    * re-read as well: a row whose relation ended (its Crew retired, its last child archived) is

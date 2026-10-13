@@ -16,6 +16,7 @@ import { failAsJ5ActionError } from "../rpcActionError.ts";
 import { ClientReadsService } from "./ClientReadsService.ts";
 import { ParticipantId } from "./contracts.ts";
 import { PeerAdminService } from "./PeerAdminService.ts";
+import { ReadChanges } from "./ReadChanges.ts";
 
 const METHODS = J5_CLIENT_READ_WS_METHODS;
 
@@ -34,6 +35,7 @@ export const CLIENT_READ_RPC_SCOPES = {
   [METHODS.readPreArchiveFacts]: AuthOrchestrationReadScope,
   [METHODS.readParticipantIdentities]: AuthOrchestrationReadScope,
   [METHODS.listPeers]: AuthAccessReadScope,
+  [METHODS.subscribeReadChanges]: AuthOrchestrationReadScope,
 } as const;
 
 /** A person the request names who is not one of this server's people is a refusal, not a fault. */
@@ -65,6 +67,7 @@ const optionalPerson = (personId: string | undefined) =>
 export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers")(function* () {
   const reads = yield* ClientReadsService;
   const peers = yield* PeerAdminService;
+  const changes = yield* ReadChanges;
   return {
     [METHODS.listHumanInbox]: (input: HumanInboxListRequest) =>
       optionalPerson(input.personId).pipe(
@@ -107,5 +110,6 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
         ),
       ),
     [METHODS.listPeers]: () => peers.list.pipe(Effect.catch(failed("Listing peers failed."))),
+    [METHODS.subscribeReadChanges]: () => changes.changes,
   };
 });

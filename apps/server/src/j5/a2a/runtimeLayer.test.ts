@@ -44,6 +44,7 @@ import { ThreadLifecycleService } from "../../orchestration-v2/ThreadLifecycleSe
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { ThreadLaunchService } from "../../orchestration-v2/ThreadLaunchService.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/OrchestrationCommandReceipts.ts";
+import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { A2AArchiveFacts } from "./ArchiveFactsService.ts";
 import { A2ALifecycleService } from "./LifecycleService.ts";
@@ -54,6 +55,8 @@ import { ThreadRegistration } from "./ThreadRegistration.ts";
 import { SpawnCompositionService } from "./SpawnCompositionService.ts";
 import { SpawnWorkspaceService, layer as spawnWorkspaceLayer } from "./spawnWorkspace.ts";
 import { PeerRegistryService } from "./PeerRegistryService.ts";
+import { ReadChanges } from "./ReadChanges.ts";
+import { settledReadRevisions } from "./test-support/readRevisions.ts";
 import { makeJ5A2ARuntimeLayer, peerHttpClient } from "./runtimeLayer.ts";
 
 const archiveDependencies = Layer.mergeAll(
@@ -69,7 +72,10 @@ const archiveDependencies = Layer.mergeAll(
 );
 
 // The Crew and silence daemons read their start point from the event store; this one is empty.
-const emptyEventStore = Layer.mock(EventSinkV2)({ latestSequence: () => Effect.succeed(0) });
+const emptyEventStore = Layer.mock(EventSinkV2)({
+  latestSequence: () => Effect.succeed(0),
+  stream: () => Stream.never,
+});
 
 const measureNestedRuntimeBuilds = (nested: "http" | "mcp") =>
   Effect.scoped(
@@ -169,6 +175,18 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
       );
       // j5_spawn_agent reads the workspace service from the route graph; CrewLaunch is built with it.
       const spawnWorkspaceConsumer = Layer.effectDiscard(SpawnWorkspaceService.pipe(Effect.asVoid));
+      // The Crew store is given its `ReadChanges` apart from the one the routes are handed; a
+      // write through it must move the revisions a client is streamed.
+      let routeReadChanges: ReadChanges["Service"] | undefined;
+      const readChangesConsumer = Layer.effectDiscard(
+        Effect.gen(function* () {
+          routeReadChanges = yield* ReadChanges;
+          yield* (yield* AgentCrewInstanceService).markArchived(
+            "crew:none",
+            "2026-10-12T00:00:00.000Z",
+          );
+        }),
+      );
       const runtime = makeJ5A2ARuntimeLayer({
         ledger: countedLedger,
         spawnWorkspace: spawnWorkspaceLayer.pipe(
@@ -198,6 +216,7 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
             threadRegistrationConsumer,
             spawnCompositionConsumer,
             spawnWorkspaceConsumer,
+            readChangesConsumer,
           ).pipe(
             Layer.provideMerge(runtime),
             Layer.provide(countedThreadManagement),
@@ -266,6 +285,11 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
       assert.equal(outboxes.size, 1);
       // The start guard holds only if j5_spawn_agent and CrewLaunch share one workspace service.
       assert.equal(spawnWorkspaces.size, 1);
+      assert.equal(
+        (yield* settledReadRevisions.pipe(Effect.provideService(ReadChanges, routeReadChanges!)))
+          .crew,
+        1,
+      );
       const sql = Context.get(databaseContext, SqlClient.SqlClient);
       const people = yield* sql<{
         readonly is_local_operator: number;

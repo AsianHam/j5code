@@ -14,7 +14,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { serverEnvironment } from "../state/server";
 import { environmentThreadShells } from "../state/threads";
 import { j5Sharing } from "./sharing/guestAccess";
-import { crewApprovalPollPlan, type CrewApprovalPollPlan } from "./crew/crewRuntimeRequests.logic";
+import { crewApprovalReadPlan, type CrewApprovalReadPlan } from "./crew/crewRuntimeRequests.logic";
 
 export const j5Environment = createJ5EnvironmentAtoms(connectionAtomRuntime);
 
@@ -60,29 +60,29 @@ export const crewProposalSourcesAtom = createJ5ReadSourcesAtom({
   capability: "j5ProjectLedger",
   queryAtom: crewProposalsQueryAtom,
 });
-let lastCrewApprovalPoll: CrewApprovalPollPlan = { key: "", environmentIds: [] };
+let lastCrewApprovalRead: CrewApprovalReadPlan = { key: "", environmentIds: [] };
 /** The environments with a thread waiting on an approval; the same object until that changes. */
-export const crewApprovalPollAtom = Atom.make((get) => {
-  const next = crewApprovalPollPlan(get(environmentThreadShells.threadShellsAtom));
-  if (next.key !== lastCrewApprovalPoll.key) lastCrewApprovalPoll = next;
-  return lastCrewApprovalPoll;
-}).pipe(Atom.withLabel("web-j5:crew-approval-poll"));
+export const crewApprovalReadAtom = Atom.make((get) => {
+  const next = crewApprovalReadPlan(get(environmentThreadShells.threadShellsAtom));
+  if (next.key !== lastCrewApprovalRead.key) lastCrewApprovalRead = next;
+  return lastCrewApprovalRead;
+}).pipe(Atom.withLabel("web-j5:crew-approval-read"));
 const NO_CREW_RUNTIME_REQUESTS = AsyncResult.success<ReadonlyArray<CrewRuntimeRequestItem>>([]);
 // An environment with no thread waiting on an approval has no seat approval to list, so it is
 // not asked; the read starts when one of its threads raises the flag.
-const polledCrewRuntimeRequestsAtom = Atom.family((environmentId: EnvironmentId) =>
+const gatedCrewRuntimeRequestsAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) =>
-    get(crewApprovalPollAtom).environmentIds.includes(environmentId)
+    get(crewApprovalReadAtom).environmentIds.includes(environmentId)
       ? get(crewRuntimeRequestsQueryAtom(environmentId))
       : NO_CREW_RUNTIME_REQUESTS,
-  ).pipe(Atom.withLabel(`web-j5:polled-crew-runtime-requests:${environmentId}`)),
+  ).pipe(Atom.withLabel(`web-j5:gated-crew-runtime-requests:${environmentId}`)),
 );
 // A server without the read fails its source alone; the Inbox shows the rest.
 export const crewRuntimeRequestSourcesAtom = createJ5ReadSourcesAtom({
   ...sourcesInput,
   label: "web-j5:crew-runtime-request-sources",
   capability: "j5ProjectLedger",
-  queryAtom: polledCrewRuntimeRequestsAtom,
+  queryAtom: gatedCrewRuntimeRequestsAtom,
 });
 export const fleetSourcesAtom = createJ5ReadSourcesAtom({
   ...sourcesInput,

@@ -7,10 +7,12 @@ import {
   J5_CLIENT_ACTION_WS_METHODS,
   J5_CLIENT_READ_WS_METHODS,
   J5_PLAYBOOK_WS_METHODS,
+  type J5ReadRevisionKey,
 } from "@t3tools/contracts/j5";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import { AsyncResult, type Atom } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
@@ -93,7 +95,28 @@ const j5Read = <TTag extends J5ReadTag>(tag: TTag, input: EnvironmentRpcInput<TT
 export function createJ5EnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
+  // Which reads the server says went out of date. A query that names its revisions here re-reads
+  // when one of them moves, and holds this subscription open for as long as it is mounted.
+  const readChanges = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "j5:read-changes",
+    tag: J5_CLIENT_READ_WS_METHODS.subscribeReadChanges,
+  });
+  // One value per set of revisions, so a query re-reads only when a revision it depends on moved.
+  const readRevisions = Atom.family((key: string) => {
+    const [environmentId, ...keys] = JSON.parse(key) as [EnvironmentId, ...J5ReadRevisionKey[]];
+    return Atom.make((get) => {
+      const revisions = Option.getOrNull(
+        AsyncResult.value(get(readChanges({ environmentId, input: {} }))),
+      );
+      return revisions === null ? null : keys.map((name) => revisions[name]).join(":");
+    }).pipe(Atom.withLabel(`j5:read-revisions:${key}`));
+  });
+  const rereadOn =
+    (...keys: ReadonlyArray<J5ReadRevisionKey>) =>
+    (target: { readonly environmentId: EnvironmentId }) =>
+      readRevisions(JSON.stringify([target.environmentId, ...keys]));
   return {
+    readChanges,
     playbookChanges: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "j5:playbook-changes",
       tag: J5_PLAYBOOK_WS_METHODS.subscribeChanges,
@@ -146,19 +169,23 @@ export function createJ5EnvironmentAtoms<R, E>(
       tag: J5_CLIENT_READ_WS_METHODS.listHumanInbox,
       execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.listHumanInbox, input),
       staleTimeMs: 7_500,
+      refreshTrigger: rereadOn("inbox"),
     }),
     openCount: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "j5:inbox-count",
       tag: J5_CLIENT_READ_WS_METHODS.readOpenInboxCount,
       execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.readOpenInboxCount, input),
       staleTimeMs: 7_500,
+      refreshTrigger: rereadOn("inbox"),
     }),
-    // The Fleet page reads every connected environment's roster; it changes on the scale of turns.
+    // The Fleet page reads every connected environment's roster: its agents and their open
+    // Exchanges, and its Crews with their seats.
     fleet: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "j5:fleet",
       tag: J5_CLIENT_READ_WS_METHODS.readFleet,
       execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.readFleet, input),
       staleTimeMs: 30_000,
+      refreshTrigger: rereadOn("crew", "fleet"),
     }),
     // The sidebar asks about the rows it shows, a batch at a time (`scopedThreadReadStore`).
     listCrewMemberships: createEnvironmentRpcCommand(runtime, {
@@ -187,6 +214,7 @@ export function createJ5EnvironmentAtoms<R, E>(
     crewProposals: createEnvironmentQueryAtomFamily(runtime, {
       label: "j5:crew-proposals",
       staleTimeMs: 7_500,
+      refreshTrigger: rereadOn("crew"),
       execute: (_input: Record<string, never>) =>
         j5Read(J5_CLIENT_READ_WS_METHODS.listCrewProposals, {}).pipe(
           Effect.map((response) => response.proposals),
@@ -207,10 +235,12 @@ export function createJ5EnvironmentAtoms<R, E>(
       "j5:archive-crew",
       J5_CLIENT_ACTION_WS_METHODS.archiveCrew,
     ),
-    // Crew seats' provider approvals answered from the Inbox; same cadence as gates.
+    // Crew seats' provider approvals answered from the Inbox. The list changes when an approval
+    // does, and when a Crew gains, loses or retires the seat it is on.
     crewRuntimeRequests: createEnvironmentQueryAtomFamily(runtime, {
       label: "j5:crew-runtime-requests",
       staleTimeMs: 7_500,
+      refreshTrigger: rereadOn("crew", "runtimeRequests"),
       execute: (_input: Record<string, never>) =>
         j5Read(J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests, {}).pipe(
           Effect.map((response) => response.requests),
@@ -228,8 +258,8 @@ export function createJ5EnvironmentAtoms<R, E>(
       J5_CLIENT_ACTION_WS_METHODS.answerHumanExchange,
     ),
     // Polls, backlogs and errors change while Connections stays open, and
-    // nothing pushes them, so the list is read again on an interval well inside
-    // the two-minute online window.
+    // nothing pushes them (peering moves none of the read revisions), so the list
+    // is read again on an interval well inside the two-minute online window.
     peers: createEnvironmentQueryAtomFamily(runtime, {
       label: "j5:peers",
       staleTimeMs: 30_000,
