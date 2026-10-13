@@ -9,6 +9,7 @@ import {
   ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { J5_SHARING_WS_METHODS } from "@t3tools/contracts/j5";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -127,9 +128,6 @@ it("names the few routes a guest keeps permissions on", () => {
     threadId: ThreadId.make(id),
   });
   assert.deepStrictEqual(GuestGate.guestHttpRule("GET", "/ws"), { kind: "open" });
-  assert.deepStrictEqual(GuestGate.guestHttpRule("GET", "/api/orchestration/shell"), {
-    kind: "open",
-  });
   assert.deepStrictEqual(
     GuestGate.guestHttpRule("GET", "/api/orchestration/threads/t1"),
     thread("t1"),
@@ -147,6 +145,8 @@ it("names the few routes a guest keeps permissions on", () => {
     thread("thread:one"),
   );
   for (const [method, path] of [
+    // The sidebar snapshot: a guest's client reads the sidebar from the socket's filtered feed.
+    ["GET", "/api/orchestration/shell"],
     ["GET", "/api/orchestration/shell/archived"],
     ["GET", "/api/orchestration/shell/"],
     ["POST", "/api/orchestration/shell"],
@@ -181,7 +181,6 @@ it.layer(testLayer)("guest gate", (it) => {
       yield* grantGuest(granted, "view");
       for (const url of [
         "/ws",
-        "/api/orchestration/shell",
         "/api/orchestration/threads/thread%3Ahttp-granted",
         "/api/orchestration/threads/thread%3Ahttp-granted/bounded?compactTurnItems=1",
         "/api/orchestration/threads/thread%3Ahttp-granted/history?cursor=abc",
@@ -189,6 +188,7 @@ it.layer(testLayer)("guest gate", (it) => {
         assert.deepStrictEqual(yield* scopesFor("guest", "GET", url), GUEST_SCOPES, url);
       }
       for (const url of [
+        "/api/orchestration/shell",
         "/api/orchestration/threads/thread%3Ahttp-other",
         "/api/orchestration/threads/thread%3Ahttp-other/bounded",
         "/api/orchestration/threads/thread%3Adoes-not-exist",
@@ -297,6 +297,9 @@ it.layer(testLayer)("guest RPC authorization", (it) => {
         WS_METHODS.subscribeServerConfig,
         WS_METHODS.subscribeServerLifecycle,
         ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+        // Answered from the guest's own session by `PersonAccess`.
+        J5_SHARING_WS_METHODS.getConnectionAccess,
+        J5_SHARING_WS_METHODS.subscribeThreadAccess,
       ]) {
         assert.strictEqual(yield* call(GUEST, method, {}), "ran", method);
         assert.strictEqual(yield* call(stray, method, {}), "ran", method);
@@ -312,8 +315,97 @@ it.layer(testLayer)("guest RPC authorization", (it) => {
           WS_METHODS.serverGetConfig,
           WS_METHODS.subscribeServerConfig,
           WS_METHODS.subscribeServerLifecycle,
+          J5_SHARING_WS_METHODS.getConnectionAccess,
+          J5_SHARING_WS_METHODS.subscribeThreadAccess,
         ].toSorted(),
       );
+    }),
+  );
+
+  it.effect("a guest gets a URL only for what a granted thread's messages carry", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const granted = yield* thread("thread:assets-granted");
+      const other = yield* thread("thread:assets-other");
+      yield* grantGuest(granted, "view");
+      const message = (threadId: ThreadId, attachmentIds: ReadonlyArray<string>) => sql`
+        INSERT INTO orchestration_v2_projection_messages (
+          message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at,
+          payload_json
+        ) VALUES (
+          ${`message:${threadId}`}, ${threadId}, NULL, NULL, 'user', 0, ${AT}, ${AT},
+          ${JSON.stringify({
+            // The other thread's attachment id is written in this message's text, where a
+            // person could paste it; only the attachment list counts.
+            text: "see assets-other-22222222-2222-4222-8222-222222222222",
+            attachments: attachmentIds.map((id) => ({ type: "image", id, name: "shot.png" })),
+          })}
+        )
+      `;
+      const turnItem = (threadId: ThreadId, itemId: string) => sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          ${itemId}, ${threadId}, NULL, NULL, NULL, NULL, NULL, 1, 'dynamic_tool', 'completed',
+          ${AT}, '{}'
+        )
+      `;
+      const mine = "assets-granted-11111111-1111-4111-8111-111111111111";
+      const theirs = "assets-other-22222222-2222-4222-8222-222222222222";
+      yield* message(granted, [mine]);
+      yield* message(other, [theirs]);
+      yield* turnItem(granted, "item:granted");
+      yield* turnItem(other, "item:other");
+
+      const url = (who: EnvironmentAuth.AuthenticatedSession, resource: unknown) =>
+        call(who, WS_METHODS.assetsCreateUrl, { resource });
+      const attachment = (attachmentId: string) => ({ _tag: "attachment", attachmentId });
+      const toolImage = (threadId: ThreadId, itemId: string) => ({
+        _tag: "tool-output-image",
+        threadId,
+        itemId,
+        index: 0,
+      });
+
+      assert.strictEqual(yield* url(GUEST, attachment(mine)), "ran");
+      assert.strictEqual(yield* url(GUEST, toolImage(granted, "item:granted")), "ran");
+      for (const [why, resource] of [
+        ["an attachment of a thread outside the grant", attachment(theirs)],
+        [
+          "an id no message carries",
+          attachment("assets-granted-33333333-3333-4333-8333-333333333333"),
+        ],
+        ["a made-up id", attachment("../../etc/passwd")],
+        ["another thread's tool image", toolImage(other, "item:other")],
+        // The item is real and so is the grant, but the item is not that thread's.
+        ["another thread's item named under the granted thread", toolImage(granted, "item:other")],
+        ["a workspace file", { _tag: "workspace-file", threadId: granted, path: "README.md" }],
+        ["a media file", { _tag: "media-file", threadId: granted, path: "/etc/passwd" }],
+        ["a draft workspace file", { _tag: "draft-workspace-file", cwd: "/", path: "etc/passwd" }],
+        ["a project favicon", { _tag: "project-favicon", cwd: "/" }],
+        ["GitHub media", { _tag: "github-media", cwd: "/", url: "https://github.com/x" }],
+        ["a native app icon", { _tag: "native-app-icon", app: {} }],
+        ["a kind that does not exist", { _tag: "attachments", attachmentId: mine }],
+        ["no resource at all", undefined],
+      ] as const) {
+        assert.match(yield* url(GUEST, resource), /^refused: /, why);
+      }
+      // A guest with no person recorded holds nothing, and a member is not looked up at all.
+      const stray = session("session:assets-stray", PersonAccess.GUEST_SESSION_SUBJECT);
+      assert.match(yield* url(stray, attachment(mine)), /^refused: /);
+      assert.strictEqual(yield* url(MEMBER, attachment(theirs)), "ran");
+
+      // Removing the grant ends it for the next request.
+      const access = yield* PersonAccess.PersonAccess;
+      const bound = yield* sql<{ readonly person_id: string }>`
+        SELECT person_id FROM j5_a2a_person_session WHERE session_id = ${GUEST.sessionId}
+      `;
+      yield* access.removeGrant({
+        personId: bound[0]!.person_id as PersonAccess.Person["personId"],
+        target: { kind: "thread", threadId: granted },
+      });
+      assert.match(yield* url(GUEST, attachment(mine)), /^refused: /);
     }),
   );
 

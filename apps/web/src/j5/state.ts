@@ -13,6 +13,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { serverEnvironment } from "../state/server";
 import { environmentThreadShells } from "../state/threads";
+import { j5Sharing } from "./sharing/guestAccess";
 import { crewApprovalPollPlan, type CrewApprovalPollPlan } from "./crew/crewRuntimeRequests.logic";
 
 export const j5Environment = createJ5EnvironmentAtoms(connectionAtomRuntime);
@@ -21,6 +22,7 @@ const sourcesInput = {
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   stateAtom: environmentCatalog.stateAtom,
   configValueAtom: serverEnvironment.configValueAtom,
+  guestAtom: j5Sharing.isGuest,
 };
 
 export const openInboxQueryAtom = (environmentId: EnvironmentId) =>

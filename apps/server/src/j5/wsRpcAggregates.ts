@@ -4,7 +4,11 @@ import {
   J5_SKILL_CATALOG_WS_METHODS,
   J5_SKILL_LINK_WS_METHODS,
 } from "@t3tools/contracts";
-import { J5_CLIENT_ACTION_WS_METHODS, J5_PLAYBOOK_WS_METHODS } from "@t3tools/contracts/j5";
+import {
+  J5_CLIENT_ACTION_WS_METHODS,
+  J5_PLAYBOOK_WS_METHODS,
+  J5_SHARING_WS_METHODS,
+} from "@t3tools/contracts/j5";
 
 const labelled = <const Methods extends Readonly<Record<string, string>>>(
   methods: Methods,
@@ -26,4 +30,5 @@ export const J5_RPC_AGGREGATES = {
   ...labelled(J5_SKILL_LINK_WS_METHODS, "j5SkillLinks"),
   ...labelled(J5_PLAYBOOK_WS_METHODS, "j5Playbooks"),
   ...labelled(J5_CLIENT_ACTION_WS_METHODS, "j5ClientActions"),
+  ...labelled(J5_SHARING_WS_METHODS, "j5Sharing"),
 };

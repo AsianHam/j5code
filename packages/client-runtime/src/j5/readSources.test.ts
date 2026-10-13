@@ -123,3 +123,46 @@ it("shows an older client's J5 views as unsupported against a project-keyed serv
   // A key that is missing is probed, which is why the server states the older two as false.
   expect(readSourceFor({ j5ProjectLedger: true }, "j5HumanInbox").routeCalls).toBe(1);
 });
+
+it("shows nothing from a server once its connection is known to be a guest's", () => {
+  type Input = Parameters<typeof createJ5ReadSourcesAtom<ReadonlyArray<string>>>[0];
+  const guest = Atom.make(false);
+  let routeCalls = 0;
+  const sources = createJ5ReadSourcesAtom<ReadonlyArray<string>>({
+    label: "test:j5-read-sources-guest",
+    capability: "j5ProjectLedger",
+    catalogValueAtom: Atom.make({
+      isReady: true,
+      entries: new Map([[source.environmentId, { target: { label: "Remote" } }]]),
+    }) as unknown as Input["catalogValueAtom"],
+    stateAtom: () =>
+      Atom.make(AsyncResult.success({ phase: "connected" })) as unknown as ReturnType<
+        Input["stateAtom"]
+      >,
+    configValueAtom: () =>
+      Atom.make({
+        environment: { capabilities: { j5ProjectLedger: true } },
+      }) as unknown as ReturnType<Input["configValueAtom"]>,
+    // The read a guest's client sent before it knew: the server refused it.
+    queryAtom: () =>
+      Atom.make(() => {
+        routeCalls += 1;
+        return AsyncResult.failure<ReadonlyArray<string>, unknown>(
+          Cause.fail(new J5HttpError({ status: 403, detail: "Not shared" })),
+        );
+      }),
+    guestAtom: () => guest,
+  });
+  const registry = AtomRegistry.make();
+  // Until the server says which kind the connection is, the read goes out as a member's would.
+  expect(registry.get(sources).sources[0]).toMatchObject({ status: "error", error: "Not shared" });
+  expect(routeCalls).toBe(1);
+  registry.set(guest, true);
+  // The refusal leaves no error behind, and a source that is unsupported is never asked again.
+  expect(registry.get(sources).sources[0]).toMatchObject({
+    status: "unsupported",
+    data: null,
+    error: null,
+  });
+  expect(routeCalls).toBe(1);
+});

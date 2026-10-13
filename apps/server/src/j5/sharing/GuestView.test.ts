@@ -1,21 +1,15 @@
-import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthOrchestrationReadScope,
   AuthSessionId,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
-  EnvironmentAuthenticatedAuth,
-  EnvironmentAuthenticatedPrincipal,
-  EnvironmentHttpApi,
   EnvironmentId,
   EventId,
-  ORCHESTRATION_PROTOCOL_HEADER,
-  ORCHESTRATION_PROTOCOL_VERSION,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ShellStreamItem,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ServerConfig,
   type ServerConfigStreamEvent,
@@ -24,19 +18,16 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Etag, HttpRouter, HttpServerRequest } from "effect/http";
-import * as HttpApi from "effect/http-api/HttpApi";
-import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import type * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
-import * as OrchestrationHttp from "../../orchestration-v2/http.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
@@ -293,49 +284,12 @@ const outline = (items: ReadonlyArray<OrchestrationV2ShellStreamItem>) =>
         : item.kind,
   );
 
-class OrchestrationApi extends HttpApi.make("environment").add(
-  EnvironmentHttpApi.groups.orchestration,
-) {}
-const layerHttpAuth = Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
-  Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
-    const who = SESSIONS[request.headers["x-test-session"] ?? ""]!;
-    return effect.pipe(
-      Effect.provideService(EnvironmentAuthenticatedPrincipal, {
-        ...who,
-        scopes: new Set(who.scopes),
-      }),
-    );
-  }),
-);
-
-/** `GET /api/orchestration/shell` through upstream's route, as the session named. */
-const httpShell = Effect.fn("test.httpShell")(function* (who: keyof typeof SESSIONS) {
-  const context = yield* Effect.context<Layer.Success<typeof layerTest>>();
-  const appLayer = HttpApiBuilder.layer(OrchestrationApi).pipe(
-    Layer.provide(OrchestrationHttp.layer),
-    Layer.provide(layerHttpAuth),
-    Layer.provide(Layer.succeedContext(context)),
-    Layer.provide(NodeHttpPlatform.layer),
-    Layer.provide(Etag.layerWeak),
-    Layer.provide(NodeServices.layer),
-  );
-  return yield* Effect.acquireUseRelease(
-    Effect.sync(() => HttpRouter.toWebHandler(appLayer, { disableLogger: true })),
-    ({ handler }) =>
-      Effect.promise(async () => {
-        const response = await handler(
-          new Request("http://environment.test/api/orchestration/shell", {
-            headers: {
-              [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION),
-              "x-test-session": who,
-            },
-          }),
-        );
-        assert.strictEqual(response.status, 200);
-        return await response.text();
-      }),
-    ({ dispose }) => Effect.promise(() => dispose()),
-  );
+/**
+ * The sidebar a connection is first sent. A guest's only source is the socket's feed: the HTTP
+ * snapshot route is refused to it (`GuestGate.guestHttpRule`) and its client falls back here.
+ */
+const firstSnapshot = Effect.fn("test.firstSnapshot")(function* (who: keyof typeof SESSIONS) {
+  return snapshotOf(yield* until(yield* open(SESSIONS[who]!), synchronized));
 });
 
 /** Each test gets its own database, so sequence numbers start from the same place in each. */
@@ -343,6 +297,87 @@ const live = <A, E>(
   name: string,
   test: Effect.Effect<A, E, Layer.Success<typeof layerTest> | import("effect/Scope").Scope>,
 ) => it.live(name, () => test.pipe(Effect.provide(layerTest)));
+
+/** A provider with every field set, each host-specific one to a value the tests look for. */
+const HOST_PROVIDER = {
+  skillDiscoveryError: "host-skill-error",
+  instanceId: "codex",
+  driver: "codex",
+  displayName: "Codex",
+  accentColor: "host-accent",
+  iconUrl: `http://${HOST_ADDRESS}/icon.png`,
+  badgeLabel: "host-badge",
+  continuation: { groupKey: "host-group" },
+  showInteractionModeToggle: true,
+  reportsContextWindow: true,
+  supportedRuntimeModes: ["full-access"],
+  requiresNewThreadForModelChange: true,
+  supportsConversationRollback: true,
+  supportsTextGeneration: true,
+  setup: { canAuthenticate: true, canInstall: true, documentationUrl: "https://host-docs" },
+  nativeSessions: { canList: true, canLoad: true, canResume: true },
+  configurableProviders: true,
+  runtimePaths: { homePath: `${HOST_PATH}/codex-home`, shadowHomePath: null },
+  enabled: true,
+  installed: true,
+  version: "9.9.9-host",
+  status: "warning",
+  auth: {
+    status: "authenticated",
+    type: "host-plan",
+    label: "Host Account",
+    email: "host@example.com",
+    canLogout: true,
+    profileId: "host-profile",
+  },
+  checkedAt: "2026-10-11T08:09:10.000Z",
+  message: "host-status-message",
+  availability: "available",
+  models: [
+    {
+      slug: "gpt-test",
+      name: "GPT Test",
+      shortName: "Test",
+      aliases: ["host-alias"],
+      isCustom: false,
+      isDefault: true,
+      capabilities: null,
+    },
+  ],
+  updateRequiredModels: [{ slug: "gpt-next", name: "GPT Next", minVersion: "10.0.0-host" }],
+  slashCommands: [{ name: "host-command" }],
+  skills: [{ name: "host-skill", path: `${HOST_PATH}/skills/host-skill`, enabled: true }],
+  workspaceSnapshots: [
+    {
+      cwd: `${HOST_PATH}/cwd`,
+      checkedAt: "2026-10-11T08:09:10.000Z",
+      slashCommands: [],
+      skills: [],
+    },
+  ],
+  versionAdvisory: {
+    status: "behind_latest",
+    currentVersion: "9.9.9-host",
+    latestVersion: "10.0.0-host",
+    updateCommand: "host-update-command",
+    canUpdate: true,
+    checkedAt: null,
+    message: null,
+  },
+  compatibilityAdvisory: {
+    status: "graceful",
+    message: "host-compatibility",
+    recommendedVersion: null,
+    recommendedRange: null,
+  },
+  updateState: {
+    status: "failed",
+    startedAt: null,
+    finishedAt: null,
+    message: "host-update-failed",
+    output: "host-update-output",
+  },
+};
 
 const fullConfig = {
   environment: {
@@ -363,7 +398,7 @@ const fullConfig = {
   keybindingsConfigPath: `${HOST_PATH}/keybindings.json`,
   keybindings: [{ command: "terminal.toggle", shortcut: { key: "j" } }],
   issues: [{ kind: "keybindings.malformed-config", message: `${HOST_PATH}/keybindings.json` }],
-  providers: [{ instanceId: "codex", auth: { email: "host@example.com" } }],
+  providers: [HOST_PROVIDER, { ...HOST_PROVIDER, instanceId: "claude-off", enabled: false }],
   availableEditors: ["cursor"],
   remoteOpenTargets: [{ host: HOST_ADDRESS }],
   directEndpoints: [{ kind: "tailnet", httpBaseUrl: `http://${HOST_ADDRESS}:3773` }],
@@ -395,6 +430,24 @@ const assertNothingOfTheHost = (sent: unknown) => {
     HOST_PATH,
     HOST_ADDRESS,
     "host@example.com",
+    // Everything else a provider's entry says about the host's account, install and health.
+    "Host Account",
+    "host-plan",
+    "host-profile",
+    "9.9.9-host",
+    "10.0.0-host",
+    "host-status-message",
+    "host-skill",
+    "host-command",
+    "host-alias",
+    "host-accent",
+    "host-badge",
+    "host-group",
+    "host-docs",
+    "host-update",
+    "host-compatibility",
+    "2026-10-11T08:09:10.000Z",
+    "claude-off",
     "host-prefix",
     "jackson-workstation",
     "github.example.com",
@@ -416,7 +469,33 @@ it.effect("a guest's configuration holds nothing of the host, and still decodes"
     const view = yield* GuestView.connectionView(GUEST);
     const reduced = view.config(fullConfig);
     assertNothingOfTheHost(reduced);
-    assert.deepStrictEqual(reduced.providers, []);
+    // Each enabled provider is named, with its models, and says nothing else.
+    assert.deepStrictEqual(reduced.providers, [
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        driver: ProviderDriverKind.make("codex"),
+        displayName: "Codex",
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "unknown" },
+        checkedAt: "1970-01-01T00:00:00.000Z",
+        models: [
+          {
+            slug: "gpt-test",
+            name: "GPT Test",
+            shortName: "Test",
+            isCustom: false,
+            isDefault: true,
+            capabilities: null,
+          },
+        ],
+        slashCommands: [],
+        skills: [],
+      },
+    ]);
+    assert.strictEqual((yield* GuestView.connectionView(MEMBER)).config(fullConfig), fullConfig);
     assert.deepStrictEqual(reduced.settings, DEFAULT_SERVER_SETTINGS);
     assert.deepStrictEqual(reduced.environment, {
       environmentId: fullConfig.environment.environmentId,
@@ -528,7 +607,7 @@ it.effect("a guest's lifecycle feed is a welcome that names nothing of the host"
 );
 
 live(
-  "a guest's sidebar holds only what its grants cover, over HTTP and over the feed",
+  "a guest's sidebar holds only what its grants cover",
   Effect.gen(function* () {
     const shared = yield* project("project:shared");
     const other = yield* project("project:other");
@@ -551,24 +630,24 @@ live(
       ],
       threads: ["thread:granted"],
     };
-    const http = JSON.parse(yield* httpShell("guest"));
-    assertNothingOfTheHost(http);
-    assert.deepStrictEqual(http.projects, expected.projects);
+    const sent = yield* firstSnapshot("guest");
+    assertNothingOfTheHost(sent);
+    assert.deepStrictEqual(sent.projects, expected.projects);
     assert.deepStrictEqual(
-      http.threads.map((thread: { id: string }) => thread.id),
+      sent.threads.map((thread: { id: string }) => thread.id),
       expected.threads,
     );
-    assert.strictEqual(http.threads[0].worktreePath, "/");
-    assert.strictEqual(http.threads[0].branch, "j5code/feature");
-    assert.deepStrictEqual(http.archivedThreads, []);
+    assert.strictEqual(sent.threads[0]?.worktreePath, "/");
+    assert.strictEqual(sent.threads[0]?.branch, "j5code/feature");
+    assert.deepStrictEqual(sent.archivedThreads, []);
 
     const first = yield* until(yield* open(GUEST), synchronized);
     assertNothingOfTheHost(first);
     // Upstream also sent a repository-identity frame naming every project's folder; a guest's
     // feed carries the one snapshot and the marker.
-    assert.deepStrictEqual(outline(first), [`snapshot@${http.snapshotSequence}`, "synchronized"]);
+    assert.deepStrictEqual(outline(first), [`snapshot@${sent.snapshotSequence}`, "synchronized"]);
     assert.deepStrictEqual(snapshotOf(first), {
-      ...http,
+      ...sent,
       threads: snapshotOf(first).threads,
     });
     assert.deepStrictEqual(
@@ -576,22 +655,12 @@ live(
       expected.threads,
     );
 
-    // A member is answered in full, and its feed is upstream's own stream object.
-    const memberHttp = JSON.parse(yield* httpShell("member"));
-    assert.strictEqual(memberHttp.threads.length, 3);
-    assert.strictEqual(memberHttp.projects.length, 2);
-    assert.deepStrictEqual(
-      memberHttp.projects.map((entry: { workspaceRoot: string }) => entry.workspaceRoot).toSorted(),
-      [`${HOST_PATH}/project:other`, `${HOST_PATH}/project:shared`],
-    );
-    assert.strictEqual(memberHttp.snapshotSequence, http.snapshotSequence);
+    // A member's feed is upstream's own stream object.
     const untouched = Stream.empty;
     assert.strictEqual(
       (yield* GuestView.connectionView(MEMBER)).shellStream({}, () => untouched),
       untouched,
     );
-    const snapshot = snapshotOf(yield* until(yield* open(MEMBER), synchronized));
-    assert.strictEqual(yield* GuestView.shellSnapshotFor(MEMBER, snapshot), snapshot);
   }).pipe(Effect.scoped),
 );
 
@@ -760,13 +829,13 @@ live(
     yield* write("thread.created", { id: "thread:elsewhere", projectId: other });
     yield* guest({ kind: "project", projectId: shared }, { kind: "project", projectId: empty });
 
-    const http = JSON.parse(yield* httpShell("guest"));
-    assert.deepStrictEqual(http.projects.map((entry: { id: string }) => entry.id).toSorted(), [
+    const sent = yield* firstSnapshot("guest");
+    assert.deepStrictEqual(sent.projects.map((entry: { id: string }) => entry.id).toSorted(), [
       empty,
       shared,
     ]);
     assert.deepStrictEqual(
-      http.threads.map((thread: { id: string }) => thread.id),
+      sent.threads.map((thread: { id: string }) => thread.id),
       ["thread:one"],
     );
 
@@ -833,14 +902,14 @@ live(
     // Another guest holds everything; the stray session is not theirs.
     yield* guest({ kind: "project", projectId: shared });
 
-    const http = JSON.parse(yield* httpShell("stray"));
-    assert.deepStrictEqual(http.projects, []);
-    assert.deepStrictEqual(http.threads, []);
-    assert.deepStrictEqual(http.archivedThreads, []);
+    const sent = yield* firstSnapshot("stray");
+    assert.deepStrictEqual(sent.projects, []);
+    assert.deepStrictEqual(sent.threads, []);
+    assert.deepStrictEqual(sent.archivedThreads, []);
 
     const feed = yield* open(STRAY);
     const first = yield* until(feed, synchronized);
-    assert.deepStrictEqual(outline(first), [`snapshot@${http.snapshotSequence}`, "synchronized"]);
+    assert.deepStrictEqual(outline(first), [`snapshot@${sent.snapshotSequence}`, "synchronized"]);
     assert.deepStrictEqual(snapshotOf(first).threads, []);
     assert.deepStrictEqual(snapshotOf(first).projects, []);
 
@@ -853,6 +922,71 @@ live(
 
     const view = yield* GuestView.connectionView(STRAY);
     assertNothingOfTheHost(view.config(fullConfig));
-    assert.deepStrictEqual(view.config(fullConfig).providers, []);
+  }).pipe(Effect.scoped),
+);
+
+live(
+  "a granted thread appearing in a project the client was not sent begins the feed again",
+  Effect.gen(function* () {
+    const shared = yield* project("project:shared");
+    const late = ThreadId.make("thread:late");
+    // The grant names a thread that does not exist yet, so the first sidebar holds nothing.
+    yield* guest({ kind: "thread", threadId: late });
+    const feed = yield* open(GUEST);
+    const first = yield* until(feed, synchronized);
+    assert.deepStrictEqual(snapshotOf(first).projects, []);
+    assert.deepStrictEqual(snapshotOf(first).threads, []);
+
+    // The thread arrives as one item, but its project was never sent and two items cannot share
+    // a sequence number: the guest is sent a whole sidebar holding both.
+    yield* write("thread.created", { id: late, projectId: shared });
+    const again = yield* until(
+      feed,
+      (item) => item.kind === "snapshot" && item.snapshot.threads.some(({ id }) => id === late),
+    );
+    assertNothingOfTheHost(again);
+    assert.deepStrictEqual(
+      again.map((item) => item.kind),
+      ["snapshot"],
+    );
+    const sidebar = snapshotOf(again);
+    assert.deepStrictEqual(
+      sidebar.projects.map(({ id }) => id),
+      [shared],
+    );
+    assert.deepStrictEqual(
+      sidebar.threads.map(({ id }) => id),
+      [late],
+    );
+  }).pipe(Effect.scoped),
+);
+
+live(
+  "a grant that cannot be read ends a guest's feed with nothing sent",
+  Effect.gen(function* () {
+    const shared = yield* project("project:shared");
+    yield* write("thread.created", { id: "thread:granted", projectId: shared });
+    yield* guest({ kind: "thread", threadId: ThreadId.make("thread:granted") });
+    const access = yield* PersonAccess.PersonAccess;
+    const unreadable = PersonAccess.PersonAccess.of({
+      ...access,
+      threadAccess: () =>
+        Effect.fail(
+          new PersonAccess.PersonAccessStorageError({
+            operation: "read a person's access to a thread",
+          }),
+        ),
+    });
+    const view = yield* GuestView.connectionView(GUEST).pipe(
+      Effect.provideService(PersonAccess.PersonAccess, unreadable),
+    );
+    const sent: Array<OrchestrationV2ShellStreamItem> = [];
+    const exit = yield* view.shellStream({ requestCompletionMarker: true }, upstreamShell).pipe(
+      Stream.runForEach((item) => Effect.sync(() => sent.push(item))),
+      Effect.exit,
+    );
+    // The feed fails rather than guessing: the thread the guest does hold is not sent either.
+    assert.isTrue(Exit.isFailure(exit));
+    assert.deepStrictEqual(sent, []);
   }).pipe(Effect.scoped),
 );

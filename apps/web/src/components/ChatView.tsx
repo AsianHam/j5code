@@ -39,6 +39,7 @@ import {
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { CrewRosterGate } from "../j5/crew/CrewRosterGate";
+import { useCanOperateThread } from "../j5/sharing/guestAccess";
 import { expandPlaybookPrompt } from "@t3tools/client-runtime/j5/playbooks";
 import { PlaybookBoard } from "../j5/playbooks/PlaybookBoard";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -1581,7 +1582,7 @@ export default function ChatView(props: ChatViewProps) {
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
   } = props;
-  const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canOperateThread = useCanOperateThread(environmentId, threadId);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useCallback(
     () => readEnvironmentScope(environmentId, AuthTerminalOperateScope),

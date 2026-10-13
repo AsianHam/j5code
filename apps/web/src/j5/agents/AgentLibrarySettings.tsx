@@ -40,6 +40,11 @@ import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useSettingsScopeEnvironments } from "../settingsScopeEnvironment";
+import {
+  GUEST_LIBRARY_UNAVAILABLE,
+  useGuestEnvironmentIds,
+  useIsGuestEverywhere,
+} from "../sharing/guestAccess";
 import { agentPersonaEnvironment } from "./agentPersonaAtoms";
 import { PlaybookLibrarySettings } from "../playbooks/PlaybookLibrarySettings";
 import { useEnvironmentQuery } from "../../state/query";
@@ -70,10 +75,31 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
+  SettingsUnavailableGroup,
 } from "../../components/settings/settingsLayout";
 
 export function AgentLibrarySettings() {
-  const { environments, isReady } = useEnvironments();
+  // A guest is not offered a server's Personas or Playbooks (Shared server AC24).
+  return useIsGuestEverywhere() ? (
+    <SettingsPageContainer>
+      <SettingsSection title="Personas">
+        <SettingsUnavailableGroup message={GUEST_LIBRARY_UNAVAILABLE}>
+          {null}
+        </SettingsUnavailableGroup>
+      </SettingsSection>
+    </SettingsPageContainer>
+  ) : (
+    <MemberAgentLibrarySettings />
+  );
+}
+
+function MemberAgentLibrarySettings() {
+  const { environments: connected, isReady } = useEnvironments();
+  const guestEnvironmentIds = useGuestEnvironmentIds();
+  const environments = useMemo(
+    () => connected.filter((environment) => !guestEnvironmentIds.has(environment.environmentId)),
+    [connected, guestEnvironmentIds],
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const orderedEnvironments = useMemo(
     () =>

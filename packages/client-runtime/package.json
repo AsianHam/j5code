@@ -383,6 +383,10 @@
       "types": "./src/j5/peering.ts",
       "default": "./src/j5/peering.ts"
     },
+    "./j5/sharing": {
+      "types": "./src/j5/sharing.ts",
+      "default": "./src/j5/sharing.ts"
+    },
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"

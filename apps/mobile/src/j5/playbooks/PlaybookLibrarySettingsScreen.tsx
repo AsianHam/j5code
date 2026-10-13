@@ -1,3 +1,4 @@
+import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 import {
   ensurePlaybookAuthor,
   playbookAuthorLaunch,
@@ -29,9 +30,14 @@ export const PlaybookLibrarySettingsSection = memo(function PlaybookLibrarySetti
   const navigation = useNavigation();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const workspaceInputs = useAtomValue(playbookWorkspaceInputsAtom);
+  const guestEnvironmentIds = useGuestEnvironmentIds();
   const workspaces = useMemo(
-    () => playbookWorkspaces(workspaceInputs.projects, workspaceInputs.threads),
-    [workspaceInputs],
+    () =>
+      // A guest is not offered a server's Playbooks (Shared server AC24).
+      playbookWorkspaces(workspaceInputs.projects, workspaceInputs.threads).filter(
+        (entry) => !guestEnvironmentIds.has(entry.environmentId),
+      ),
+    [guestEnvironmentIds, workspaceInputs],
   );
   const [workspaceKey, setWorkspaceKey] = useState("");
   const [deleting, setDeleting] = useState(false);

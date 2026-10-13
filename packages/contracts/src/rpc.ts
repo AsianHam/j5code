@@ -165,6 +165,7 @@ import { J5SkillLinkRpcGroup } from "./j5/skillLinks.ts";
 import { J5SkillCatalogRpcGroup } from "./j5/skillCatalog.ts";
 import { J5PlaybookRpcGroup } from "./j5/playbook.ts";
 import { J5ClientActionRpcGroup } from "./j5.ts";
+import { J5SharingRpcGroup } from "./j5/sharing.ts";
 import {
   PullRequestActionInput,
   PullRequestActivity,
@@ -2007,4 +2008,5 @@ export const WsRpcGroup = RpcGroup.make(
   .merge(J5SkillLinkRpcGroup)
   .merge(J5PlaybookRpcGroup)
   .merge(J5ClientActionRpcGroup)
+  .merge(J5SharingRpcGroup)
   .middleware(RpcScopeAuthorization);

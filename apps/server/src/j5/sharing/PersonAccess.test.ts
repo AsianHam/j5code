@@ -1,8 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import { AuthSessionId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { J5_SHARING_WS_METHODS, type SharingThreadAccess } from "@t3tools/contracts/j5";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../../persistence/Migrations.ts";
@@ -13,6 +17,7 @@ import {
 } from "../a2a/HumanPersonRegistry.ts";
 import { runJ5A2AMigrations } from "../a2a/Migrations.ts";
 import * as PersonAccess from "./PersonAccess.ts";
+import { makeSharingRpcHandlers } from "./sharingRpc.ts";
 
 const AT = "2026-10-11T00:00:00.000Z";
 const PROJECT = ProjectId.make("project:billing-migration");
@@ -280,6 +285,97 @@ it.layer(testLayer)("PersonAccess", (it) => {
       assert.strictEqual(yield* access.threadAccess(session, threadId), "collaborate");
       yield* access.removeGrant({ personId: guest.personId, target });
       assert.strictEqual(yield* access.threadAccess(session, threadId), "none");
+    }),
+  );
+
+  it.effect("a guest's client is told a different level on each thread it holds", () =>
+    Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const { guest, session } = yield* guestSession("mixed-levels");
+      const reading = yield* thread("thread:mixed-view");
+      const writing = yield* thread("thread:mixed-collaborate");
+      const beneath = yield* thread("thread:mixed-collaborate-child", PROJECT, {
+        parent: "thread:mixed-collaborate",
+        relationship: "subagent",
+      });
+      const stranger = yield* thread("thread:mixed-ungranted");
+      yield* access.putGrant({
+        personId: guest.personId,
+        target: { kind: "thread", threadId: reading },
+        level: "view",
+      });
+      yield* access.putGrant({
+        personId: guest.personId,
+        target: { kind: "thread", threadId: writing },
+        level: "collaborate",
+      });
+      const handlers = makeSharingRpcHandlers({ access, session });
+      const told = (threadId: ThreadId) =>
+        handlers[J5_SHARING_WS_METHODS.subscribeThreadAccess]({ threadId }).pipe(Stream.runHead);
+      assert.deepStrictEqual(yield* handlers[J5_SHARING_WS_METHODS.getConnectionAccess](), {
+        kind: "guest",
+      });
+      assert.deepStrictEqual(Option.getOrNull(yield* told(reading)), {
+        kind: "guest",
+        level: "view",
+      });
+      assert.deepStrictEqual(Option.getOrNull(yield* told(writing)), {
+        kind: "guest",
+        level: "collaborate",
+      });
+      // The agent beneath a granted thread carries its level; only the server can tell.
+      assert.deepStrictEqual(Option.getOrNull(yield* told(beneath)), {
+        kind: "guest",
+        level: "collaborate",
+      });
+      assert.deepStrictEqual(Option.getOrNull(yield* told(stranger)), {
+        kind: "guest",
+        level: "none",
+      });
+    }),
+  );
+
+  it.effect("a client showing a thread is told when a grant changes its level", () =>
+    Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const { guest, session } = yield* guestSession("level-changes");
+      const other = yield* guestSession("level-bystander");
+      const threadId = yield* thread("thread:level-changes");
+      const target = { kind: "thread" as const, threadId };
+      yield* access.putGrant({ personId: guest.personId, target, level: "view" });
+      const told = yield* Queue.unbounded<SharingThreadAccess>();
+      const handlers = makeSharingRpcHandlers({ access, session });
+      yield* handlers[J5_SHARING_WS_METHODS.subscribeThreadAccess]({ threadId }).pipe(
+        Stream.runForEach((item) => Queue.offer(told, item)),
+        Effect.forkScoped,
+      );
+      assert.deepStrictEqual(yield* Queue.take(told), { kind: "guest", level: "view" });
+      // Another guest's grant, and a grant that leaves this level as it was, tell it nothing.
+      yield* access.putGrant({ personId: other.guest.personId, target, level: "collaborate" });
+      yield* access.putGrant({ personId: guest.personId, target, level: "view" });
+      yield* access.putGrant({ personId: guest.personId, target, level: "collaborate" });
+      assert.deepStrictEqual(yield* Queue.take(told), { kind: "guest", level: "collaborate" });
+      yield* access.removeGrant({ personId: guest.personId, target });
+      assert.deepStrictEqual(yield* Queue.take(told), { kind: "guest", level: "none" });
+    }),
+  );
+
+  it.effect("a member's connection is told once that it is a member's", () =>
+    Effect.gen(function* () {
+      const access = yield* PersonAccess.PersonAccess;
+      const threadId = yield* thread("thread:member-told-once");
+      const session = { sessionId: AuthSessionId.make("session:desk"), subject: "one-time-token" };
+      const handlers = makeSharingRpcHandlers({ access, session });
+      assert.deepStrictEqual(yield* handlers[J5_SHARING_WS_METHODS.getConnectionAccess](), {
+        kind: "member",
+      });
+      // The feed ends after its one answer, so nothing stays open for a member.
+      assert.deepStrictEqual(
+        yield* handlers[J5_SHARING_WS_METHODS.subscribeThreadAccess]({ threadId }).pipe(
+          Stream.runCollect,
+        ),
+        [{ kind: "member", level: "collaborate" }],
+      );
     }),
   );
 

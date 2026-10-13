@@ -16,7 +16,6 @@ import {
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
-import { shellSnapshotFor } from "../j5/sharing/GuestView.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import {
@@ -154,10 +153,8 @@ export const layer = HttpApiBuilder.group(
         "shellSnapshot",
         Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return yield* loadShellSnapshot().pipe(
-            // J5: a guest's sidebar lists only what its grants cover (FORK.md case 69).
-            Effect.flatMap((snapshot) => shellSnapshotFor(session, snapshot)),
             traceLocalHandlerWork,
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_snapshot_failed", cause),

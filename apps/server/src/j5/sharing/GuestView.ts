@@ -10,11 +10,12 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
+  type ServerProvider,
+  type ServerProviderModel,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { identity } from "effect/Function";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -25,7 +26,8 @@ import { GUEST_SESSION_SUBJECT, PersonAccess, type SessionIdentity } from "./Per
  * What a guest's connection is told (Shared server AC12, AC23). A guest's client cannot connect
  * without the server configuration, the lifecycle welcome and the sidebar feed, so a guest gets
  * each in a reduced form: what a client needs to draw a granted thread, and none of the host's
- * paths, network addresses, provider accounts or settings. That holds outside the threads a guest
+ * paths, network addresses, provider accounts or settings. Its providers are named, with their
+ * models, and nothing more. That holds outside the threads a guest
  * was granted. A granted thread's own contents are shared whole: its thread load and its feed
  * carry its worktree path and working directory, as its history already does. A member's
  * connection gets upstream's answer untouched; nothing here looks past the session's subject.
@@ -57,6 +59,47 @@ const PROTOCOL_FLAGS = [
   "threadFindProgressive",
 ] as const satisfies ReadonlyArray<keyof ServerConfig>;
 
+/** When a reduced provider says it was checked: the schema needs a time, and the real one is the host's. */
+const PLACEHOLDER_CHECKED_AT = "1970-01-01T00:00:00.000Z";
+
+const reduceModel = (model: ServerProviderModel): ServerProviderModel => ({
+  slug: model.slug,
+  name: model.name,
+  ...(model.shortName === undefined ? {} : { shortName: model.shortName }),
+  ...(model.subProvider === undefined ? {} : { subProvider: model.subProvider }),
+  isCustom: model.isCustom,
+  ...(model.isDefault === undefined ? {} : { isDefault: model.isDefault }),
+  ...(model.isLegacy === undefined ? {} : { isLegacy: model.isLegacy }),
+  capabilities: model.capabilities,
+});
+
+/**
+ * A provider as a guest's client is told of it: which one it is, what it is called and the models
+ * it offers. Upstream's composer shows its "enable a provider" setup state when the list is empty,
+ * and with these it shows a thread's model and, for a guest with View, its own read-only state.
+ * Nothing of the provider's sign-in, version, health, paths, usage, skills or commands is sent:
+ * each is left out or given its emptiest valid value. Built field by field, so a field upstream
+ * adds later is left out until it is listed here.
+ */
+const reduceProvider = (provider: ServerProvider): ServerProvider => ({
+  instanceId: provider.instanceId,
+  driver: provider.driver,
+  ...(provider.displayName === undefined ? {} : { displayName: provider.displayName }),
+  enabled: true,
+  installed: true,
+  version: null,
+  status: "ready",
+  auth: { status: "unknown" },
+  checkedAt: PLACEHOLDER_CHECKED_AT,
+  models: provider.models.map(reduceModel),
+  slashCommands: [],
+  skills: [],
+});
+
+/** The providers a guest is told of: every one a thread could be running on, reduced. */
+const reduceProviders = (providers: ServerConfig["providers"]) =>
+  providers.filter((provider) => provider.enabled).map(reduceProvider);
+
 /**
  * The configuration a guest's client is given. Built field by field, so a field upstream adds
  * later is left out until it is listed here.
@@ -68,7 +111,7 @@ export const reduceServerConfig = (config: ServerConfig): ServerConfig => ({
   keybindingsConfigPath: PLACEHOLDER_PATH,
   keybindings: [],
   issues: [],
-  providers: [],
+  providers: reduceProviders(config.providers),
   availableEditors: [],
   observability: {
     logsDirectoryPath: PLACEHOLDER_PATH,
@@ -232,8 +275,8 @@ const guestView = (access: PersonAccess["Service"], session: SessionIdentity): C
   const filter = makeShellFilter(access, session);
   return {
     config: reduceServerConfig,
-    // The reduced configuration holds nothing that changes while connected, so every later
-    // provider, settings, keybinding, theme and usage update is dropped rather than reduced.
+    // Every later provider, settings, keybinding, theme and usage update is dropped rather than
+    // reduced: a guest's client keeps the providers and models it was told of when it connected.
     configStream: (stream) =>
       stream.pipe(
         Stream.filter((event) => event.type === "snapshot"),
@@ -293,23 +336,3 @@ export const connectionView = (
   session.subject !== GUEST_SESSION_SUBJECT
     ? Effect.succeed(MEMBER_VIEW)
     : Effect.map(PersonAccess, (access) => guestView(access, session));
-
-/**
- * The sidebar snapshot `GET /api/orchestration/shell` answers with: a member's is returned as is.
- * `PersonAccess` is looked up only for a guest, so upstream's route asks for nothing new; where it
- * is not provided a guest's request fails rather than being answered in full.
- */
-export const shellSnapshotFor = (
-  session: SessionIdentity,
-  snapshot: OrchestrationV2ShellSnapshot,
-) =>
-  session.subject !== GUEST_SESSION_SUBJECT
-    ? Effect.succeed(snapshot)
-    : Effect.serviceOption(PersonAccess).pipe(
-        Effect.flatMap(
-          Option.match({
-            onNone: () => Effect.die("PersonAccess is not provided to the sidebar snapshot route"),
-            onSome: (access) => makeShellFilter(access, session).snapshot(snapshot),
-          }),
-        ),
-      );

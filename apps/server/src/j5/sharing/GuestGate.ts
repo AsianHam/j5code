@@ -8,6 +8,7 @@ import {
   type WsRpcGroup,
   authScopeRequiredResponse,
 } from "@t3tools/contracts";
+import { J5_SHARING_WS_METHODS } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -18,6 +19,7 @@ import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import {
   GUEST_SESSION_SUBJECT,
   type GrantLevel,
+  type MessageAsset,
   PersonAccess,
   layer as personAccessLayer,
 } from "./PersonAccess.ts";
@@ -33,8 +35,9 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 /**
  * A request a guest may make. `thread`: for one thread, at the level named, with the thread read
- * from the payload. `narrowed`: for anything, because its handler answers a guest through
- * `GuestView`, with a reduced or filtered answer in place of upstream's.
+ * from the payload. `messageAsset`: for an attachment or a tool's image that a thread within the
+ * guest's reach holds, by the server's own records. `narrowed`: for anything, because its handler answers a guest through
+ * `GuestView` or `PersonAccess`, with a reduced or filtered answer in place of upstream's.
  */
 type GuestRpcRule =
   | {
@@ -42,7 +45,11 @@ type GuestRpcRule =
       readonly level: GrantLevel;
       readonly threadId: (payload: unknown) => string | undefined;
     }
-  | { readonly kind: "narrowed" };
+  | { readonly kind: "narrowed" }
+  | {
+      readonly kind: "messageAsset";
+      readonly asset: (payload: unknown) => MessageAsset | undefined;
+    };
 
 const payloadThreadId = (payload: unknown) =>
   typeof payload === "object" &&
@@ -51,6 +58,31 @@ const payloadThreadId = (payload: unknown) =>
   typeof payload.threadId === "string"
     ? payload.threadId
     : undefined;
+
+const field = (value: unknown, name: string): unknown =>
+  typeof value === "object" && value !== null && name in value
+    ? (value as Record<string, unknown>)[name]
+    : undefined;
+
+/**
+ * The asset kinds a guest may ask a URL for: the two that are part of a conversation and that the
+ * server can tie to a thread. Every kind keyed by a path or a folder (workspace, media and draft
+ * files, project favicons, GitHub media) and native app icons are not named, so they are refused.
+ */
+const messageAssetOf = (payload: unknown): MessageAsset | undefined => {
+  const resource = field(payload, "resource");
+  const tag = field(resource, "_tag");
+  const attachmentId = field(resource, "attachmentId");
+  const threadId = field(resource, "threadId");
+  const itemId = field(resource, "itemId");
+  if (tag === "attachment" && typeof attachmentId === "string") {
+    return { kind: "attachment", attachmentId };
+  }
+  if (tag === "tool-output-image" && typeof threadId === "string" && typeof itemId === "string") {
+    return { kind: "tool-output-image", threadId: ThreadId.make(threadId), itemId };
+  }
+  return undefined;
+};
 
 const viewThread: GuestRpcRule = { kind: "thread", level: "view", threadId: payloadThreadId };
 const narrowed: GuestRpcRule = { kind: "narrowed" };
@@ -70,6 +102,12 @@ export const GUEST_RPC_RULES: Partial<Record<WsRpcMethod, GuestRpcRule>> = {
   [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: viewThread,
   [ORCHESTRATION_V2_WS_METHODS.searchThread]: viewThread,
   [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: viewThread,
+  // The images and files in a granted thread's messages (AC12); the URL it returns is signed for
+  // that one asset and is the only thing `/api/assets` serves for it.
+  [WS_METHODS.assetsCreateUrl]: { kind: "messageAsset", asset: messageAssetOf },
+  // A guest asking what it holds: answered for its own session, `none` for a thread out of reach.
+  [J5_SHARING_WS_METHODS.getConnectionAccess]: narrowed,
+  [J5_SHARING_WS_METHODS.subscribeThreadAccess]: narrowed,
 };
 
 /** `open`: the route decides what a guest gets. `thread`: allowed when a grant covers the thread. */
@@ -90,14 +128,15 @@ const decodeSegment = (segment: string) => {
 
 /**
  * Which HTTP routes keep a guest's permissions. `/ws` is the RPC socket, whose requests
- * `GUEST_RPC_RULES` decides one by one; the sidebar snapshot is filtered in its handler by
- * `GuestView`. A route that reads no permission at all, such as the one
+ * `GUEST_RPC_RULES` decides one by one. The sidebar snapshot route is refused: a client that is
+ * refused it reads the sidebar from the socket's feed, which `GuestView` filters, so there is one
+ * filtered path and not two. A route that reads no permission at all, such as the one
  * that issues a WebSocket ticket for the caller's own session, is unaffected by the gate and is
  * not listed.
  */
 export const guestHttpRule = (method: string, pathname: string): GuestHttpRule => {
   if (method !== "GET") return { kind: "refuse" };
-  if (pathname === "/ws" || pathname === "/api/orchestration/shell") return { kind: "open" };
+  if (pathname === "/ws") return { kind: "open" };
   const threadLoad = THREAD_LOAD.exec(pathname);
   const threadId = threadLoad?.[1] === undefined ? undefined : decodeSegment(threadLoad[1]);
   return threadId === undefined || threadId.length === 0
@@ -186,18 +225,29 @@ export const layerRpcAuthorization = (
         Effect.gen(function* () {
           const access = yield* PersonAccess;
           const inner = yield* RpcScopeAuthorization;
+          const refuseUnreadable = (cause: unknown) =>
+            Effect.logError("J5 guest gate could not read a grant; refusing", { cause }).pipe(
+              Effect.as(false),
+            );
           const reachesThread = (threadId: ThreadId, level: GrantLevel) =>
             access.threadAccess(session, threadId).pipe(
               Effect.map((held) => reaches(held, level)),
-              Effect.catch((cause) =>
-                Effect.logError("J5 guest gate could not read a grant; refusing", { cause }).pipe(
-                  Effect.as(false),
-                ),
-              ),
+              Effect.catch(refuseUnreadable),
             );
           return RpcScopeAuthorization.of((effect, options) => {
             const rule = GUEST_RPC_RULES[options.rpc._tag as WsRpcMethod];
             if (rule?.kind === "narrowed") return inner(effect, options);
+            if (rule?.kind === "messageAsset") {
+              const asset = rule.asset(options.payload);
+              if (asset === undefined) return Effect.fail(notSharedError());
+              return access.messageAssetAccess(session, asset).pipe(
+                Effect.map((held) => reaches(held, "view")),
+                Effect.catch(refuseUnreadable),
+                Effect.flatMap((allowed) =>
+                  allowed ? inner(effect, options) : Effect.fail(notSharedError()),
+                ),
+              );
+            }
             const named = rule?.threadId(options.payload);
             if (rule === undefined || named === undefined) return Effect.fail(notSharedError());
             const threadId = ThreadId.make(named);

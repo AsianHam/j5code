@@ -1,3 +1,8 @@
+import {
+  GUEST_LIBRARY_UNAVAILABLE,
+  useGuestEnvironmentIds,
+  useIsGuestEverywhere,
+} from "../sharing/guestAccess";
 import { AgentLibraryToast, type AgentLibraryNotification } from "./AgentLibraryToast";
 import { AgentImportConflictModal } from "./AgentImportConflictModal";
 import { AgentCreateModal } from "./AgentCreateModal";
@@ -44,9 +49,25 @@ import { SettingsSection } from "../../features/settings/components/SettingsSect
 import { PlaybookLibrarySettingsSection } from "../playbooks/PlaybookLibrarySettingsScreen";
 
 export function AgentLibrarySettingsScreen() {
+  // A guest is not offered a server's Personas or Playbooks (Shared server AC24).
+  return useIsGuestEverywhere() ? (
+    <View className="p-4">
+      <AgentMessage title={GUEST_LIBRARY_UNAVAILABLE} />
+    </View>
+  ) : (
+    <MemberAgentLibrarySettingsScreen />
+  );
+}
+
+function MemberAgentLibrarySettingsScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { connectedEnvironments } = useRemoteConnectionStatus();
+  const { connectedEnvironments: connected } = useRemoteConnectionStatus();
+  const guestEnvironmentIds = useGuestEnvironmentIds();
+  const connectedEnvironments = useMemo(
+    () => connected.filter((environment) => !guestEnvironmentIds.has(environment.environmentId)),
+    [connected, guestEnvironmentIds],
+  );
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
   const effectiveEnvironmentId = connectedEnvironments.some(
     (environment) => environment.environmentId === selectedEnvironmentId,

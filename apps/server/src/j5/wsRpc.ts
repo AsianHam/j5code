@@ -5,7 +5,11 @@ import {
   J5SkillLinkRpcGroup,
   SkillLinkError,
 } from "@t3tools/contracts";
-import { J5ClientActionRpcGroup, J5PlaybookRpcGroup } from "@t3tools/contracts/j5";
+import {
+  J5ClientActionRpcGroup,
+  J5PlaybookRpcGroup,
+  J5SharingRpcGroup,
+} from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,6 +27,8 @@ import { makeArtifactRpcHandlers } from "./artifacts/artifactRpc.ts";
 import type { ArtifactWorkspace } from "./artifacts/ArtifactWorkspace.ts";
 import { PlaybookStore } from "./playbooks/PlaybookStore.ts";
 import { makePlaybookRpcHandlers } from "./playbooks/playbookRpc.ts";
+import { PersonAccess, type SessionIdentity } from "./sharing/PersonAccess.ts";
+import { makeSharingRpcHandlers } from "./sharing/sharingRpc.ts";
 import { makeSkillCatalogRpcHandlers } from "./skills/skillCatalogRpc.ts";
 import { makeSkillLinkRpcHandlers } from "./skills/skillLinkRpc.ts";
 
@@ -33,6 +39,7 @@ const J5WsRpcGroup = J5AgentPersonaRpcGroup.merge(
   J5SkillLinkRpcGroup,
   J5PlaybookRpcGroup,
   J5ClientActionRpcGroup,
+  J5SharingRpcGroup,
 );
 
 /** Every J5 RPC method, for `ws.ts` to leave out of the group upstream's handlers are typed by. */
@@ -40,7 +47,7 @@ export const J5_WS_RPC_METHODS = [...J5WsRpcGroup.requests.keys()] as ReadonlyAr
   RpcGroup.Rpcs<typeof J5WsRpcGroup>["_tag"]
 >;
 
-type J5WsRpcServices = ClientActionsService | PeerAdminService | ArtifactDeletion;
+type J5WsRpcServices = ClientActionsService | PeerAdminService | ArtifactDeletion | PersonAccess;
 
 /**
  * The server-lifetime J5 services the handlers call. `ws.ts` reads them once, where its route is
@@ -48,7 +55,7 @@ type J5WsRpcServices = ClientActionsService | PeerAdminService | ArtifactDeletio
  */
 export const j5WsRpcServices = Effect.context<J5WsRpcServices>().pipe(
   // Only these: the whole server context laid over a socket's would shadow that socket's own.
-  Effect.map(Context.pick(ClientActionsService, PeerAdminService, ArtifactDeletion)),
+  Effect.map(Context.pick(ClientActionsService, PeerAdminService, ArtifactDeletion, PersonAccess)),
 );
 
 /**
@@ -60,6 +67,7 @@ export const j5WsRpcServices = Effect.context<J5WsRpcServices>().pipe(
 export const layerJ5WsRpc = (
   artifactWorkspace: ArtifactWorkspace["Service"],
   services: Context.Context<J5WsRpcServices>,
+  session: SessionIdentity,
 ) =>
   J5WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -86,6 +94,7 @@ export const layerJ5WsRpc = (
             ),
         })),
         ...(yield* makePlaybookRpcHandlers({ store: yield* PlaybookStore })),
+        ...makeSharingRpcHandlers({ access: yield* PersonAccess, session }),
       });
     }),
   ).pipe(Layer.provide(Layer.succeedContext(services)));

@@ -70,6 +70,12 @@ const SEAMS: ReadonlyArray<Seam> = [
     reaches: ["selectDraftAgent(draftKey, queuedMessage.creation.agentPersonaId ?? null)"],
   },
   {
+    file: "features/threads/ThreadRouteScreen.tsx",
+    record: "case 69: a guest's level on the thread",
+    from: "../../j5/sharing/guestAccess",
+    reaches: ["useCanOperateThread("],
+  },
+  {
     file: "state/use-thread-composer-state.ts",
     record: "case 45: playbook text expansion",
     from: "@t3tools/client-runtime/j5/playbooks",

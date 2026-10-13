@@ -3225,7 +3225,7 @@ export const layer = Layer.unwrap(
               j5CrewSeatArchiveGuard,
             ).pipe(
               // J5: J5's RPC handlers, served on the same socket.
-              Layer.merge(layerJ5WsRpc(artifactWorkspace, j5RpcServices)),
+              Layer.merge(layerJ5WsRpc(artifactWorkspace, j5RpcServices, session)),
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
               // their defects, not the rest of the server's.

@@ -47,6 +47,7 @@ import {
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { uuidv4 } from "../../lib/uuid";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { useCanOperateThread } from "../../j5/sharing/guestAccess";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
@@ -229,9 +230,9 @@ function ThreadRouteContent(
     selectedThreadProject,
     selectedEnvironmentConnection,
   } = useThreadSelection();
-  const canOperateThread = useEnvironmentScope(
+  const canOperateThread = useCanOperateThread(
     selectedThread?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
+    selectedThread?.id ?? null,
   );
   const canReadTerminal = useEnvironmentScope(
     selectedThread?.environmentId ?? null,

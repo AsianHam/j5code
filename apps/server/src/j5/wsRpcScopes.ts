@@ -2,6 +2,7 @@ import { CLIENT_ACTION_RPC_SCOPES } from "./a2a/clientActionRpc.ts";
 import { AGENT_PERSONA_RPC_SCOPES } from "./agents/agentPersonaRpc.ts";
 import { ARTIFACT_RPC_SCOPES } from "./artifacts/artifactRpc.ts";
 import { PLAYBOOK_RPC_SCOPES } from "./playbooks/playbookRpc.ts";
+import { SHARING_RPC_SCOPES } from "./sharing/sharingRpc.ts";
 import { SKILL_CATALOG_RPC_SCOPES } from "./skills/skillCatalogRpc.ts";
 import { SKILL_LINK_RPC_SCOPES } from "./skills/skillLinkRpc.ts";
 
@@ -17,4 +18,5 @@ export const J5_RPC_SCOPES = {
   ...SKILL_LINK_RPC_SCOPES,
   ...PLAYBOOK_RPC_SCOPES,
   ...CLIENT_ACTION_RPC_SCOPES,
+  ...SHARING_RPC_SCOPES,
 } as const;

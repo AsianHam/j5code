@@ -75,15 +75,22 @@ export function createJ5ReadSourcesAtom<A>(input: {
   ) => Atom.Atom<AsyncResult.AsyncResult<SupervisorConnectionState, unknown>>;
   readonly configValueAtom: (id: EnvironmentId) => Atom.Atom<ServerConfig | null>;
   readonly queryAtom: (id: EnvironmentId) => Atom.Atom<AsyncResult.AsyncResult<A, unknown>>;
+  /**
+   * Whether the environment's connection is a guest's. A guest is shown nothing of a server's J5
+   * read models (Shared server AC24), so its source reads as unsupported as soon as this is true,
+   * whatever an earlier read answered, and is not asked again.
+   */
+  readonly guestAtom?: (id: EnvironmentId) => Atom.Atom<boolean>;
 }): Atom.Atom<J5ReadSources<A>> {
   return Atom.make((get) => {
     const catalog = get(input.catalogValueAtom);
     const sources: Array<J5ReadSource<A>> = [];
     for (const [environmentId, entry] of catalog.entries) {
       const state = Option.getOrNull(AsyncResult.value(get(input.stateAtom(environmentId))));
-      const supported = get(input.configValueAtom(environmentId))?.environment.capabilities[
-        input.capability
-      ];
+      const supported =
+        input.guestAtom !== undefined && get(input.guestAtom(environmentId))
+          ? false
+          : get(input.configValueAtom(environmentId))?.environment.capabilities[input.capability];
       sources.push(
         resolveJ5ReadSource({
           environmentId,

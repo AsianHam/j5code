@@ -24,6 +24,7 @@ import {
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import { readCanOperateThread } from "../j5/sharing/threadOperability";
 import { readEnvironmentScope } from "../state/session";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
@@ -150,7 +151,7 @@ export function useThreadActionMenu(input: {
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
         const items = buildThreadActionMenuItems({
-          canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
+          canOperate: readCanOperateThread(threadRef),
           branch: thread.branch ?? null,
           projectFilter: null,
           isPinned: thread.pinnedAt != null,

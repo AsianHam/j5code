@@ -8,15 +8,21 @@ import { useEffect, useMemo } from "react";
 import { environmentCatalog } from "../../connection/catalog";
 import { environmentSession } from "../../state/session";
 import { requestCrewMemberships } from "../crew/CrewMembershipsClient";
+import { j5Sharing } from "../sharing/guestAccess";
 import { requestSpawnedChildren } from "./SpawnedChildrenClient";
 
-/** Each catalogued environment's prepared connection, or null while it is not connected. */
+/**
+ * Each catalogued environment's prepared connection, or null while it is not connected. A guest's
+ * connection is left null too once it is known to be one: the server refuses a guest these reads
+ * (Shared server AC24). Nothing waits for that answer, so a member's rows are read at once.
+ */
 export const threadReadConnectionsAtom = Atom.make((get) => {
   const connections = new Map<EnvironmentId, PreparedConnection | null>();
   for (const id of get(environmentCatalog.catalogValueAtom).entries.keys()) {
     const state = Option.getOrNull(AsyncResult.value(get(environmentCatalog.stateAtom(id))));
     const prepared = get(environmentSession.preparedConnectionValueAtom(id));
-    connections.set(id, state?.phase === "connected" ? Option.getOrNull(prepared) : null);
+    const readable = state?.phase === "connected" && !get(j5Sharing.isGuest(id));
+    connections.set(id, readable ? Option.getOrNull(prepared) : null);
   }
   return connections;
 });

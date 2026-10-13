@@ -5,6 +5,7 @@ import { Rpc, RpcGroup } from "effect/rpc";
 export * from "./j5/actionError.ts";
 export * from "./j5/peerPoll.ts";
 export * from "./j5/playbook.ts";
+export * from "./j5/sharing.ts";
 
 import { ModelSelection } from "./modelSelection.ts";
 import {

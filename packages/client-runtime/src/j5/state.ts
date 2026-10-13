@@ -21,6 +21,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "../state/runtime.ts";
 import * as J5Http from "./http.ts";
+import { sharingConnectionIsKnownGuest } from "./sharing.ts";
 
 const preparedConnection = Effect.gen(function* () {
   const supervisor = yield* EnvironmentSupervisor;
@@ -28,6 +29,16 @@ const preparedConnection = Effect.gen(function* () {
   const state = yield* SubscriptionRef.get(supervisor.state);
   if (Option.isNone(prepared) || state.phase !== "connected") {
     return yield* new J5Http.J5HttpError({ status: 0, detail: "The environment is disconnected." });
+  }
+  // A guest is shown nothing of the server's inbox, Fleet page, Crews or Playbooks (Shared server
+  // AC24) and the server refuses each of these reads. Once the connection is known to be a
+  // guest's, none is sent: the read reports the environment as one without the feature, which is
+  // never polled. The check does not wait for that answer, so a member's reads are not delayed.
+  if (yield* sharingConnectionIsKnownGuest) {
+    return yield* new J5Http.J5HttpError({
+      status: 501,
+      detail: "This is not shared with you on this server.",
+    });
   }
   return prepared.value;
 });
