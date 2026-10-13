@@ -8,6 +8,7 @@ import { J5_SHARING_WS_METHODS } from "@t3tools/contracts/j5";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { j5Environment } from "../state";
 import { NAME_IN_USE } from "./shareLink.logic";
 
 const command = <Tag extends Parameters<typeof createEnvironmentRpcCommand>[1]["tag"]>(tag: Tag) =>
@@ -23,11 +24,15 @@ export const sharingManage = {
     label: "environment-data:j5-sharing:people",
     tag: J5_SHARING_WS_METHODS.listPeople,
     staleTimeMs: 0,
+    // The server moves this when a person, grant, device or link changes, here or on another
+    // client; a link that expires by time does not move it.
+    refreshTrigger: j5Environment.rereadOn("sharing"),
   }),
   openLinks: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:j5-sharing:open-links",
     tag: J5_SHARING_WS_METHODS.listOpenLinks,
     staleTimeMs: 0,
+    refreshTrigger: j5Environment.rereadOn("sharing"),
   }),
   // Names the person the server belongs to; a guest and an agent know them by it.
   setOwnerName: command(J5_SHARING_WS_METHODS.setOwnerName),
@@ -36,6 +41,12 @@ export const sharingManage = {
   createLink: command(J5_SHARING_WS_METHODS.createLink),
   createOpenLink: command(J5_SHARING_WS_METHODS.createOpenLink),
   revokeOpenLink: command(J5_SHARING_WS_METHODS.revokeOpenLink),
+  removeGrant: command(J5_SHARING_WS_METHODS.removeGrant),
+  removePerson: command(J5_SHARING_WS_METHODS.removePerson),
+  revokeDevice: command(J5_SHARING_WS_METHODS.revokeDevice),
+  revokeLink: command(J5_SHARING_WS_METHODS.revokeLink),
+  // Renaming also confirms a name a guest gave themselves; the two are one request.
+  renamePerson: command(J5_SHARING_WS_METHODS.renamePerson),
 };
 
 export const peopleQuery = (environmentId: EnvironmentId) =>

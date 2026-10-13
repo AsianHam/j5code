@@ -33,7 +33,7 @@ import {
  * server advertises; any other client knows only the one it reached the server at. Nothing is
  * opened to make a link work (Shared server AC22).
  */
-function useLinkRoutes(environmentId: EnvironmentId): ReadonlyArray<LinkRoute> {
+export function useLinkRoutes(environmentId: EnvironmentId): ReadonlyArray<LinkRoute> {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const advertised = useEnvironmentQuery(
     isElectron && environmentId === primaryEnvironmentId ? desktopNetworkAccessStateAtom : null,
@@ -44,6 +44,14 @@ function useLinkRoutes(environmentId: EnvironmentId): ReadonlyArray<LinkRoute> {
     if (routes.length > 0) return routes;
     return [linkRouteFromBaseUrl(baseUrl ?? window.location.origin)];
   }, [advertised.data, baseUrl]);
+}
+
+/** The address a link has over the route this client would offer first, for a one-click copy. */
+export function useLinkAddress(environmentId: EnvironmentId): (secret: string) => string | null {
+  const routes = useLinkRoutes(environmentId);
+  const defaultRouteKey = useUiStateStore((state) => state.defaultAdvertisedEndpointKey);
+  const route = selectQrEndpointOption(routes, null, defaultRouteKey);
+  return (secret) => route?.urlFor(secret) ?? null;
 }
 
 /**

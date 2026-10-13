@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedProjectRef, ThreadId } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { Link2Icon, UsersIcon } from "lucide-react";
 
 import {
@@ -10,6 +11,7 @@ import {
 } from "../../components/CommandPalette.logic";
 import { useProject } from "../../state/entities";
 import { j5Sharing } from "./guestAccess";
+import { useCanSeePeople } from "./peopleAccess";
 import { openSharingDialog } from "./sharingDialogs";
 import { sharingManage } from "./sharingManage";
 
@@ -37,6 +39,8 @@ export function useSharingPaletteItems(input: {
   const project = useProject(
     projectRef === null ? null : scopeProjectRef(projectRef.environmentId, projectRef.projectId),
   );
+  const canSeePeople = useCanSeePeople();
+  const navigate = useNavigate();
   if (environmentId === null || isGuest) return [];
 
   const items: CommandPaletteActionItem[] = [];
@@ -91,6 +95,19 @@ export function useSharingPaletteItems(input: {
           environmentId: activeThread.environmentId,
           threadId: activeThread.id,
         });
+      },
+    });
+  }
+  if (canSeePeople) {
+    items.push({
+      kind: "action",
+      value: "action:j5-open-people",
+      searchTerms: ["open people", "guests", "members", "share", "sharing", "devices", "settings"],
+      title: "Open People",
+      description: "Settings",
+      icon: <UsersIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/settings/people" });
       },
     });
   }

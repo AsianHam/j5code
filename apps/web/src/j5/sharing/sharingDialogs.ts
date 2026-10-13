@@ -11,7 +11,10 @@ export type SharingDialogRequest =
   | {
       readonly kind: "share";
       readonly environmentId: EnvironmentId;
-      readonly target: SharingGrantTarget;
+      /** `null` when opened from a place that names no thread or project: the dialog asks. */
+      readonly target: SharingGrantTarget | null;
+      /** Someone already on the server who is being given more; no link is made for them. */
+      readonly person?: { readonly personId: string; readonly name: string };
     }
   | {
       /** The person the server belongs to sets or changes the name they are known by on it. */
@@ -21,7 +24,18 @@ export type SharingDialogRequest =
   | {
       readonly kind: "join-link";
       readonly environmentId: EnvironmentId;
-      readonly threadId: ThreadId;
+      /** `null` when opened from the People page: the dialog asks which thread. */
+      readonly threadId: ThreadId | null;
+    }
+  | {
+      readonly kind: "rename";
+      readonly environmentId: EnvironmentId;
+      readonly person: { readonly personId: string; readonly name: string };
+    }
+  | {
+      readonly kind: "device-link";
+      readonly environmentId: EnvironmentId;
+      readonly person: { readonly personId: string; readonly name: string };
     };
 
 interface SharingDialogState {

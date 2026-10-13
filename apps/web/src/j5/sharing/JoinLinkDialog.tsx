@@ -30,6 +30,7 @@ import {
   type LinkLifetime,
 } from "./shareLink.logic";
 import { ShareLinkPanel } from "./ShareLinkPanel";
+import { TargetPicker } from "./TargetPicker";
 import {
   linkSecretMadeHere,
   openLinksQuery,
@@ -47,14 +48,17 @@ import {
  */
 export function JoinLinkDialog({
   environmentId,
-  threadId,
+  threadId: givenThreadId,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
+  /** `null` when the dialog was opened from the People page: it asks which thread. */
+  readonly threadId: ThreadId | null;
   readonly onClose: () => void;
 }) {
-  const thread = useThreadShell(scopeThreadRef(environmentId, threadId));
+  const [pickedThreadId, setPickedThreadId] = useState<ThreadId | null>(null);
+  const threadId = givenThreadId ?? pickedThreadId;
+  const thread = useThreadShell(threadId === null ? null : scopeThreadRef(environmentId, threadId));
   const canManage = useAtomValue(sharingManage.createOpenLink.permissionAtom(environmentId));
   const links = useEnvironmentQuery(canManage ? openLinksQuery(environmentId) : null);
   const people = useEnvironmentQuery(canManage ? peopleQuery(environmentId) : null);
@@ -68,10 +72,14 @@ export function JoinLinkDialog({
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
-  const active = links.data === null ? null : activeOpenLinkFor(links.data.links, threadId, nowMs);
+  const active =
+    links.data === null || threadId === null
+      ? null
+      : activeOpenLinkFor(links.data.links, threadId, nowMs);
   const title = thread?.title ?? "this thread";
 
   const make = async () => {
+    if (threadId === null) return;
     setBusy(true);
     setError(null);
     const created = await createOpenLink({ environmentId, input: { threadId, lifetime } });
@@ -127,7 +135,18 @@ export function JoinLinkDialog({
             <>
               <div>
                 <p className="mb-1.5 text-xs font-medium text-foreground">Thread</p>
-                <p className="truncate text-sm text-foreground">{title}</p>
+                {givenThreadId === null ? (
+                  <TargetPicker
+                    environmentId={environmentId}
+                    threadsOnly
+                    onPick={(target) =>
+                      setPickedThreadId(target?.kind === "thread" ? target.threadId : null)
+                    }
+                    disabled={busy}
+                  />
+                ) : (
+                  <p className="truncate text-sm text-foreground">{title}</p>
+                )}
               </div>
               <LinkLifetimeRow
                 value={lifetime}
@@ -162,7 +181,7 @@ export function JoinLinkDialog({
                 Cancel
               </Button>
               <Button
-                disabled={busy || !canManage || links.data === null}
+                disabled={busy || !canManage || links.data === null || threadId === null}
                 onClick={() => void make()}
               >
                 {busy ? "Making link…" : "Make link"}

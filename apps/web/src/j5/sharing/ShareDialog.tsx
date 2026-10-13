@@ -44,6 +44,7 @@ import {
   type LinkLifetime,
 } from "./shareLink.logic";
 import { ShareLinkPanel } from "./ShareLinkPanel";
+import { TargetPicker } from "./TargetPicker";
 import {
   peopleQuery,
   refreshSharing,
@@ -77,14 +78,17 @@ const LEVELS: ReadonlyArray<{
 ];
 
 /** The thread's or project's title, as the person sharing it knows it. */
-function useTargetTitle(environmentId: EnvironmentId, target: SharingGrantTarget): string | null {
+export function useTargetTitle(
+  environmentId: EnvironmentId,
+  target: SharingGrantTarget | null,
+): string | null {
   const thread = useThreadShell(
-    target.kind === "thread" ? scopeThreadRef(environmentId, target.threadId) : null,
+    target?.kind === "thread" ? scopeThreadRef(environmentId, target.threadId) : null,
   );
   const project = useProject(
-    target.kind === "project" ? scopeProjectRef(environmentId, target.projectId) : null,
+    target?.kind === "project" ? scopeProjectRef(environmentId, target.projectId) : null,
   );
-  return target.kind === "thread" ? (thread?.title ?? null) : (project?.title ?? null);
+  return target?.kind === "thread" ? (thread?.title ?? null) : (project?.title ?? null);
 }
 
 /**
@@ -94,13 +98,19 @@ function useTargetTitle(environmentId: EnvironmentId, target: SharingGrantTarget
  */
 export function ShareDialog({
   environmentId,
-  target,
+  target: givenTarget,
+  person: givenPerson,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly target: SharingGrantTarget;
+  /** `null` when the dialog was opened from the People page: it asks what to share. */
+  readonly target: SharingGrantTarget | null;
+  /** Someone already on the server who is being given more access. */
+  readonly person?: { readonly personId: string; readonly name: string } | undefined;
   readonly onClose: () => void;
 }) {
+  const [pickedTarget, setPickedTarget] = useState<SharingGrantTarget | null>(null);
+  const target = givenTarget ?? pickedTarget;
   const targetTitle = useTargetTitle(environmentId, target);
   const canManage = useAtomValue(sharingManage.putGrant.permissionAtom(environmentId));
   const people = useEnvironmentQuery(canManage ? peopleQuery(environmentId) : null);
@@ -110,9 +120,10 @@ export function ShareDialog({
   const putGrant = useAtomCommand(sharingManage.putGrant, { reportFailure: false });
   const createLink = useAtomCommand(sharingManage.createLink, { reportFailure: false });
 
-  const [name, setName] = useState("");
+  const [name, setName] = useState(givenPerson?.name ?? "");
   // Someone already on the server, picked from the names that match what was typed.
-  const [existing, setExisting] = useState<SharingPerson | null>(null);
+  const [pickedPerson, setPickedPerson] = useState<SharingPerson | null>(null);
+  const existing = givenPerson ?? pickedPerson;
   // A person this dialog made whose grant or link then failed: a second try reuses them.
   const [made, setMade] = useState<SharingPerson | null>(null);
   const [level, setLevel] = useState<SharingGrantLevel>("view");
@@ -125,7 +136,7 @@ export function ShareDialog({
 
   const typedName = name.trim();
   const matches = guestsMatchingName(people.data?.people ?? [], name);
-  const noun = target.kind === "thread" ? "thread" : "project";
+  const noun = target === null ? "thread or project" : target.kind;
 
   const makeLink = async (personId: string) => {
     const created = await createLink({ environmentId, input: { personId, lifetime } });
@@ -139,10 +150,11 @@ export function ShareDialog({
   };
 
   const share = async () => {
+    if (target === null) return;
     setBusy(true);
     setError(null);
     try {
-      let person = existing ?? made;
+      let person: { readonly personId: string } | null = existing ?? made;
       if (person === null) {
         // The contract refuses such a name before the server sees it, with no words for a person.
         if (!isPersonName(typedName)) {
@@ -155,7 +167,7 @@ export function ShareDialog({
           return;
         }
         person = guest.value;
-        setMade(person);
+        setMade(guest.value);
       }
       const granted = await putGrant({
         environmentId,
@@ -234,9 +246,19 @@ export function ShareDialog({
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Share {noun}</DialogTitle>
+          <DialogTitle>{givenTarget === null ? "Share" : `Share ${givenTarget.kind}`}</DialogTitle>
         </DialogHeader>
         <DialogPanel>
+          {givenTarget === null ? (
+            <div>
+              <p className="mb-1.5 text-xs font-medium text-foreground">Thread or project</p>
+              <TargetPicker
+                environmentId={environmentId}
+                onPick={setPickedTarget}
+                disabled={busy || made !== null}
+              />
+            </div>
+          ) : null}
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-foreground">Name</span>
             <Autocomplete
@@ -247,7 +269,7 @@ export function ShareDialog({
               onValueChange={(value, details) => {
                 setName(value);
                 setError(null);
-                setExisting(
+                setPickedPerson(
                   details.reason === "item-press"
                     ? (matches.find((person) => person.displayName === value) ?? null)
                     : null,
@@ -255,9 +277,9 @@ export function ShareDialog({
               }}
             >
               <AutocompleteInput
-                autoFocus
+                autoFocus={givenTarget !== null}
                 placeholder="What the agent and other people call them"
-                disabled={busy || made !== null}
+                disabled={busy || made !== null || givenPerson !== undefined}
                 maxLength={80}
               />
               {matches.length > 0 && existing === null ? (
@@ -347,9 +369,9 @@ export function ShareDialog({
           ) : null}
           <Alert>
             <AlertDescription>
-              {target.kind === "thread"
-                ? "Sharing a thread shares the agent's whole history, including any agents it spawned."
-                : "Sharing a project shares every thread in it and its artifacts, including any agents they spawned."}
+              {target?.kind === "project"
+                ? "Sharing a project shares every thread in it and its artifacts, including any agents they spawned."
+                : "Sharing a thread shares the agent's whole history, including any agents it spawned."}
             </AlertDescription>
           </Alert>
           {existing === null ? (
@@ -371,7 +393,10 @@ export function ShareDialog({
           <Button variant="outline" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={busy || !canManage || typedName === ""} onClick={() => void share()}>
+          <Button
+            disabled={busy || !canManage || typedName === "" || target === null}
+            onClick={() => void share()}
+          >
             {existing !== null
               ? busy
                 ? "Sharing…"

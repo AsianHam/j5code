@@ -59,6 +59,8 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("~/connection/runtime", () => ({ connectionAtomRuntime: undefined }));
+// J5 (case 72): the Sharing section has its own tests and needs a connection runtime.
+vi.mock("../../j5/sharing/ProjectSharingSettings", () => ({ ProjectSharingSettings: () => null }));
 vi.mock("@t3tools/client-runtime/state/session", () => ({
   createEnvironmentSessionAtoms: () => ({
     sessionStateAtom: (id: EnvironmentId) => state.sessions.get(id)!,

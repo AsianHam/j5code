@@ -25,6 +25,7 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
+  | "/settings/people"
   | "/settings/archived";
 
 /**
@@ -102,6 +103,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
+  "/settings/people": "People",
   "/settings/archived": "Archive",
 };
 
@@ -611,6 +613,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "people",
+    title: "People",
+    to: "/settings/people",
+    searchTerms: ["guests members share sharing join link devices access collaborate view"],
+  },
+  {
     id: "providers",
     title: "Providers",
     to: "/settings/providers",
@@ -961,6 +969,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
+  "/settings/people": "connections",
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
 };

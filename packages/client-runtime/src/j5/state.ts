@@ -117,6 +117,8 @@ export function createJ5EnvironmentAtoms<R, E>(
       readRevisions(JSON.stringify([target.environmentId, ...keys]));
   return {
     readChanges,
+    /** A `refreshTrigger` for a read made elsewhere that one of the server's revisions covers. */
+    rereadOn,
     playbookChanges: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "j5:playbook-changes",
       tag: J5_PLAYBOOK_WS_METHODS.subscribeChanges,
