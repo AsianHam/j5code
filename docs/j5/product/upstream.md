@@ -535,3 +535,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-13 — D33: sharing and shared conversations are not supported on mobile (Jackson; [#609](https://github.com/Jacksondr5/j5code/issues/609)).
 - 2026-10-13 — D33: the agent is told who answered its approval prompts, on the note at the top of the next message (Jackson; [#533](https://github.com/Jacksondr5/j5code/issues/533)).
 - 2026-10-13 — D33: a person's reply from the inbox names them, and says where they stand in a shared conversation (Jackson; [#533](https://github.com/Jacksondr5/j5code/issues/533)).
+- 2026-10-13 — D33: upstream's launch request is taken in as a message is, so a thread started in a shared project is a shared conversation from its first message; the second `ws.ts` wrap approved (Jackson; [#533](https://github.com/Jacksondr5/j5code/issues/533)).
