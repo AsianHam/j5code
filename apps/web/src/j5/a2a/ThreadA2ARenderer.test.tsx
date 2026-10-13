@@ -327,6 +327,11 @@ describe("ThreadA2ADeliveryRenderer", () => {
       "agent:counterpart was rolled_back without replying",
     ],
     [
+      "queued-message-removed",
+      "Your message to agent:counterpart was removed from its queue before it ran, so agent:counterpart never read it. Send it again if it still matters. The message began: Review part 2.\nSecond line.",
+      "agent:counterpart never read a queued message: it was removed before it ran",
+    ],
+    [
       "awaiting-human",
       "agent:counterpart is awaiting the human on exchange:human (awaiting-human).",
       "agent:counterpart is awaiting the human",

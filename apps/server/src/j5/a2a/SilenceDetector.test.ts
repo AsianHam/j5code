@@ -47,6 +47,8 @@ import { runJ5A2AMigrations } from "./Migrations.ts";
 import { A2ASendService, layer as sendLayer } from "./SendService.ts";
 import {
   A2ASilenceDetector,
+  REMOVED_NOTICE_TYPE,
+  removedNoticeMessage,
   SilenceNoticePayload,
   STOPPED_NOTICE_INSTRUCTION,
   layer as liveSilenceDetectorLayer,
@@ -110,11 +112,13 @@ const defaultRunId = RunId.make("run:silence:test");
  * default run; `seedInbound` records which run a delivered ask belongs to.
  */
 const thread: {
+  thread: { archivedAt: string | null; deletedAt: string | null };
   runs: Array<OrchestrationV2Run>;
   messages: Array<{ readonly id: MessageId; readonly runId: RunId }>;
-} = { runs: [], messages: [] };
+} = { thread: { archivedAt: null, deletedAt: null }, runs: [], messages: [] };
 
 const threadMock = (overrides: Partial<ThreadManagementService["Service"]> = {}) => {
+  thread.thread = { archivedAt: null, deletedAt: null };
   thread.runs = [runOf(terminalEvent("completed"))];
   thread.messages = [];
   return Layer.mock(ThreadManagementService)({
@@ -408,6 +412,7 @@ const terminalEvent = (
     userMessageId: MessageId.make("message:silence:upstream"),
     completedAtSecond: 3,
   },
+  started = true,
 ): OrchestrationV2StoredEvent => {
   const completedAt = DateTime.makeUnsafe(iso(carries.completedAtSecond));
   const runId = carries.id;
@@ -433,7 +438,7 @@ const terminalEvent = (
         activeAttemptId: null,
         status,
         requestedAt: DateTime.makeUnsafe(iso(0)),
-        startedAt: DateTime.makeUnsafe(iso(1)),
+        startedAt: started ? DateTime.makeUnsafe(iso(1)) : null,
         completedAt,
         checkpointId: null,
         contextHandoffId: null,
@@ -684,6 +689,96 @@ it.effect("follows a queued ask promoted into the running turn (#435)", () =>
     assert.equal(notices[0]?.state, "turn-ended-no-reply");
     assert.equal(notices[0]?.runId, runOf(running).id);
   }).pipe(Effect.provide(makeTestLayer())),
+);
+
+/** A message the waiter sent the subject without asking for a reply, queued as `carrierRunId`. */
+const seedQueuedMessage = Effect.fn("test.j5.a2a.silence.seedQueuedMessage")(function* () {
+  const sent = yield* (yield* A2ASendService).send({
+    commandId: CommCommandId.make("command:silence:send:queued"),
+    senderThreadId: waiter.threadId,
+    to: subject.id,
+    message: "Queued update that never ran",
+    acceptedAt: iso(1),
+  });
+  yield* (yield* A2ALedger).append({
+    commandId: CommCommandId.make("command:silence:delivered:queued"),
+    projectId,
+    acceptedAt: iso(2),
+    event: {
+      kind: "message.delivered",
+      sender: waiter.id,
+      receiver: subject.id,
+      exchangeId: null,
+      correlationId: CorrelationId.make("correlation:silence:delivered:queued"),
+      payload: { messageId: sent.messageId, attempt: 1, channel: "agent" },
+      createdAt: iso(2),
+    },
+  });
+  thread.messages.push({ id: deliveryMessageId(sent.messageId), runId: carrierRunId });
+  // Removed from the queue: the run ended without ever starting.
+  const removed = terminalEvent(
+    "cancelled",
+    100,
+    { id: carrierRunId, userMessageId: deliveryMessageId(sent.messageId), completedAtSecond: 3 },
+    false,
+  );
+  thread.runs = [runOf(removed)];
+  return removed;
+});
+
+const readRemovedNotices = Effect.fn("test.j5.a2a.silence.readRemovedNotices")(function* () {
+  return yield* (yield* SqlClient.SqlClient)<{
+    readonly receiver_id: string;
+    readonly message_text: string;
+  }>`
+    SELECT receiver_id, message_text
+    FROM j5_a2a_delivery
+    WHERE envelope_channel = 'silence_notice'
+  `;
+});
+
+it.effect("tells the sender once when its queued message is removed before it runs", () =>
+  Effect.gen(function* () {
+    yield* seed();
+    const removed = yield* seedQueuedMessage();
+    const detector = yield* A2ASilenceDetector;
+
+    yield* detector.handleStoredEvent(removed);
+    yield* detector.handleStoredEvent(removed);
+
+    const notices = yield* readRemovedNotices();
+    assert.lengthOf(notices, 1);
+    assert.equal(notices[0]?.receiver_id, waiter.id);
+    assert.include(
+      notices[0]?.message_text,
+      `[Cross-agent messaging system notice: ${REMOVED_NOTICE_TYPE}]`,
+    );
+    assert.include(
+      notices[0]?.message_text,
+      removedNoticeMessage(subject.id, "Queued update that never ran"),
+    );
+  }).pipe(Effect.provide(makeTestLayer())),
+);
+
+it.effect.each(["promoted into the running turn", "archived with its receiver"] as const)(
+  "says nothing about a queued message %s",
+  (reason) =>
+    Effect.gen(function* () {
+      yield* seed();
+      const removed = yield* seedQueuedMessage();
+      if (reason === "archived with its receiver") {
+        thread.thread = { archivedAt: iso(3), deletedAt: null };
+      } else {
+        thread.messages = thread.messages.map((message) => ({
+          ...message,
+          runId: defaultRunId,
+        }));
+      }
+
+      yield* (yield* A2ASilenceDetector).handleStoredEvent(removed);
+
+      assert.lengthOf(yield* readRemovedNotices(), 0);
+    }).pipe(Effect.provide(makeTestLayer())),
 );
 
 it.effect("no-ops when A9 drops after the A3 read but before its serialized append", () =>

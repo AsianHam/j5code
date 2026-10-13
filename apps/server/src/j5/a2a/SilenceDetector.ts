@@ -18,8 +18,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
+import { canBeNotified } from "./deliveryNotices.ts";
 import { A2ADeliveryWorker } from "./DeliveryWorker.ts";
-import { deliveryMessageId } from "./DeliveryTransport.ts";
+import { deliveryMessageId, ledgerMessageIdOfDelivery } from "./DeliveryTransport.ts";
 import { formatSilenceNoticeEnvelope } from "./EnvelopeFormatter.ts";
 import { A2ALedger } from "./LedgerService.ts";
 import { findPeerCounterparty } from "./peerCounterparty.ts";
@@ -145,6 +146,13 @@ interface DeliveryStateRow {
   readonly status: "pending" | "retry_scheduled" | "delivered" | "alarmed";
 }
 
+interface RemovedDeliveryRow {
+  readonly project_id: string;
+  readonly message_id: string;
+  readonly sender_id: string;
+  readonly message_text: string;
+}
+
 interface CursorRow {
   readonly after_sequence: number | null;
 }
@@ -181,6 +189,19 @@ const correlationIdFor = (projectId: string, exchangeId: string, deliveryMessage
   CorrelationId.make(
     `correlation:j5:a2a:silence:${noticeIdentity(projectId, exchangeId, deliveryMessageId)}`,
   );
+
+export const REMOVED_NOTICE_TYPE = "queued-message-removed" as const;
+
+const REMOVED_NOTICE_EXCERPT_LENGTH = 200;
+
+/** Told to the sender of a queued message that was taken out of the receiver's queue unread. */
+export const removedNoticeMessage = (subjectId: ParticipantId, text: string): string => {
+  const excerpt =
+    text.length > REMOVED_NOTICE_EXCERPT_LENGTH
+      ? `${text.slice(0, REMOVED_NOTICE_EXCERPT_LENGTH)}…`
+      : text;
+  return `Your message to ${subjectId} was removed from its queue before it ran, so ${subjectId} never read it. Send it again if it still matters. The message began: ${excerpt}`;
+};
 
 const noticeMessage = (payload: SilenceNoticePayload, exchangeId: ExchangeId): string => {
   switch (payload.state) {
@@ -464,6 +485,76 @@ const makeLayer = (daemon: boolean) =>
           : [];
       });
 
+      /**
+       * A queued message that leaves the queue unread, whoever removed it, is told to its sender:
+       * the ledger recorded it delivered when it joined the queue (#504). An ask is reported on its
+       * Exchange instead, a promoted message moved into the running turn, and an archived receiver
+       * is gone altogether. A sender on a peer server is not told: a peer accepts a platform
+       * notice only for an Exchange.
+       */
+      const noticeRemovedDelivery = Effect.fn("j5.a2a.silence.noticeRemovedDelivery")(function* (
+        run: OrchestrationV2Run,
+        threadId: ThreadId,
+        subjectId: ParticipantId,
+        observedAt: string,
+      ) {
+        const messageId = ledgerMessageIdOfDelivery(run.userMessageId);
+        if (run.status !== "cancelled" || run.startedAt !== null || messageId === undefined) {
+          return [];
+        }
+        const rows = yield* sql<RemovedDeliveryRow>`
+          SELECT project_id, message_id, sender_id, message_text
+          FROM j5_a2a_delivery
+          WHERE message_id = ${messageId}
+            AND receiver_id = ${subjectId}
+            AND status = 'delivered'
+            AND envelope_channel = 'peer'
+            AND exchange_role <> 'ask'
+            AND origin_environment_id IS NULL
+          LIMIT 2
+        `;
+        const row = rows[0];
+        if (rows.length !== 1 || row === undefined) return [];
+        if (!canBeNotified(row.sender_id)) return [];
+        const senderId = ParticipantId.make(row.sender_id);
+        const records = yield* readRunsAndMessages(threadId);
+        if (
+          records.thread.archivedAt !== null ||
+          records.thread.deletedAt !== null ||
+          owingRun(records, messageId)?.id !== run.id
+        ) {
+          return [];
+        }
+        const identity = `${stablePart(row.project_id)}:${stablePart(row.message_id)}`;
+        const result = yield* ledger.appendEvents({
+          commandId: CommCommandId.make(`command:j5:a2a:removed:${identity}`),
+          projectId: LedgerProjectId.make(row.project_id),
+          acceptedAt: observedAt,
+          events: [
+            {
+              kind: "message.sent",
+              sender: SILENCE_DETECTOR_PARTICIPANT_ID,
+              receiver: senderId,
+              exchangeId: null,
+              correlationId: CorrelationId.make(`correlation:j5:a2a:removed:${identity}`),
+              payload: {
+                messageId: LedgerMessageId.make(`message:j5:a2a:removed:${identity}`),
+                text: formatSilenceNoticeEnvelope({
+                  noticeType: REMOVED_NOTICE_TYPE,
+                  message: removedNoticeMessage(subjectId, row.message_text),
+                }),
+                originProjectId: LedgerProjectId.make(row.project_id),
+                receiverProjectId: LedgerProjectId.make(row.project_id),
+                exchangeRole: "none",
+                envelopeChannel: "silence_notice",
+              },
+              createdAt: observedAt,
+            },
+          ],
+        });
+        return result.committed ? result.events : [];
+      });
+
       const inspectOpenDelivery = Effect.fn("j5.a2a.silence.inspectOpenDelivery")(function* (
         row: OpenDeliveryRow,
         observedAt: string,
@@ -586,13 +677,20 @@ const makeLayer = (daemon: boolean) =>
         `;
         if (memberships.length !== 1) return [];
         const subjectId = ParticipantId.make(memberships[0]!.participant_id);
+        const appended: Array<StoredCommEvent> = [
+          ...(yield* noticeRemovedDelivery(
+            run,
+            stored.event.threadId,
+            subjectId,
+            DateTime.formatIso(stored.event.occurredAt),
+          )),
+        ];
         const inbound = yield* sql<ExchangeRow>`
           SELECT project_id, exchange_id, sender_id, receiver_id, created_at
           FROM j5_a2a_exchange
           WHERE receiver_id = ${subjectId} AND status = 'open'
           ORDER BY created_at, project_id, exchange_id
         `;
-        const appended: Array<StoredCommEvent> = [];
         let thread: Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> | undefined;
         for (const exchange of inbound) {
           const delivered = yield* sql<DeliveredMessageRow>`

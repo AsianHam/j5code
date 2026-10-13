@@ -293,6 +293,13 @@ function parseSilenceSummary(noticeType: string, body: string): string | null {
     return match ? counterpartSummary(match[1]!, ` was ${match[2]} without replying`) : null;
   }
 
+  if (noticeType === "queued-message-removed") {
+    const match = /^Your message to (.+?) was removed from its queue before it ran, /.exec(body);
+    return match
+      ? counterpartSummary(match[1]!, " never read a queued message: it was removed before it ran")
+      : null;
+  }
+
   if (noticeType === "awaiting-human") {
     const match = /^(.+?) is awaiting the human on .+ \(.+\)\.$/.exec(body);
     return match ? counterpartSummary(match[1]!, " is awaiting the human") : null;
