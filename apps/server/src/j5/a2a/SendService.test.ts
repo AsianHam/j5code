@@ -671,15 +671,9 @@ it.effect("refuses an ask to a person's inbox from a shared conversation", () =>
 
     const refused = yield* Effect.flip(ask("command:shared-ask", sender.threadId));
     assert.equal(refused._tag, "A2ASharedConversationAskError");
-    // No name is recorded for the person asked, so the example names no one.
     assert.equal(
       refused.message,
       "This thread is a shared conversation, so an ask to a person's inbox is refused. Ask in this thread instead and name the person you are asking. Everyone on the thread sees the question and the answer.",
-    );
-    yield* sql`UPDATE j5_a2a_human_person SET display_name = 'Jackson' WHERE person_id = ${person.id}`;
-    assert.equal(
-      (yield* Effect.flip(ask("command:shared-ask-named", sender.threadId))).message,
-      'This thread is a shared conversation, so an ask to a person\'s inbox is refused. Ask in this thread instead and name the person you are asking, for example "Jackson, should I go ahead?". Everyone on the thread sees the question and the answer.',
     );
     // A plain send is told the same, not to open an ask.
     const plain = yield* Effect.flip(

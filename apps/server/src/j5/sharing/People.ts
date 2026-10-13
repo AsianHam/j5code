@@ -127,6 +127,15 @@ export class NameNotConfirmedError extends Schema.TaggedError<NameNotConfirmedEr
   }
 }
 
+export class GrantNoteNotClearableError extends Schema.TaggedError<GrantNoteNotClearableError>()(
+  "GrantNoteNotClearableError",
+  {},
+) {
+  override get message(): string {
+    return "What a person is here for can be changed to other words, and cannot be removed once it is set.";
+  }
+}
+
 export class NotAGuestError extends Schema.TaggedError<NotAGuestError>()("NotAGuestError", {}) {
   override get message(): string {
     return "Only a guest can leave what was shared with them; this connection is a member's.";
@@ -191,6 +200,7 @@ export interface PeopleShape {
     | GrantOnMemberError
     | GrantTargetNotFoundError
     | NameNotConfirmedError
+    | GrantNoteNotClearableError
   >;
   readonly removeGrant: (input: {
     readonly personId: string;
@@ -456,6 +466,16 @@ export const layer: Layer.Layer<
         if (input.level === "collaborate") {
           const person = yield* access.readPerson(personId);
           if (person?.nameSelfGiven === true) return yield* new NameNotConfirmedError({ personId });
+        }
+        // The line saying what a person is here for is optional when a share is made. Once it
+        // is set it is changed to other words or left alone (the key left out), never taken away.
+        if (input.note === null) {
+          const held = (yield* access.listGrants(personId)).find((grant) =>
+            sameTarget(grant.target, input.target),
+          );
+          if (held !== undefined && held.note !== null) {
+            return yield* new GrantNoteNotClearableError({});
+          }
         }
         yield* access.putGrant({
           personId,

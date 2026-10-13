@@ -200,17 +200,16 @@ export class A2AHumanAskOrReplyRequiredError extends Schema.TaggedError<A2AHuman
 /**
  * Refuses an agent's ask to a person's inbox from a shared conversation (Shared conversations
  * AC13). An agent reads this text as its tool's answer; it is reviewed as agent-facing wording.
- * The example uses the name of the person it tried to ask, when the server holds one.
  */
-export const sharedConversationAskRefusal = (personName: string | null) =>
-  `This thread is a shared conversation, so an ask to a person's inbox is refused. Ask in this thread instead and name the person you are asking${personName === null ? "" : `, for example "${personName}, should I go ahead?"`}. Everyone on the thread sees the question and the answer.`;
+export const SHARED_CONVERSATION_ASK_REFUSAL =
+  "This thread is a shared conversation, so an ask to a person's inbox is refused. Ask in this thread instead and name the person you are asking. Everyone on the thread sees the question and the answer.";
 
 export class A2ASharedConversationAskError extends Schema.TaggedError<A2ASharedConversationAskError>()(
   "A2ASharedConversationAskError",
-  { personName: Schema.NullOr(Schema.String) },
+  {},
 ) {
   override get message(): string {
-    return sharedConversationAskRefusal(this.personName);
+    return SHARED_CONVERSATION_ASK_REFUSAL;
   }
 }
 
@@ -991,12 +990,7 @@ const rawLayer: Layer.Layer<
         `;
         const threadId = senderThread[0]?.thread_id;
         if (threadId != null && (yield* isSharedConversation(sql, threadId as ThreadId))) {
-          const asked = yield* sql<{ readonly display_name: string | null }>`
-            SELECT display_name FROM j5_a2a_human_person WHERE person_id = ${receiverId}
-          `;
-          return yield* new A2ASharedConversationAskError({
-            personName: asked[0]?.display_name ?? null,
-          });
+          return yield* new A2ASharedConversationAskError({});
         }
       }
       if (

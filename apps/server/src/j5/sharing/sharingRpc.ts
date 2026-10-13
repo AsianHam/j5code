@@ -83,6 +83,7 @@ const refused = failAsJ5ActionError({
     "GrantNotHeldError",
     "OpenLinkNotFoundError",
     "NameNotConfirmedError",
+    "GrantNoteNotClearableError",
   ],
   failed: "Sharing could not be changed.",
 });

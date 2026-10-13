@@ -300,6 +300,11 @@ export const SharingMessageAuthor = Schema.Struct({
   kind: SharingPersonKind,
   /** The person asking wrote it. */
   you: Schema.Boolean,
+  /**
+   * The platform's note this message carries to the agent, when it carries one: the stored
+   * text of the message begins with exactly this, then a line break, then the author line.
+   */
+  note: Schema.NullOr(Schema.String),
 });
 export type SharingMessageAuthor = typeof SharingMessageAuthor.Type;
 

@@ -454,13 +454,23 @@ it.layer(testLayer)("people and grants", (it) => {
         level: "view",
         note: "reviewing the migration plan with me",
       });
-      const cleared = yield* people.putGrant({
+      // Once set, the line is changed to other words or left alone, never taken away.
+      const refusedClear = yield* people
+        .putGrant({
+          personId: guest.personId,
+          target: { kind: "project", projectId },
+          level: "view",
+          note: null,
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(refusedClear._tag, "GrantNoteNotClearableError");
+      const reworded = yield* people.putGrant({
         personId: guest.personId,
         target: { kind: "project", projectId },
         level: "view",
-        note: null,
+        note: "reviewing the rollback steps",
       });
-      assert.strictEqual(cleared.grants[0]?.note, null);
+      assert.strictEqual(reworded.grants[0]?.note, "reviewing the rollback steps");
 
       const listed = yield* people.list;
       const member = listed.find((candidate) => candidate.personId === operator);

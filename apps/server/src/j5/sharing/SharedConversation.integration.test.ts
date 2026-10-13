@@ -109,76 +109,123 @@ it.effect(
         worktreePath: null,
       });
       yield* access.setOperatorName("Jackson");
+      const stored = Effect.gen(function* () {
+        const projection = yield* threads.getThreadProjection(threadId);
+        return {
+          projection,
+          text: (messageId: string) =>
+            projection.messages.find((message) => message.id === messageId)?.text,
+        };
+      });
+
+      // Before anyone is brought in, the member's message is stored exactly as typed. No provider
+      // is running, so its run stays active and everything sent after it queues.
+      const before = message("Let us review the plan.");
+      assert.strictEqual(yield* send(MEMBER, before), before);
+      assert.strictEqual((yield* stored).text(before.messageId), "Let us review the plan.");
+
       const priya = yield* access.createGuest({ displayName: "Priya" });
       yield* access.bindSession({ sessionId: GUEST.sessionId, personId: priya.personId });
       const target = { kind: "thread" as const, threadId };
       yield* access.putGrant({ personId: priya.personId, target, level: "collaborate" });
 
-      // The member writes first, then the guest, then the member again.
-      const fromMember = message("Let us review the plan.");
-      const fromGuest = message("What does the plan change?");
-      const later = message("And what does it cost?");
-      yield* send(MEMBER, fromMember);
-      yield* send(GUEST, fromGuest);
-      yield* send(MEMBER, later);
-
-      // Upstream's stored thread: the note first, then each person's message under their name.
-      const projection = yield* threads.getThreadProjection(threadId);
-      const stored = projection.messages
-        .filter((stored) => stored.role === "user")
-        .toSorted(
-          (left, right) => left.createdAt.epochMilliseconds - right.createdAt.epochMilliseconds,
-        );
-      assert.deepStrictEqual(
-        stored.map((stored) => [stored.createdBy, stored.text.split("\n")[0]]),
-        [
-          ["system", "<j5_shared_conversation>"],
-          ["user", "[Message from Jackson (member)]"],
-          ["user", "[Message from Priya (guest)]"],
-          ["user", "[Message from Jackson (member)]"],
-        ],
-      );
+      // The guest's first message carries the note, at the top, ahead of its author line. It is
+      // one message: no turn is spent on the note alone, and the platform sends nothing itself.
+      const carrier = message("What does the plan change?");
+      yield* send(GUEST, carrier);
+      const authors = yield* conversation.threadAuthors(MEMBER, threadId);
+      const note = authors.find((author) => author.messageId === carrier.messageId)?.note;
+      assert.isTrue(note?.startsWith("<j5_shared_conversation>\nThis thread is now a shared"));
+      assert.isTrue(note?.endsWith("\n</j5_shared_conversation>"));
       assert.strictEqual(
-        stored[2]?.text,
-        "[Message from Priya (guest)]\n\nWhat does the plan change?",
+        (yield* stored).text(carrier.messageId),
+        `${note}\n[Message from Priya (guest)]\n\nWhat does the plan change?`,
       );
-      const note = stored[0]!;
-
-      // No provider is running, so the note's run stays active and everything after it queues,
-      // in the order it was sent. These are the two fields J5 reads from upstream by SQL.
-      const before = yield* runs;
+      assert.isFalse(
+        (yield* stored).projection.messages.some((message) => message.createdBy === "system"),
+      );
+      // It queued behind the member's run. These are the fields J5 reads from upstream by SQL.
       assert.deepStrictEqual(
-        before.map((run) => [run.message_id, run.status === "queued"]),
+        (yield* runs).map((run) => [run.message_id, run.status === "queued"]),
         [
-          [note.id, false],
-          [fromMember.messageId, true],
-          [fromGuest.messageId, true],
-          [later.messageId, true],
+          [before.messageId, false],
+          [carrier.messageId, true],
         ],
       );
 
-      // The guest changes its own queued message and not the member's.
-      const guestRun = projection.runs.find((run) => run.userMessageId === fromGuest.messageId)!;
-      const memberRun = projection.runs.find((run) => run.userMessageId === fromMember.messageId)!;
-      const edit = (runId: typeof guestRun.id, text: string) =>
-        send(GUEST, {
+      // Edited while it waits, by its author and with or without the platform's text sent back,
+      // it keeps the note and its author line.
+      const carrierRun = (yield* stored).projection.runs.find(
+        (run) => run.userMessageId === carrier.messageId,
+      )!;
+      const edit = (who: PersonAccess.SessionIdentity, key: string, text: string) =>
+        send(who, {
           type: "queued-run.edit",
-          commandId: CommandId.make(`command:live:edit:${runId}`),
+          commandId: CommandId.make(`command:live:edit:${key}`),
           threadId,
-          runId,
+          runId: carrierRun.id,
           text,
         });
-      yield* edit(guestRun.id, "What does the plan change, and when?");
+      yield* edit(GUEST, "plain", "What does the plan change, and when?");
       assert.strictEqual(
-        (yield* Effect.flip(edit(memberRun.id, "Mine now.")))._tag,
+        (yield* stored).text(carrier.messageId),
+        `${note}\n[Message from Priya (guest)]\n\nWhat does the plan change, and when?`,
+      );
+      yield* edit(GUEST, "resent", `${(yield* stored).text(carrier.messageId)} Exactly.`);
+      assert.strictEqual(
+        (yield* stored).text(carrier.messageId),
+        `${note}\n[Message from Priya (guest)]\n\nWhat does the plan change, and when? Exactly.`,
+      );
+      yield* edit(MEMBER, "member", "What does the plan change?");
+      assert.strictEqual(
+        (yield* stored).text(carrier.messageId),
+        `${note}\n[Message from Priya (guest), edited by Jackson (member)]\n\nWhat does the plan change?`,
+      );
+
+      // A second message while the carrier still waits says nothing more: the agent will be told.
+      const second = message("And what does it cost?");
+      yield* send(MEMBER, second);
+      assert.strictEqual(
+        (yield* stored).text(second.messageId),
+        "[Message from Jackson (member)]\n\nAnd what does it cost?",
+      );
+      // The guest cannot change the member's queued message.
+      const secondRun = (yield* stored).projection.runs.find(
+        (run) => run.userMessageId === second.messageId,
+      )!;
+      assert.strictEqual(
+        (yield* Effect.flip(
+          send(GUEST, {
+            type: "queued-run.edit",
+            commandId: CommandId.make("command:live:edit:not-mine"),
+            threadId,
+            runId: secondRun.id,
+            text: "Mine now.",
+          }),
+        ))._tag,
         "EnvironmentAuthorizationError",
       );
-      const edited = (yield* threads.getThreadProjection(threadId)).messages.find(
-        (stored) => stored.id === fromGuest.messageId,
-      );
+
+      // The guest withdraws the carrier before it runs, so the agent was never told. The next
+      // message a person sends carries the note instead.
+      yield* send(GUEST, {
+        type: "queued-run.cancel",
+        commandId: CommandId.make("command:live:cancel"),
+        threadId,
+        runId: carrierRun.id,
+      });
+      const next = message("Still reviewing.");
+      yield* send(MEMBER, next);
       assert.strictEqual(
-        edited?.text,
-        "[Message from Priya (guest)]\n\nWhat does the plan change, and when?",
+        (yield* stored).text(next.messageId),
+        `${note}\n[Message from Jackson (member)]\n\nStill reviewing.`,
+      );
+      // And the one after it does not.
+      const queuedByGuest = message("One more question.");
+      yield* send(GUEST, queuedByGuest);
+      assert.strictEqual(
+        (yield* stored).text(queuedByGuest.messageId),
+        "[Message from Priya (guest)]\n\nOne more question.",
       );
 
       // Lowered to View: the guest's queued run is withdrawn through upstream's own cancel, and
@@ -186,12 +233,12 @@ it.effect(
       yield* access.putGrant({ personId: priya.personId, target, level: "view" });
       yield* conversation.withdrawQueued(priya.personId);
       const after = yield* runs;
-      const withdrawn = after.find((run) => run.message_id === fromGuest.messageId)!;
-      assert.notStrictEqual(withdrawn.status, "queued");
+      const withdrawn = after.find((run) => run.message_id === queuedByGuest.messageId)!;
+      assert.strictEqual(withdrawn.status, "cancelled");
       assert.isNull(withdrawn.started_at);
       assert.deepStrictEqual(
         after.filter((run) => run.status === "queued").map((run) => run.message_id),
-        [fromMember.messageId, later.messageId],
+        [second.messageId, next.messageId],
       );
       // Told again, nothing more is withdrawn, and the guest can no longer send.
       yield* conversation.withdrawQueued(priya.personId);
@@ -200,6 +247,18 @@ it.effect(
         (yield* Effect.flip(send(GUEST, message("Still here?"))))._tag,
         "EnvironmentAuthorizationError",
       );
+
+      // With no guest left who can write, the member's next message says so, once, and is the
+      // last to carry an author line.
+      const closing = message("Just me now.");
+      yield* send(MEMBER, closing);
+      const closingText = (yield* stored).text(closing.messageId)!;
+      assert.isTrue(
+        closingText.startsWith("<j5_shared_conversation>\nPriya (guest) can no longer"),
+      );
+      assert.isTrue(closingText.endsWith("\n[Message from Jackson (member)]\n\nJust me now."));
+      const plain = message("And on.");
+      assert.strictEqual(yield* send(MEMBER, plain), plain);
     }).pipe(Effect.provide(layerFor(harness)));
   },
 );

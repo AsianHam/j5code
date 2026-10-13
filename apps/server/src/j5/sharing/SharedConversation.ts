@@ -1,11 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off - random ids for the platform's notes.
-import * as NodeCrypto from "node:crypto";
-
 import {
   AuthOrchestrationOperateScope,
   CommandId,
   EnvironmentAuthorizationError,
-  MessageId,
+  type MessageId,
   type OrchestrationV2Command,
   type RunId,
   type ThreadId,
@@ -110,17 +107,15 @@ interface AuthorRow {
   readonly person_id: string;
   readonly person_kind: PersonKind;
   readonly display_name: string | null;
+  readonly note: string | null;
 }
 
-const toAuthor = (row: AuthorRow): Author => ({
+const toAuthor = (row: AuthorRow): Author & { readonly note: string | null } => ({
   personId: row.person_id as ParticipantId,
   kind: row.person_kind,
   displayName: row.display_name,
+  note: row.note,
 });
-
-class NoteNotSentError extends Schema.TaggedError<NoteNotSentError>()("NoteNotSentError", {
-  cause: Schema.Defect(),
-}) {}
 
 const ToldWriters = Schema.fromJsonString(Schema.Array(Writer));
 const decodeTold = Schema.decodeEffect(ToldWriters);
@@ -131,25 +126,9 @@ const NEAREST = { thread: 0, ancestor: 1, project: 2 } as const;
 const make = <E>(
   sql: SqlClient.SqlClient,
   access: PersonAccessShape,
-  /** Hands upstream a command of the platform's own: a note to an agent, or a withdrawal. */
+  /** Hands upstream a command of the platform's own: the withdrawal of a queued message. */
   dispatch: (command: OrchestrationV2Command) => Effect.Effect<unknown, E>,
 ) => {
-  /** Sends the agent of a thread one platform note, as a message of its own. */
-  const tell = (threadId: ThreadId, text: string) => {
-    const id = NodeCrypto.randomUUID();
-    return dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make(`command:j5:shared-conversation-note:${id}`),
-      threadId,
-      messageId: MessageId.make(`message:j5:shared-conversation-note:${id}`),
-      text,
-      attachments: [],
-      createdBy: "system",
-      creationSource: "server",
-      dispatchMode: { type: "queue_after_active" },
-    });
-  };
-
   /**
    * Withdraws the messages a guest still has queued on threads they can no longer write to,
    * after their access changed: a grant removed or lowered, the person removed, or their leaving.
@@ -245,37 +224,87 @@ const make = <E>(
   });
 
   /**
-   * Tells the agent who can write to its thread when that differs from what it was last told
-   * (AC3, AC4), and reports whether the thread is a shared conversation. It runs as a person's
-   * message is taken in, so the note reaches the agent ahead of the first message it bears on,
-   * and a change to a grant wakes no agent by itself. A thread that was never shared costs one
-   * lookup by key and one for any Collaborate grant on the server.
+   * Whether the note a message carried ever reached the agent. It did not if upstream never
+   * took the message in, or if the message was queued and then withdrawn before it ran. Read
+   * from upstream's own records by SQL: a message's `run_id`, a run's `status` and the
+   * `startedAt` in its payload (`SharedConversation.integration.test.ts` fails if upstream
+   * reshapes them).
+   */
+  const carrierLost = (messageId: string) =>
+    sql<{ readonly status: string | null; readonly started_at: string | null }>`
+      SELECT run.status AS status, json_extract(run.payload_json, '$.startedAt') AS started_at
+      FROM orchestration_v2_projection_messages AS message
+      LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = message.run_id
+      WHERE message.message_id = ${messageId}
+    `.pipe(
+      Effect.map(
+        (rows) =>
+          rows[0] === undefined || (rows[0].status === "cancelled" && rows[0].started_at === null),
+      ),
+    );
+
+  /**
+   * Works out what the agent must be told about who can write to its thread (AC3, AC4), as a
+   * person's message is taken in, and reports whether the thread is a shared conversation. When
+   * that differs from what the agent was last told, the note is returned to go at the top of
+   * this message, and this message is recorded as its carrier. A change to a grant therefore
+   * wakes no agent and costs no turn of its own.
+   *
+   * What the agent "was last told" is only what reached it: if the last carrier was withdrawn
+   * before it ran, the record falls back to what came before, and this message carries the
+   * note instead. That is checked here, when the next message arrives, so every way a queued
+   * message can be withdrawn is covered without a hook on any of them.
+   *
+   * A thread that was never shared costs one lookup by key and one for any Collaborate grant on
+   * the server.
    */
   const announce = Effect.fn("j5.sharing.sharedConversation.announce")(function* (
     threadId: ThreadId,
+    carrier: MessageId,
   ) {
-    const rows = yield* sql<{ readonly writers_json: string }>`
-      SELECT writers_json FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}
+    const rows = yield* sql<{
+      readonly writers_json: string;
+      readonly previous_json: string | null;
+      readonly carrier_message_id: string;
+    }>`
+      SELECT writers_json, previous_json, carrier_message_id
+      FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}
     `;
-    const told = rows[0] === undefined ? null : yield* decodeTold(rows[0].writers_json);
+    const row = rows[0];
     const shared = yield* isSharedConversation(sql, threadId);
-    if (told === null && !shared) return false;
+    if (row === undefined && !shared) return { shared, note: null };
+    const told =
+      row === undefined
+        ? null
+        : (yield* carrierLost(row.carrier_message_id))
+          ? row.previous_json === null
+            ? null
+            : yield* decodeTold(row.previous_json)
+          : yield* decodeTold(row.writers_json);
     const now = shared ? yield* writers(threadId) : [];
-    const text = told === null ? firstNote(now) : changeNote(told, now);
-    if (text === null) return shared;
-    yield* tell(threadId, text).pipe(Effect.mapError((cause) => new NoteNotSentError({ cause })));
-    if (shared) {
-      const toldAt = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
-        INSERT INTO j5_a2a_shared_thread_told (thread_id, writers_json, told_at)
-        VALUES (${threadId}, ${yield* encodeTold(now)}, ${toldAt})
-        ON CONFLICT (thread_id)
-        DO UPDATE SET writers_json = excluded.writers_json, told_at = excluded.told_at
-      `;
-    } else {
-      yield* sql`DELETE FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}`;
+    // A thread shared again after it stopped being one is told as a thread newly shared.
+    const wasShared = told !== null && told.some((writer) => writer.kind === "guest");
+    const note = wasShared ? changeNote(told, now) : shared ? firstNote(now) : null;
+    if (note === null) {
+      // Never told and nothing to tell: shared and unshared with no message in between.
+      if (told === null && row !== undefined) {
+        yield* sql`DELETE FROM j5_a2a_shared_thread_told WHERE thread_id = ${threadId}`;
+      }
+      return { shared, note: null };
     }
-    return shared;
+    const toldAt = DateTime.formatIso(yield* DateTime.now);
+    const previous = told === null ? null : yield* encodeTold(told);
+    yield* sql`
+      INSERT INTO j5_a2a_shared_thread_told (
+        thread_id, writers_json, previous_json, carrier_message_id, told_at
+      ) VALUES (${threadId}, ${yield* encodeTold(now)}, ${previous}, ${carrier}, ${toldAt})
+      ON CONFLICT (thread_id) DO UPDATE SET
+        writers_json = excluded.writers_json,
+        previous_json = excluded.previous_json,
+        carrier_message_id = excluded.carrier_message_id,
+        told_at = excluded.told_at
+    `;
+    return { shared, note };
   });
 
   /** The person a connection writes as: its guest, or the server's owner for any other. */
@@ -290,7 +319,7 @@ const make = <E>(
 
   const messageAuthor = (threadId: ThreadId, messageId: string) =>
     sql<AuthorRow>`
-      SELECT message_id, person_id, person_kind, display_name
+      SELECT message_id, person_id, person_kind, display_name, note
       FROM j5_a2a_message_author
       WHERE thread_id = ${threadId} AND message_id = ${messageId}
     `.pipe(Effect.map((rows) => (rows[0] === undefined ? null : toAuthor(rows[0]))));
@@ -307,44 +336,74 @@ const make = <E>(
     threadId: ThreadId,
     messageId: MessageId,
     author: Author,
+    note: string | null,
   ) {
     const createdAt = DateTime.formatIso(yield* DateTime.now);
     // The first record of a message stands: a later send cannot take a message over.
     yield* sql`
       INSERT INTO j5_a2a_message_author (
-        thread_id, message_id, person_id, person_kind, display_name, created_at
+        thread_id, message_id, person_id, person_kind, display_name, note, created_at
       ) VALUES (
         ${threadId}, ${messageId}, ${author.personId}, ${author.kind}, ${author.displayName},
-        ${createdAt}
+        ${note}, ${createdAt}
       )
       ON CONFLICT (thread_id, message_id) DO NOTHING
     `;
   });
 
-  /** A queued edit's text under its message's author, and its editor when that is someone else. */
-  const stampEdit = (text: string, original: Author, editor: Author) =>
-    withAuthorLine(
-      withoutAuthorLine(text, original),
+  /**
+   * A person's message as it is stored and as the agent reads it: the platform's note when this
+   * message carries one, then the author line, then what the person typed.
+   */
+  const stamped = (text: string, author: Author, note: string | null, editedBy?: Author) =>
+    `${note === null ? "" : `${note}\n`}${withAuthorLine(text, author, editedBy)}`;
+
+  /**
+   * A queued edit's text under its message's author, and its editor when that is someone else.
+   * A note the message carries stays on it. What the platform wrote is taken off the text a
+   * client sent back before it is written again.
+   */
+  const stampEdit = (
+    text: string,
+    original: Author & { readonly note: string | null },
+    editor: Author,
+  ) => {
+    const typed =
+      original.note !== null && text.startsWith(`${original.note}\n`)
+        ? text.slice(original.note.length + 1)
+        : text;
+    return stamped(
+      withoutAuthorLine(typed, original),
       original,
+      original.note,
       editor.personId === original.personId ? undefined : editor,
     );
+  };
 
   const admitMember = Effect.fn("j5.sharing.sharedConversation.admitMember")(function* (
     session: SessionIdentity,
     command: OrchestrationV2Command,
   ) {
     if (command.type !== "message.dispatch" && command.type !== "queued-run.edit") return command;
-    const shared =
-      command.type === "message.dispatch"
-        ? yield* announce(command.threadId)
-        : yield* isSharedConversation(sql, command.threadId);
-    if (!shared) return command;
+    if (command.type === "message.dispatch") {
+      const { shared, note } = yield* announce(command.threadId, command.messageId);
+      // A thread that has just stopped being shared says so on this one message more.
+      if (!shared && note === null) return command;
+      const author = yield* sessionAuthor(session);
+      if (author === null) return command;
+      yield* recordAuthor(command.threadId, command.messageId, author, note);
+      return { ...command, text: stamped(command.text, author, note) };
+    }
+    // An edit matters here only on a thread that is, or has been, a shared conversation: a
+    // message queued while it was one keeps its author line and any note it carries.
+    if (!(yield* isSharedConversation(sql, command.threadId))) {
+      const everShared = yield* sql<{ readonly found: number }>`
+        SELECT 1 AS found FROM j5_a2a_shared_thread_told WHERE thread_id = ${command.threadId}
+      `;
+      if (everShared.length === 0) return command;
+    }
     const author = yield* sessionAuthor(session);
     if (author === null) return command;
-    if (command.type === "message.dispatch") {
-      yield* recordAuthor(command.threadId, command.messageId, author);
-      return { ...command, text: withAuthorLine(command.text, author) };
-    }
     // A queued message no person is recorded for (one sent before the thread was shared, or a
     // delivery from an agent or the platform) is edited as upstream has it.
     const messageId = yield* queuedMessageId(command.threadId, command.runId);
@@ -387,9 +446,9 @@ const make = <E>(
           WHERE message_id = ${command.messageId}
         `;
         if (existing.length > 0) return yield* refused("This message was already sent.");
-        yield* announce(command.threadId);
-        yield* recordAuthor(command.threadId, command.messageId, author);
-        return { ...command, text: withAuthorLine(command.text, author) };
+        const { note } = yield* announce(command.threadId, command.messageId);
+        yield* recordAuthor(command.threadId, command.messageId, author, note);
+        return { ...command, text: stamped(command.text, author, note) };
       }
       case "queued-run.edit":
       case "queued-run.cancel": {
@@ -484,7 +543,7 @@ const make = <E>(
       // The gate asks the same of a guest's request; this holds for any other caller.
       if (guest !== null && (yield* access.threadAccess(session, threadId)) === "none") return [];
       const rows = yield* sql<AuthorRow>`
-        SELECT message_id, person_id, person_kind, display_name
+        SELECT message_id, person_id, person_kind, display_name, note
         FROM j5_a2a_message_author
         WHERE thread_id = ${threadId}
         ORDER BY created_at, message_id
@@ -495,6 +554,7 @@ const make = <E>(
         kind: row.person_kind,
         // Every device that is not a guest's is the one member's.
         you: guest === null ? row.person_kind === "member" : row.person_id === guest.personId,
+        note: row.note,
       }));
     }),
   };
@@ -504,8 +564,7 @@ export type SharedConversation = ReturnType<typeof make<unknown>>;
 
 /**
  * Built over the database, `PersonAccess` and upstream's thread service, which every socket's
- * handlers already have. A note goes to the agent the way J5's other platform notices do: a
- * message the platform sends, which starts the agent when it is idle and queues when it is not.
+ * handlers already have. The thread service is used for one thing: withdrawing a queued message.
  */
 export const sharedConversation = Effect.gen(function* () {
   const threads = yield* ThreadManagementService;

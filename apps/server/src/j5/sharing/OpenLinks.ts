@@ -538,6 +538,7 @@ const make: Layer.Layer<
               SqlError: (cause) => Effect.fail(storage("record someone joining")(cause)),
               // None of these can happen to a guest recorded a statement ago, in a transaction.
               GrantTargetNotFoundError: () => Effect.fail(new OpenLinkRefusedError({})),
+              GrantNoteNotClearableError: () => Effect.fail(new OpenLinkRefusedError({})),
               PersonNotFoundError: (cause) => Effect.fail(storage("record a grant")(cause)),
               GrantOnMemberError: (cause) => Effect.fail(storage("record a grant")(cause)),
               LinkForMemberError: (cause) => Effect.fail(storage("make a share link")(cause)),
