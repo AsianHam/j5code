@@ -13,7 +13,8 @@ interface SharedMessageInput {
 
 /**
  * Draws the two kinds of message only a shared conversation holds, in the place upstream's
- * timeline draws a person's message: the platform's note to the agent about who can write, and
+ * timeline draws a person's message: the note the platform gave the agent with a message (who can
+ * write, or which approvals were answered; its words are the server's and nothing here reads them), and
  * a message another person wrote. Everything else, the reader's own messages among them, is
  * `null` and stays upstream's to draw.
  *
@@ -27,7 +28,7 @@ export function renderSharedConversationMessage(props: SharedMessageInput): Reac
     return (
       <details className="text-xs text-muted-foreground" data-j5-shared-conversation="note">
         <summary className="cursor-pointer select-none">
-          The agent was told who can write to this thread
+          The agent was given a note with this message
           {props.timestampLabel ? ` · ${props.timestampLabel}` : null}
         </summary>
         <p className="mt-1.5 whitespace-pre-wrap break-words border-l border-border pl-3">
