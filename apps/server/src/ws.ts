@@ -3149,8 +3149,7 @@ const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
           j5Conversation.admit(currentSession, command).pipe(
             Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]),
-            Effect.tap(() => j5Conversation.accepted(currentSession, command)),
-            Effect.tapError(() => j5Conversation.refused(command)),
+            Effect.onExit((exit) => j5Conversation.settled(currentSession, command, exit)),
           ),
       };
     }),

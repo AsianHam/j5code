@@ -982,6 +982,34 @@ const each = <A, E>(
         ["request:race", "Jackson", "member", true],
       );
 
+      // An answer interrupted while upstream had it (the connection dropped, say) leaves
+      // nothing behind, as `ws.ts` settles it: the same wrap, with upstream never returning.
+      const dropped = respond(threadId, "request:dropped", "command:priya-dropped");
+      const reached = yield* Deferred.make<void>();
+      const inFlight = yield* conversation.admit(PRIYA, dropped).pipe(
+        Effect.flatMap(() =>
+          Deferred.succeed(reached, undefined).pipe(Effect.andThen(Effect.never)),
+        ),
+        Effect.onExit((exit) => conversation.settled(PRIYA, dropped, exit)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(reached);
+      assert.isTrue(
+        (yield* told(MEMBER, threadId)).some(([requestId]) => requestId === "request:dropped"),
+      );
+      yield* Fiber.interrupt(inFlight);
+      assert.isFalse(
+        (yield* told(MEMBER, threadId)).some(([requestId]) => requestId === "request:dropped"),
+      );
+      // And an accepted one, settled the same way, stays.
+      const kept = respond(threadId, "request:kept", "command:priya-kept");
+      yield* conversation
+        .admit(PRIYA, kept)
+        .pipe(Effect.onExit((exit) => conversation.settled(PRIYA, kept, exit)));
+      assert.isTrue(
+        (yield* told(MEMBER, threadId)).some(([requestId]) => requestId === "request:kept"),
+      );
+
       // A question a member dismisses is theirs.
       const dismiss = {
         type: "thread.user-input.dismiss",
@@ -997,7 +1025,7 @@ const each = <A, E>(
 
       // A viewer cannot answer, and nothing is written for one who tries.
       assert.isTrue(refused(yield* send(SAM, respond(threadId, "request:another", "command:sam"))));
-      assert.strictEqual((yield* told(MEMBER, threadId)).length, 3);
+      assert.strictEqual((yield* told(MEMBER, threadId)).length, 4);
       // A thread only one person can write to records nothing, and a guest reads nothing of it.
       const unshared = respond(alone, "request:alone", "command:alone");
       assert.strictEqual(yield* send(MEMBER, unshared), unshared);

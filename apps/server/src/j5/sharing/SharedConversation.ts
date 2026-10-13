@@ -11,6 +11,7 @@ import {
 import type { SharingMessageAuthor, SharingPromptAnswer } from "@t3tools/contracts/j5";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -558,7 +559,7 @@ const make = <E>(
           ),
         );
 
-  return {
+  const conversation = {
     withdrawQueued,
     /** The same for the guest on a connection, who has just left something. */
     withdrawQueuedOf: (session: SessionIdentity) =>
@@ -578,7 +579,7 @@ const make = <E>(
      */
     accepted: (session: SessionIdentity, command: OrchestrationV2Command) =>
       recordAnswer(session, command, "accepted"),
-    /** After upstream has refused a client's command: what was written for that answer is taken back. */
+    /** After upstream has refused a client's command, or it was interrupted: what was written for that answer is taken back. */
     refused: (command: OrchestrationV2Command) =>
       !isAnswer(command)
         ? Effect.void
@@ -719,6 +720,23 @@ const make = <E>(
         note: row.note,
       }));
     }),
+  };
+  return {
+    ...conversation,
+    /**
+     * When upstream has finished with a client's command, however it ended. Accepted, the
+     * person whose answer upstream took is the one recorded; refused or interrupted, what was
+     * written for that answer is taken back, so a prompt later settled some other way never
+     * reads as answered by someone whose answer did not land.
+     */
+    settled: (
+      session: SessionIdentity,
+      command: OrchestrationV2Command,
+      exit: Exit.Exit<unknown, unknown>,
+    ) =>
+      Exit.isSuccess(exit)
+        ? conversation.accepted(session, command)
+        : conversation.refused(command),
   };
 };
 
