@@ -1275,9 +1275,12 @@ const make = Effect.gen(function* () {
     };
   };
 
-  /** Matches an id, then a case-insensitive name. Omitted means the reported default. */
+  /**
+   * Matches an id, then a case-insensitive name. Omitted means incognito (J5,
+   * FORK.md case 74): an agent shares the person's saved logins only by asking.
+   */
   const resolveOpenProfile = (requested: string | undefined): string | undefined => {
-    if (requested === undefined) return reportedProfiles?.defaultProfileId;
+    if (requested === undefined) return INCOGNITO_BROWSER_PROFILE_ID;
     const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;
     const wanted = requested.toLowerCase();
     const match =

@@ -57,6 +57,10 @@ ports, the pairing URL, the project to use, and its commands. Nothing in that
 home points at a real repository or at the developer's data. Then use
 [test-t3-app](../test-t3-app/SKILL.md) for the browser steps.
 
+Each tab you open has its own storage, so it is one signed-in person and
+nothing else can sign it out. Do not pass a `profileId`: every tab that names
+a profile shares that profile's cookies, across all agents on the server.
+
 Do not seed a test home by hand, copy the live database, or start `vp run dev`
 yourself for a test. The script does not install dependencies: if it says they
 are missing, install them and run it again.
@@ -70,9 +74,9 @@ are missing, install them and run it again.
 
 `guest "<name>" [--thread <id> | --project <id>] [--level view|collaborate]`
 adds a second person to the running test server and prints their pairing URL.
-Open it in a new incognito tab (`profileId: "incognito"`,
-`reuseExistingTab: false`). Each incognito tab is its own person, so open one
-per person and never pair a second person in a tab that already has one.
+Open it in a new tab (`reuseExistingTab: false`). Each tab is its own person,
+so open one per person and never pair a second person in a tab that already
+has one.
 
 A start returns within about two minutes. On a busy machine it can return
 before it has finished, and prints the command that finishes it.
@@ -101,9 +105,7 @@ A worktree holds one setup at a time. Pass a flag to the first start, or to
 
 - **After any `rebuild`**, a tab that was open before it can stay on the
   pairing form. Press "Reload app" there.
-- **`--fresh`.** The home has no project and no pinned model. Open it in a tab
-  with `profileId: "incognito"`: the default browser profile may have finished
-  onboarding already, and then the wizard does not show. After pairing, wait
+- **`--fresh`.** The home has no project and no pinned model. After pairing, wait
   for the wizard's own text, since there is no composer yet. Add only the test
   repository the script names, or choose "Do not import projects". Pick your
   model by hand.
@@ -181,8 +183,7 @@ sent through the UI.
 
 Use `--base <ref>` so base and head show the same data. The ref is the PR's
 own base, which for a stacked PR is the layer beneath it, not `j5/main`. Open
-the second server in a tab with `profileId: "incognito"`, so the two do not
-share a login. Capture at 1280x800 as test-t3-app describes, then upload:
+each server in its own tab. Capture at 1280x800 as test-t3-app describes, then upload:
 
 ```bash
 node scripts/j5/pr-evidence.ts <pr> --pair "<caption>" <before.png> <after.png>

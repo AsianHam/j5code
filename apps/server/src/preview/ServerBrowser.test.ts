@@ -1455,7 +1455,7 @@ it.live("a session's own tab stays its default while other sessions' tabs are li
 );
 
 it.live(
-  "preview_open picks a reported profile by id or name and defaults to the reported one",
+  "preview_open picks a reported profile by id or name and defaults to a private incognito tab",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1483,12 +1483,12 @@ it.live(
         const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
         const profileOf = (tabId: string | null) =>
           sessions.find((session) => session.tabId === tabId)?.profileId;
-        expect(profileOf(byDefault.tabId)).toBe("profile-work");
+        expect(profileOf(byDefault.tabId)).toBe("incognito");
         expect(profileOf(byName.tabId)).toBe("profile-work");
         expect(profileOf(byId.tabId)).toBe("incognito");
         // The chosen profile reaches the headless tab's storage.
         expect(contextRequests).toEqual([
-          { profileId: "profile-work", isolated: false },
+          { profileId: "incognito", isolated: true },
           { profileId: "profile-work", isolated: false },
           { profileId: "incognito", isolated: true },
         ]);
@@ -1510,11 +1510,11 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
-it.live("an agent tab keeps throwaway storage when no client reported profiles", () =>
+it.live("an agent tab is private when no client reported profiles", () =>
   Effect.scoped(
     Effect.gen(function* () {
       yield* ready;
-      expect(contextRequests).toEqual([{ profileId: "default", isolated: true }]);
+      expect(contextRequests).toEqual([{ profileId: "incognito", isolated: true }]);
     }),
   ).pipe(Effect.provide(layer)),
 );
