@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { MessageCopyButton } from "../../components/chat/MessageCopyButton";
+
 import { authorName, sharedConversationNote } from "./sharedConversation.logic";
 import { sharedAuthorOf } from "./sharedTimeline";
 import { initialsOf } from "./shareLink.logic";
@@ -50,9 +52,13 @@ export function renderSharedConversationMessage(props: SharedMessageInput): Reac
             {author.kind}
           </span>
         )}
-        {props.timestampLabel ? (
-          <span className="ml-auto shrink-0 text-muted-foreground">{props.timestampLabel}</span>
-        ) : null}
+        <span className="ml-auto flex shrink-0 items-center gap-1 text-muted-foreground">
+          {props.timestampLabel}
+          {/* The typed words, without the line that is there for the agent. Upstream's other
+              control on a person's own message, "Edit from here", is not offered on someone
+              else's: it would hand their words to the reader's composer. */}
+          <MessageCopyButton text={props.message.text} size="icon-xs" variant="ghost" />
+        </span>
       </div>
       <p className="mt-1.5 whitespace-pre-wrap break-words text-sm" data-thread-find-text="true">
         {props.message.text}
