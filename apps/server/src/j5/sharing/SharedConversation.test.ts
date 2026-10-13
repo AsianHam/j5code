@@ -794,6 +794,46 @@ const each = <A, E>(
           ].join("\n"),
         );
 
+        // The member changes what a guest is there for, then takes the line away: each is told,
+        // and telling it again says nothing.
+        yield* access.putGrant({
+          personId: priya.personId,
+          target,
+          level: "collaborate",
+          note: "checking the\nrollback steps",
+        });
+        yield* send(MEMBER, message(threadId, "One more thing."));
+        assert.strictEqual(
+          notes.at(-1)?.text,
+          [
+            "<j5_shared_conversation>",
+            "Priya R. (guest) is now here for: checking the rollback steps",
+            "Who can write now: Jackson (member), Priya R. (guest), Sam (guest).",
+            "</j5_shared_conversation>",
+          ].join("\n"),
+        );
+        yield* access.putGrant({
+          personId: priya.personId,
+          target,
+          level: "collaborate",
+          note: null,
+        });
+        yield* send(MEMBER, message(threadId, "And another."));
+        assert.strictEqual(
+          notes.at(-1)?.text,
+          [
+            "<j5_shared_conversation>",
+            "What Priya R. (guest) is here for is no longer stated.",
+            "Who can write now: Jackson (member), Priya R. (guest), Sam (guest).",
+            "</j5_shared_conversation>",
+          ].join("\n"),
+        );
+        const toldSoFar = notes.length;
+        yield* send(MEMBER, message(threadId, "Nothing changed."));
+        assert.strictEqual(notes.length, toldSoFar);
+        // The two notes just read are set aside, so the ones below keep their place.
+        notes.splice(2, 2);
+
         // One is lowered to View, which is no longer writing.
         yield* access.putGrant({ personId: sam.personId, target, level: "view" });
         yield* send(MEMBER, message(threadId, "Carry on."));

@@ -1001,6 +1001,20 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
 
 // `readChangesLayer` is the one the rest of the server provides, so it is the same instance
 // (see `a2a/runtimeLayer.ts`): what is written here reaches the stream a client follows.
+/**
+ * Whether a guest, by id, may write to a thread now. For code that acts on a person and has no
+ * session of theirs, such as withdrawing what they left queued.
+ */
+export const guestWritesTo = (sql: SqlClient.SqlClient, personId: string, threadId: ThreadId) =>
+  guestGrantsOnThread(sql, threadId).pipe(
+    Effect.map((rows) =>
+      rows.some(
+        (row) =>
+          row.person_id === personId && row.level === "collaborate" && grantWrites(row, threadId),
+      ),
+    ),
+  );
+
 export const layer: Layer.Layer<PersonAccess, never, SqlClient.SqlClient> = make.pipe(
   Layer.provide(readChangesLayer),
 );

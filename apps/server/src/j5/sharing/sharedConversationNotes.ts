@@ -27,11 +27,16 @@ const note = (paragraphs: ReadonlyArray<string>) =>
 
 const names = (writers: ReadonlyArray<Writer>) => writers.map((writer) => writer.label).join(", ");
 
-// One line, however the member typed it.
-const purposeLine = (writer: Writer) =>
-  writer.purpose === null
-    ? []
-    : [`${writer.label} is here for: ${writer.purpose.replace(/\s+/g, " ").trim()}`];
+// One line, however the member typed it; `null` when there is none.
+const purposeOf = (writer: Writer) => {
+  const purpose = writer.purpose?.replace(/\s+/g, " ").trim() ?? "";
+  return purpose.length === 0 ? null : purpose;
+};
+
+const purposeLine = (writer: Writer) => {
+  const purpose = purposeOf(writer);
+  return purpose === null ? [] : [`${writer.label} is here for: ${purpose}`];
+};
 
 /**
  * The note an agent gets when its thread gains its first guest collaborator (AC3, AC5, AC6): who
@@ -70,6 +75,17 @@ export const changeNote = (before: ReadonlyArray<Writer>, after: ReadonlyArray<W
       return previous === undefined || previous.label === writer.label
         ? []
         : [`Renamed: ${previous.label} is now ${writer.label}.`];
+    }),
+    // A member changed, or took away, the line saying what a guest is there for.
+    ...after.flatMap((writer) => {
+      const previous = was.get(writer.personId);
+      if (previous === undefined || purposeOf(previous) === purposeOf(writer)) return [];
+      const purpose = purposeOf(writer);
+      return [
+        purpose === null
+          ? `What ${writer.label} is here for is no longer stated.`
+          : `${writer.label} is now here for: ${purpose}`,
+      ];
     }),
   ];
   if (lines.length === 0) return null;

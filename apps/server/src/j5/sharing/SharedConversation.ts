@@ -28,7 +28,9 @@ import {
   type PersonKind,
   type SessionIdentity,
   isCrewSeatThread,
+  guestWritesTo,
   isSharedConversation,
+  writesVia,
 } from "./PersonAccess.ts";
 import { Writer, changeNote, firstNote } from "./sharedConversationNotes.ts";
 
@@ -157,28 +159,24 @@ const make = <E>(
    */
   const withdrawQueued = Effect.fn("j5.sharing.sharedConversation.withdrawQueued")(
     function* (personId: string) {
-      const stranded = yield* sql<{ readonly run_id: string; readonly thread_id: string }>`
+      // Upstream's own record of what is queued, read by SQL: a run's `status` and the
+      // `userMessageId` in its payload (`SharedConversation.integration.test.ts` fails if
+      // upstream reshapes either).
+      const queued = yield* sql<{ readonly run_id: string; readonly thread_id: string }>`
         SELECT run.run_id, run.thread_id
         FROM j5_a2a_message_author AS author
         JOIN orchestration_v2_projection_runs AS run
           ON run.thread_id = author.thread_id
          AND run.status = 'queued'
          AND json_extract(run.payload_json, '$.userMessageId') = author.message_id
-        WHERE author.person_id = ${personId}
-          AND author.person_kind = 'guest'
-          AND NOT EXISTS (
-            SELECT 1 FROM j5_a2a_person_grant AS held
-            WHERE held.person_id = author.person_id
-              AND held.level = 'collaborate'
-              AND (
-                (held.target_kind = 'thread' AND held.target_id = author.thread_id)
-                OR (held.target_kind = 'project' AND held.target_id = (
-                  SELECT project_id FROM orchestration_v2_projection_threads
-                  WHERE thread_id = author.thread_id
-                ))
-              )
-          )
+        WHERE author.person_id = ${personId} AND author.person_kind = 'guest'
       `;
+      // Where they may still write is asked of the one rule for it, thread by thread.
+      const stranded = yield* Effect.filter(queued, (run) =>
+        guestWritesTo(sql, personId, run.thread_id as ThreadId).pipe(
+          Effect.map((writes) => !writes),
+        ),
+      );
       yield* Effect.forEach(
         stranded,
         (run) =>
@@ -217,8 +215,7 @@ const make = <E>(
     yield* ensureLocalOperatorHumanPerson(sql);
     const people = yield* access.threadPeople(threadId);
     const guests = people.guests.filter((guest) =>
-      // A grant on a thread above this one gives reading only.
-      guest.grants.some((grant) => grant.level === "collaborate" && grant.via !== "ancestor"),
+      guest.grants.some((grant) => grant.level === "collaborate" && writesVia(grant.via)),
     );
     if (guests.length === 0) return [];
     return [
