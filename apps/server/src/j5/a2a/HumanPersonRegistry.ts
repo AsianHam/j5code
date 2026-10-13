@@ -22,24 +22,30 @@ export class A2ALocalOperatorNotFoundError extends Schema.TaggedError<A2ALocalOp
   }
 }
 
+/**
+ * The people an agent can address and who have an inbox on this server: its members. A guest is
+ * a person too, and is deliberately absent here (Shared server AC3, Inbox AC14).
+ */
 export const listRegisteredHumanPersonIds = Effect.fn(
   "j5.a2a.humanPersonRegistry.listRegisteredHumanPersonIds",
 )(function* (sql: SqlClient.SqlClient) {
   const rows = yield* sql<HumanPersonRow>`
     SELECT person_id
     FROM j5_a2a_human_person
+    WHERE kind = 'member'
     ORDER BY person_id
   `;
   return rows.map((row) => ParticipantId.make(row.person_id));
 });
 
+/** Whether the id is a member of this server; false for a guest, as for an unknown id. */
 export const isRegisteredHumanPerson = Effect.fn(
   "j5.a2a.humanPersonRegistry.isRegisteredHumanPerson",
 )(function* (sql: SqlClient.SqlClient, personId: ParticipantId) {
   const rows = yield* sql<{ readonly count: number }>`
     SELECT COUNT(*) AS count
     FROM j5_a2a_human_person
-    WHERE person_id = ${personId}
+    WHERE person_id = ${personId} AND kind = 'member'
   `;
   return (rows[0]?.count ?? 0) === 1;
 });
