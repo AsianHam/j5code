@@ -11,10 +11,7 @@ export default Effect.gen(function* () {
   // A person's answer to an approval or a question, by upstream's request id and the command
   // that carried the answer. It is written as the answer is taken in, before upstream settles
   // the prompt, so it is a claim: who answered a prompt is the claim whose command upstream's
-  // event log shows settled it. `decision` is what an approval was answered with; a question
-  // has none. An approval is told to the agent in the note at the top of the next message a
-  // person sends: `told_message_id` is that message. `silent` marks one answered while the
-  // thread was not shared, which the agent is never told of.
+  // event log shows settled it.
   yield* sql`
     CREATE TABLE j5_a2a_prompt_answer (
       thread_id TEXT NOT NULL,
@@ -24,9 +21,6 @@ export default Effect.gen(function* () {
       person_kind TEXT NOT NULL CHECK (person_kind IN ('member', 'guest')),
       display_name TEXT,
       answered_at TEXT NOT NULL,
-      decision TEXT,
-      silent INTEGER NOT NULL DEFAULT 0 CHECK (silent IN (0, 1)),
-      told_message_id TEXT,
       PRIMARY KEY (thread_id, request_id, command_id)
     )
   `;

@@ -19,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -372,8 +373,6 @@ const each = <A, E>(
         { deliveryIntent: "restart" },
         { deliveryIntent: "auto" },
         { modelSelection: { instanceId: "codex", model: "another" } },
-        { titleSeed: "Renamed by a guest" },
-        { context: { version: 1, records: [] } },
         { createdBy: "system", creationSource: "server" },
       ]) {
         const command = message(threadId, "Hello.", extra);
@@ -393,16 +392,33 @@ const each = <A, E>(
     }),
   );
 
-  each("a guest's message that carries more than text is refused", () =>
+  each("a guest's message carries what a member's does, but not someone else's standing", () =>
     Effect.gen(function* () {
       const threadId = yield* thread("thread:fields");
       const other = yield* thread("thread:fields-other");
-      yield* guest(PRIYA, "Priya", threadId, "collaborate");
+      const priya = yield* guest(PRIYA, "Priya", threadId, "collaborate");
+      const record = (kind: string, extra: Record<string, unknown> = {}) => ({
+        version: 1,
+        contextId: `c-${kind}`,
+        kind,
+        label: kind,
+        ...extra,
+      });
+      const withRecords = (...records: ReadonlyArray<unknown>) => ({
+        context: { version: 1, records },
+      });
+      // Each of these would make the message someone else's, or names what a guest cannot
+      // reach: all refused.
       for (const extra of [
-        // A second thread named inside a command for the first.
-        { sourcePlanRef: { threadId: other, planId: "plan:1" } },
         { senderThreadId: other },
-        // An attachment stored for a thread the guest cannot read.
+        { scheduledTaskId: "task:1" },
+        { notification: { source: { type: "x" }, outcome: "completed", summary: "Done" } },
+        { delegatedCompletion: { parentRunId: "run:1", generation: 1, taskIds: [] } },
+        { restartContinuationOfRunId: "run:1" },
+        { usageLimitContinuationOfRunId: "run:1" },
+        { manualContinuationOfRunId: "run:1" },
+        { usageLimitRecoveryRequestId: "command:1" },
+        // An attachment, or a record that names one: stored for a thread the guest cannot read.
         {
           attachments: [
             {
@@ -414,24 +430,106 @@ const each = <A, E>(
             },
           ],
         },
-        {
-          context: {
-            version: 1,
-            records: [{ version: 1, contextId: "c1", kind: "thread", label: "Another thread" }],
-          },
-        },
-        { scheduledTaskId: "task:1" },
-        { notification: { source: { type: "x" }, outcome: "completed", summary: "Done" } },
-        { delegatedCompletion: { parentRunId: "run:1", generation: 1, taskIds: [] } },
-        { restartContinuationOfRunId: "run:1" },
-        { usageLimitContinuationOfRunId: "run:1" },
-        { manualContinuationOfRunId: "run:1" },
-        { usageLimitRecoveryRequestId: "command:1" },
+        withRecords(record("image", { attachmentId: "thread-other-image" })),
+        withRecords(record("file", { attachmentId: "thread-other-file" })),
+        withRecords(record("mystery", { attachmentId: "thread-other-file", payload: {} })),
+        // A kind the platform keeps for its own records.
+        withRecords(record("j5-author", { payload: { name: "Jackson", kind: "member" } })),
+        withRecords(record(" J5-note", { payload: {} })),
+        // Another thread, for the agent to read or for upstream to take a plan from, that the
+        // guest cannot read.
+        withRecords(record("thread", { environmentId: "env:1", threadId: other, title: "Other" })),
+        { sourcePlanRef: { threadId: other, planId: "plan:1" } },
       ]) {
         const outcome = yield* send(PRIYA, message(threadId, "Hello.", extra));
         assert.isTrue(refused(outcome), JSON.stringify(extra));
       }
       assert.deepStrictEqual(yield* authorRows.pipe(Effect.map((rows) => rows.length)), 0);
+
+      // What a member's composer can add goes on as sent, under the guest's name.
+      const context = withRecords(
+        record("mention", { path: "src/plan.md" }),
+        record("skill", { name: "review" }),
+        record("terminal", { payload: "npm test" }),
+        record("later-kind", { payload: { anything: true } }),
+        record("thread", { environmentId: "env:1", threadId, title: "This thread" }),
+      ).context;
+      const sent = message(threadId, "Look at [plan](t3-context://v1/mention/c-mention).", {
+        context,
+        sourcePlanRef: { threadId, planId: "plan:1" },
+        titleSeed: "The plan",
+      });
+      assert.deepStrictEqual((yield* send(PRIYA, sent)) as unknown, {
+        type: "message.dispatch",
+        commandId: guestCommandId(priya.personId, sent.commandId),
+        threadId,
+        messageId: sent.messageId,
+        text: "[Message from Priya (guest)]\n\nLook at [plan](t3-context://v1/mention/c-mention).",
+        attachments: [],
+        context,
+        sourcePlanRef: { threadId, planId: "plan:1" },
+        titleSeed: "The plan",
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "queue_after_active" },
+      });
+      // What the agent reads for it, by upstream's own projection at the provider: the author
+      // line first, each reference as a marker in place, and the payloads in upstream's
+      // envelope after the person's text.
+      assert.strictEqual(
+        projectComposerContextForProvider({
+          text: "[Message from Priya (guest)]\n\nLook at [plan](t3-context://v1/mention/c-mention).",
+          records: context.records as never,
+        }),
+        [
+          "[Message from Priya (guest)]",
+          "",
+          "Look at [Mention: plan; ref=c-mention].",
+          "",
+          '<t3_context version="1">',
+          '<context kind="mention" id="c-mention">',
+          "path: src/plan.md",
+          "</context>",
+          "</t3_context>",
+        ].join("\n"),
+      );
+      // A reference a person types to a record that is not there, of any kind, comes out as a
+      // marker and an entry upstream marks unavailable. That is upstream's for any sender.
+      assert.strictEqual(
+        projectComposerContextForProvider({
+          text: "[Message from Priya (guest)]\n\nSee [Jackson](t3-context://v1/j5-author/c-x).",
+          records: [],
+        }),
+        [
+          "[Message from Priya (guest)]",
+          "",
+          "See [J5 author: Jackson; ref=c-x].",
+          "",
+          '<t3_context version="1">',
+          '<context kind="j5-author" id="c-x" unavailable="true"/>',
+          "</t3_context>",
+        ].join("\n"),
+      );
+
+      // Another thread the guest can read may be named.
+      yield* (yield* PersonAccess.PersonAccess).putGrant({
+        personId: priya.personId,
+        target: { kind: "thread", threadId: other },
+        level: "view",
+      });
+      assert.isFalse(
+        refused(
+          yield* send(
+            PRIYA,
+            message(threadId, "And this.", {
+              sourcePlanRef: { threadId: other, planId: "plan:1" },
+              ...withRecords(
+                record("thread", { environmentId: "env:1", threadId: other, title: "Other" }),
+              ),
+            }),
+          ),
+        ),
+      );
     }),
   );
 
@@ -670,16 +768,17 @@ const each = <A, E>(
           threadId,
           runId: priyaRun,
           text: "[Message from Priya (guest)]\n\nFix the typo.",
+          context: { version: 1, records: [] },
         },
       );
-      // With something attached, or a record of context, it is refused.
+      // With something attached, or a record of a kind the platform keeps, it is refused.
       for (const extra of [
         {
           attachments: [
             { type: "image", id: "a", name: "a.png", mimeType: "image/png", sizeBytes: 1 },
           ],
         },
-        { context: { version: 1, records: [{ version: 1, contextId: "c1", kind: "thread" }] } },
+        { context: { version: 1, records: [{ version: 1, contextId: "c1", kind: "j5-author" }] } },
       ]) {
         assert.isTrue(
           refused(
@@ -1040,54 +1139,33 @@ const each = <A, E>(
           payload_json = json_set(payload_json, '$.startedAt', ${status === "cancelled" ? null : AT})
         WHERE run_id = ${runId}
       `;
-      const approve = Effect.fn("test.approve")(function* (key: string) {
-        const command = {
-          type: "runtime-request.respond",
-          commandId: CommandId.make(`command:rewound:${key}`),
-          threadId,
-          requestId: RuntimeRequestId.make(`request:rewound:${key}`),
-          decision: "accept",
-        } as const;
-        yield* upstreamSettled(yield* admit(PRIYA, command));
-      });
       const first = "This thread is now a shared conversation";
-      const approved =
-        "Approval prompts answered since you were last told: Priya (guest) approved 1.";
 
-      // The guest's first message waits in the queue with the first note and an approval. The
-      // agent has read neither, and the guest can still withdraw it: a second message carries
-      // the note too, so that neither can reach an agent that has not been told. The approval
-      // is told once.
-      yield* approve("one");
+      // The guest's first message waits in the queue with the first note. The agent has not
+      // read it, and the guest can still withdraw it: a second message carries the note too,
+      // so that neither can reach an agent that has not been told.
       const waiting = message(threadId, "Hello.");
       yield* send(PRIYA, waiting);
       yield* queued(threadId, "run:rewound:1", waiting.messageId);
-      assert.isTrue(notes[0]!.text.includes(first) && notes[0]!.text.includes(approved));
+      assert.isTrue(notes[0]!.text.includes(first));
       const second = message(threadId, "And another thing.");
       yield* send(PRIYA, second);
       yield* queued(threadId, "run:rewound:2", second.messageId);
       assert.isTrue(notes[1]!.text.includes(first));
-      assert.isFalse(notes[1]!.text.includes("Approval prompts"));
 
       // The first is withdrawn and the second runs: the agent has the note, from the second.
-      // The approval went with the first, so the next message carries it, and no note.
       yield* ended("run:rewound:1", "cancelled");
       yield* ended("run:rewound:2", "completed");
       yield* send(MEMBER, message(threadId, "Carry on."));
-      assert.strictEqual(
-        notes[2]!.text,
-        `<j5_shared_conversation>\n${approved}\n</j5_shared_conversation>`,
-      );
-      yield* send(MEMBER, message(threadId, "Good."));
-      assert.strictEqual(notes.length, 3);
+      assert.strictEqual(notes.length, 2);
 
       // A member rewinds the conversation to before the message that told the agent. Upstream
       // marks its run rolled back and keeps the message; the agent no longer has the note, so
       // the next message carries it again.
       yield* ended("run:rewound:2", "rolled_back");
       yield* send(MEMBER, message(threadId, "Hello again."));
-      assert.isTrue(notes[3]!.text.includes(first));
-      assert.strictEqual(notes.length, 4);
+      assert.isTrue(notes[2]!.text.includes(first));
+      assert.strictEqual(notes.length, 3);
 
       // A change is told against what last reached the agent, and told again while the message
       // that carries it waits.
@@ -1095,15 +1173,16 @@ const each = <A, E>(
       const change = message(threadId, "Welcome, Sam.");
       yield* send(MEMBER, change);
       yield* queued(threadId, "run:rewound:3", change.messageId);
-      assert.isTrue(notes[4]!.text.includes("Sam (guest) can now write to this thread."));
-      assert.isFalse(notes[4]!.text.includes(first));
+      assert.isTrue(notes[3]!.text.includes("Sam (guest) can now write to this thread."));
+      assert.isFalse(notes[3]!.text.includes(first));
       yield* send(PRIYA, message(threadId, "Hello, Sam."));
-      assert.isTrue(notes[5]!.text.includes("Sam (guest) can now write to this thread."));
+      assert.isTrue(notes[4]!.text.includes("Sam (guest) can now write to this thread."));
       yield* ended("run:rewound:3", "completed");
       yield* send(MEMBER, message(threadId, "On we go."));
-      assert.strictEqual(notes.length, 6);
+      assert.strictEqual(notes.length, 5);
     }),
   );
+
   each("a rewind to the thread's first message, which carried the first note, tells it again", () =>
     Effect.gen(function* () {
       const access = yield* PersonAccess.PersonAccess;
@@ -1831,145 +1910,6 @@ const each = <A, E>(
       });
       yield* through(MEMBER, respond("request:after", "command:member-after"), true);
       assert.isTrue((yield* told).some(([requestId]) => requestId === "request:after"));
-    }),
-  );
-  each("the agent is told who answered its approval prompts, on the next message", () =>
-    Effect.gen(function* () {
-      const access = yield* PersonAccess.PersonAccess;
-      const sql = yield* SqlClient.SqlClient;
-      const threadId = yield* thread("thread:approvals");
-      yield* access.setOperatorName("Jackson");
-      const priya = yield* guest(PRIYA, "Priya", threadId, "collaborate");
-      const target = { kind: "thread" as const, threadId };
-      let answered = 0;
-      // An answer as `ws.ts` carries it through upstream, which accepts it and logs the prompt
-      // settling; `replayed` is upstream answering "accepted" for an id it already had.
-      const answer = (
-        who: EnvironmentAuth.AuthenticatedSession,
-        body: Record<string, unknown>,
-        replayed = false,
-      ) => {
-        answered += 1;
-        const command = {
-          type: "runtime-request.respond",
-          commandId: CommandId.make(`command:approval:${answered}`),
-          threadId,
-          requestId: RuntimeRequestId.make(`request:approval:${answered}`),
-          ...body,
-        } as const;
-        return admit(who, command).pipe(
-          Effect.tap((taken) => (replayed ? Effect.void : upstreamSettled(taken))),
-        );
-      };
-      const line = (text: string) =>
-        ["<j5_shared_conversation>", text, "</j5_shared_conversation>"].join("\n");
-
-      // A guest's first act on a shared thread can be an approval. The first message a person
-      // sends tells the agent the thread is shared and who answered, in one block.
-      yield* answer(PRIYA, { decision: "accept" });
-      yield* send(MEMBER, message(threadId, "Let us begin."));
-      assert.strictEqual(notes.length, 1);
-      assert.isTrue(notes[0]!.text.startsWith("<j5_shared_conversation>\nThis thread is now a"));
-      assert.isTrue(
-        notes[0]!.text.endsWith(
-          "Approval prompts answered since you were last told: Priya (guest) approved 1.\n</j5_shared_conversation>",
-        ),
-      );
-
-      yield* answer(PRIYA, { decision: "accept" });
-      yield* answer(PRIYA, { decision: "accept" });
-      yield* answer(PRIYA, { decision: "decline" });
-      yield* answer(MEMBER, { decision: "acceptForSession" });
-      // Not approvals, or not answers that settled anything: none of these is counted.
-      yield* answer(PRIYA, { answers: { q1: "Yes." } });
-      yield* answer(PRIYA, { decision: "accept" }, true);
-
-      // The next message a person sends carries one line, whoever sends it, and only once.
-      yield* send(PRIYA, message(threadId, "What next?"));
-      assert.strictEqual(
-        notes[1]?.text,
-        line(
-          "Approval prompts answered since you were last told: Priya (guest) approved 2, declined 1; Jackson (member) approved 1.",
-        ),
-      );
-      yield* send(MEMBER, message(threadId, "Carry on."));
-      assert.strictEqual(notes.length, 2);
-
-      // A change in who can write and an approval, due together, ride in one block.
-      yield* answer(MEMBER, { decision: "cancel" });
-      const sam = yield* guest(SAM, "Sam", threadId, "collaborate");
-      yield* send(MEMBER, message(threadId, "Welcome, Sam."));
-      assert.strictEqual(
-        notes[2]?.text,
-        [
-          "<j5_shared_conversation>",
-          "Sam (guest) can now write to this thread.",
-          "Who can write now: Jackson (member), Priya (guest), Sam (guest).",
-          "Approval prompts answered since you were last told: Jackson (member) cancelled 1.",
-          "</j5_shared_conversation>",
-        ].join("\n"),
-      );
-
-      // The message that carries the line is queued and then withdrawn before it runs: the
-      // agent was never told, so the next message carries it.
-      yield* answer(SAM, { decision: "accept" });
-      const carrier = message(threadId, "One more thing.");
-      yield* send(SAM, carrier);
-      assert.strictEqual(notes.length, 4);
-      yield* queued(threadId, "run:approvals-carrier", carrier.messageId);
-      yield* sql`
-        UPDATE orchestration_v2_projection_runs SET status = 'cancelled'
-        WHERE run_id = 'run:approvals-carrier'
-      `;
-      yield* send(MEMBER, message(threadId, "Where were we?"));
-      assert.strictEqual(
-        notes[4]?.text,
-        line("Approval prompts answered since you were last told: Sam (guest) approved 1."),
-      );
-      yield* send(MEMBER, message(threadId, "Good."));
-      assert.strictEqual(notes.length, 5);
-
-      // The thread stops being shared with an approval untold: the last note carries it.
-      yield* answer(PRIYA, { decision: "accept" });
-      yield* access.removeGrant({ personId: priya.personId, target });
-      yield* access.removeGrant({ personId: sam.personId, target });
-      yield* send(MEMBER, message(threadId, "Just me now."));
-      assert.isTrue(notes[5]!.text.includes("Only members can write to this thread now."));
-      assert.isTrue(
-        notes[5]!.text.endsWith(
-          "Approval prompts answered since you were last told: Priya (guest) approved 1.\n</j5_shared_conversation>",
-        ),
-      );
-      // After that the agent is told of no approval: the thread is one person's again.
-      yield* answer(MEMBER, { decision: "accept" });
-      const plain = message(threadId, "Back to work.");
-      assert.strictEqual(yield* send(MEMBER, plain), plain);
-      // Shared again, it starts afresh: what was answered in between is not brought up.
-      yield* access.putGrant({ personId: sam.personId, target, level: "collaborate" });
-      yield* send(MEMBER, message(threadId, "Sam is back."));
-      assert.isTrue(notes[6]!.text.includes("This thread is now a shared conversation"));
-      assert.isFalse(notes[6]!.text.includes("Approval prompts"));
-      yield* send(MEMBER, message(threadId, "Nothing to add."));
-      assert.strictEqual(notes.length, 7);
-
-      // A thread that was never shared records and tells nothing.
-      const alone = yield* thread("thread:approvals-alone");
-      const unshared = {
-        type: "runtime-request.respond",
-        commandId: CommandId.make("command:approval:alone"),
-        threadId: alone,
-        requestId: RuntimeRequestId.make("request:approval:alone"),
-        decision: "accept",
-      } as const;
-      yield* admit(MEMBER, unshared).pipe(Effect.tap(() => upstreamSettled(unshared)));
-      const toAlone = message(alone, "Hello.");
-      assert.strictEqual(yield* send(MEMBER, toAlone), toAlone);
-      assert.strictEqual(
-        (yield* sql<{ readonly n: number }>`
-          SELECT COUNT(*) AS n FROM j5_a2a_prompt_answer WHERE thread_id = ${alone}
-        `)[0]!.n,
-        0,
-      );
     }),
   );
 }

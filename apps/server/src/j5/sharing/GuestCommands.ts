@@ -49,31 +49,61 @@ export const guestCommandThreadId = (payload: unknown): string | undefined => {
 const GUEST_DECISIONS: ReadonlySet<string> = new Set(["accept", "decline", "cancel"]);
 
 /**
- * What a guest's message may not carry. Each would let the message be something other than a
- * person's own text queued on this thread: another sender, a scheduled task, a notification, a
- * continuation of someone's run, or a plan read from a thread the command names inside itself.
+ * What a guest's message may not carry, because each would make the message someone else's:
+ * another sender, a scheduled task, a notification, or a continuation of someone's run. These
+ * are not limits on what a guest may say.
  */
 const MESSAGE_FIELDS_REFUSED = [
   "notification",
   "scheduledTaskId",
   "senderThreadId",
   "delegatedCompletion",
-  "sourcePlanRef",
   "restartContinuationOfRunId",
   "usageLimitContinuationOfRunId",
   "manualContinuationOfRunId",
   "usageLimitRecoveryRequestId",
 ] as const satisfies ReadonlyArray<keyof CommandOf<"message.dispatch">>;
 
+type MessageContext = NonNullable<CommandOf<"message.dispatch">["context"]>;
+
+/** A kind of composer context the platform keeps for records of its own. */
+const isPlatformKind = (kind: string) => kind.trim().toLowerCase().startsWith("j5");
+
 /**
- * Whether a command carries anything beside its text. Upstream's client sends an empty list of
- * attachments and an empty set of context records with a plain edit, and those carry nothing;
- * the command is rebuilt without them either way.
+ * Why a guest's composer context is refused, or `null` when it may go on. A guest's message
+ * carries what a member's does (mentions, terminal output, picked elements, review comments,
+ * skills, other threads), with two exceptions. A record that names a stored attachment is
+ * refused with attachments themselves: upstream passes a stored attachment's id through
+ * unchecked, so a guest could name one from a thread it cannot read. And a kind the platform
+ * keeps for itself is not a guest's to send.
  */
-const carriesMoreThanText = (command: {
+const contextRefusal = (context: MessageContext | undefined): string | null => {
+  for (const record of context?.records ?? []) {
+    if (isPlatformKind(record.kind)) return "A guest's message cannot carry that.";
+    if (record.kind === "image" || record.kind === "file" || "attachmentId" in record) {
+      return "A guest cannot send attachments yet.";
+    }
+  }
+  return null;
+};
+
+/** The other threads a guest's command names for the server or the agent to read from. */
+export const threadsNamedBy = (command: GuestCommand): ReadonlyArray<string> => {
+  if (command.type !== "message.dispatch" && command.type !== "queued-run.edit") return [];
+  const records = command.context?.records ?? [];
+  return [
+    ...records.flatMap((record) =>
+      record.kind === "thread" && "threadId" in record ? [record.threadId] : [],
+    ),
+    ...(command.type === "message.dispatch" && command.sourcePlanRef !== undefined
+      ? [command.sourcePlanRef.threadId]
+      : []),
+  ];
+};
+
+const carriesAttachments = (command: {
   readonly attachments?: ReadonlyArray<unknown> | undefined;
-  readonly context?: { readonly records: ReadonlyArray<unknown> } | undefined;
-}) => (command.attachments?.length ?? 0) > 0 || (command.context?.records.length ?? 0) > 0;
+}) => (command.attachments?.length ?? 0) > 0;
 
 export type GuestCommandDecision =
   | { readonly allowed: true; readonly command: GuestCommand }
@@ -94,10 +124,10 @@ export const guestCommand = (command: OrchestrationV2Command): GuestCommandDecis
       const carried = MESSAGE_FIELDS_REFUSED.find((name) => command[name] !== undefined);
       if (carried !== undefined) return refuse("A guest's message cannot carry that.");
       // An attachment id already stored passes through upstream unchecked, so a guest could name
-      // one from a thread it cannot read; composer context can name files and other threads.
-      if (carriesMoreThanText(command)) {
-        return refuse("A guest can send text only: no attachments, mentions or other context.");
-      }
+      // one from a thread it cannot read.
+      if (carriesAttachments(command)) return refuse("A guest cannot send attachments yet.");
+      const contextRefused = contextRefusal(command.context);
+      if (contextRefused !== null) return refuse(contextRefused);
       return {
         allowed: true,
         command: {
@@ -107,16 +137,19 @@ export const guestCommand = (command: OrchestrationV2Command): GuestCommandDecis
           messageId: command.messageId,
           text: command.text,
           attachments: [],
+          ...(command.context === undefined ? {} : { context: command.context }),
+          ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...(command.titleSeed === undefined ? {} : { titleSeed: command.titleSeed }),
           createdBy: "user",
           creationSource: command.creationSource === "mobile" ? "mobile" : "web",
           dispatchMode: { type: "queue_after_active" },
         },
       };
     }
-    case "queued-run.edit":
-      if (carriesMoreThanText(command)) {
-        return refuse("A guest can send text only: no attachments, mentions or other context.");
-      }
+    case "queued-run.edit": {
+      if (carriesAttachments(command)) return refuse("A guest cannot send attachments yet.");
+      const contextRefused = contextRefusal(command.context);
+      if (contextRefused !== null) return refuse(contextRefused);
       return {
         allowed: true,
         command: {
@@ -125,8 +158,10 @@ export const guestCommand = (command: OrchestrationV2Command): GuestCommandDecis
           threadId: command.threadId,
           runId: command.runId,
           text: command.text,
+          ...(command.context === undefined ? {} : { context: command.context }),
         },
       };
+    }
     case "queued-run.cancel":
       return {
         allowed: true,

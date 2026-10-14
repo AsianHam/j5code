@@ -26,25 +26,19 @@ import { ThreadManagementService } from "../../orchestration-v2/ThreadManagement
 import type { ParticipantId } from "../a2a/contracts.ts";
 import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
 import { authorLabel } from "./authorLabel.ts";
-import { guestCommand } from "./GuestCommands.ts";
+import { guestCommand, threadsNamedBy } from "./GuestCommands.ts";
 import {
   GUEST_SESSION_SUBJECT,
   PersonAccess,
   type PersonAccessShape,
   type PersonKind,
   type SessionIdentity,
-  isCrewSeatThread,
   guestWritesTo,
+  isCrewSeatThread,
   isSharedConversation,
   writesVia,
 } from "./PersonAccess.ts";
-import {
-  Writer,
-  approvalsLine,
-  changeNote,
-  firstNote,
-  withApprovals,
-} from "./sharedConversationNotes.ts";
+import { Writer, changeNote, firstNote } from "./sharedConversationNotes.ts";
 
 /**
  * A shared conversation: a thread a guest holds Collaborate on
@@ -331,56 +325,6 @@ const make = <E>(
   )`;
 
   /**
-   * The approvals answered on a thread that its agent has not been told of (AC9), marked as
-   * told by the message now being taken in. One whose telling was lost is told again. An
-   * approval answered while the thread was not shared is never told. Read on every message to
-   * a shared conversation: one pass over the thread's approvals, each a lookup by key.
-   */
-  const untoldApprovals = Effect.fn("j5.sharing.sharedConversation.untoldApprovals")(function* (
-    threadId: ThreadId,
-    carrier: MessageId,
-  ) {
-    const answered = yield* sql<
-      CarrierRun & {
-        readonly request_id: string;
-        readonly command_id: string;
-        readonly told_message_id: string | null;
-        readonly person_kind: PersonKind;
-        readonly display_name: string | null;
-        readonly decision: string;
-      }
-    >`
-      SELECT answer.request_id, answer.command_id, answer.told_message_id, answer.person_kind,
-        answer.display_name, answer.decision, message.message_id AS carried,
-        run.status AS status, json_extract(run.payload_json, '$.startedAt') AS started_at
-      FROM j5_a2a_prompt_answer AS answer
-      LEFT JOIN orchestration_v2_projection_messages AS message
-        ON message.message_id = answer.told_message_id
-      LEFT JOIN orchestration_v2_projection_runs AS run ON run.run_id = message.run_id
-      WHERE answer.thread_id = ${threadId} AND answer.decision IS NOT NULL
-        AND answer.silent = 0 AND ${settledItsPrompt}
-      ORDER BY answer.answered_at, answer.request_id
-    `;
-    const waiting = answered.filter((row) => row.told_message_id === null || lost(row));
-    if (waiting.length === 0) return null;
-    yield* Effect.forEach(
-      waiting,
-      (row) => sql`
-        UPDATE j5_a2a_prompt_answer SET told_message_id = ${carrier}
-        WHERE thread_id = ${threadId} AND request_id = ${row.request_id}
-          AND command_id = ${row.command_id}
-      `,
-      { discard: true },
-    );
-    return approvalsLine(
-      waiting.map((row) => ({
-        label: authorLabel({ kind: row.person_kind, displayName: row.display_name }),
-        decision: row.decision,
-      })),
-    );
-  });
-
-  /**
    * Who the agent was last told can write to a thread: what the newest message known to have
    * reached it with a note said. `null` for an agent that has been told nothing that still
    * stands. A note on a message still waiting in the queue has told the agent nothing yet, and
@@ -434,13 +378,9 @@ const make = <E>(
     // A thread shared again after it stopped being one is told as a thread newly shared.
     const wasShared = last !== null && last.some((writer) => writer.kind === "guest");
     const note = wasShared ? changeNote(last, now) : shared ? firstNote(now) : null;
-    // The agent is told who answered its approval prompts while its thread was shared, on the
-    // same block: the first note carries any answered before a person's first message, and
-    // the last note of a thread that has stopped being shared carries what is left.
-    const approvals = wasShared || shared ? yield* untoldApprovals(threadId, carrier) : null;
     return {
       shared,
-      note: withApprovals(note, approvals),
+      note,
       told: note === null ? null : yield* encodeTold(now),
     };
   });
@@ -571,6 +511,13 @@ const make = <E>(
     if (author === null || author.kind !== "guest" || author.nameSelfGiven) {
       return yield* refused("A member has to confirm your name before you can write here.");
     }
+    // Another thread a guest's message names, for the agent to read or for upstream to take a
+    // plan from, is one the guest can read.
+    for (const named of threadsNamedBy(decision.command)) {
+      if ((yield* access.threadAccess(session, ThreadId.make(named))) === "none") {
+        return yield* refused("This is not shared with you on this server.");
+      }
+    }
     const command = {
       ...decision.command,
       commandId: guestCommandId(author.personId, decision.command.commandId),
@@ -671,23 +618,17 @@ const make = <E>(
     command.type !== "runtime-request.respond" && command.type !== "thread.user-input.dismiss"
       ? Effect.void
       : Effect.gen(function* () {
-          const shared = yield* isSharedConversation(sql, command.threadId);
-          if (!shared && !(yield* writtenWhileShared(command.threadId))) return;
+          if (!(yield* everShared(command.threadId))) return;
           const author = yield* sessionAuthor(session);
           if (author === null) return;
           const answeredAt = DateTime.formatIso(yield* DateTime.now);
-          // What an approval was answered with; a question's answer and a dismissal have none.
-          const decision =
-            command.type === "runtime-request.respond" ? (command.decision ?? null) : null;
-          // The agent is told only of what was answered while its thread was shared.
           yield* sql`
             INSERT INTO j5_a2a_prompt_answer (
               thread_id, request_id, command_id, person_id, person_kind, display_name,
-              answered_at, decision, silent
+              answered_at
             ) VALUES (
               ${command.threadId}, ${command.requestId}, ${command.commandId},
-              ${author.personId}, ${author.kind}, ${author.displayName}, ${answeredAt},
-              ${decision}, ${shared ? 0 : 1}
+              ${author.personId}, ${author.kind}, ${author.displayName}, ${answeredAt}
             )
             ON CONFLICT (thread_id, request_id, command_id) DO NOTHING
           `;
