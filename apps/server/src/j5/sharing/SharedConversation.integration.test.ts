@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
+import { isNativeMaintenanceCommand } from "../../orchestration-v2/Orchestrator.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { makeHarness, modelSelection, projectId } from "../test-support/threadLaunchHarness.ts";
 import * as PersonAccess from "./PersonAccess.ts";
@@ -432,6 +433,18 @@ it.effect(
       assert.isTrue(
         first?.endsWith("\n[Message from Jackson (member)]\n\nLet us review the plan."),
       );
+      // A member's `/compact` goes on as typed, so upstream takes it for the command it is; a
+      // guest's is sent as words under their name, which upstream does not.
+      const compact = message("/compact", on);
+      yield* send(MEMBER, compact);
+      const compactText = yield* text(compact.messageId);
+      assert.strictEqual(compactText, "/compact");
+      assert.isTrue(isNativeMaintenanceCommand({ text: compactText!, attachments: [] }));
+      const guestCompact = message("/compact", on);
+      yield* send(GUEST, guestCompact);
+      const guestText = yield* text(guestCompact.messageId);
+      assert.strictEqual(guestText, "[Message from Priya (guest)]\n\n/compact");
+      assert.isFalse(isNativeMaintenanceCommand({ text: guestText!, attachments: [] }));
       // The guest's own message on the thread is named, and a guest cannot start a thread.
       const reply = message("What does the plan change?", on);
       yield* send(GUEST, reply);

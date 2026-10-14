@@ -25,7 +25,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import type { ParticipantId } from "../a2a/contracts.ts";
 import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
-import { authorLabel } from "./authorLabel.ts";
+import { authorLabel, beginsWithSlash } from "./authorLabel.ts";
 import { guestCommand, planThreadOf, threadsNamedBy } from "./GuestCommands.ts";
 import {
   GUEST_SESSION_SUBJECT,
@@ -442,22 +442,24 @@ const make = <E>(
    * A note the message carries stays on it. What the platform wrote is taken off the text a
    * client sent back before it is written again.
    */
+  const typedIn = (text: string, original: Author & { readonly note: string | null }) =>
+    withoutAuthorLine(
+      original.note !== null && text.startsWith(`${original.note}\n`)
+        ? text.slice(original.note.length + 1)
+        : text,
+      original,
+    );
   const stampEdit = (
     text: string,
     original: Author & { readonly note: string | null },
     editor: Author,
-  ) => {
-    const typed =
-      original.note !== null && text.startsWith(`${original.note}\n`)
-        ? text.slice(original.note.length + 1)
-        : text;
-    return stamped(
-      withoutAuthorLine(typed, original),
+  ) =>
+    stamped(
+      typedIn(text, original),
       original,
       original.note,
       editor.personId === original.personId ? undefined : editor,
     );
-  };
 
   const admitMember = Effect.fn("j5.sharing.sharedConversation.admitMember")(function* (
     session: SessionIdentity,
@@ -474,6 +476,10 @@ const make = <E>(
     }
     if (command.type !== "message.dispatch" && command.type !== "queued-run.edit") return command;
     if (command.type === "message.dispatch") {
+      // A member's slash command goes on as typed, so that it is still a command. It carries
+      // no note and is no one's recorded message: a note that is due rides on the next message
+      // that is stamped.
+      if (beginsWithSlash(command.text)) return command;
       const carried = yield* announce(command.threadId, command.messageId);
       // A thread that has just stopped being shared says so on this one message more.
       if (!carried.shared && carried.note === null) return command;
@@ -491,9 +497,20 @@ const make = <E>(
     // delivery from an agent or the platform) is edited as upstream has it.
     const messageId = yield* queuedMessageId(command.threadId, command.runId);
     const original = messageId === null ? null : yield* messageAuthor(command.threadId, messageId);
-    return original === null
-      ? command
-      : { ...command, text: stampEdit(command.text, original, author) };
+    if (original === null) return command;
+    // A member's own queued message edited into a slash command goes on as typed, and stops
+    // being a recorded message: what it carried was never read, so the next stamped message
+    // carries it. A guest's message stays the guest's and stays stamped, whoever edits it and
+    // whatever the edit begins with.
+    const typed = typedIn(command.text, original);
+    if (original.kind === "member" && beginsWithSlash(typed)) {
+      yield* sql`
+        DELETE FROM j5_a2a_message_author
+        WHERE thread_id = ${command.threadId} AND message_id = ${messageId}
+      `;
+      return { ...command, text: typed };
+    }
+    return { ...command, text: stampEdit(command.text, original, author) };
   });
 
   const admitGuest = Effect.fn("j5.sharing.sharedConversation.admitGuest")(function* (
@@ -778,7 +795,8 @@ const make = <E>(
           return yield* refused("A guest cannot start a thread.");
         }
         const first = input.initialMessage;
-        if (first === undefined) return input;
+        // A member's slash command starts a thread as typed, as it is sent to one.
+        if (first === undefined || beginsWithSlash(first.text)) return input;
         const shared =
           input.threadId === undefined
             ? // No thread can be named, so only the project says whether it will be shared.

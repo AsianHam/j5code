@@ -27,3 +27,13 @@ export const authorLabel = (author: {
   const name = author.displayName === null ? "" : personNameInLine(author.displayName);
   return name.length === 0 ? `a ${author.kind}` : `${name} (${author.kind})`;
 };
+
+/**
+ * Whether a message begins with a slash: its first character that is not whitespace is `/`.
+ * Upstream and the providers read a command from the start of a message (`/compact`,
+ * `/logout`, `/goal`, a provider's own commands and skills), trimming it the same way. A
+ * member's message that begins so goes on exactly as typed, with no author line and no note,
+ * so that the command is still one. A guest's never does: it is stamped like any other, and
+ * reaches the agent as words under the guest's name.
+ */
+export const beginsWithSlash = (text: string) => text.trimStart().startsWith("/");
