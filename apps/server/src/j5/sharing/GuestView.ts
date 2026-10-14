@@ -50,7 +50,11 @@ const reduceEnvironment = (
   ...(environment.orchestrationProtocolVersion === undefined
     ? {}
     : { orchestrationProtocolVersion: environment.orchestrationProtocolVersion }),
-  capabilities: { repositoryIdentity: false },
+  // One capability is told truthfully: the server takes a guest's composer context as links and
+  // records, and without this upstream's composer folds each chip into plain words for a server
+  // it takes to be an old one. It says nothing about the host. The attachment capabilities stay
+  // unsaid, since a guest's attachments are refused.
+  capabilities: { repositoryIdentity: false, inlineMessageContext: true },
 });
 
 /** What the read requests a guest may make can do; they say nothing about the host. */

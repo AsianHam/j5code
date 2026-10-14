@@ -507,7 +507,7 @@ it.effect("a guest's configuration holds nothing of the host, and still decodes"
       platform: { os: "linux", arch: "x64" },
       serverVersion: "0.0.48",
       orchestrationProtocolVersion: 2,
-      capabilities: { repositoryIdentity: false },
+      capabilities: { repositoryIdentity: false, inlineMessageContext: true },
     });
     assert.deepStrictEqual(Object.keys(reduced).toSorted(), [
       "auth",
@@ -597,7 +597,7 @@ it.effect("a guest's lifecycle feed is a welcome that names nothing of the host"
             platform: { os: "linux", arch: "x64" },
             serverVersion: "0.0.48",
             orchestrationProtocolVersion: 2,
-            capabilities: { repositoryIdentity: false },
+            capabilities: { repositoryIdentity: false, inlineMessageContext: true },
           },
           cwd: "/",
           projectName: "Shared project",
