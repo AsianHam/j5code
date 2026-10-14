@@ -433,7 +433,7 @@ migrations after upstream migrations.
 
 Current pin: `29980a31409234b676f97bd477c4e46fdb61a929`, from upstream `main` (frozen 2026-10-08). The previous pin was `67a2be0fdbee7afb64b691f147ed286a108c706b`, from upstream's V2 branch `t3code/codex-turn-mapping`.
 
-Released pin: `67a2be0fdbee7afb64b691f147ed286a108c706b`, from `t3code/codex-turn-mapping` (in J5 Code 0.0.48, frozen 2026-09-24).
+Released pin: `29980a31409234b676f97bd477c4e46fdb61a929`, from `main` (in J5 Code 0.0.49, frozen 2026-10-08).
 
 The released pin is the one the latest stable release is built on, and it is what j5.codes shows. It changes in the pull request that brings a stable release's version bump into `j5/main`, never in the advance itself.
 
