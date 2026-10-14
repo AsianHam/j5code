@@ -26,7 +26,7 @@ import { ThreadManagementService } from "../../orchestration-v2/ThreadManagement
 import type { ParticipantId } from "../a2a/contracts.ts";
 import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
 import { authorLabel } from "./authorLabel.ts";
-import { guestCommand, threadsNamedBy } from "./GuestCommands.ts";
+import { guestCommand, planThreadOf, threadsNamedBy } from "./GuestCommands.ts";
 import {
   GUEST_SESSION_SUBJECT,
   PersonAccess,
@@ -511,12 +511,20 @@ const make = <E>(
     if (author === null || author.kind !== "guest" || author.nameSelfGiven) {
       return yield* refused("A member has to confirm your name before you can write here.");
     }
-    // Another thread a guest's message names, for the agent to read or for upstream to take a
-    // plan from, is one the guest can read.
+    // Another thread a guest's message attaches for the agent to read is one the guest can
+    // read. A thread whose plan it builds from is one the guest can write to, since upstream
+    // marks that plan completed there.
     for (const named of threadsNamedBy(decision.command)) {
       if ((yield* access.threadAccess(session, ThreadId.make(named))) === "none") {
         return yield* refused("This is not shared with you on this server.");
       }
+    }
+    const planThread = planThreadOf(decision.command);
+    if (
+      planThread !== undefined &&
+      (yield* access.threadAccess(session, ThreadId.make(planThread))) !== "collaborate"
+    ) {
+      return yield* refused("This is not shared with you to write to.");
     }
     const command = {
       ...decision.command,

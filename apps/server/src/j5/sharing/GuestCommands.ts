@@ -72,7 +72,7 @@ const isPlatformKind = (kind: string) => kind.trim().toLowerCase().startsWith("j
 /**
  * Why a guest's composer context is refused, or `null` when it may go on. A guest's message
  * carries what a member's does (mentions, terminal output, picked elements, review comments,
- * skills, other threads), with two exceptions. A record that names a stored attachment is
+ * skills, other threads) and names a plan to build from, with two exceptions. A record that names a stored attachment is
  * refused with attachments themselves: upstream passes a stored attachment's id through
  * unchecked, so a guest could name one from a thread it cannot read. And a kind the platform
  * keeps for itself is not a guest's to send.
@@ -87,19 +87,21 @@ const contextRefusal = (context: MessageContext | undefined): string | null => {
   return null;
 };
 
-/** The other threads a guest's command names for the server or the agent to read from. */
-export const threadsNamedBy = (command: GuestCommand): ReadonlyArray<string> => {
-  if (command.type !== "message.dispatch" && command.type !== "queued-run.edit") return [];
-  const records = command.context?.records ?? [];
-  return [
-    ...records.flatMap((record) =>
-      record.kind === "thread" && "threadId" in record ? [record.threadId] : [],
-    ),
-    ...(command.type === "message.dispatch" && command.sourcePlanRef !== undefined
-      ? [command.sourcePlanRef.threadId]
-      : []),
-  ];
-};
+/** The other threads a guest's command attaches for the agent to read: named, not opened. */
+export const threadsNamedBy = (command: GuestCommand): ReadonlyArray<string> =>
+  command.type !== "message.dispatch" && command.type !== "queued-run.edit"
+    ? []
+    : (command.context?.records ?? []).flatMap((record) =>
+        record.kind === "thread" && "threadId" in record ? [record.threadId] : [],
+      );
+
+/**
+ * The thread whose plan a guest's message asks the agent to build from. Upstream does not only
+ * read that plan: it marks it completed, on the plan's own thread. So this is a thread the
+ * guest writes to, not one it merely reads.
+ */
+export const planThreadOf = (command: GuestCommand): string | undefined =>
+  command.type === "message.dispatch" ? command.sourcePlanRef?.threadId : undefined;
 
 const carriesAttachments = (command: {
   readonly attachments?: ReadonlyArray<unknown> | undefined;
@@ -139,7 +141,6 @@ export const guestCommand = (command: OrchestrationV2Command): GuestCommandDecis
           attachments: [],
           ...(command.context === undefined ? {} : { context: command.context }),
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
-          ...(command.titleSeed === undefined ? {} : { titleSeed: command.titleSeed }),
           createdBy: "user",
           creationSource: command.creationSource === "mobile" ? "mobile" : "web",
           dispatchMode: { type: "queue_after_active" },

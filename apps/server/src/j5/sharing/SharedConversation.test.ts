@@ -457,6 +457,7 @@ const each = <A, E>(
       const sent = message(threadId, "Look at [plan](t3-context://v1/mention/c-mention).", {
         context,
         sourcePlanRef: { threadId, planId: "plan:1" },
+        // A title is not a guest's to set: the seed is left out, and upstream makes a title.
         titleSeed: "The plan",
       });
       assert.deepStrictEqual((yield* send(PRIYA, sent)) as unknown, {
@@ -468,7 +469,6 @@ const each = <A, E>(
         attachments: [],
         context,
         sourcePlanRef: { threadId, planId: "plan:1" },
-        titleSeed: "The plan",
         createdBy: "user",
         creationSource: "web",
         dispatchMode: { type: "queue_after_active" },
@@ -511,25 +511,25 @@ const each = <A, E>(
         ].join("\n"),
       );
 
-      // Another thread the guest can read may be named.
-      yield* (yield* PersonAccess.PersonAccess).putGrant({
-        personId: priya.personId,
-        target: { kind: "thread", threadId: other },
-        level: "view",
-      });
-      assert.isFalse(
-        refused(
-          yield* send(
-            PRIYA,
-            message(threadId, "And this.", {
-              sourcePlanRef: { threadId: other, planId: "plan:1" },
-              ...withRecords(
-                record("thread", { environmentId: "env:1", threadId: other, title: "Other" }),
-              ),
-            }),
-          ),
-        ),
+      // Another thread the guest can read may be attached for the agent to read. Its plan may
+      // not be built from: upstream marks a plan completed on the plan's own thread, which is a
+      // write there, so that takes Collaborate on it.
+      const access = yield* PersonAccess.PersonAccess;
+      const grant = (level: "view" | "collaborate") =>
+        access.putGrant({
+          personId: priya.personId,
+          target: { kind: "thread", threadId: other },
+          level,
+        });
+      const attached = withRecords(
+        record("thread", { environmentId: "env:1", threadId: other, title: "Other" }),
       );
+      const fromPlan = { sourcePlanRef: { threadId: other, planId: "plan:1" } };
+      yield* grant("view");
+      assert.isFalse(refused(yield* send(PRIYA, message(threadId, "And this.", attached))));
+      assert.isTrue(refused(yield* send(PRIYA, message(threadId, "Build it.", fromPlan))));
+      yield* grant("collaborate");
+      assert.isFalse(refused(yield* send(PRIYA, message(threadId, "Build it.", fromPlan))));
     }),
   );
 
