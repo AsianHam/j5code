@@ -1,5 +1,8 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import type { ReactNode } from "react";
 
+import ChatMarkdown from "../../components/ChatMarkdown";
 import { MessageCopyButton } from "../../components/chat/MessageCopyButton";
 
 import { authorName } from "./sharedConversation.logic";
@@ -9,12 +12,18 @@ import { initialsOf } from "./shareLink.logic";
 interface SharedMessageInput {
   readonly message: { readonly createdBy?: string | undefined; readonly text: string };
   readonly timestampLabel?: string | undefined;
+  readonly threadRef?: ScopedThreadRef | null | undefined;
+  readonly markdownCwd?: string | undefined;
 }
+
+// Upstream's own level for a message's headings, under the heading that names its author.
+const MESSAGE_HEADING_LEVEL = 3;
+const NO_SKILLS: ReadonlyArray<never> = [];
 
 /**
  * Draws the two kinds of message only a shared conversation holds, in the place upstream's
  * timeline draws a person's message: the note the platform gave the agent with a message (who can
- * write, or which approvals were answered; its words are the server's and nothing here reads them), and
+ * write; its words are the server's and nothing here reads them), and
  * a message another person wrote. Everything else, the reader's own messages among them, is
  * `null` and stays upstream's to draw.
  *
@@ -60,12 +69,32 @@ export function renderSharedConversationMessage(props: SharedMessageInput): Reac
           {/* The typed words, without the line that is there for the agent. Upstream's other
               control on a person's own message, "Edit from here", is not offered on someone
               else's: it would hand their words to the reader's composer. */}
-          <MessageCopyButton text={props.message.text} size="icon-xs" variant="ghost" />
+          <MessageCopyButton
+            // As upstream's Copy on a person's own message: a mention is copied as its label.
+            text={replaceComposerContextReferences(
+              props.message.text,
+              (reference) => reference.label,
+            )}
+            size="icon-xs"
+            variant="ghost"
+          />
         </span>
       </div>
-      <p className="mt-1.5 whitespace-pre-wrap break-words text-sm" data-thread-find-text="true">
-        {props.message.text}
-      </p>
+      {/* Drawn as upstream draws a person's own words, so markdown reads the same and a mention
+          shows its label and not its link. Upstream's chip for a mention needs the row's own
+          state, which this card does not have. */}
+      <div className="mt-1.5 text-sm" data-thread-find-text="true">
+        <ChatMarkdown
+          text={props.message.text}
+          cwd={props.markdownCwd}
+          threadRef={props.threadRef ?? undefined}
+          skills={NO_SKILLS}
+          className="text-foreground"
+          lineBreaks
+          parseRawHtml={false}
+          headingLevelOffset={MESSAGE_HEADING_LEVEL}
+        />
+      </div>
     </section>
   );
 }
