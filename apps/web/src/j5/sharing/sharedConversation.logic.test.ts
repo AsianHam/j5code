@@ -12,6 +12,7 @@ import {
   queuedMessageTexts,
   settledPromptSignal,
   sharedMessageView,
+  unstampedCommandAuthor,
 } from "./sharedConversation.logic";
 
 const NOTE = "<j5_shared_conversation>\nWho can write: Priya (guest).\n</j5_shared_conversation>";
@@ -225,5 +226,38 @@ describe("what tells the client to ask the server's record again", () => {
     expect(isSettledPrompt(prompt("p1", "2026-10-13T06:40:00Z").entry.toolData)).toBe(true);
     expect(isSettledPrompt(prompt("p1", null).entry.toolData)).toBe(false);
     expect(isSettledPrompt({ type: "tool_call", completedAt: "2026-10-13T06:40:00Z" })).toBe(false);
+  });
+});
+
+describe("a slash command the record does not hold", () => {
+  const command = { id: "m1", text: "  /compact", createdBy: "user" };
+
+  it("is a member's on a guest's screen", () => {
+    expect(unstampedCommandAuthor({ readerIsGuest: true, message: command })).toEqual({
+      messageId: "m1",
+      displayName: null,
+      kind: "member",
+      you: false,
+      note: null,
+    });
+  });
+
+  it("is left alone on a member's screen, who cannot tell their own from another's", () => {
+    expect(unstampedCommandAuthor({ readerIsGuest: false, message: command })).toBeNull();
+  });
+
+  it("is the guest's own while it is still the copy their client drew", () => {
+    expect(
+      unstampedCommandAuthor({ readerIsGuest: true, message: { id: "m1", text: "/compact" } }),
+    ).toBeNull();
+  });
+
+  it("is not claimed when it is not a command", () => {
+    expect(
+      unstampedCommandAuthor({
+        readerIsGuest: true,
+        message: { id: "m1", text: "see /tmp", createdBy: "user" },
+      }),
+    ).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ import {
   mayHaveAuthorLine,
   settledPromptSignal,
   sharedMessageView,
+  unstampedCommandAuthor,
   type AuthorsByMessage,
 } from "./sharedConversation.logic";
 import { splitSharedMessage } from "@t3tools/client-runtime/j5/shared-conversation";
@@ -18,7 +19,12 @@ import { splitSharedMessage } from "@t3tools/client-runtime/j5/shared-conversati
 interface MessageEntry {
   readonly id: string;
   readonly kind: string;
-  readonly message?: { readonly id: string; readonly role: string; readonly text: string };
+  readonly message?: {
+    readonly id: string;
+    readonly role: string;
+    readonly text: string;
+    readonly createdBy?: unknown;
+  };
   readonly entry?: {
     readonly toolData?: unknown;
     readonly questionAnswer?: {
@@ -136,7 +142,17 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
         unrecorded: record.unrecorded.has(entry.message.id),
         typedHere: typedHere.current.has(entry.message.id),
       });
-      if (view === null) return [entry];
+      if (view === null) {
+        // A member's slash command, which the server leaves as typed, on a guest's screen.
+        const author = unstampedCommandAuthor({
+          readerIsGuest: record.guest,
+          message: entry.message,
+        });
+        if (author === null) return [entry];
+        const message = { ...entry.message };
+        marks.set(message, { kind: "message", author });
+        return [{ ...entry, message }];
+      }
       const message = { ...entry.message, text: view.typed };
       // The reader's own message stays upstream's bubble; anyone else's is J5's card.
       if (view.author === "waiting" || (view.author !== null && !view.author.you)) {
@@ -153,5 +169,13 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
       marks.set(note, { kind: "note" });
       return [{ ...entry, id: `${entry.id}:shared-note`, message: note }, shown];
     });
-  }, [entries, messages, record.answers, record.authors, record.shared, record.unrecorded]);
+  }, [
+    entries,
+    messages,
+    record.answers,
+    record.authors,
+    record.guest,
+    record.shared,
+    record.unrecorded,
+  ]);
 }

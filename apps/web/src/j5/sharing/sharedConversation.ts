@@ -107,7 +107,10 @@ export function useThreadAuthors(
   }, [authoredKey, record, result.authors]);
   // The record holding anyone is itself proof the thread is shared.
   const shared = knownShared || result.authors.size > 0 || result.answers.size > 0;
-  return useMemo(() => ({ ...result, unrecorded, shared }), [result, unrecorded, shared]);
+  return useMemo(
+    () => ({ ...result, unrecorded, shared, guest: isGuest }),
+    [result, unrecorded, shared, isGuest],
+  );
 }
 
 /**

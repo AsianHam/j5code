@@ -182,3 +182,20 @@ export function sharedMessageView(input: {
   if (authorLine === null) return null;
   return { typed, note, author: input.typedHere ? null : "waiting" };
 }
+
+/**
+ * Whose a message is that the record does not hold, for a guest reading a shared conversation: a
+ * member's, when it is the server's copy (`createdBy` is set; the reader's own copy, drawn before
+ * the server's came, has none) and begins with `/`. The server stamps every message a guest sends,
+ * and leaves a member's slash command as typed so the agent can run it; so an unstamped command
+ * is never the guest's own. Which member sent it is not known. `null` when the message is not
+ * such a command, or when the reader is a member, who cannot tell their own from another's.
+ */
+export function unstampedCommandAuthor(input: {
+  readonly readerIsGuest: boolean;
+  readonly message: { readonly id: string; readonly text: string; readonly createdBy?: unknown };
+}): SharingMessageAuthor | null {
+  if (!input.readerIsGuest || input.message.createdBy === undefined) return null;
+  if (!input.message.text.trimStart().startsWith("/")) return null;
+  return { messageId: input.message.id, displayName: null, kind: "member", you: false, note: null };
+}
