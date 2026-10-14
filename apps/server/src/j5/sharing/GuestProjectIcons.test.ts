@@ -409,6 +409,10 @@ it.layer(testLayer)("a guest and a project's favicon", (it) => {
             joined_open_link_id
           ) VALUES (${`human:icon-full-${index}`}, 0, ${AT}, 'guest', NULL, 1, ${full.linkId})
         `;
+        yield* sql`
+          INSERT INTO j5_a2a_open_link_join (link_id, person_id, joined_at)
+          VALUES (${full.linkId}, ${`human:icon-full-${index}`}, ${AT})
+        `;
       }
       yield* openLinks.revoke(link.linkId);
       const refusals = [];

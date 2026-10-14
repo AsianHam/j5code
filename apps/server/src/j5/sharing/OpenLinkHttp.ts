@@ -21,6 +21,10 @@ import { GUEST_SESSION_SUBJECT } from "./PersonAccess.ts";
 export const MEMBER_OPENED_OPEN_LINK =
   "You are already signed in to this server as a member. This link is for guests: send it to them rather than opening it.";
 
+/** What someone joining is told when the name they typed is someone else's, or their own. */
+export const OPEN_LINK_NAME_TAKEN =
+  "That name is already in use on this server. If it is yours, open this link on the device you joined with, or ask for a link for this device.";
+
 const decodeJoin = Schema.decodeUnknownEffect(SharingJoinRequest);
 const decodeDescribe = Schema.decodeUnknownEffect(SharingDescribeRequest);
 
@@ -42,12 +46,18 @@ export const openLinkHttpRouteLayer = Layer.unwrap(
     const openLinks = wired.value;
     const auth = yield* Effect.serviceOption(EnvironmentAuth.EnvironmentAuth);
     const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
+    /** The session a browser's cookie carries, when it carries one that works. */
+    const sessionOf = (request: HttpServerRequest.HttpServerRequest) =>
+      Option.isNone(auth)
+        ? Effect.succeed(null)
+        : auth.value.authenticateHttpRequest(request).pipe(Effect.orElseSucceed(() => null));
 
     /**
      * What a link opens, asked before pairing or joining so the page can say what the person is
      * about to do. It spends and changes nothing. A link that would not work now gets the join
      * route's one refusal, whatever is wrong with it. A member's browser gets the same answer as
-     * anyone: it is refused at the next step, where it would pair or join.
+     * anyone: it is refused at the next step, where it would pair or join. A guest's browser is
+     * also told whom it can join as.
      */
     const describeRoute = HttpRouter.add(
       "POST",
@@ -60,7 +70,8 @@ export const openLinkHttpRouteLayer = Layer.unwrap(
         const serverName = Option.isNone(environment)
           ? ""
           : (yield* environment.value.getDescriptor).label;
-        return yield* openLinks.describe(decoded.value.link).pipe(
+        const session = yield* sessionOf(request);
+        return yield* openLinks.describe(decoded.value.link, session).pipe(
           Effect.flatMap((described) =>
             // Each entry by its titles and icon; its project's id stays here. The favicon link
             // is the one a guest's own client is given once paired (`GuestProjectIcons.ts`):
@@ -105,37 +116,40 @@ export const openLinkHttpRouteLayer = Layer.unwrap(
         const request = yield* HttpServerRequest.HttpServerRequest;
         // The route asks for no sign-in, but a browser sends its cookie. A member who opens the
         // link would be recorded as a new guest and then paired as one, so they are told
-        // instead, and no one is recorded. Anyone else, signed in or not, goes on.
-        const member = Option.isNone(auth)
-          ? false
-          : yield* auth.value.authenticateHttpRequest(request).pipe(
-              Effect.map((session) => session.subject !== GUEST_SESSION_SUBJECT),
-              Effect.orElseSucceed(() => false),
-            );
-        if (member) return refusal(409, "signed_in_as_member", MEMBER_OPENED_OPEN_LINK);
+        // instead, and no one is recorded. A guest may join as themselves. Anyone else, signed
+        // in or not, gives a name and goes on.
+        const session = yield* sessionOf(request);
+        if (session !== null && session.subject !== GUEST_SESSION_SUBJECT) {
+          return refusal(409, "signed_in_as_member", MEMBER_OPENED_OPEN_LINK);
+        }
         const decoded = yield* request.json.pipe(Effect.flatMap(decodeJoin), Effect.option);
         if (Option.isNone(decoded)) {
           return refusal(
             400,
             "invalid_request",
-            "A link is needed, and a name: one line of ordinary characters, up to 80 of them, with no square brackets.",
+            "A link is needed, and any name given is one line of ordinary characters, up to 80 of them, with no square brackets.",
           );
         }
-        return yield* openLinks.join(decoded.value).pipe(
-          Effect.map((link) =>
-            HttpServerResponse.jsonUnsafe({
-              credential: link.credential,
-              expiresAt: link.expiresAt,
-            }),
+        const { token, displayName } = decoded.value;
+        return yield* openLinks.join({ token, displayName, session }).pipe(
+          Effect.map((joined) =>
+            joined.kind === "new"
+              ? HttpServerResponse.jsonUnsafe({
+                  credential: joined.link.credential,
+                  expiresAt: joined.link.expiresAt,
+                })
+              : // Already paired: the browser goes on to the thread it was just given.
+                HttpServerResponse.jsonUnsafe({ threadId: joined.threadId }),
           ),
           Effect.catchTags({
             OpenLinkRefusedError: (error) =>
               Effect.succeed(refusal(404, "link_refused", error.message)),
             OpenLinkNameError: (error) =>
               Effect.succeed(refusal(400, "invalid_request", error.message)),
-            // Told only to the holder of a link that works, who is about to be let in.
-            PersonNameTakenError: (error) =>
-              Effect.succeed(refusal(409, "name_taken", error.message)),
+            // Told only to the holder of a link that works, who is about to be let in. A name is
+            // no proof of who someone is, so a person on another device is not let in by theirs.
+            PersonNameTakenError: () =>
+              Effect.succeed(refusal(409, "name_taken", OPEN_LINK_NAME_TAKEN)),
           }),
           Effect.catch((cause) =>
             Effect.logError("J5 open link join failed", { cause }).pipe(

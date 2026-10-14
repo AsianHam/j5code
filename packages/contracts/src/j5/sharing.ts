@@ -420,13 +420,21 @@ export const SharingLinkDescription = Schema.Struct({
   opens: Schema.Array(SharingLinkOpens),
   /** When the link stops working if it is not used first. */
   expiresAt: Schema.DateTimeUtc,
+  /**
+   * For an open link asked about from a guest's own browser: that guest's name. They can join
+   * as themselves, with no name to give.
+   */
+  joiningAs: Schema.optionalKey(Schema.String),
 });
 export type SharingLinkDescription = typeof SharingLinkDescription.Type;
 
-/** What a person sends to join: the link's token and the name they go by. */
+/**
+ * What a person sends to join: the link's token and the name they go by. A guest already signed
+ * in on the browser leaves the name out to join as themselves.
+ */
 export const SharingJoinRequest = Schema.Struct({
   token: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
-  displayName: SharingPersonName,
+  displayName: Schema.optionalKey(SharingPersonName),
 });
 export type SharingJoinRequest = typeof SharingJoinRequest.Type;
 

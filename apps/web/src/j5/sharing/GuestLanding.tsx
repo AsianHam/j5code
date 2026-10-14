@@ -24,6 +24,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { j5Sharing } from "./guestAccess";
 import { landingFor } from "./joinPage.logic";
+import { forgetLandingThread, landingThread } from "./landingThread";
 import {
   rememberPairedThroughShareLink,
   wasPairedThroughShareLink,
@@ -98,15 +99,23 @@ function GuestHome({ environmentId }: { readonly environmentId: EnvironmentId })
   const held = asked && !grants.isPending ? (grants.data?.grants ?? null) : null;
   const only = held !== null && held.length === 1 ? held[0]!.target : null;
   const onlyThreadId = only?.kind === "thread" ? only.threadId : null;
+  // A thread just joined by an open link is opened once the server's list holds it, and not
+  // before: upstream's thread page leaves an address its list does not hold yet.
+  const [joinedThreadId] = useState(landingThread);
+  const joinedThread = useThreadShell(
+    joinedThreadId === null ? null : scopeThreadRef(environmentId, joinedThreadId),
+  );
+  const openThreadId = joinedThread?.id ?? onlyThreadId;
 
   useEffect(() => {
-    if (onlyThreadId === null) return;
+    if (openThreadId === null) return;
+    forgetLandingThread();
     void navigate({
       to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(environmentId, onlyThreadId)),
+      params: buildThreadRouteParams(scopeThreadRef(environmentId, openThreadId)),
       replace: true,
     });
-  }, [environmentId, navigate, onlyThreadId]);
+  }, [environmentId, navigate, openThreadId]);
 
   if (held === null) {
     return grants.error === null || grants.isPending || !asked ? null : (
@@ -120,7 +129,7 @@ function GuestHome({ environmentId }: { readonly environmentId: EnvironmentId })
       </Frame>
     );
   }
-  if (onlyThreadId !== null) return null;
+  if (openThreadId !== null) return null;
   if (held.length === 0) {
     return (
       <Frame>

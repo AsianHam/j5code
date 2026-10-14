@@ -38,6 +38,7 @@ import Migration0034 from "./migrations/034_PeopleAndGrants.ts";
 import Migration0035 from "./migrations/035_GuestLinks.ts";
 import Migration0036 from "./migrations/036_OpenLinks.ts";
 import Migration0037 from "./migrations/037_PersonNames.ts";
+import Migration0038 from "./migrations/038_OpenLinkJoins.ts";
 
 export const J5_A2A_MIGRATIONS_TABLE = "j5_a2a_migrations";
 
@@ -86,6 +87,7 @@ export const migrationEntries = [
   [36, "OpenLinks", Migration0036],
   // 37 sits in the layer below 36 in the stack that introduced both; ids are never renumbered.
   [37, "PersonNames", Migration0037],
+  [38, "OpenLinkJoins", Migration0038],
 ] as const;
 
 const makeMigrationLoader = (throughId?: number) =>

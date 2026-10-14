@@ -771,6 +771,8 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
               yield* sql`DELETE FROM j5_a2a_person_grant WHERE person_id = ${personId}`;
               yield* sql`DELETE FROM j5_a2a_person_session WHERE person_id = ${personId}`;
               yield* sql`DELETE FROM j5_a2a_guest_link WHERE person_id = ${personId}`;
+              // Off every open link's list of who joined, which frees their place on it.
+              yield* sql`DELETE FROM j5_a2a_open_link_join WHERE person_id = ${personId}`;
               yield* sql`
                 DELETE FROM j5_a2a_human_person WHERE person_id = ${personId} AND kind = 'guest'
               `;

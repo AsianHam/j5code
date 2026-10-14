@@ -37,7 +37,7 @@ import { layer as readChangesLayer } from "../a2a/ReadChanges.ts";
 import { settledReadRevisions } from "../a2a/test-support/readRevisions.ts";
 import * as GuestGate from "./GuestGate.ts";
 import * as GuestPairing from "./GuestPairing.ts";
-import { openLinkHttpRouteLayer } from "./OpenLinkHttp.ts";
+import { OPEN_LINK_NAME_TAKEN, openLinkHttpRouteLayer } from "./OpenLinkHttp.ts";
 import * as OpenLinks from "./OpenLinks.ts";
 import { People } from "./People.ts";
 import * as PersonAccess from "./PersonAccess.ts";
@@ -258,6 +258,10 @@ it.layer(testLayer)("joining by an open link", (it) => {
             joined_open_link_id
           ) VALUES (${`human:full-${index}`}, 0, ${AT}, 'guest', 'Filler', 1, ${full.linkId})
         `;
+        yield* sql`
+          INSERT INTO j5_a2a_open_link_join (link_id, person_id, joined_at)
+          VALUES (${full.linkId}, ${`human:full-${index}`}, ${AT})
+        `;
       }
       const deleted = yield* make("deleted");
       yield* sql`
@@ -358,7 +362,8 @@ it.layer(testLayer)("joining by an open link", (it) => {
         "[Sam",
       ]) {
         assert.strictEqual(
-          (yield* Effect.flip(openLinks.join({ token: good.token, displayName })))._tag,
+          (yield* Effect.flip(openLinks.join({ token: good.token, displayName, session: null })))
+            ._tag,
           "OpenLinkNameError",
         );
       }
@@ -435,6 +440,125 @@ it.layer(testLayer)("joining by an open link", (it) => {
         200,
       );
       assert.strictEqual((yield* guests).length, before + 3);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a guest's own browser joins another link's thread as themselves (#614)", () =>
+    Effect.gen(function* () {
+      const openLinks = yield* OpenLinks.OpenLinks;
+      const people = yield* People;
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const access = yield* PersonAccess.PersonAccess;
+      const route = yield* joinRoute();
+      const first = yield* thread("thread:self-first");
+      const second = yield* thread("thread:self-second");
+      const third = yield* thread("thread:self-third");
+      const firstLink = yield* openLinks.create(first);
+      const secondLink = yield* openLinks.create(second);
+      const joinAsSelf = (token: string, cookie?: string) =>
+        route.raw(JSON.stringify({ token }), cookie);
+
+      const joined = yield* route.join(firstLink.token, "Bob Self");
+      const paired = yield* auth.createBrowserSession(joined.body.credential!, {
+        deviceType: "desktop",
+      });
+      const cookie = `${sessions.cookieName}=${paired.sessionToken}`;
+      const session = yield* auth.authenticateHttpRequest({
+        method: "GET",
+        url: "/ws",
+        cookies: { [sessions.cookieName]: paired.sessionToken },
+        headers: {},
+      } as unknown as Parameters<typeof auth.authenticateHttpRequest>[0]);
+      const bob = (yield* guests).find((person) => person.displayName === "Bob Self")!;
+      const before = (yield* guests).length;
+
+      // The page is told whom the browser can join as; anyone else's is not.
+      const described = yield* route.describe(secondLink.token, cookie);
+      assert.strictEqual((described.body as { joiningAs?: string }).joiningAs, "Bob Self");
+      assert.notProperty((yield* route.describe(secondLink.token)).body, "joiningAs");
+
+      // No name: the guest is given the thread, and nothing is paired or recorded anew.
+      const added = yield* joinAsSelf(secondLink.token, cookie);
+      assert.strictEqual(added.status, 200);
+      assert.strictEqual(added.body.threadId, second);
+      assert.notProperty(added.body, "credential");
+      assert.strictEqual((yield* guests).length, before);
+      assert.strictEqual(yield* access.threadAccess(session, first), "view");
+      assert.strictEqual(yield* access.threadAccess(session, second), "view");
+      // Each link counts them once, however often it is opened; their name stays their own word.
+      assert.strictEqual((yield* joinAsSelf(secondLink.token, cookie)).status, 200);
+      const joinsOf = (linkId: string) =>
+        openLinks.list.pipe(
+          Effect.map((links) => links.find((entry) => entry.linkId === linkId)?.joined),
+        );
+      assert.deepStrictEqual(yield* joinsOf(firstLink.linkId), [bob.personId]);
+      assert.deepStrictEqual(yield* joinsOf(secondLink.linkId), [bob.personId]);
+      const listed = (yield* guests).find((person) => person.personId === bob.personId)!;
+      assert.deepStrictEqual(
+        [listed.joinedOpenLinkId, listed.nameSelfGiven],
+        [firstLink.linkId, true],
+      );
+
+      // A level already held on the thread is kept, and none is carried over from another.
+      yield* people.rename({ personId: bob.personId, displayName: "Bob Self" });
+      yield* people.putGrant({
+        personId: bob.personId,
+        target: { kind: "thread", threadId: third },
+        level: "collaborate",
+      });
+      assert.strictEqual(
+        (yield* joinAsSelf((yield* openLinks.create(third)).token, cookie)).status,
+        200,
+      );
+      assert.strictEqual(yield* access.threadAccess(session, third), "collaborate");
+      assert.strictEqual(yield* access.threadAccess(session, second), "view");
+
+      // A browser that is no guest's gives a name; a name someone has is refused with a way on.
+      const latest = yield* openLinks.create(yield* thread("thread:self-latest"));
+      assert.strictEqual((yield* joinAsSelf(latest.token)).status, 400);
+      assert.strictEqual(
+        (yield* joinAsSelf(latest.token, `${sessions.cookieName}=nope`)).status,
+        400,
+      );
+      const taken = yield* route.join(latest.token, "bob self");
+      assert.strictEqual(taken.status, 409);
+      assert.match(taken.body.message!, /open this link on the device you joined with/);
+
+      // A full link still lets in, and offers itself to, a guest it already counts.
+      const sql = yield* SqlClient.SqlClient;
+      for (let index = 1; index < OpenLinks.OPEN_LINK_MAX_PEOPLE; index += 1) {
+        yield* sql`
+          INSERT INTO j5_a2a_open_link_join (link_id, person_id, joined_at)
+          VALUES (${secondLink.linkId}, ${`human:self-full-${index}`}, ${AT})
+        `;
+      }
+      const offered = yield* route.describe(secondLink.token, cookie);
+      assert.strictEqual((offered.body as { joiningAs?: string }).joiningAs, "Bob Self");
+      assert.strictEqual((yield* route.describe(secondLink.token)).status, 404);
+      assert.strictEqual((yield* joinAsSelf(secondLink.token, cookie)).status, 200);
+      assert.strictEqual((yield* route.join(secondLink.token, "One Too Many")).status, 404);
+
+      // A guest's session bound to no one is no one: it is offered nothing and gives a name.
+      const loose = yield* route.join(latest.token, "Loose End");
+      const looseSession = yield* auth.createBrowserSession(loose.body.credential!, {
+        deviceType: "desktop",
+      });
+      const looseCookie = `${sessions.cookieName}=${looseSession.sessionToken}`;
+      const looseIdentity = yield* auth.authenticateHttpRequest({
+        method: "GET",
+        url: "/ws",
+        cookies: { [sessions.cookieName]: looseSession.sessionToken },
+        headers: {},
+      } as unknown as Parameters<typeof auth.authenticateHttpRequest>[0]);
+      yield* access.unbindSession(looseIdentity.sessionId);
+      assert.notProperty((yield* route.describe(latest.token, looseCookie)).body, "joiningAs");
+      assert.strictEqual((yield* joinAsSelf(latest.token, looseCookie)).status, 400);
+
+      // Removed, they leave every link's list, and free their places on them.
+      yield* people.removePerson(bob.personId);
+      assert.deepStrictEqual(yield* joinsOf(firstLink.linkId), []);
+      assert.notInclude((yield* joinsOf(secondLink.linkId))!, bob.personId);
     }).pipe(Effect.scoped),
   );
 
@@ -554,7 +678,7 @@ it.layer(testLayer)("joining by an open link", (it) => {
             status: 409,
             body: {
               error: "name_taken",
-              message: "That name is already in use on this server. Choose another.",
+              message: OPEN_LINK_NAME_TAKEN,
             },
           },
           displayName,
@@ -577,7 +701,7 @@ it.layer(testLayer)("joining by an open link", (it) => {
         ["Priya", "priya", " PRIYA "],
         (displayName) =>
           openLinks
-            .join({ token: link.token, displayName: displayName.trim() })
+            .join({ token: link.token, displayName: displayName.trim(), session: null })
             .pipe(
               Effect.as("joined"),
               Effect.catchTags({ PersonNameTakenError: () => Effect.succeed("taken") }),
@@ -630,12 +754,16 @@ it.layer(testLayer)("joining by an open link", (it) => {
             joined_open_link_id
           ) VALUES (${`human:places-${index}`}, 0, ${AT}, 'guest', 'Filler', 1, ${link.linkId})
         `;
+        yield* sql`
+          INSERT INTO j5_a2a_open_link_join (link_id, person_id, joined_at)
+          VALUES (${link.linkId}, ${`human:places-${index}`}, ${AT})
+        `;
       }
       const outcomes = yield* Effect.forEach(
         Array.from({ length: 8 }, (_, index) => `Racer ${index}`),
         (displayName) =>
           openLinks
-            .join({ token: link.token, displayName })
+            .join({ token: link.token, displayName, session: null })
             .pipe(
               Effect.as("joined"),
               Effect.catchTags({ OpenLinkRefusedError: () => Effect.succeed("refused") }),
@@ -853,6 +981,10 @@ it.layer(testLayer)("asking what a link opens", (it) => {
             joined_open_link_id
           ) VALUES (${`human:described-${index}`}, 0, ${AT}, 'guest', 'Filler', 1, ${full.linkId})
         `;
+        yield* sql`
+          INSERT INTO j5_a2a_open_link_join (link_id, person_id, joined_at)
+          VALUES (${full.linkId}, ${`human:described-${index}`}, ${AT})
+        `;
       }
       const deletedThread = yield* thread("thread:undescribed-deleted");
       const dead = yield* openLinks.create(deletedThread);
@@ -931,10 +1063,16 @@ it.layer(Layer.merge(testLayer, readChangesLayer))(
 
           const link = yield* openLinks.create(threadId);
           assert.isTrue(yield* moved(), "made");
-          yield* openLinks.join({ token: link.token, displayName: "Counted joiner" });
+          yield* openLinks.join({
+            token: link.token,
+            displayName: "Counted joiner",
+            session: null,
+          });
           assert.isTrue(yield* moved(), "joined with");
           yield* openLinks.list;
-          yield* Effect.flip(openLinks.join({ token: "no-such-link", displayName: "No one" }));
+          yield* Effect.flip(
+            openLinks.join({ token: "no-such-link", displayName: "No one", session: null }),
+          );
           assert.isFalse(yield* moved(), "a read and a refused join");
           yield* openLinks.revoke(link.linkId);
           assert.isTrue(yield* moved(), "revoked");

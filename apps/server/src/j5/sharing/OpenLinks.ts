@@ -48,6 +48,7 @@ import {
  * the level the server enforces, so a link that leaks shows the thread and no more than that.
  * Each person who opens it types a name and becomes a new guest with a View grant on the thread
  * and an ordinary single-use share link of their own; from there they are a guest like any other.
+ * A guest already signed in on the browser joins as themselves instead (#614).
  * Joining needs no sign-in: the token is 32 random bytes, which cannot be guessed, and a link
  * brings in only so many people.
  */
@@ -110,6 +111,14 @@ export type LinkDescription = Omit<SharingLinkDescription, "serverName" | "opens
   readonly opens: ReadonlyArray<OpenedEntry>;
 };
 
+/**
+ * What joining did: recorded a new person, whose browser pairs with the share link made for them,
+ * or gave the link's thread to the guest whose browser it already is.
+ */
+export type JoinOutcome =
+  | { readonly kind: "new"; readonly link: SharingLink }
+  | { readonly kind: "existing"; readonly threadId: ThreadId };
+
 const decodeChosenIcon = Schema.decodeUnknownOption(Schema.fromJsonString(StoredProjectIcon));
 /** The icon a person chose for a project, as it is stored; nothing when none was chosen. */
 const chosenIcon = (stored: string | null) =>
@@ -119,10 +128,12 @@ export interface OpenLinksShape {
   /**
    * What a link would open if it were used now, for either kind of link: a named person's share
    * link or an open link. It reads and changes nothing, however often it is asked. Every link
-   * that would not work is refused alike, as the join route refuses.
+   * that would not work is refused alike, as the join route refuses. An open link asked about
+   * from a guest's own browser also says who that guest is, whom they can join as.
    */
   readonly describe: (
     link: string,
+    session: SessionIdentity | null,
   ) => Effect.Effect<LinkDescription, StorageError | OpenLinkRefusedError>;
   /** Makes a link for a thread. The token is shown once, here. */
   readonly create: (
@@ -150,17 +161,24 @@ export interface OpenLinksShape {
   /** Every open link, newest first, with the people who joined through it. */
   readonly list: Effect.Effect<ReadonlyArray<SharingOpenLink>, StorageError>;
   /**
-   * What the join route does: records the person under the name they typed, gives them View on
-   * the link's thread, and makes them a share link of their own to pair their device with. It
-   * checks everything before it writes, and its writes commit together or not at all. A name
-   * someone on the server already has is refused, and only after the link has been found good,
-   * so no one learns whether a name is in use without a link that works.
+   * What the join route does. With a name, it records a new person under it, gives them View on
+   * the link's thread, and makes them a share link of their own to pair their device with. A
+   * name someone on the server already has is refused, and only after the link has been found
+   * good, so no one learns whether a name is in use without a link that works.
+   *
+   * Without a name, it is a guest already signed in on this browser joining as themselves
+   * (#614): they are given View on the link's thread, unless they already hold a grant on it, and
+   * nothing is paired. A browser that is no guest's must give a name.
+   *
+   * Either way it checks everything before it writes, its writes commit together or not at all,
+   * and the person is counted among the link's joins.
    */
   readonly join: (input: {
     readonly token: string;
-    readonly displayName: string;
+    readonly displayName: string | undefined;
+    readonly session: SessionIdentity | null;
   }) => Effect.Effect<
-    SharingLink,
+    JoinOutcome,
     StorageError | OpenLinkRefusedError | OpenLinkNameError | PersonNameTakenError
   >;
 }
@@ -204,9 +222,23 @@ const make: Layer.Layer<
 
     const joined = (linkId: string) =>
       sql<{ readonly person_id: string }>`
-          SELECT person_id FROM j5_a2a_human_person
-          WHERE joined_open_link_id = ${linkId} ORDER BY created_at, person_id
+          SELECT person_id FROM j5_a2a_open_link_join
+          WHERE link_id = ${linkId} ORDER BY joined_at, person_id
         `.pipe(Effect.mapError(storage("read who joined with a link")));
+
+    /** The guest a browser already is, when it is one; a session bound to no one is no one. */
+    const guestOf = (session: SessionIdentity | null) =>
+      session === null
+        ? Effect.succeed(null)
+        : access
+            .sessionPerson(session)
+            .pipe(
+              Effect.map((person) =>
+                person !== null && person.kind === "guest" && person.personId !== null
+                  ? person
+                  : null,
+              ),
+            );
 
     // Told when a link is made or revoked, which changes what a thread's people answer holds.
     const linkChanges = yield* Effect.acquireRelease(PubSub.sliding<string>(64), (pubsub) =>
@@ -328,6 +360,7 @@ const make: Layer.Layer<
     /** An open link, while it can still be joined with. */
     const describeOpenLink = Effect.fn("j5.sharing.openLinks.describeOpenLink")(function* (
       token: string,
+      session: SessionIdentity | null,
     ) {
       const nowMs = yield* Clock.currentTimeMillis;
       const rows = yield* sql<OpenLinkRow>`
@@ -335,28 +368,29 @@ const make: Layer.Layer<
           FROM j5_a2a_open_link WHERE token_hash = ${hashToken(token).toString("hex")}
         `.pipe(Effect.mapError(storage("read an open link")));
       const row = rows[0];
-      if (
-        row === undefined ||
-        row.revoked_at !== null ||
-        Date.parse(row.expires_at) <= nowMs ||
-        (yield* joined(row.link_id)).length >= OPEN_LINK_MAX_PEOPLE
-      ) {
+      if (row === undefined || row.revoked_at !== null || Date.parse(row.expires_at) <= nowMs) {
         return null;
       }
+      // A full link still works for a guest it already counts, as joining does.
+      const joins = yield* joined(row.link_id);
+      const guest = yield* guestOf(session);
+      const counted = guest !== null && joins.some((join) => join.person_id === guest.personId);
+      if (!counted && joins.length >= OPEN_LINK_MAX_PEOPLE) return null;
       const opens = yield* opened({ kind: "thread", threadId: row.thread_id as ThreadId }, "view");
-      return opens.length === 0
-        ? null
-        : ({
-            kind: "open",
-            personName: null,
-            opens,
-            expiresAt: DateTime.makeUnsafe(row.expires_at),
-          } satisfies LinkDescription);
+      if (opens.length === 0) return null;
+      return {
+        kind: "open",
+        personName: null,
+        opens,
+        expiresAt: DateTime.makeUnsafe(row.expires_at),
+        ...(guest === null || guest.displayName === null ? {} : { joiningAs: guest.displayName }),
+      } satisfies LinkDescription;
     });
 
     return OpenLinks.of({
-      describe: Effect.fn("j5.sharing.openLinks.describe")(function* (link) {
-        const described = (yield* describePersonLink(link)) ?? (yield* describeOpenLink(link));
+      describe: Effect.fn("j5.sharing.openLinks.describe")(function* (link, session) {
+        const described =
+          (yield* describePersonLink(link)) ?? (yield* describeOpenLink(link, session));
         if (described === null) return yield* new OpenLinkRefusedError({});
         return described;
       }),
@@ -438,8 +472,16 @@ const make: Layer.Layer<
       ),
 
       join: Effect.fn("j5.sharing.openLinks.join")(function* (input) {
-        // The route's schema says the same; this holds for any other caller.
-        if (!isPersonName(input.displayName)) return yield* new OpenLinkNameError({});
+        // Who is joining: the guest this browser already is, when no name is given, or a new
+        // person under the name given. The route's schema checks the name too.
+        const { displayName } = input;
+        const guest = displayName === undefined ? yield* guestOf(input.session) : null;
+        const who =
+          guest ??
+          (displayName !== undefined && isPersonName(displayName)
+            ? { newName: displayName }
+            : null);
+        if (who === null) return yield* new OpenLinkNameError({});
         const nowMs = yield* Clock.currentTimeMillis;
         const tokenHash = hashToken(input.token).toString("hex");
         const admit = Effect.gen(function* () {
@@ -453,25 +495,41 @@ const make: Layer.Layer<
               WHERE link.token_hash = ${tokenHash}
             `.pipe(Effect.mapError(storage("read an open link")));
           const row = rows[0];
+          const joins = row === undefined ? [] : yield* joined(row.link_id);
+          // A guest already counted among the link's joins takes no further place on it.
+          const counted = guest !== null && joins.some((join) => join.person_id === guest.personId);
           if (
             row === undefined ||
             row.revoked_at !== null ||
             Date.parse(row.expires_at) <= nowMs ||
-            (yield* joined(row.link_id)).length >= OPEN_LINK_MAX_PEOPLE
+            (!counted && joins.length >= OPEN_LINK_MAX_PEOPLE)
           ) {
             return yield* new OpenLinkRefusedError({});
           }
-          const guest = yield* access.createGuest({
-            displayName: input.displayName,
-            joinedOpenLinkId: row.link_id,
-          });
-          yield* people.putGrant({
-            personId: guest.personId,
-            target: { kind: "thread", threadId: row.thread_id as ThreadId },
-            level: "view",
-          });
+          const threadId = row.thread_id as ThreadId;
+          const target = { kind: "thread", threadId } as const;
+          const person =
+            "newName" in who
+              ? yield* access.createGuest({
+                  displayName: who.newName,
+                  joinedOpenLinkId: row.link_id,
+                })
+              : who;
+          const joinedAt = DateTime.formatIso(yield* DateTime.now);
+          yield* sql`
+              INSERT INTO j5_a2a_open_link_join (link_id, person_id, joined_at)
+              VALUES (${row.link_id}, ${person.personId}, ${joinedAt})
+              ON CONFLICT (link_id, person_id) DO NOTHING
+            `.pipe(Effect.mapError(storage("record someone joining")));
+          // View, or the level already held on the thread itself, whichever is higher: a guest
+          // who collaborates on it keeps that.
+          const held = (yield* access.listGrants(person.personId)).some(
+            (grant) => grant.target.kind === "thread" && grant.target.threadId === threadId,
+          );
+          if (!held) yield* people.putGrant({ personId: person.personId, target, level: "view" });
+          if (guest !== null) return { kind: "existing" as const, threadId };
           // Used at once by the browser that asked, so it need not outlive the hour.
-          return yield* people.createLink(guest.personId, "1h");
+          return { kind: "new" as const, link: yield* people.createLink(person.personId, "1h") };
         });
         return yield* joining
           .withPermits(1)(sql.withTransaction(admit))
