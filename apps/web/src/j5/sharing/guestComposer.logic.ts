@@ -1,8 +1,7 @@
 import type { ProviderApprovalOption } from "@t3tools/contracts";
 
-/** What a guest is told when they try to send more than text. */
-export const GUEST_TEXT_ONLY =
-  "A guest can send text only: no attachments, mentions or other context.";
+/** What a guest is told when they try to attach a file or an image. */
+export const GUEST_NO_ATTACHMENTS = "A guest cannot send attachments yet.";
 
 // The server takes these three from a guest and refuses "for this session" and "always".
 const GUEST_APPROVAL_OPTIONS = [
@@ -26,18 +25,4 @@ export function approvalOptionsFor(
     allowed.has(option.decision),
   );
   return listed.length === 0 ? GUEST_APPROVAL_OPTIONS : listed;
-}
-
-/**
- * What a guest's command to change a queued message of their own carries: the text. The server
- * refuses a guest's attachments and context, which upstream's edit always sends. A member's
- * command is returned as it is.
- */
-export function queuedEditFor<Input extends { readonly edit?: unknown }>(
-  isGuest: boolean,
-  input: Input,
-): Input {
-  if (!isGuest || input.edit === undefined) return input;
-  const { edit: _edit, ...textOnly } = input;
-  return textOnly as Input;
 }

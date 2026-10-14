@@ -40,7 +40,7 @@ import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { CrewRosterGate } from "../j5/crew/CrewRosterGate";
 import { useCanOperateThread } from "../j5/sharing/guestAccess";
-import { useGuestEditsAsText, useMayInterruptThread } from "../j5/sharing/guestComposer";
+import { useMayInterruptThread } from "../j5/sharing/guestComposer";
 import { expandPlaybookPrompt } from "@t3tools/client-runtime/j5/playbooks";
 import { PlaybookBoard } from "../j5/playbooks/PlaybookBoard";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -4652,11 +4652,9 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadId, environmentId, interactionMode, isServerThread, runtimeMode, startThreadTurn],
   );
-  const editQueuedRunAsBuilt = useAtomCommand(threadEnvironment.editQueuedRun, {
+  const editQueuedRunCommand = useAtomCommand(threadEnvironment.editQueuedRun, {
     reportFailure: false,
   });
-  // J5: a guest's edit of their own queued message is sent as text alone.
-  const editQueuedRunCommand = useGuestEditsAsText(editQueuedRunAsBuilt);
   const queuedRunsControlRef = useRef<QueuedRunsControlHandle>(null);
   const queuedEditSaveInFlightRef = useRef(false);
   const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);

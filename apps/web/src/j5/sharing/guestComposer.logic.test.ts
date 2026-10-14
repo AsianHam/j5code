@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { approvalOptionsFor, queuedEditFor } from "./guestComposer.logic";
+import { approvalOptionsFor } from "./guestComposer.logic";
 
 describe("the answers an approval offers", () => {
   const listed = [
@@ -30,17 +30,5 @@ describe("the answers an approval offers", () => {
         (option) => option.decision,
       ),
     ).toEqual(["cancel", "decline", "accept"]);
-  });
-});
-
-describe("changing a queued message", () => {
-  const input = { runId: "run-1", text: "fixed typo", edit: { attachments: [], context: {} } };
-
-  it("sends a guest's as text alone", () => {
-    expect(queuedEditFor(true, input)).toEqual({ runId: "run-1", text: "fixed typo" });
-  });
-
-  it("sends a member's as upstream built it", () => {
-    expect(queuedEditFor(false, input)).toBe(input);
   });
 });
