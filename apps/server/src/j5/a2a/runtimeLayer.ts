@@ -54,7 +54,7 @@ import { layer as agentHandoffNudgeWorkerLayer } from "../agents/agentHandoffNud
 import { layer as agentHandoffRefreshesLayer } from "../agents/agentHandoffRefreshes.ts";
 import { layer as exchangeAnalyticsLayer } from "../analytics/ExchangeAnalytics.ts";
 import { layer as fleetSnapshotLayer } from "../analytics/FleetSnapshot.ts";
-import { layer as turnAnalyticsLayer } from "../analytics/TurnAnalytics.ts";
+import { layer as threadAnalyticsLayer } from "../analytics/ThreadAnalytics.ts";
 
 // One `ReadChanges` for the server: `readChangesLayer` is the same layer object wherever it is
 // provided below, so Effect memoizes one instance for the writers that notify it and the
@@ -233,7 +233,7 @@ export const makeJ5A2AAuxiliaryLayer = (
     crewStopProvided,
     crewRuntimeRequestProvided,
     crewSeatFinishNotifierProvided,
-    turnAnalyticsLayer.pipe(Layer.provide(agentCrewInstanceLayer)),
+    threadAnalyticsLayer.pipe(Layer.provide(agentCrewInstanceLayer)),
     exchangeAnalyticsLayer,
     fleetSnapshotLayer,
     // Exported to the routes so the J5 WebSocket handler streams the revisions the writers move.

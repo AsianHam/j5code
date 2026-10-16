@@ -7,6 +7,7 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2StoredEvent,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   ScheduledTaskId,
@@ -30,7 +31,7 @@ import { LedgerProjectId } from "../a2a/contracts.ts";
 import { participantIdForThread } from "../a2a/HomeRegistrar.ts";
 import { A2ALedger, layer as ledgerLayer } from "../a2a/LedgerService.ts";
 import { runJ5A2AMigrations } from "../a2a/Migrations.ts";
-import { manualLayer, TurnAnalytics } from "./TurnAnalytics.ts";
+import { manualLayer, ThreadAnalytics } from "./ThreadAnalytics.ts";
 
 const at = DateTime.makeUnsafe("2026-10-10T12:00:00Z");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -40,10 +41,20 @@ type Origin = {
   readonly creationSource: OrchestrationV2CreationSource;
 };
 
-const thread = Effect.fn(function* (name: string, origin: Origin) {
+const modelSelection = { instanceId: providerInstanceId, model: "test-model" };
+
+/** Stores a thread and returns its id with the `thread.created` event it comes with. */
+const thread = Effect.fn(function* (
+  name: string,
+  origin: Origin,
+  options: {
+    readonly parent?: { readonly threadId: ThreadId; readonly relationship: "fork" | "subagent" };
+    readonly persona?: boolean;
+  } = {},
+) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const threadId = ThreadId.make(`thread:turn-analytics:${name}`);
-  yield* store.apply({
+  const created = {
     id: EventId.make(`event:${threadId}`),
     type: "thread.created",
     threadId,
@@ -54,13 +65,17 @@ const thread = Effect.fn(function* (name: string, origin: Origin) {
       projectId: ProjectId.make("project:turn-analytics"),
       title: name,
       providerInstanceId,
-      modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+      modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
       worktreePath: null,
       activeProviderThreadId: null,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      lineage: {
+        parentThreadId: options.parent?.threadId ?? null,
+        relationshipToParent: options.parent?.relationship ?? null,
+        rootThreadId: options.parent?.threadId ?? threadId,
+      },
       forkedFrom: null,
       createdAt: at,
       updatedAt: at,
@@ -69,9 +84,29 @@ const thread = Effect.fn(function* (name: string, origin: Origin) {
       settledAt: null,
       lastVisitedAt: null,
       deletedAt: null,
+      ...(options.persona
+        ? {
+            agentPersonaAssignment: {
+              personaId: "critic",
+              definitionVersion: 1,
+              authorityPolicy: "critic-review",
+              resolvedRoute: "primary",
+              resolvedDriver: ProviderDriverKind.make("codex"),
+              resolvedModelSelection: modelSelection,
+            },
+          }
+        : {}),
     } satisfies OrchestrationV2AppThread,
-  });
-  return threadId;
+  } as const;
+  yield* store.apply(created);
+  return {
+    threadId,
+    created: {
+      sequence: 0,
+      commandId: null,
+      event: created,
+    } as unknown as OrchestrationV2StoredEvent,
+  };
 });
 
 /** Stores the message that asks for a turn and returns the `run.created` event it comes with. */
@@ -143,11 +178,21 @@ it.effect("says who asked for each turn, and nothing about what was asked", () =
     const recorded = yield* Ref.make<ReadonlyArray<Readonly<Record<string, unknown>>>>([]);
     yield* Effect.gen(function* () {
       yield* runJ5A2AMigrations();
-      const turns = yield* TurnAnalytics;
+      const turns = yield* ThreadAnalytics;
 
-      const composer = yield* thread("composer", { createdBy: "user", creationSource: "web" });
-      const seat = yield* thread("seat", { createdBy: "agent", creationSource: "mcp" });
-      const spawned = yield* thread("spawned", { createdBy: "agent", creationSource: "mcp" });
+      const { threadId: composer } = yield* thread("composer", {
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const { threadId: seat } = yield* thread("seat", {
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const { threadId: spawned } = yield* thread(
+        "spawned",
+        { createdBy: "agent", creationSource: "mcp" },
+        { persona: true },
+      );
       const projectId = LedgerProjectId.make("ledger:turn-analytics");
       yield* (yield* A2ALedger).ensureProject({ projectId, createdAt: DateTime.formatIso(at) });
       yield* (yield* AgentCrewInstanceService).record({
@@ -202,16 +247,73 @@ it.effect("says who asked for each turn, and nothing about what was asked", () =
       const [createdBy, creationSource] = asked.split("/");
       return { event: "j5.turn.started", createdBy, creationSource, ...properties };
     };
-    const person = { threadCreatedBy: "user", threadCreationSource: "web", crewSeat: false };
-    const agent = { threadCreatedBy: "agent", threadCreationSource: "mcp" };
+    const person = {
+      threadCreatedBy: "user",
+      threadCreationSource: "web",
+      crewSeat: false,
+      persona: false,
+    };
+    const seatThread = { threadCreatedBy: "agent", threadCreationSource: "mcp", crewSeat: true };
+    const spawnedThread = {
+      threadCreatedBy: "agent",
+      threadCreationSource: "mcp",
+      crewSeat: false,
+      persona: true,
+    };
     const plain = { scheduled: false, wake: false };
+    const first = { firstTurn: true, turnNumber: 1 };
+    const nth = (turnNumber: number) => ({ firstTurn: false, turnNumber });
     assert.deepStrictEqual(yield* Ref.get(recorded), [
-      expected("user/web", { ...plain, ...person, firstTurn: true }),
-      expected("agent/mcp", { ...plain, ...agent, crewSeat: true, firstTurn: true }),
-      expected("system/server", { ...plain, ...agent, crewSeat: true, firstTurn: false }),
-      expected("agent/mcp", { ...plain, ...agent, crewSeat: false, firstTurn: false }),
-      expected("user/mcp", { ...plain, ...agent, crewSeat: false, firstTurn: false }),
-      expected("system/server", { ...person, firstTurn: false, scheduled: true, wake: true }),
+      expected("user/web", { ...plain, ...person, ...first }),
+      expected("agent/mcp", { ...plain, ...seatThread, persona: false, ...first }),
+      expected("system/server", { ...plain, ...seatThread, persona: false, ...nth(2) }),
+      expected("agent/mcp", { ...plain, ...spawnedThread, ...nth(2) }),
+      expected("user/mcp", { ...plain, ...spawnedThread, ...nth(3) }),
+      expected("system/server", { ...person, ...nth(2), scheduled: true, wake: true }),
+    ]);
+  }),
+);
+
+it.effect("says what made each thread, and nothing about the thread", () =>
+  Effect.gen(function* () {
+    const recorded = yield* Ref.make<ReadonlyArray<Readonly<Record<string, unknown>>>>([]);
+    yield* Effect.gen(function* () {
+      const threads = yield* ThreadAnalytics;
+      const agent = { createdBy: "agent", creationSource: "mcp" } as const;
+
+      const composer = yield* thread("composer", { createdBy: "user", creationSource: "web" });
+      const parent = { threadId: composer.threadId };
+      const created = [
+        composer,
+        yield* thread(
+          "fork",
+          { createdBy: "user", creationSource: "web" },
+          { parent: { ...parent, relationship: "fork" } },
+        ),
+        // `j5_spawn_agent` with a persona: a Peer Agent, which has no parent in the lineage.
+        yield* thread("peer", agent, { persona: true }),
+        yield* thread("delegated", agent, { parent: { ...parent, relationship: "subagent" } }),
+        yield* thread(
+          "provider-subagent",
+          { createdBy: "agent", creationSource: "provider" },
+          { parent: { ...parent, relationship: "subagent" } },
+        ),
+        yield* thread("system", { createdBy: "system", creationSource: "server" }),
+      ];
+      for (const { created: event } of created) yield* threads.handleStoredEvent(event);
+    }).pipe(Effect.provide(testLayer(recorded)));
+
+    const expected = (kind: string, asked: string, persona = false) => {
+      const [createdBy, creationSource] = asked.split("/");
+      return { event: "j5.thread.created", kind, createdBy, creationSource, persona };
+    };
+    assert.deepStrictEqual(yield* Ref.get(recorded), [
+      expected("person", "user/web"),
+      expected("fork", "user/web"),
+      expected("peer_agent", "agent/mcp", true),
+      expected("delegated", "agent/mcp"),
+      expected("provider_subagent", "agent/provider"),
+      expected("system", "system/server"),
     ]);
   }),
 );
