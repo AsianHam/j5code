@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 124" width="150" height="124" preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">
+  <!--
+    Peering highlight tile. 150 x 124 CSS px, the art column of a highlight entry.
+    Colours come from --hl-* custom properties set by the theme (see README).
+    Two devices, an agent on each, an ask crossing the gap and a reply coming back.
+  -->
+  <defs>
+    <g id="j5-highlight-boat">
+      <polygon points="14,30 32,8 32,30" fill="var(--hl-sail-l)" stroke="var(--hl-ink)" stroke-width="1.6" stroke-linejoin="round"/>
+      <polygon points="32,8 32,30 50,30" fill="var(--hl-sail-r)" stroke="var(--hl-ink)" stroke-width="1.6" stroke-linejoin="round"/>
+      <polygon points="4,30 60,30 50,44 14,44" fill="var(--hl-hull)" stroke="var(--hl-ink)" stroke-width="1.6" stroke-linejoin="round"/>
+      <path d="M8 35h48" stroke="var(--hl-ink)" stroke-opacity="0.25" stroke-width="1"/>
+      <circle cx="24" cy="37" r="1.4" fill="#12202f"/>
+      <circle cx="40" cy="37" r="1.4" fill="#12202f"/>
+      <path d="M32 8v-7" stroke="var(--hl-ink)" stroke-width="1.4"/>
+      <polygon points="32,0 45,3.5 32,7" fill="var(--hl-pennant-fill)" stroke="var(--hl-pennant)" stroke-width="1.4" stroke-linejoin="round"/>
+    </g>
+  </defs>
+
+  <!-- the two devices -->
+  <rect x="4" y="12" width="66" height="102" rx="10" fill="var(--hl-region)" stroke="var(--hl-line)"/>
+  <rect x="80" y="12" width="66" height="102" rx="10" fill="var(--hl-region)" stroke="var(--hl-line)"/>
+  <!-- the network between them -->
+  <path d="M75 18v90" stroke="var(--hl-dim)" stroke-opacity="0.45" stroke-width="1.2" stroke-dasharray="1.5 4" stroke-linecap="round"/>
+
+  <!-- water in each device -->
+  <path d="M8 94 Q 18 89 28 94 T 48 94 T 68 94" stroke="var(--hl-sea)" stroke-opacity="0.5" stroke-width="1.2" fill="none"/>
+  <path d="M8 104 Q 18 99 28 104 T 48 104 T 68 104" stroke="var(--hl-sea)" stroke-opacity="0.3" stroke-width="1.2" fill="none"/>
+  <path d="M84 94 Q 94 89 104 94 T 124 94 T 144 94" stroke="var(--hl-sea)" stroke-opacity="0.5" stroke-width="1.2" fill="none"/>
+  <path d="M84 104 Q 94 99 104 104 T 124 104 T 144 104" stroke="var(--hl-sea)" stroke-opacity="0.3" stroke-width="1.2" fill="none"/>
+
+  <!-- routes: an ask over, a reply back -->
+  <path d="M37 45 Q 75 2 113 45" stroke="var(--hl-dim)" stroke-opacity="0.6" stroke-width="1.2" stroke-dasharray="3 5" fill="none"/>
+  <path d="M113 45 Q 75 24 37 45" stroke="var(--hl-dim)" stroke-opacity="0.6" stroke-width="1.2" stroke-dasharray="3 5" fill="none"/>
+
+  <!-- agents -->
+  <g transform="translate(8 52) scale(0.9)" style="--hl-pennant: var(--hl-ask); --hl-pennant-fill: var(--hl-ask)"><use href="#j5-highlight-boat"/></g>
+  <g transform="translate(84 52) scale(0.9)" style="--hl-pennant: var(--hl-reply); --hl-pennant-fill: var(--hl-reply)"><use href="#j5-highlight-boat"/></g>
+
+  <!-- messages in flight -->
+  <circle cx="62" cy="21" r="4.5" fill="var(--hl-ask)"/>
+  <circle cx="96" cy="36" r="4.5" fill="var(--hl-reply)"/>
+</svg>
