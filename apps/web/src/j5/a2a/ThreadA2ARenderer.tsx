@@ -4,7 +4,9 @@ import { useNowMinute } from "~/hooks/useNowMinute";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ChevronRightIcon, InboxIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 
+import ChatMarkdown from "../../components/ChatMarkdown";
 import { useFindRevealRef } from "../../components/chat/markdownFindContext";
 import { renderCrewNotice } from "../crew/CrewNoticeRenderer";
 import { participantIdsForCrewNotice } from "../crew/crewNotices.logic";
@@ -63,7 +65,7 @@ export interface ThreadA2ADeliveryCompositionInput {
   readonly participantLabels?: ReadonlyMap<string, string> | undefined;
   /** The caller supplies this only when it can prove the authenticated viewer. */
   readonly resolveViewerParticipantId?: (() => string | null) | undefined;
-  /** The shown thread, for Crew cards that open seats and render the brief's markdown. */
+  /** The shown thread, for cards that open seats and render a message's markdown. */
   readonly threadRef?: ScopedThreadRef | null | undefined;
   readonly markdownCwd?: string | undefined;
   /** Test-only clock injection; production cards read the current wall clock once per render. */
@@ -439,15 +441,52 @@ export function formatTimeSinceSent(sentAt: string, now = Date.now()): string {
   return `${Math.floor(elapsedHours / 24)}d`;
 }
 
-function A2ABodyClamp({ body }: { readonly body: string }) {
-  const bodyRef = useRef<HTMLParagraphElement>(null);
+interface A2AMarkdownContext {
+  readonly cwd: string | undefined;
+  readonly threadRef: ScopedThreadRef | null | undefined;
+}
+
+/** The markdown a card body renders: the same as the Inbox shows for the same message. */
+function A2AMarkdownBody({
+  body,
+  className,
+  markdown,
+}: {
+  readonly body: string;
+  readonly className: string;
+  readonly markdown: A2AMarkdownContext;
+}) {
+  return (
+    <ChatMarkdown
+      text={body}
+      cwd={markdown.cwd}
+      threadRef={markdown.threadRef ?? undefined}
+      className={className}
+      lineBreaks={shouldPreserveAssistantLineBreaks(body)}
+      parseRawHtml={false}
+    />
+  );
+}
+
+// Two `leading-5` lines. A height clip rather than `line-clamp`, which only clips running text
+// and spills once the markdown has lists, headings, or code blocks.
+const COLLAPSED_BODY_LINES = 2;
+
+function A2ABodyClamp({
+  body,
+  markdown,
+}: {
+  readonly body: string;
+  readonly markdown: A2AMarkdownContext;
+}) {
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
-  const [hiddenLineCount, setHiddenLineCount] = useState(0);
-  // In-thread find opens the body when it selects a match in the clamped part.
+  const [canExpand, setCanExpand] = useState(false);
+  // In-thread find opens the body when it selects a match in the clipped part.
   const revealForFind = useCallback(() => setExpanded(true), []);
   const findRevealRef = useFindRevealRef(revealForFind);
   const setBodyRef = useCallback(
-    (element: HTMLParagraphElement | null) => {
+    (element: HTMLDivElement | null) => {
       bodyRef.current = element;
       return findRevealRef(element);
     },
@@ -461,32 +500,29 @@ function A2ABodyClamp({ body }: { readonly body: string }) {
     const measure = () => {
       const lineHeight = Number.parseFloat(window.getComputedStyle(element).lineHeight);
       if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
-      const totalLines = Math.ceil(element.scrollHeight / lineHeight);
-      setHiddenLineCount(Math.max(0, totalLines - 2));
+      setCanExpand(element.scrollHeight > lineHeight * COLLAPSED_BODY_LINES + 1);
     };
 
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
+    // The collapsed wrapper keeps its capped height while the markdown inside grows, as images
+    // load and code blocks highlight, so the markdown root is observed too.
+    if (element.firstElementChild) observer.observe(element.firstElementChild);
     return () => observer.disconnect();
   }, [body]);
 
-  const canExpand = hiddenLineCount > 0;
   return (
     <div className="mt-2">
-      <p
+      <div
         ref={setBodyRef}
-        className={
-          expanded
-            ? "whitespace-pre-wrap break-words text-sm leading-5"
-            : "line-clamp-2 whitespace-pre-wrap break-words text-sm leading-5"
-        }
+        className={expanded ? "text-sm leading-5" : "max-h-10 overflow-hidden text-sm leading-5"}
         data-j5-a2a-card-body
         data-thread-find-text="true"
         data-thread-find-fold={expanded ? undefined : ""}
       >
-        {body}
-      </p>
+        <A2AMarkdownBody body={body} className="leading-5" markdown={markdown} />
+      </div>
       {canExpand ? (
         <button
           type="button"
@@ -498,9 +534,7 @@ function A2ABodyClamp({ body }: { readonly body: string }) {
             aria-hidden
             className={expanded ? "size-3 shrink-0 rotate-90" : "size-3 shrink-0"}
           />
-          {expanded
-            ? "Collapse"
-            : `${hiddenLineCount} more ${hiddenLineCount === 1 ? "line" : "lines"}`}
+          {expanded ? "Show less" : "Show full message"}
         </button>
       ) : null}
     </div>
@@ -511,6 +545,7 @@ function PeerDeliveryCard({
   automated = false,
   body,
   exchange,
+  markdown,
   now,
   outsideAgent = false,
   senderLabel,
@@ -520,6 +555,7 @@ function PeerDeliveryCard({
   readonly automated?: boolean | undefined;
   readonly body: string;
   readonly exchange: "expects-reply" | "plain" | "closed";
+  readonly markdown: A2AMarkdownContext;
   readonly now?: number | undefined;
   readonly outsideAgent?: boolean | undefined;
   readonly senderLabel: string;
@@ -580,7 +616,7 @@ function PeerDeliveryCard({
           {formatTimeSinceSent(sentAt, currentNow)}
         </time>
       </div>
-      <A2ABodyClamp body={body} />
+      <A2ABodyClamp body={body} markdown={markdown} />
     </section>
   );
 }
@@ -596,6 +632,7 @@ export function renderThreadA2ADelivery(props: ThreadA2ADeliveryCompositionInput
   if (crewNotice !== null) return crewNotice;
   const presentation = presentThreadA2ADelivery(props);
   if (presentation === null) return null;
+  const markdown = { cwd: props.markdownCwd, threadRef: props.threadRef };
 
   if (presentation.kind === "peer") {
     return (
@@ -603,6 +640,7 @@ export function renderThreadA2ADelivery(props: ThreadA2ADeliveryCompositionInput
         automated={presentation.automated}
         body={presentation.body}
         exchange={presentation.exchange}
+        markdown={markdown}
         now={props.now}
         outsideAgent={presentation.outsideAgent}
         senderLabel={presentation.senderLabel}
@@ -628,9 +666,9 @@ export function renderThreadA2ADelivery(props: ThreadA2ADeliveryCompositionInput
             </span>
           ) : null}
         </div>
-        <p className="mt-1 whitespace-pre-wrap break-words text-sm" data-thread-find-text="true">
-          {presentation.body}
-        </p>
+        <div className="mt-1" data-thread-find-text="true">
+          <A2AMarkdownBody body={presentation.body} className="text-sm" markdown={markdown} />
+        </div>
       </section>
     );
   }

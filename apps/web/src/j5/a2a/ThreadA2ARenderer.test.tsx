@@ -116,7 +116,7 @@ describe("ThreadA2ADeliveryRenderer", () => {
     expect(markup).toContain("Expects reply");
     expect(markup).toContain(">5m<");
     expect(markup).toContain('dateTime="2026-08-29T12:00:00.000Z"');
-    expect(markup).toContain("line-clamp-2");
+    expect(markup).toContain("max-h-10");
     expect(markup).not.toContain("project-alpha");
     expect(markup).not.toContain("exchange:one");
     expect(markup).not.toContain("Show raw envelope");
@@ -150,6 +150,32 @@ describe("ThreadA2ADeliveryRenderer", () => {
     expect(markup).not.toContain("Reply");
     expect(markup).not.toContain("plain");
     expect(markup).not.toContain("closed");
+  });
+
+  it("renders peer and human bodies as markdown", () => {
+    const markdownBody = "**Terms.**\n\n- Scopes: Server, Project, Thread.";
+    const peerMarkup = renderToStaticMarkup(
+      <ThreadA2ADeliveryRenderer
+        message={message({
+          text: peerPlainRaw.replace("Nothing further is needed.", markdownBody),
+        })}
+      />,
+    );
+    const humanMarkup = renderToStaticMarkup(
+      <ThreadA2ADeliveryRenderer
+        message={message({
+          id: deliveryId("human-markdown"),
+          createdBy: "user",
+          text: humanRaw.replace("Please prioritize the alert.", markdownBody),
+        })}
+      />,
+    );
+
+    for (const markup of [peerMarkup, humanMarkup]) {
+      expect(markup).toContain("<strong>Terms.</strong>");
+      expect(markup).toContain("<li>Scopes: Server, Project, Thread.</li>");
+      expect(markup).not.toContain("**Terms.**");
+    }
   });
 
   it("renders the exact v13 peer reply as a closed exchange without reply instructions", () => {
