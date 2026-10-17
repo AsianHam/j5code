@@ -11,6 +11,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
   A2AHomeRegistrar,
   participantIdForThread,
+  threadIdForParticipant,
   layer as homeRegistrarLayer,
 } from "./HomeRegistrar.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
@@ -18,6 +19,13 @@ import { runJ5A2AMigrations } from "./Migrations.ts";
 import { CommCommandId, ParticipantId, LedgerProjectId } from "./contracts.ts";
 
 const createdAt = "2026-08-19T15:30:00.000Z";
+
+it("reads an agent's thread back out of its participant id, and nothing else's", () => {
+  const threadId = ThreadId.make("thread:j5:a2a:mcp:session:spawn:1");
+  assert.equal(threadIdForParticipant(participantIdForThread(threadId)), threadId);
+  for (const other of ["human:local", "machine:watchdog", "outside:session-1", "agent:j5:a2a:"])
+    assert.isNull(threadIdForParticipant(other));
+});
 const database = NodeSqliteClient.layer({ filename: ":memory:" });
 const ledger = ledgerLayer.pipe(Layer.provide(database));
 const registrar = homeRegistrarLayer.pipe(Layer.provide(ledger), Layer.provide(database));

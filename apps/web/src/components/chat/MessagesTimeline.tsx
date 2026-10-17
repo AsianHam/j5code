@@ -126,7 +126,7 @@ import {
   participantIdsForThreadA2ADelivery,
   renderThreadA2ADelivery,
 } from "../../j5/a2a/ThreadA2ARenderer";
-import { useParticipantLabels } from "../../j5/a2a/ParticipantIdentitiesClient";
+import { useParticipantIdentities } from "../../j5/a2a/ParticipantIdentitiesClient";
 import {
   resolvedSpawnBriefContext,
   participantIdsForSpawnBrief,
@@ -338,6 +338,7 @@ interface TimelineRowSharedState {
   runs: ReadonlyArray<HandoffTimelineRun>;
   activeThreadEnvironmentId: EnvironmentId;
   participantLabels: ReadonlyMap<string, string>;
+  participantThreads: ReadonlyMap<string, ScopedThreadRef>;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   /** Sends text an MCP App asked to post, after the user approved it. */
@@ -711,7 +712,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       ),
     [timelineEntries],
   );
-  const participantLabels = useParticipantLabels(activeThreadEnvironmentId, participantIds);
+  const { labels: participantLabels, threads: participantThreads } = useParticipantIdentities(
+    activeThreadEnvironmentId,
+    participantIds,
+  );
   // A Peer Agent's thread opens with its spawner's brief. Spawned threads carry
   // no parentThreadId (J5 keeps them top-level), so the brief itself is the
   // lineage fact the header shows. Only the first user message can be one.
@@ -1352,6 +1356,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       runs,
       activeThreadEnvironmentId,
       participantLabels,
+      participantThreads,
       onRevertToTurnCount,
       onRunShellCommand,
       findActive,
@@ -1391,6 +1396,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       runs,
       activeThreadEnvironmentId,
       participantLabels,
+      participantThreads,
       onRevertToTurnCount,
       onRunShellCommand,
       findActive,
@@ -2085,6 +2091,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           message: row.message,
           timestampLabel: formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat),
           participantLabels: ctx.participantLabels,
+          participantThreads: ctx.participantThreads,
           threadRef: ctx.threadRef,
           markdownCwd: ctx.markdownCwd,
         })

@@ -1,30 +1,47 @@
-import type { EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
 
-import { readParticipantLabels } from "./archiveFlowClient";
+import { readParticipantIdentities, readParticipantLabels } from "./archiveFlowClient";
+
+export interface ParticipantIdentities {
+  readonly labels: ReadonlyMap<string, string>;
+  /** Each agent's thread, on whichever server it is: this one or a peer. */
+  readonly threads: ReadonlyMap<string, ScopedThreadRef>;
+}
+
+const NO_IDENTITIES: ParticipantIdentities = { labels: new Map(), threads: new Map() };
 
 /** One identity read for every J5 surface; unknowns deliberately stay absent. */
-export function useParticipantLabels(
+export function useParticipantIdentities(
   environmentId: EnvironmentId,
   participantIds: ReadonlyArray<string>,
-) {
-  const key = Array.from(new Set(participantIds)).sort().join("\0");
-  const [result, setResult] = useState({ key: "", labels: new Map<string, string>() });
+): ParticipantIdentities {
+  const idsKey = Array.from(new Set(participantIds)).sort().join("\0");
+  // A result answers one environment's ids; another environment's never stands in for it.
+  const key = `${environmentId}\n${idsKey}`;
+  const [result, setResult] = useState({ key: "", identities: NO_IDENTITIES });
   useEffect(() => {
-    const ids = key === "" ? [] : key.split("\0");
+    const ids = idsKey === "" ? [] : idsKey.split("\0");
     if (ids.length === 0) {
-      setResult({ key, labels: new Map() });
+      setResult({ key, identities: NO_IDENTITIES });
       return;
     }
     let active = true;
-    void readParticipantLabels(environmentId, ids).then((next) => {
-      if (active) setResult({ key, labels: next });
+    void readParticipantIdentities(environmentId, ids).then((next) => {
+      if (active) setResult({ key, identities: next });
     });
     return () => {
       active = false;
     };
-  }, [environmentId, key]);
-  return useMemo(() => (result.key === key ? result.labels : new Map()), [key, result]);
+  }, [environmentId, idsKey, key]);
+  return result.key === key ? result.identities : NO_IDENTITIES;
+}
+
+export function useParticipantLabels(
+  environmentId: EnvironmentId,
+  participantIds: ReadonlyArray<string>,
+) {
+  return useParticipantIdentities(environmentId, participantIds).labels;
 }
 
 export interface ScopedParticipantRef {

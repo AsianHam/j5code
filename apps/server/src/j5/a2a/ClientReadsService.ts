@@ -1,4 +1,4 @@
-import { NonNegativeInt, type ThreadId, TrimmedNonEmptyString } from "@t3tools/contracts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "@t3tools/contracts";
 import type {
   CrewMembershipsResponse,
   CrewProposalsResponse,
@@ -30,11 +30,19 @@ import { A2ALedger } from "./LedgerService.ts";
 import { ParticipantPlacementService } from "./PlacementService.ts";
 import { ParticipantId } from "./contracts.ts";
 import { outsideAgentNameRows } from "./outsideAgentNames.ts";
+import { threadIdForParticipant } from "./HomeRegistrar.ts";
 import { makePreArchiveFactsRead } from "./preArchiveFactsRead.ts";
 import { makeSpawnedChildrenRead } from "./spawnedChildrenRead.ts";
 
 export const DisplayIdentity = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("known"), displayName: TrimmedNonEmptyString }),
+  Schema.Struct({
+    kind: Schema.Literal("known"),
+    displayName: TrimmedNonEmptyString,
+    /** The agent's thread, when it still has one; other senders have none. */
+    threadId: Schema.optionalKey(ThreadId),
+    /** The peer server the thread is on. Absent when it is on this server. */
+    threadEnvironmentId: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
   Schema.Struct({ kind: Schema.Literal("unknown") }),
 ]);
 export type DisplayIdentity = typeof DisplayIdentity.Type;
@@ -67,6 +75,14 @@ export type ClientReadsError = SqlError | A2AHumanInboxError;
 interface IdentityRow {
   readonly participant_id: string;
   readonly display_name: string | null;
+  readonly thread_id?: string | null;
+  readonly thread_environment_id?: string | null;
+}
+
+interface PeerSenderRow {
+  readonly participant_id: string;
+  /** JSON `{ label, environmentId }` from the latest labeled delivery, or null. */
+  readonly latest: string | null;
 }
 
 interface OpenInboxCountRow {
@@ -96,9 +112,15 @@ const unknownIdentity = (): DisplayIdentity => ({ kind: "unknown" });
 const toIdentity = (row: IdentityRow | undefined): DisplayIdentity => {
   if (row === undefined || row.display_name === null) return unknownIdentity();
   const displayName = row.display_name.trim();
-  return displayName.length === 0
-    ? unknownIdentity()
-    : { kind: "known", displayName: TrimmedNonEmptyString.make(displayName) };
+  if (displayName.length === 0) return unknownIdentity();
+  return {
+    kind: "known",
+    displayName: TrimmedNonEmptyString.make(displayName),
+    ...(row.thread_id ? { threadId: ThreadId.make(row.thread_id) } : {}),
+    ...(row.thread_environment_id
+      ? { threadEnvironmentId: TrimmedNonEmptyString.make(row.thread_environment_id) }
+      : {}),
+  };
 };
 
 /** The one definition of an agent's display name: the title of the thread its first `participant.joined` named. */
@@ -111,6 +133,7 @@ export const participantIdentityRows = (
       SELECT
         json_extract(event.payload, '$.participant.id') AS participant_id,
         thread.title AS display_name,
+        CASE WHEN thread.deleted_at IS NULL THEN thread.thread_id END AS thread_id,
         ROW_NUMBER() OVER (
           PARTITION BY json_extract(event.payload, '$.participant.id')
           ORDER BY event.created_at ASC, event.project_id ASC, event.seq ASC
@@ -122,7 +145,7 @@ export const participantIdentityRows = (
         AND json_extract(event.payload, '$.participant.kind') = 'agent'
         AND json_extract(event.payload, '$.participant.id') IN ${sql.in(participantIds)}
     )
-    SELECT participant_id, display_name
+    SELECT participant_id, display_name, thread_id
     FROM ranked_identities
     WHERE history_rank = 1
   `;
@@ -141,25 +164,33 @@ export const openInboxCountStatement = (sql: SqlClient.SqlClient, personId: Part
   `;
 
 /**
- * The label a peer sent with the delivery this server recorded last, for each
- * sender asked about. "Last" is by the time this server recorded the row: the
+ * The label a peer sent with the delivery this server recorded last, and the
+ * peer that sent it, for each sender asked about. "Last" is by the time this server recorded the row: the
  * receiver stamps received rows with its own clock, so the origin cannot date
  * one into the future, and the stamp orders rows across projects, which `seq`
  * (allocated per project) does not; project id, then seq, break ties so one
  * row wins. A sender id belongs to one peer (the inbound ownership check refuses
  * a second origin), so its latest labeled row is that peer's latest label. Each
  * id is one backward seek on migration 27's index, so the cost follows the ids
- * asked about, never a sender's history. An id with no label comes back with a
- * null name; callers skip it (filtering in SQL would evaluate the seek twice).
+ * asked about, never a sender's history. Both facts come back as one JSON value
+ * so the seek runs once. An id with no label comes back null; callers skip it
+ * (filtering in SQL would evaluate the seek twice).
  */
+const decodeLatestPeerDelivery = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ label: Schema.String, environmentId: Schema.String })),
+);
+
 export const peerSenderLabelStatement = (
   sql: SqlClient.SqlClient,
   participantIds: ReadonlyArray<string>,
 ) =>
-  sql<IdentityRow>`
+  sql<PeerSenderRow>`
     SELECT asked.value AS participant_id,
            (
-             SELECT json_extract(event.payload, '$.senderLabel')
+             SELECT json_object(
+                      'label', json_extract(event.payload, '$.senderLabel'),
+                      'environmentId', json_extract(event.payload, '$.originEnvironmentId')
+                    )
              FROM j5_a2a_comm_event AS event
              WHERE event.kind = 'message.received'
                AND json_extract(event.payload, '$.senderLabel') IS NOT NULL
@@ -167,7 +198,7 @@ export const peerSenderLabelStatement = (
                AND event.sender = asked.value
              ORDER BY event.created_at DESC, event.project_id DESC, event.seq DESC
              LIMIT 1
-           ) AS display_name
+           ) AS latest
     FROM json_each(${JSON.stringify(participantIds)}) AS asked
   `;
 
@@ -296,11 +327,17 @@ export const layer: Layer.Layer<
             (participantId) => !named.has(participantId),
           );
           if (unresolved.length > 0) {
-            rows.push(
-              ...(yield* peerSenderLabelStatement(sql, unresolved)).filter(
-                (row) => row.display_name !== null,
-              ),
-            );
+            // An agent's id names its thread, on the peer that sent its deliveries.
+            for (const row of yield* peerSenderLabelStatement(sql, unresolved)) {
+              if (row.latest === null) continue;
+              const latest = decodeLatestPeerDelivery(row.latest);
+              rows.push({
+                participant_id: row.participant_id,
+                display_name: latest.label,
+                thread_id: threadIdForParticipant(row.participant_id),
+                thread_environment_id: latest.environmentId,
+              });
+            }
           }
         }
         const rowsByParticipant = Map.groupBy(rows, (row) => row.participant_id);

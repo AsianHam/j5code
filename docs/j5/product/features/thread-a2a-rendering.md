@@ -15,7 +15,7 @@ The person should read the letter, not the envelope: who said what to whom, what
 
 Agent-to-agent traffic in a thread is rendered as **cards** — a distinct treatment from the conversation, which keeps upstream's rendering untouched. Three kinds of item get a card.
 
-A **received message** from another agent shows the sender's name (a link to the sender's thread), a badge for what the message asks of the reader, the time, and the body. There is no envelope on the card: the renderer reads the versioned envelope text and shows the letter. If it meets an envelope version it does not understand, it shows the raw text rather than guessing — a visible fallback, never a plausible fake.
+A **received message** from another agent shows the sender's name (a link to the sender's thread when this client can open it), a badge for what the message asks of the reader, the time, and the body. There is no envelope on the card: the renderer reads the versioned envelope text and shows the letter. If it meets an envelope version it does not understand, it shows the raw text rather than guessing — a visible fallback, never a plausible fake.
 
 A **reply that arrived through the inbox** is rendered as the person who sent it: "You · via Inbox" when the reader is that person, otherwise the person's name. The label comes from the person id, so it is right for any number of people.
 
@@ -35,7 +35,7 @@ This is **not** a change to what agents receive, **not** a summary layer, and **
 
 ### Received messages
 
-1. A message from another agent renders as a card with the sender's name, a badge reflecting only the measured Exchange role, the time since it was sent, and the body; the sender's name navigates to the sender's thread.
+1. A message from another agent renders as a card with the sender's name, a badge reflecting only the measured Exchange role, the time since it was sent, and the body; the sender's name navigates to the sender's thread when this client can open it, on the same server or on a peer server the client is also connected to.
 2. A card never shows the envelope; a message whose envelope version the renderer does not recognize renders as its raw text.
 3. A plain message shows no badge; a received ask shows "Expects reply"; a received message that closed an Exchange shows "Replied"; a follow-up shows "Follow-up".
 
@@ -82,3 +82,4 @@ This is **not** a change to what agents receive, **not** a summary layer, and **
 - 2026-09-05 — "Replied" becomes the one word for a closed Exchange on every surface, replacing "Reply received" on sent cards and "Answered" on the inbox shelf (glossary).
 - 2026-09-08 — rewritten into the definition shape. Former identifiers: TA1 → AC1–AC3; TA2 → AC4; TA3 → AC5; TA4, TA8 → AC6, AC8; TA5 → AC13; TA6 → AC7; TA7 → AC9; TA9 → Definition (time); TA10 → AC11–AC12. The v0 rendering of the person's inbox reply as `Via Inbox · ⟨person⟩` (the "You" claim needs a person binding the auth principal does not yet have) is build status and lives in the dogfood plan.
 - 2026-10-10 — sent messages no longer get a card (AC6). Upstream's V2 orchestrator sends clients a trimmed tool call, without the message body or the Exchange state the card was drawn from, so the card had not rendered since J5 moved to it; Jackson chose to retire it over exempting sends from the trimming (#522).
+- 2026-10-17 — the sender's name links only when this client can open the sender's thread, on its own server or a connected peer; automations, outside agents and people have no thread to open (AC1). The 2026-08-31 clickable name had not been built (#625).

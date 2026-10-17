@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -124,8 +124,20 @@ interface ThreadHomeResolution {
   readonly retired: boolean;
 }
 
+const AGENT_PARTICIPANT_PREFIX = "agent:j5:a2a:";
+
 export const participantIdForThread = (threadId: ThreadId) =>
-  ParticipantId.make(`agent:j5:a2a:${threadId}`);
+  ParticipantId.make(`${AGENT_PARTICIPANT_PREFIX}${threadId}`);
+
+/**
+ * The inverse, for an agent on a peer server, whose thread this server has no record of. Every
+ * J5 server mints agent ids above; anything else (a person, an automation) has no thread.
+ */
+export const threadIdForParticipant = (participantId: string) =>
+  participantId.startsWith(AGENT_PARTICIPANT_PREFIX) &&
+  participantId.length > AGENT_PARTICIPANT_PREFIX.length
+    ? ThreadId.make(participantId.slice(AGENT_PARTICIPANT_PREFIX.length))
+    : null;
 
 export const resolveThreadHome = Effect.fn("j5.a2a.resolveThreadHome")(function* (
   sql: SqlClient.SqlClient,

@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, TrimmedNonEmptyString } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -76,6 +76,11 @@ it.effect("reads total batched identities without participant-id normalization",
       kind: "agent",
       id: ParticipantId.make("agent:j5:a2a:thread%3Aclient-reads%3Abeta"),
       threadId: ThreadId.make("thread:client-reads:beta"),
+    };
+    const deleted: AgentParticipant = {
+      kind: "agent",
+      id: ParticipantId.make("agent:j5:a2a:thread:client-reads:deleted"),
+      threadId: ThreadId.make("thread:client-reads:deleted"),
     };
     const alphaProject = LedgerProjectId.make("project:client-reads:alpha");
     const betaProject = LedgerProjectId.make("project:client-reads:beta");
@@ -200,20 +205,43 @@ it.effect("reads total batched identities without participant-id normalization",
           'default', NULL, ${createdAt}, ${createdAt}, NULL, NULL, '{}'
         )
       `;
+    yield* sql`
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode,
+          interaction_mode, active_provider_thread_id, created_at, updated_at,
+          archived_at, deleted_at, payload_json
+        ) VALUES (
+          (${deleted.threadId}), 'project:client-reads', 'Deleted Thread', 'codex', 'full-access',
+          'default', NULL, ${createdAt}, ${createdAt}, NULL, ${createdAt}, '{}'
+        )
+      `;
 
+    yield* join({
+      projectId: LedgerProjectId.make("project:client-reads:deleted"),
+      agent: deleted,
+    });
     const missing = ParticipantId.make("agent:client-reads:missing");
     const identities = yield* reads.participantIdentities({
-      participantIds: [beta.id, duplicateHistory, missing, alpha.id, beta.id],
+      participantIds: [beta.id, duplicateHistory, missing, alpha.id, beta.id, deleted.id],
     });
     assert.deepStrictEqual(identities, {
       entries: [
         { participantId: beta.id, identity: { kind: "unknown" } },
         {
           participantId: duplicateHistory,
-          identity: { kind: "known", displayName: "Earlier Duplicate Thread" },
+          identity: {
+            kind: "known",
+            displayName: "Earlier Duplicate Thread",
+            threadId: ThreadId.make("thread:client-reads:duplicate-history:second"),
+          },
         },
         { participantId: missing, identity: { kind: "unknown" } },
-        { participantId: alpha.id, identity: { kind: "known", displayName: "Alpha Thread" } },
+        {
+          participantId: alpha.id,
+          identity: { kind: "known", displayName: "Alpha Thread", threadId: alpha.threadId },
+        },
+        // A deleted thread keeps its name but has nothing to open.
+        { participantId: deleted.id, identity: { kind: "known", displayName: "Deleted Thread" } },
       ],
     });
     assert.deepStrictEqual(yield* reads.participantIdentities({ participantIds: [] }), {
@@ -351,44 +379,46 @@ it.effect(
     }).pipe(Effect.provide(makeTestLayer())),
 );
 
-it.effect("names a sender homed on a peer by the label its server sent, after any local name", () =>
-  Effect.gen(function* () {
-    yield* runMigrations();
-    yield* runJ5A2AMigrations();
-    const ledger = yield* A2ALedger;
-    const reads = yield* ClientReadsService;
-    const sql = yield* SqlClient.SqlClient;
-    const project = LedgerProjectId.make("project:client-reads:peer");
-    const remoteSender = ParticipantId.make("agent:j5:a2a:thread:remote-asker");
-    const local: AgentParticipant = {
-      kind: "agent",
-      id: ParticipantId.make("agent:j5:a2a:thread:client-reads:local"),
-      threadId: ThreadId.make("thread:client-reads:local"),
-    };
-    const createdAt = "2026-09-21T00:00:00.000Z";
-    yield* ledger.ensureProject({ projectId: project, createdAt });
-    yield* ledger.appendEvents({
-      commandId: CommCommandId.make("command:client-reads:peer:join"),
-      projectId: project,
-      acceptedAt: createdAt,
-      events: [
-        {
-          kind: "participant.joined",
-          sender: null,
-          receiver: local.id,
-          exchangeId: null,
-          correlationId: null,
-          payload: { participant: local },
-          createdAt,
-        },
-      ],
-    });
-    // Deliveries from one remote sender into two projects here. Each project
-    // numbers its own rows, so the renamed sender's latest label sits at a
-    // lower seq than an older one; the time this server recorded each wins.
-    const other = LedgerProjectId.make("project:client-reads:peer:other");
-    yield* ledger.ensureProject({ projectId: other, createdAt });
-    const received = (inProject: LedgerProjectId, seq: number, label: string, at: string) => sql`
+it.effect(
+  "names a sender homed on a peer by the label its server sent, and places its thread there",
+  () =>
+    Effect.gen(function* () {
+      yield* runMigrations();
+      yield* runJ5A2AMigrations();
+      const ledger = yield* A2ALedger;
+      const reads = yield* ClientReadsService;
+      const sql = yield* SqlClient.SqlClient;
+      const project = LedgerProjectId.make("project:client-reads:peer");
+      const remoteSender = ParticipantId.make("agent:j5:a2a:thread:remote-asker");
+      const local: AgentParticipant = {
+        kind: "agent",
+        id: ParticipantId.make("agent:j5:a2a:thread:client-reads:local"),
+        threadId: ThreadId.make("thread:client-reads:local"),
+      };
+      const createdAt = "2026-09-21T00:00:00.000Z";
+      yield* ledger.ensureProject({ projectId: project, createdAt });
+      yield* ledger.appendEvents({
+        commandId: CommCommandId.make("command:client-reads:peer:join"),
+        projectId: project,
+        acceptedAt: createdAt,
+        events: [
+          {
+            kind: "participant.joined",
+            sender: null,
+            receiver: local.id,
+            exchangeId: null,
+            correlationId: null,
+            payload: { participant: local },
+            createdAt,
+          },
+        ],
+      });
+      // Deliveries from one remote sender into two projects here. Each project
+      // numbers its own rows, so the renamed sender's latest label sits at a
+      // lower seq than an older one; the time this server recorded each wins.
+      const other = LedgerProjectId.make("project:client-reads:peer:other");
+      yield* ledger.ensureProject({ projectId: other, createdAt });
+      const received = (inProject: LedgerProjectId, seq: number, label: string, at: string) => sql`
       INSERT INTO j5_a2a_comm_event (
         seq, project_id, kind, sender, receiver, exchange_id, correlation_id,
         payload, created_at, command_id
@@ -404,36 +434,52 @@ it.effect("names a sender homed on a peer by the label its server sent, after an
         ${at}, ${`command:client-reads:peer:${inProject}:${String(seq)}`}
       )
     `;
-    yield* received(project, 500, "Old title", "2026-09-21T00:01:00.000Z");
-    yield* received(other, 10, "Incident asker", "2026-09-21T00:02:00.000Z");
+      yield* received(project, 500, "Old title", "2026-09-21T00:01:00.000Z");
+      yield* received(other, 10, "Incident asker", "2026-09-21T00:02:00.000Z");
 
-    const identities = yield* reads.participantIdentities({
-      participantIds: [remoteSender, local.id],
-    });
-    assert.deepStrictEqual(identities, {
-      entries: [
-        { participantId: remoteSender, identity: { kind: "known", displayName: "Incident asker" } },
-        { participantId: local.id, identity: { kind: "unknown" } },
-      ],
-    });
-    // Two rows recorded at the same instant: the tie falls to project id, so one label wins.
-    yield* received(other, 11, "Tie in other", "2026-09-21T00:03:00.000Z");
-    yield* received(project, 501, "Tie in peer", "2026-09-21T00:03:00.000Z");
-    const tied = yield* reads.participantIdentities({ participantIds: [remoteSender] });
-    assert.deepStrictEqual(tied.entries, [
-      { participantId: remoteSender, identity: { kind: "known", displayName: "Tie in other" } },
-    ]);
+      const identities = yield* reads.participantIdentities({
+        participantIds: [remoteSender, local.id],
+      });
+      assert.deepStrictEqual(identities, {
+        entries: [
+          {
+            participantId: remoteSender,
+            identity: {
+              kind: "known",
+              displayName: "Incident asker",
+              threadId: ThreadId.make("thread:remote-asker"),
+              threadEnvironmentId: TrimmedNonEmptyString.make("environment-home"),
+            },
+          },
+          { participantId: local.id, identity: { kind: "unknown" } },
+        ],
+      });
+      // Two rows recorded at the same instant: the tie falls to project id, so one label wins.
+      yield* received(other, 11, "Tie in other", "2026-09-21T00:03:00.000Z");
+      yield* received(project, 501, "Tie in peer", "2026-09-21T00:03:00.000Z");
+      const tied = yield* reads.participantIdentities({ participantIds: [remoteSender] });
+      assert.deepStrictEqual(tied.entries, [
+        {
+          participantId: remoteSender,
+          identity: {
+            kind: "known",
+            displayName: "Tie in other",
+            threadId: ThreadId.make("thread:remote-asker"),
+            threadEnvironmentId: TrimmedNonEmptyString.make("environment-home"),
+          },
+        },
+      ]);
 
-    // Each id asked about is one backward seek on the recency index: no scan, no sort.
-    const plan = yield* explainPeerSenderLabelStatement(sql, [remoteSender]);
-    const rendered = plan.map((row) => row.detail).join(" | ");
-    const ledgerReads = plan.filter((row) => /\b(?:SCAN|SEARCH) event\b/.test(row.detail));
-    assert.equal(ledgerReads.length, 1, `one read of the ledger per id: ${rendered}`);
-    assert.match(
-      ledgerReads[0]!.detail,
-      /^SEARCH event USING INDEX j5_a2a_comm_event_received_label_recency_idx \(sender=\?\)/,
-      rendered,
-    );
-    assert.notMatch(rendered, /TEMP B-TREE/, `the index order is the answer order: ${rendered}`);
-  }).pipe(Effect.provide(makeTestLayer())),
+      // Each id asked about is one backward seek on the recency index: no scan, no sort.
+      const plan = yield* explainPeerSenderLabelStatement(sql, [remoteSender]);
+      const rendered = plan.map((row) => row.detail).join(" | ");
+      const ledgerReads = plan.filter((row) => /\b(?:SCAN|SEARCH) event\b/.test(row.detail));
+      assert.equal(ledgerReads.length, 1, `one read of the ledger per id: ${rendered}`);
+      assert.match(
+        ledgerReads[0]!.detail,
+        /^SEARCH event USING INDEX j5_a2a_comm_event_received_label_recency_idx \(sender=\?\)/,
+        rendered,
+      );
+      assert.notMatch(rendered, /TEMP B-TREE/, `the index order is the answer order: ${rendered}`);
+    }).pipe(Effect.provide(makeTestLayer())),
 );

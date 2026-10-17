@@ -1,4 +1,4 @@
-import { MessageId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -130,6 +130,22 @@ describe("ThreadA2ADeliveryRenderer", () => {
     expect(
       renderToStaticMarkup(<ThreadA2ADeliveryRenderer message={message({ text: peerRaw })} />),
     ).not.toContain("agent:delivery-sender");
+  });
+
+  it("places the sender's thread where the identity read put it", () => {
+    const senderThread = {
+      environmentId: EnvironmentId.make("environment:peer"),
+      threadId: ThreadId.make("thread:sender"),
+    };
+    const present = (participantThreads?: ReadonlyMap<string, typeof senderThread>) =>
+      presentThreadA2ADelivery({ message: message({ text: peerRaw }), participantThreads });
+
+    expect(present(new Map([["agent:delivery-sender", senderThread]]))).toMatchObject({
+      senderThreadRef: senderThread,
+    });
+    // A sender with no thread (or before the read answers) has nothing to open.
+    expect(present(new Map())).toMatchObject({ senderThreadRef: null });
+    expect(present()).toMatchObject({ senderThreadRef: null });
   });
 
   it("formats queued peer deliveries with the timeline identity formatter", () => {
@@ -529,6 +545,7 @@ describe("ThreadA2ADeliveryRenderer machine senders", () => {
       senderId: "machine:watchdog",
       senderLabel: "watchdog",
       senderTooltipParticipantId: null,
+      senderThreadRef: null,
       body: "canary 42",
       exchange: "plain",
       exchangeId: null,
@@ -591,6 +608,7 @@ describe("ThreadA2ADeliveryRenderer outside agents", () => {
       senderId: "outside:session-1",
       senderLabel: "Claude Desktop",
       senderTooltipParticipantId: null,
+      senderThreadRef: null,
       body: "Rebase onto main.\n\nThen rerun the suite.",
       exchange: "plain",
       exchangeId: null,
