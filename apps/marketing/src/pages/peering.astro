@@ -2,6 +2,7 @@
 import Layout from "../layouts/Layout.astro";
 import PeeringScene from "../components/PeeringScene.astro";
 import { routeChevrons } from "../lib/route";
+import { INSTALL_DOCS_URL } from "../lib/site";
 ---
 
 <Layout
@@ -178,6 +179,49 @@ import { routeChevrons } from "../lib/route";
             <figure class="mode-stage"><PeeringScene variant="asleep" /><PeeringScene variant="asleep" compact /></figure>
           </article>
         </div>
+      </div>
+    </section>
+
+    <section class="start">
+      <div class="container start-inner">
+        <div class="section-head start-head">
+          <h2 class="display">Peer your first two devices.</h2>
+          <p>
+            Once J5 is running on both machines, you set it up from one J5 window, in about a
+            minute.
+          </p>
+        </div>
+        <ol class="steps start-steps">
+          <li>
+            <span class="num">1</span>
+            <div>
+              <h3>Open Peer servers</h3>
+              <p>It's under <b>Settings → Connections → Peer servers</b>.</p>
+            </div>
+          </li>
+          <li>
+            <span class="num">2</span>
+            <div>
+              <h3>Add the other machine as a peer</h3>
+              <p>Choose <b>Add peer</b> and pick the other server.</p>
+            </div>
+          </li>
+          <li>
+            <span class="num">3</span>
+            <div>
+              <h3>Confirm how messages will travel</h3>
+              <p>
+                J5 checks which way each server can reach the other and spells out the setup it
+                proposes. Choose <b>Peer</b> to accept it, or <b>Set up differently</b> to pick the
+                direction and addresses yourself.
+              </p>
+            </div>
+          </li>
+        </ol>
+        <p class="start-note">
+          Only one machine running J5 so far? <a href="/download">Download it for the other</a>,
+          or <a href={INSTALL_DOCS_URL} target="_blank" rel="noopener noreferrer">install the server</a>.
+        </p>
       </div>
     </section>
   </div>
@@ -494,6 +538,49 @@ import { routeChevrons } from "../lib/route";
     grid-column: 1 / -1;
   }
 
+  /* The way in, as the homepage closes on its download. */
+  .start {
+    padding: 112px 0 120px;
+    background:
+      radial-gradient(ellipse 60% 50% at 50% 100%, rgba(201, 162, 77, 0.12), transparent 70%),
+      var(--navy-950);
+  }
+
+  .start-inner {
+    display: grid;
+    gap: 44px;
+  }
+
+  .start-head {
+    margin-bottom: 0;
+  }
+
+  .start-steps {
+    max-width: 680px;
+  }
+
+  .start-steps p b {
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  .start-note {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--fg-dim);
+  }
+
+  .start-note a {
+    color: var(--fg-muted);
+    text-decoration: underline;
+    text-decoration-color: rgba(223, 233, 238, 0.3);
+    text-underline-offset: 3px;
+  }
+
+  .start-note a:hover {
+    color: var(--fg);
+  }
+
   @media (max-width: 820px) {
     section {
       padding: 72px 0;
@@ -501,6 +588,14 @@ import { routeChevrons } from "../lib/route";
 
     .hero {
       padding: 72px 0 64px;
+    }
+
+    .start {
+      padding: 72px 0 80px;
+    }
+
+    .start-inner {
+      gap: 32px;
     }
 
     .why,
