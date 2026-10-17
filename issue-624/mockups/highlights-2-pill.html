@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Highlights · pill width</title>
+<style>
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --radius: 0.625rem; --radius-lg: var(--radius);
+    --sidebar: #fafafa; --sidebar-foreground: #27272a; --sidebar-muted-foreground: #71717a; --sidebar-control-surface: #f4f4f5; --sidebar-row-selected: #ffffff; --sidebar-border: #e4e4e7;
+    --sidebar-icon-color: color-mix(in srgb, var(--sidebar-muted-foreground) 60%, var(--sidebar));
+    --primary: oklch(0.488 0.217 264); --primary-foreground: #fff; --popover: #ffffff; --popover-foreground: #27272a; --border: #e4e4e7; --muted-foreground: #71717a;
+    --shadow-popover: 0 16px 40px -18px rgb(0 0 0 / 55%);
+    --fg-page: #27272a; --mf-page: #71717a; --bad: #dc2626;
+  }
+  .dark {
+    --sidebar: color-mix(in srgb, #0a0a0a 97%, #ffffff); --sidebar-foreground: #f5f5f5; --sidebar-muted-foreground: color-mix(in srgb, #737373 90%, #ffffff);
+    --sidebar-control-surface: rgb(255 255 255 / 3%); --sidebar-row-selected: rgb(255 255 255 / 3%); --sidebar-border: rgb(255 255 255 / 6%);
+    --primary: oklch(0.571 0.21 264); --popover: color-mix(in srgb, #0a0a0a 97%, #ffffff); --popover-foreground: #f5f5f5; --border: rgb(255 255 255 / 6%);
+    --muted-foreground: color-mix(in srgb, #737373 90%, #ffffff); --shadow-popover: 0 18px 44px -18px rgb(0 0 0 / 80%);
+    --fg-page: #f5f5f5; --mf-page: #a1a1aa; --bad: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: var(--font-sans); color: var(--fg-page); padding: 0 0 8px; -webkit-font-smoothing: antialiased; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .sub { font-size: 13px; color: var(--mf-page); margin: 0 0 14px; line-height: 1.45; }
+  .toggle { position: absolute; top: 2px; right: 0; font-size: 12px; color: var(--mf-page); display: flex; gap: 6px; align-items: center; cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--primary); }
+  h2 { font-size: 13px; font-weight: 600; margin: 18px 0 8px; padding-top: 14px; border-top: 1px solid rgb(127 127 127 / 20%); }
+  .row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+  .cell { }
+  .label { font-size: 11px; color: var(--mf-page); margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; }
+  .label b { color: var(--bad); font-weight: 600; text-transform: none; letter-spacing: 0; }
+  .note { font-size: 12px; color: var(--mf-page); line-height: 1.45; margin: 8px 0 0; max-width: 560px; }
+  svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .sb { background: var(--sidebar); color: var(--sidebar-foreground); border: 1px solid var(--sidebar-border); border-radius: 8px; position: relative; font-size: 13px; }
+  .sb.w256 { width: 256px; } .sb.w208 { width: 208px; }
+  .sb .rows { padding: 8px 8px 0; }
+  .sb .trow { height: 30px; display: flex; align-items: center; padding: 0 10px; border-radius: 6px; white-space: nowrap; overflow: hidden; background: var(--sidebar-row-selected); box-shadow: 0 0 0 1px var(--sidebar-border); }
+  .sb .trow span { overflow: hidden; text-overflow: ellipsis; }
+  .footer { padding: 4px 8px; margin-top: 10px; }
+  .util { display: flex; align-items: center; gap: 4px; position: relative; }
+  .ib { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 8px; color: var(--sidebar-icon-color); position: relative; }
+  .ib svg { width: 16px; height: 16px; }
+  .upd { margin-left: auto; border-radius: 999px; }
+  .hl { border-radius: 999px; background: var(--sidebar-control-surface); color: var(--sidebar-foreground); }
+  .hl.auto { margin-left: auto; }
+  .hl .badge { position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--primary); color: var(--primary-foreground); font-size: 9px; font-weight: 600; display: grid; place-items: center; box-shadow: 0 0 0 2px var(--sidebar); font-variant-numeric: tabular-nums; }
+  .hl .dot { position: absolute; top: 2px; right: 2px; width: 8px; height: 8px; border-radius: 999px; background: var(--primary); box-shadow: 0 0 0 2px var(--sidebar); }
+  .tpill { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px 0 9px; border-radius: 999px; background: var(--sidebar-control-surface); border: 1px solid var(--sidebar-border); font-size: 11px; font-weight: 500; white-space: nowrap; flex: none; }
+  .tpill svg { width: 12px; height: 12px; color: var(--primary); }
+  .tpill.auto { margin-left: auto; }
+  .over { outline: 1.5px dashed var(--bad); outline-offset: 2px; }
+  .clip { overflow: hidden; }
+
+  /* open popover */
+  .pop { position: absolute; right: 0; bottom: calc(100% + 6px); width: 248px; background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover); padding: 10px 12px 8px; font-size: 12px; line-height: 16px; z-index: 2; text-align: left; }
+  .pop .ph { font-weight: 500; font-size: 13px; line-height: 20px; padding-right: 0; }
+  .pop .entry { padding: 8px 0 0; position: relative; padding-right: 22px; }
+  .pop .entry + .entry { border-top: 1px solid var(--border); margin-top: 8px; }
+  .pop .et { font-weight: 600; }
+  .pop .d { color: var(--muted-foreground); }
+  .pop .lm { color: var(--muted-foreground); margin-top: 3px; display: inline-flex; align-items: center; gap: 4px; text-decoration: underline dotted; text-underline-offset: 4px; }
+  .pop .lm svg { width: 11px; height: 11px; stroke-width: 2.25; }
+  .pop .x { position: absolute; top: 7px; right: -6px; width: 20px; height: 20px; display: grid; place-items: center; color: var(--muted-foreground); opacity: .7; border-radius: 6px; }
+  .pop .x svg { width: 14px; height: 14px; }
+  .pop .entry + .entry .x { top: 15px; }
+  .popwrap .sb { margin-top: 250px; }
+</style>
+</head>
+<body>
+<label class="toggle"><input type="checkbox" id="dk"> dark</label>
+<h1>The pill, measured against the real row</h1>
+<p class="sub">Desktop footer: four utility buttons, then the update button on the right. 32px each, 4px apart, 8px inset. Free space: 64px at the default width, 16px at the narrowest. Web has no update button, so 36px more.</p>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+<symbol id="i-ext" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+<symbol id="i-sp" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/></symbol>
+<symbol id="i-set" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-pr" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/></symbol>
+<symbol id="i-fa" viewBox="0 0 24 24"><circle cx="15" cy="19" r="2"/><path d="M20.9 19.8A2 2 0 0 0 22 18V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h5.1"/><path d="M15 11v-1"/><path d="M15 17v-2"/></symbol>
+<symbol id="i-ch" viewBox="0 0 24 24"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></symbol>
+<symbol id="i-rf" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+</defs></svg>
+<template id="u4"><span class="ib"><svg><use href="#i-set"/></svg></span><span class="ib"><svg><use href="#i-pr"/></svg></span><span class="ib"><svg><use href="#i-fa"/></svg></span><span class="ib"><svg><use href="#i-ch"/></svg></span></template>
+<template id="trow"><div class="rows"><div class="trow"><span>fix(web): agent message cards render markdown</span></div></div></template>
+
+<h2>1 · Text pill, "3 new"</h2>
+<div class="row">
+  <div class="cell"><p class="label">Default · 256px</p>
+    <div class="sb w256"><div data-trow></div><div class="footer"><div class="util"><span data-u4></span><span class="tpill auto"><svg><use href="#i-sp"/></svg>3 new</span><span class="ib upd" style="margin-left:0"><svg><use href="#i-rf"/></svg></span></div></div></div></div>
+  <div class="cell"><p class="label">Narrowest · 208px <b>· overflows</b></p>
+    <div class="sb w208 clip"><div data-trow></div><div class="footer"><div class="util"><span data-u4></span><span class="tpill auto over"><svg><use href="#i-sp"/></svg>3 new</span><span class="ib upd" style="margin-left:0"><svg><use href="#i-rf"/></svg></span></div></div></div></div>
+</div>
+<p class="note">About 62px wide. Fits the default with 2px to spare, so "12 new" or a larger font breaks it. Overflows at the narrowest.</p>
+
+<h2>2 · Icon button with a count, like the inbox bell</h2>
+<div class="row">
+  <div class="cell"><p class="label">Default · 256px</p>
+    <div class="sb w256"><div data-trow></div><div class="footer"><div class="util"><span data-u4></span><span class="ib hl auto"><svg><use href="#i-sp"/></svg><span class="badge">3</span></span><span class="ib upd" style="margin-left:0"><svg><use href="#i-rf"/></svg></span></div></div></div></div>
+  <div class="cell"><p class="label">Narrowest · 208px <b>· 20px short on desktop</b></p>
+    <div class="sb w208 clip"><div data-trow></div><div class="footer"><div class="util"><span data-u4></span><span class="ib hl auto over"><svg><use href="#i-sp"/></svg><span class="badge">3</span></span><span class="ib upd" style="margin-left:0"><svg><use href="#i-rf"/></svg></span></div></div></div></div>
+  <div class="cell"><p class="label">Narrowest · web, no update button</p>
+    <div class="sb w208"><div data-trow></div><div class="footer"><div class="util"><span data-u4></span><span class="ib hl auto"><svg><use href="#i-sp"/></svg><span class="badge">3</span></span></div></div></div></div>
+</div>
+<p class="note">Same 32px as its neighbours. Fits the default with 28px to spare. At the narrowest it only fits on web; on desktop, the row would need to drop its gaps to make room, or the button sits in the row only when there is space.</p>
+
+<h2>3 · Open: the list, × on each entry, newest first, at most five</h2>
+<div class="row popwrap">
+  <div class="cell">
+    <div class="sb w256"><div data-trow></div><div class="footer"><div class="util"><span data-u4></span><span class="ib hl auto"><svg><use href="#i-sp"/></svg><span class="badge">3</span></span><span class="ib upd" style="margin-left:0"><svg><use href="#i-rf"/></svg></span>
+      <div class="pop">
+        <div class="ph">New in J5 Code</div>
+        <div class="entry"><div class="et">Open links</div><div class="d">Share a thread by link. Guests join as themselves.</div><a class="lm">Learn more <svg><use href="#i-ext"/></svg></a><span class="x"><svg><use href="#i-x"/></svg></span></div>
+        <div class="entry"><div class="et">Agent message cards</div><div class="d">Messages between agents render as markdown.</div><span class="x"><svg><use href="#i-x"/></svg></span></div>
+        <div class="entry"><div class="et">Peering</div><div class="d">Agents on your other machines can message each other.</div><a class="lm">Learn more <svg><use href="#i-ext"/></svg></a><span class="x"><svg><use href="#i-x"/></svg></span></div>
+      </div>
+    </div></div></div>
+  </div>
+  <div class="cell" style="align-self:flex-end"><p class="note" style="margin:0 0 6px; max-width: 420px;">Click opens it; hover does not. × clears one entry and the count drops. Clearing the last one removes the button. The update button keeps its own hover popover beside it, untouched.</p></div>
+</div>
+
+<script>
+for (const el of document.querySelectorAll('[data-u4]')) el.replaceWith(document.getElementById('u4').content.cloneNode(true));
+for (const el of document.querySelectorAll('[data-trow]')) el.replaceWith(document.getElementById('trow').content.cloneNode(true));
+(function(){ const bg=getComputedStyle(document.documentElement).getPropertyValue('--background').trim(); let dark=false; if(bg){ const cv=document.createElement('canvas'); cv.width=cv.height=1; const ctx=cv.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,1,1); ctx.fillStyle=bg; ctx.fillRect(0,0,1,1); const [r,g,b]=ctx.getImageData(0,0,1,1).data; dark=(r*299+g*587+b*114)/1000<128; } document.documentElement.classList.toggle('dark',dark); document.getElementById('dk').checked=dark; })();
+document.getElementById('dk').addEventListener('change', e => document.documentElement.classList.toggle('dark', e.target.checked));
+</script>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Highlights · final</title>
+<style>
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --radius: 0.625rem;
+    --sidebar: #fafafa; --sidebar-foreground: #27272a; --sidebar-muted-foreground: #71717a; --sidebar-control-surface: #f4f4f5; --sidebar-row-selected: #fff; --sidebar-border: #e4e4e7;
+    --sidebar-icon-color: color-mix(in srgb, var(--sidebar-muted-foreground) 60%, var(--sidebar));
+    --primary: oklch(0.488 0.217 264); --primary-foreground: #fff; --popover: #fff; --popover-foreground: #27272a; --border: #e4e4e7; --muted-foreground: #71717a; --foreground: #27272a;
+    --shadow-popover: 0 16px 40px -18px rgb(0 0 0 / 55%);
+    --fg-page: #27272a; --mf-page: #71717a;
+    /* art tile: chart paper in light */
+    --art-bg: #f4efe4; --art-bg2: #ebe3d1; --art-line: rgba(18,32,47,.14); --art-sea: #3b8fae; --art-ink: #12202f; --art-dim: #5f6a76;
+    --ink: #12202f; --hull: #fbf7ee; --sail-l: #e5ddc8; --sail-r: #fbf7ee; --pennant: #2f7d5b; --pennant-fill: var(--pennant);
+    --brass: #c9a24d; --msg-ask: #e08a3c; --msg-receive: #3b8fae; --msg-reply: #2f7d5b;
+  }
+  .dark {
+    --sidebar: color-mix(in srgb, #0a0a0a 97%, #fff); --sidebar-foreground: #f5f5f5; --sidebar-muted-foreground: color-mix(in srgb, #737373 90%, #fff);
+    --sidebar-control-surface: rgb(255 255 255 / 3%); --sidebar-row-selected: rgb(255 255 255 / 3%); --sidebar-border: rgb(255 255 255 / 6%);
+    --primary: oklch(0.571 0.21 264); --popover: color-mix(in srgb, #0a0a0a 97%, #fff); --popover-foreground: #f5f5f5; --border: rgb(255 255 255 / 6%);
+    --muted-foreground: color-mix(in srgb, #737373 90%, #fff); --foreground: #f5f5f5; --shadow-popover: 0 18px 44px -18px rgb(0 0 0 / 80%);
+    --fg-page: #f5f5f5; --mf-page: #a1a1aa;
+    /* art tile: navy in dark */
+    --art-bg: #0a1c30; --art-bg2: #102a47; --art-line: rgba(223,233,238,.14); --art-sea: #3b8fae; --art-ink: #dfe9ee; --art-dim: rgba(223,233,238,.6);
+    --ink: #dfe9ee; --hull: #f4efe4; --sail-l: #cfd9df; --sail-r: #f4efe4; --pennant: #6fcf9a; --msg-reply: #6fcf9a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: var(--font-sans); color: var(--fg-page); padding: 0 0 8px; -webkit-font-smoothing: antialiased; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .sub { font-size: 13px; color: var(--mf-page); margin: 0 0 14px; line-height: 1.45; max-width: 640px; }
+  .toggle { position: absolute; top: 2px; right: 0; font-size: 12px; color: var(--mf-page); display: flex; gap: 6px; align-items: center; cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--primary); }
+  h2 { font-size: 13px; font-weight: 600; margin: 18px 0 2px; padding-top: 14px; border-top: 1px solid rgb(127 127 127 / 20%); }
+  .desc { font-size: 12px; color: var(--mf-page); margin: 0 0 10px; line-height: 1.45; max-width: 640px; }
+  .row { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+  .label { font-size: 11px; color: var(--mf-page); margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; }
+  svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  svg.art { stroke: none; display: block; width: 100%; height: 100%; }
+
+  /* popover frame (width lg = 384px) */
+  .pop { width: 384px; background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-popover); font-size: 12px; line-height: 16px; overflow: hidden; }
+  .pop .ph { font-weight: 500; font-size: 13px; line-height: 20px; padding: 10px 14px 6px; }
+  .pop .sep { height: 1px; background: var(--border); margin: 0 14px; }
+
+  /* rich entry */
+  .e { position: relative; display: grid; }
+  .e .x { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; color: var(--muted-foreground); opacity: .75; z-index: 2; }
+  .e .x svg { width: 14px; height: 14px; }
+  .e .t { font-weight: 600; font-size: 14px; line-height: 20px; }
+  .e .d { color: var(--muted-foreground); font-size: 12px; line-height: 17px; margin-top: 3px; }
+  .e .lm { margin-top: 10px; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--border); font-size: 11px; font-weight: 500; color: var(--foreground); background: var(--popover); width: max-content; }
+  .e .lm svg { width: 11px; height: 11px; stroke-width: 2.25; color: var(--muted-foreground); }
+  .e .when { font-size: 11px; color: var(--muted-foreground); margin-top: 8px; opacity: .8; }
+  .art-bg { background: var(--art-bg); background-image: radial-gradient(120% 90% at 80% 20%, var(--art-bg2) 0%, transparent 60%); }
+
+  /* L1 art right */
+  .l1 { grid-template-columns: 1fr 150px; min-height: 124px; }
+  .l1 .txt { padding: 14px 6px 14px 14px; }
+  .l1 .tile { position: relative; overflow: hidden; }
+  .l1 .tile::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, var(--popover) 0, transparent 22px); z-index: 1; }
+
+  /* L2 art on top */
+  .l2 { grid-template-columns: 1fr; }
+  .l2 .tile { height: 112px; overflow: hidden; position: relative; }
+  .l2 .txt { padding: 10px 14px 14px; }
+  .l2 .x { color: var(--art-ink); }
+
+  /* L3 poster: text over art */
+  .l3 { grid-template-columns: 1fr; min-height: 150px; }
+  .l3 .tile { position: absolute; inset: 0; overflow: hidden; }
+  .l3 .txt { position: relative; z-index: 1; padding: 16px 14px 14px; max-width: 220px; }
+  .l3 .t { color: var(--art-ink); font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 19px; line-height: 22px; font-weight: 500; letter-spacing: -.01em; }
+  .l3 .d { color: var(--art-dim); }
+  .l3 .lm { background: transparent; color: var(--art-ink); border-color: var(--art-line); }
+  .l3 .lm svg { color: var(--art-dim); }
+  .l3 .x { color: var(--art-ink); }
+  .l3 .tile::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, var(--art-bg) 38%, transparent 56%); }
+
+  /* sidebar + button for the stacked view */
+  .anchor { position: relative; width: 256px; }
+  .sb { background: var(--sidebar); color: var(--sidebar-foreground); border: 1px solid var(--sidebar-border); border-radius: 8px; width: 256px; font-size: 13px; }
+  .sb .rows { padding: 8px 8px 0; }
+  .sb .trow { height: 30px; display: flex; align-items: center; padding: 0 10px; border-radius: 6px; white-space: nowrap; overflow: hidden; background: var(--sidebar-row-selected); box-shadow: 0 0 0 1px var(--sidebar-border); }
+  .sb .trow span { overflow: hidden; text-overflow: ellipsis; }
+  .footer { padding: 4px 8px; margin-top: 10px; }
+  .util { display: flex; align-items: center; gap: 4px; }
+  .ib { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 8px; color: var(--sidebar-icon-color); position: relative; }
+  .ib svg { width: 16px; height: 16px; }
+  .hl { margin-left: auto; border-radius: 999px; background: var(--sidebar-control-surface); color: var(--sidebar-foreground); }
+  .hl .badge { position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--primary); color: var(--primary-foreground); font-size: 9px; font-weight: 600; display: grid; place-items: center; box-shadow: 0 0 0 2px var(--sidebar); }
+  .stack .pop { position: absolute; left: 8px; bottom: 54px; z-index: 2; }
+  .stack { height: 560px; }
+  .stack .sb { position: absolute; bottom: 0; }
+</style>
+<style>
+  body { padding: 16px 16px 20px; }
+  .pop .ph { display: flex; align-items: center; justify-content: space-between; padding-right: 10px; }
+  .pop .ph .k { font-size: 11px; font-weight: 400; color: var(--muted-foreground); }
+  .e .when { font-size: 11px; color: var(--muted-foreground); margin-top: 6px; opacity: .85; }
+  .e .warn { font-size: 11px; color: #a16207; margin-top: 6px; display: inline-flex; align-items: center; gap: 5px; }
+  .dark .e .warn { color: #fbbf24; }
+  .e .warn svg { width: 12px; height: 12px; stroke-width: 2.25; flex: none; }
+  .e.plain { grid-template-columns: 1fr; min-height: 0; }
+  .e.plain .txt { padding: 12px 14px 12px; }
+  .e.plain .t { font-size: 13px; }
+  .grid3 { display: grid; grid-template-columns: 256px 1fr; gap: 28px; align-items: end; }
+  .cap { font-size: 12px; color: var(--mf-page); margin: 0 0 8px; }
+  .stack { height: 560px; }
+  .stack .pop { left: 0; }
+  .hl .badge { font-variant-numeric: tabular-nums; }
+  .row2 { margin-top: 28px; display: grid; grid-template-columns: 384px 1fr; gap: 28px; align-items: start; }
+  .notes { font-size: 12px; color: var(--mf-page); line-height: 1.5; }
+  .notes b { color: var(--fg-page); font-weight: 600; }
+  .notes p { margin: 0 0 8px; }
+</style></head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+<symbol id="i-ext" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+<symbol id="i-sp" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/></symbol>
+<symbol id="i-set" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-pr" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/></symbol>
+<symbol id="i-fa" viewBox="0 0 24 24"><circle cx="15" cy="19" r="2"/><path d="M20.9 19.8A2 2 0 0 0 22 18V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h5.1"/></symbol>
+<symbol id="i-ch" viewBox="0 0 24 24"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></symbol>
+<symbol id="i-rf" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+<!-- the marketing sprite, verbatim -->
+<g id="j5-boat">
+  <polygon points="14,30 32,8 32,30" fill="var(--sail-l)" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="32,8 32,30 50,30" fill="var(--sail-r)" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="4,30 60,30 50,44 14,44" fill="var(--hull)" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M8 35h48" stroke="var(--ink)" stroke-opacity="0.25" stroke-width="1"/>
+  <circle cx="24" cy="37" r="1.4" fill="#12202f"/><circle cx="40" cy="37" r="1.4" fill="#12202f"/>
+  <path d="M32 8v-7" stroke="var(--ink)" stroke-width="1.4"/>
+  <polygon points="32,0 45,3.5 32,7" fill="var(--pennant-fill)" stroke="var(--pennant)" stroke-width="1.4" stroke-linejoin="round"/>
+</g>
+<g id="j5-captain">
+  <polygon points="14,30 32,4 32,30" fill="var(--sail-l)" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="32,4 32,30 50,30" fill="var(--sail-r)" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="2,30 62,30 51,46 13,46" fill="var(--hull)" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/>
+  <polygon points="4,33 60,33 58.6,35.5 5.4,35.5" fill="#c9a24d"/>
+  <path d="M9 40h46" stroke="var(--ink)" stroke-opacity="0.25" stroke-width="1"/>
+  <circle cx="24" cy="40.5" r="1.5" fill="#12202f"/><circle cx="40" cy="40.5" r="1.5" fill="#12202f"/>
+  <path d="M32 19l1.6 3.3 3.6.5-2.6 2.5.6 3.6-3.2-1.7-3.2 1.7.6-3.6-2.6-2.5 3.6-.5z" fill="#c9a24d"/>
+  <path d="M32 4v-7" stroke="var(--ink)" stroke-width="1.4"/>
+  <polygon points="32,-4 46,-1.5 41,1 46,3.5 32,3" fill="#c9a24d"/>
+</g>
+<!-- scenes, one per tile shape -->
+<symbol id="r-a2a" viewBox="0 0 150 124" preserveAspectRatio="xMidYMid meet">
+  <path d="M0 104 Q 15 99 30 104 T 60 104 T 90 104 T 120 104 T 150 104" stroke="var(--art-sea)" stroke-opacity=".5" stroke-width="1.2" fill="none"/>
+  <path d="M0 115 Q 15 110 30 115 T 60 115 T 90 115 T 120 115 T 150 115" stroke="var(--art-sea)" stroke-opacity=".3" stroke-width="1.2" fill="none"/>
+  <path d="M36 54 Q 75 2 114 54" stroke="var(--art-dim)" stroke-opacity=".6" stroke-width="1.2" stroke-dasharray="3 5" fill="none"/>
+  <path d="M36 54 Q 75 26 114 54" stroke="var(--art-dim)" stroke-opacity=".6" stroke-width="1.2" stroke-dasharray="3 5" fill="none"/>
+  <g transform="translate(4 60)"><use href="#j5-boat" style="--pennant:var(--msg-ask);--pennant-fill:var(--msg-ask)"/></g>
+  <g transform="translate(84 60)"><use href="#j5-boat" style="--pennant:var(--msg-reply);--pennant-fill:var(--msg-reply)"/></g>
+  <circle cx="62" cy="20" r="4.5" fill="var(--msg-ask)"/>
+  <circle cx="92" cy="36" r="4.5" fill="var(--msg-reply)"/>
+</symbol>
+<symbol id="r-crew" viewBox="0 0 150 124" preserveAspectRatio="xMidYMid meet">
+  <path d="M0 106 Q 15 101 30 106 T 60 106 T 90 106 T 120 106 T 150 106" stroke="var(--art-sea)" stroke-opacity=".5" stroke-width="1.2" fill="none"/>
+  <path d="M0 116 Q 15 111 30 116 T 60 116 T 90 116 T 120 116 T 150 116" stroke="var(--art-sea)" stroke-opacity=".3" stroke-width="1.2" fill="none"/>
+  <g transform="translate(2 58)"><use href="#j5-captain"/></g>
+  <g transform="translate(72 76) scale(.66)"><use href="#j5-boat" style="--pennant:var(--msg-reply);--pennant-fill:var(--msg-reply)"/></g>
+  <g transform="translate(106 76) scale(.66)"><use href="#j5-boat" style="--pennant:#c9a24d;--pennant-fill:#c9a24d"/></g>
+</symbol>
+<symbol id="r-share" viewBox="0 0 150 124" preserveAspectRatio="xMidYMid meet">
+  <rect x="14" y="24" width="108" height="62" rx="9" fill="var(--hull)" stroke="var(--ink)" stroke-width="1.6"/>
+  <rect x="26" y="36" width="54" height="6" rx="3" fill="var(--ink)" fill-opacity=".55"/>
+  <rect x="26" y="48" width="78" height="5" rx="2.5" fill="var(--ink)" fill-opacity=".22"/>
+  <rect x="26" y="58" width="64" height="5" rx="2.5" fill="var(--ink)" fill-opacity=".22"/>
+  <circle cx="34" cy="80" r="10" fill="#c9a24d" stroke="var(--hull)" stroke-width="2.5"/>
+  <circle cx="50" cy="80" r="10" fill="var(--msg-receive)" stroke="var(--hull)" stroke-width="2.5"/>
+  <circle cx="66" cy="80" r="10" fill="var(--msg-reply)" stroke="var(--hull)" stroke-width="2.5"/>
+  <g transform="translate(106 62)"><circle cx="16" cy="16" r="14" fill="#c9a24d" stroke="var(--hull)" stroke-width="2.5"/><g stroke="#12202f" stroke-width="1.8" fill="none" stroke-linecap="round"><path d="M12.5 19.5l7-7"/><path d="M14 23a3.5 3.5 0 0 1-5-5l3-3a3.5 3.5 0 0 1 5 0"/><path d="M18 9a3.5 3.5 0 0 1 5 5l-3 3a3.5 3.5 0 0 1-5 0"/></g></g>
+</symbol>
+<symbol id="w-crew" viewBox="0 0 352 112" preserveAspectRatio="xMidYMid meet">
+  <path d="M0 98 Q 22 92 44 98 T 88 98 T 132 98 T 176 98 T 220 98 T 264 98 T 308 98 T 352 98" stroke="var(--art-sea)" stroke-opacity=".5" stroke-width="1.2" fill="none"/>
+  <path d="M0 108 Q 22 102 44 108 T 88 108 T 132 108 T 176 108 T 220 108 T 264 108 T 308 108 T 352 108" stroke="var(--art-sea)" stroke-opacity=".3" stroke-width="1.2" fill="none"/>
+  <g transform="translate(22 30) scale(1.3)"><use href="#j5-captain"/></g>
+  <g transform="translate(150 52) scale(.95)"><use href="#j5-boat" style="--pennant:var(--msg-reply);--pennant-fill:var(--msg-reply)"/></g>
+  <g transform="translate(218 52) scale(.95)"><use href="#j5-boat" style="--pennant:#c9a24d;--pennant-fill:#c9a24d"/></g>
+  <g transform="translate(286 52) scale(.95)"><use href="#j5-boat" style="--pennant:var(--msg-receive);--pennant-fill:var(--msg-receive)"/></g>
+</symbol>
+<symbol id="p-share" viewBox="0 0 384 150" preserveAspectRatio="xMaxYMid meet">
+  <path d="M190 118 Q 210 112 230 118 T 270 118 T 310 118 T 350 118 T 390 118" stroke="var(--art-sea)" stroke-opacity=".35" stroke-width="1.2" fill="none"/>
+  <rect x="208" y="26" width="146" height="78" rx="10" fill="var(--hull)" stroke="var(--ink)" stroke-width="1.6"/>
+  <rect x="222" y="40" width="70" height="6" rx="3" fill="var(--ink)" fill-opacity=".55"/>
+  <rect x="222" y="52" width="104" height="5" rx="2.5" fill="var(--ink)" fill-opacity=".22"/>
+  <rect x="222" y="62" width="86" height="5" rx="2.5" fill="var(--ink)" fill-opacity=".22"/>
+  <circle cx="236" cy="90" r="11" fill="#c9a24d" stroke="var(--hull)" stroke-width="2.5"/>
+  <circle cx="254" cy="90" r="11" fill="var(--msg-receive)" stroke="var(--hull)" stroke-width="2.5"/>
+  <circle cx="272" cy="90" r="11" fill="var(--msg-reply)" stroke="var(--hull)" stroke-width="2.5"/>
+  <g transform="translate(324 76)"><circle cx="16" cy="16" r="15" fill="#c9a24d" stroke="var(--hull)" stroke-width="2.5"/><g stroke="#12202f" stroke-width="1.8" fill="none" stroke-linecap="round"><path d="M12.5 19.5l7-7"/><path d="M14 23a3.5 3.5 0 0 1-5-5l3-3a3.5 3.5 0 0 1 5 0"/><path d="M18 9a3.5 3.5 0 0 1 5 5l-3 3a3.5 3.5 0 0 1-5 0"/></g></g>
+</symbol>
+<symbol id="i-warn" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+</defs></svg>
+<div class="grid3">
+  <div>
+    <p class="cap">1 · Something new: a button with a count, left of the update button.</p>
+    <div class="sb"><div class="rows"><div class="trow"><span>fix(web): agent message cards render markdown</span></div></div><div class="footer"><div class="util"><span class="ib"><svg><use href="#i-set"/></svg></span><span class="ib"><svg><use href="#i-pr"/></svg></span><span class="ib"><svg><use href="#i-fa"/></svg></span><span class="ib"><svg><use href="#i-ch"/></svg></span><span class="ib hl"><svg><use href="#i-sp"/></svg><span class="badge">3</span></span><span class="ib" style="border-radius:999px"><svg><use href="#i-rf"/></svg></span></div></div></div>
+  </div>
+  <div>
+    <p class="cap">2 · Click opens the list. × dismisses one entry; the count drops; the button goes when the last is dismissed.</p>
+    <div class="stack anchor" style="width:100%">
+      <div class="sb"><div class="rows"><div class="trow"><span>fix(web): agent message cards render markdown</span></div></div><div class="footer"><div class="util"><span class="ib"><svg><use href="#i-set"/></svg></span><span class="ib"><svg><use href="#i-pr"/></svg></span><span class="ib"><svg><use href="#i-fa"/></svg></span><span class="ib"><svg><use href="#i-ch"/></svg></span><span class="ib hl"><svg><use href="#i-sp"/></svg><span class="badge">3</span></span><span class="ib" style="border-radius:999px"><svg><use href="#i-rf"/></svg></span></div></div></div>
+      <div class="pop">
+        <div class="ph">New in J5 Code <span class="k">J5 Code 0.0.49</span></div>
+        <div class="e l1"><div class="txt"><div class="t">Share a thread with anyone</div><div class="d">Send a link. They join as themselves and see the thread live.</div><div class="when">New in builds from 17 Oct</div><a class="lm">Learn more <svg><use href="#i-ext"/></svg></a></div><div class="tile art-bg"><svg class="art"><use href="#r-share"/></svg></div><span class="x"><svg><use href="#i-x"/></svg></span></div>
+        <div class="sep"></div>
+        <div class="e l1"><div class="txt"><div class="t">Crews</div><div class="d">Propose a crew, approve the roster, and a Captain runs the seats for you.</div><div class="warn"><svg><use href="#i-warn"/></svg>Needs a server from 10 Oct. This one is older.</div><a class="lm">Learn more <svg><use href="#i-ext"/></svg></a></div><div class="tile art-bg"><svg class="art"><use href="#r-crew"/></svg></div><span class="x"><svg><use href="#i-x"/></svg></span></div>
+        <div class="sep"></div>
+        <div class="e plain"><div class="txt"><div class="t">Agent message cards</div><div class="d">Messages between agents render as markdown.</div></div><span class="x"><svg><use href="#i-x"/></svg></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="row2">
+  <div>
+    <p class="cap">3 · "What's new" from the palette, later. Same list, newest first, nothing to dismiss.</p>
+    <div class="pop">
+      <div class="ph">What's new <span class="k">J5 Code 0.0.49</span></div>
+      <div class="e l1"><div class="txt"><div class="t">Share a thread with anyone</div><div class="d">Send a link. They join as themselves and see the thread live.</div><div class="when">New in builds from 17 Oct</div><a class="lm">Learn more <svg><use href="#i-ext"/></svg></a></div><div class="tile art-bg"><svg class="art"><use href="#r-share"/></svg></div></div>
+      <div class="sep"></div>
+      <div class="e l1"><div class="txt"><div class="t">Crews</div><div class="d">Propose a crew, approve the roster, and a Captain runs the seats for you.</div><div class="when">New in builds from 10 Oct</div><a class="lm">Learn more <svg><use href="#i-ext"/></svg></a></div><div class="tile art-bg"><svg class="art"><use href="#r-crew"/></svg></div></div>
+      <div class="sep"></div>
+      <div class="e plain"><div class="txt"><div class="t">Agent message cards</div><div class="d">Messages between agents render as markdown.</div><div class="when">New in builds from 3 Oct</div></div></div>
+      <div class="sep"></div>
+      <div class="e l1"><div class="txt"><div class="t">Agents talk to each other</div><div class="d">Ask another agent for help, hand off work, or wait on an answer.</div><a class="lm">Learn more <svg><use href="#i-ext"/></svg></a></div><div class="tile art-bg"><svg class="art"><use href="#r-a2a"/></svg></div></div>
+    </div>
+  </div>
+  <div class="notes">
+    <p><b>Entry.</b> Title, one or two lines, optional "Learn more" (outline button, opens the marketing page), optional art tile on the right. No art means a plain text row.</p>
+    <p><b>Art.</b> The marketing site's boat sprite and palette: chart paper in the light theme, navy in the dark one. Still, no motion.</p>
+    <p><b>Date line.</b> "New in builds from 17 Oct" once date versions exist. Absent on older entries. A server behind the feature swaps it for a warning line.</p>
+    <p><b>Limit.</b> The latest five entries. More scroll inside the popover.</p>
+  </div>
+</div>
+<script>
+(function(){ const bg=getComputedStyle(document.documentElement).getPropertyValue('--background').trim(); let dark=false; if(bg){ const cv=document.createElement('canvas'); cv.width=cv.height=1; const ctx=cv.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,1,1); ctx.fillStyle=bg; ctx.fillRect(0,0,1,1); const [r,g,b]=ctx.getImageData(0,0,1,1).data; dark=(r*299+g*587+b*114)/1000<128; } document.documentElement.classList.toggle('dark',dark); document.body.style.background = dark ? '#0a0a0a' : '#ffffff'; })();
+</script>
+</body></html>

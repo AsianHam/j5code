@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Highlights · card shape</title>
+<style>
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --radius: 0.625rem;
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-sm: calc(var(--radius) - 4px);
+    /* light, [data-app-sidebar] scope */
+    --page: #f4f4f5;
+    --sidebar: #fafafa;
+    --sidebar-foreground: #27272a;
+    --sidebar-muted-foreground: #71717a;
+    --sidebar-control-surface: #f4f4f5;
+    --sidebar-row-hover: oklch(99.2% 0 0);
+    --sidebar-row-selected: #ffffff;
+    --sidebar-border: #e4e4e7;
+    --sidebar-icon-color: color-mix(in srgb, var(--sidebar-muted-foreground) 60%, var(--sidebar));
+    --primary: oklch(0.488 0.217 264);
+    --popover: #ffffff;
+    --popover-foreground: #27272a;
+    --border: #e4e4e7;
+    --muted-foreground: #71717a;
+    --foreground: #27272a;
+    --shadow-popover: 0 16px 40px -18px rgb(0 0 0 / 55%);
+  }
+  .dark {
+    --page: #0a0a0a;
+    --sidebar: color-mix(in srgb, #0a0a0a 97%, #ffffff);
+    --sidebar-foreground: #f5f5f5;
+    --sidebar-muted-foreground: color-mix(in srgb, #737373 90%, #ffffff);
+    --sidebar-control-surface: rgb(255 255 255 / 3%);
+    --sidebar-row-hover: rgb(255 255 255 / 4%);
+    --sidebar-row-selected: rgb(255 255 255 / 3%);
+    --sidebar-border: rgb(255 255 255 / 6%);
+    --primary: oklch(0.571 0.21 264);
+    --popover: color-mix(in srgb, #0a0a0a 97%, #ffffff);
+    --popover-foreground: #f5f5f5;
+    --border: rgb(255 255 255 / 6%);
+    --muted-foreground: color-mix(in srgb, #737373 90%, #ffffff);
+    --foreground: #f5f5f5;
+    --shadow-popover: 0 18px 44px -18px rgb(0 0 0 / 80%);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: var(--font-sans); color: var(--fg-page, var(--foreground)); padding: 0 0 8px; -webkit-font-smoothing: antialiased; }
+  :root { --fg-page: #27272a; --mf-page: #71717a; }
+  .dark { --fg-page: #f5f5f5; --mf-page: #a1a1aa; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .sub { font-size: 13px; color: var(--mf-page); margin: 0 0 14px; }
+  .toggle { position: absolute; top: 2px; right: 0; font-size: 12px; color: var(--mf-page); display: flex; gap: 6px; align-items: center; cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--primary); }
+  .grid { display: grid; gap: 22px; }
+  .col { display: grid; grid-template-columns: minmax(0,1fr) 256px 256px; gap: 14px; align-items: start; padding-top: 14px; border-top: 1px solid rgb(127 127 127 / 20%); }
+  .col .intro { display: contents; }
+  .col h2 { font-size: 13px; font-weight: 600; margin: 0 0 2px; }
+  .col p.desc { font-size: 12px; color: var(--mf-page); margin: 0 0 10px; line-height: 1.45; }
+  .col .side { min-width: 0; }
+  .pair { display: contents; }
+  .label { font-size: 11px; color: var(--mf-page); margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; }
+
+  /* sidebar frame: the bottom of a 16rem sidebar */
+  .sb { width: 256px; background: var(--sidebar); color: var(--sidebar-foreground); border: 1px solid var(--sidebar-border); border-radius: 8px; overflow: visible; position: relative; font-size: 13px; }
+  .sb .rows { padding: 8px 8px 0; }
+  .sb .grp { font-size: 11px; color: var(--sidebar-muted-foreground); padding: 6px 10px 4px; font-weight: 500; }
+  .sb .row { height: 30px; display: flex; align-items: center; padding: 0 10px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--sidebar-foreground); }
+  .sb .row.sel { background: var(--sidebar-row-selected); box-shadow: 0 0 0 1px var(--sidebar-border); }
+  .sb .row span { overflow: hidden; text-overflow: ellipsis; }
+  .footer { display: flex; flex-direction: column; gap: 8px; padding: 4px 8px; margin-top: 10px; }
+  .util { display: flex; align-items: center; gap: 2px; }
+  .util .ib { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--sidebar-icon-color); }
+  .util .ib svg { width: 16px; height: 16px; }
+  .util .pill { margin-left: auto; width: 32px; height: 32px; border-radius: 999px; display: grid; place-items: center; color: var(--sidebar-icon-color); }
+  .util .pill svg { width: 16px; height: 16px; }
+  svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* shared card bits (Alert variant="sidebar") */
+  .card { border-radius: var(--radius-lg); border: 1px solid var(--sidebar-border); background: var(--sidebar-control-surface); padding: 6px 8px; font-size: 11px; line-height: 16px; position: relative; }
+  .card .t { font-weight: 500; color: var(--sidebar-foreground); display: flex; align-items: center; gap: 6px; min-height: 16px; }
+  .card .t svg.sp { width: 12px; height: 12px; color: var(--primary); flex: none; }
+  .card .d { color: var(--sidebar-muted-foreground); }
+  .card .x { position: absolute; top: 5px; right: 5px; width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; color: var(--sidebar-muted-foreground); opacity: .7; }
+  .card .x svg { width: 14px; height: 14px; }
+  .lm { color: var(--sidebar-muted-foreground); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 4px; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; }
+  .lm svg { width: 11px; height: 11px; stroke-width: 2.25; }
+  .card .t .n { margin-left: auto; margin-right: 22px; color: var(--sidebar-muted-foreground); font-weight: 400; }
+
+  /* A: stack of notices */
+  .A .card { padding-right: 28px; }
+  .A .card .d { margin-top: 1px; }
+  .A .card .lm { margin-top: 4px; }
+
+  /* B: one card, list inside */
+  .B .entry { padding: 6px 0 0; }
+  .B .entry + .entry { border-top: 1px solid var(--sidebar-border); margin-top: 6px; }
+  .B .entry .et { font-weight: 500; color: var(--sidebar-foreground); }
+  .B .entry .d { }
+  .B .entry .lm { margin-top: 2px; }
+  .B .hdr { display: flex; align-items: center; gap: 6px; font-weight: 500; padding-right: 22px; }
+  .B .hdr svg.sp { width: 12px; height: 12px; color: var(--primary); }
+  .B .single .entry { border: 0; padding-top: 1px; }
+  .B .single .entry .et { display: none; }
+
+  /* C: pill + popover */
+  .C .util { position: relative; }
+  .cpill { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 6px 0 9px; border-radius: 999px; background: var(--sidebar-control-surface); border: 1px solid var(--sidebar-border); font-size: 11px; font-weight: 500; color: var(--sidebar-foreground); margin-right: 4px; white-space: nowrap; }
+  .cpill svg.sp { width: 12px; height: 12px; color: var(--primary); }
+  .cpill .x { width: 18px; height: 18px; border-radius: 999px; display: grid; place-items: center; color: var(--sidebar-muted-foreground); opacity: .7; }
+  .cpill .x svg { width: 12px; height: 12px; }
+  .pop { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 6px); width: 232px; background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover); padding: 10px 12px; font-size: 12px; line-height: 16px; z-index: 2; }
+  .pop .ph { font-weight: 500; font-size: 13px; line-height: 20px; }
+  .pop .entry { padding-top: 8px; }
+  .pop .entry + .entry { border-top: 1px solid var(--border); margin-top: 8px; }
+  .pop .et { font-weight: 600; font-size: 12px; }
+  .pop .d { color: var(--muted-foreground); font-size: 12px; }
+  .pop .lm { color: var(--muted-foreground); margin-top: 3px; font-size: 12px; }
+  .C .sb { margin-top: 0; }
+  .C .sb { margin-top: 200px; }
+  .hint { font-size: 11px; color: var(--mf-page); margin: 0; line-height: 1.45; }
+</style>
+</head>
+<body>
+<label class="toggle"><input type="checkbox" id="dk"> dark</label>
+<h1>Where the card sits, and how it grows</h1>
+<p class="sub">Bottom of the sidebar. Left: one unseen highlight. Right: three. Same copy in all three.</p>
+
+<!-- icon defs -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+    <symbol id="i-sp" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/></symbol>
+    <symbol id="i-set" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-pr" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/></symbol>
+    <symbol id="i-fa" viewBox="0 0 24 24"><circle cx="15" cy="19" r="2"/><path d="M20.9 19.8A2 2 0 0 0 22 18V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h5.1"/><path d="M15 11v-1"/><path d="M15 17v-2"/></symbol>
+    <symbol id="i-ch" viewBox="0 0 24 24"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></symbol>
+    <symbol id="i-rf" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  </defs>
+</svg>
+
+<template id="rows">
+  <div class="rows">
+    <div class="grp">j5code</div>
+    <div class="row"><span>Highlights design partner</span></div>
+    <div class="row sel"><span>fix(web): agent message cards render markdown</span></div>
+    <div class="row"><span>Nightly release 0.0.49</span></div>
+  </div>
+</template>
+<template id="util">
+  <div class="util">
+    <span class="ib"><svg><use href="#i-set"/></svg></span>
+    <span class="ib"><svg><use href="#i-pr"/></svg></span>
+    <span class="ib"><svg><use href="#i-fa"/></svg></span>
+    <span class="ib"><svg><use href="#i-ch"/></svg></span>
+    <span class="pill"><svg><use href="#i-rf"/></svg></span>
+  </div>
+</template>
+
+<div class="grid">
+
+  <!-- A -->
+  <div class="col A">
+    <div class="side"><h2>A · A notice per highlight</h2>
+    <p class="desc">Each highlight is its own small card, the same frame as the "Undo" notice. Each has its own ×.</p><p class="hint">Grows one card per highlight. Three already pushes the threads up by half the sidebar.</p></div>
+    <div class="pair">
+      <div>
+        <p class="label">One</p>
+        <div class="sb"><div data-rows></div>
+          <div class="footer">
+            <div class="card">
+              <div class="t"><svg class="sp"><use href="#i-sp"/></svg>Peering</div>
+              <div class="d">Agents on your other machines can message each other.</div>
+              <a class="lm">Learn more <svg><use href="#i-ext"/></svg></a>
+              <span class="x"><svg><use href="#i-x"/></svg></span>
+            </div>
+            <div data-util></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p class="label">Three</p>
+        <div class="sb"><div data-rows></div>
+          <div class="footer">
+            <div class="card">
+              <div class="t"><svg class="sp"><use href="#i-sp"/></svg>Open links</div>
+              <div class="d">Share a thread by link. Guests join as themselves.</div>
+              <a class="lm">Learn more <svg><use href="#i-ext"/></svg></a>
+              <span class="x"><svg><use href="#i-x"/></svg></span>
+            </div>
+            <div class="card">
+              <div class="t"><svg class="sp"><use href="#i-sp"/></svg>Agent message cards</div>
+              <div class="d">Messages between agents render as markdown.</div>
+              <span class="x"><svg><use href="#i-x"/></svg></span>
+            </div>
+            <div class="card">
+              <div class="t"><svg class="sp"><use href="#i-sp"/></svg>Peering</div>
+              <div class="d">Agents on your other machines can message each other.</div>
+              <a class="lm">Learn more <svg><use href="#i-ext"/></svg></a>
+              <span class="x"><svg><use href="#i-x"/></svg></span>
+            </div>
+            <div data-util></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+  </div>
+
+  <!-- B -->
+  <div class="col B">
+    <div class="side"><h2>B · One card, a list inside</h2>
+    <p class="desc">One frame with a header and one × for all. A single highlight is the header itself; several become rows.</p><p class="hint">Bounded to one frame. Still tall with three, but reads as one thing to deal with.</p></div>
+    <div class="pair">
+      <div>
+        <p class="label">One</p>
+        <div class="sb"><div data-rows></div>
+          <div class="footer">
+            <div class="card single">
+              <div class="hdr"><svg class="sp"><use href="#i-sp"/></svg>New: Peering</div>
+              <div class="entry">
+                <div class="d">Agents on your other machines can message each other.</div>
+                <a class="lm">Learn more <svg><use href="#i-ext"/></svg></a>
+              </div>
+              <span class="x"><svg><use href="#i-x"/></svg></span>
+            </div>
+            <div data-util></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p class="label">Three</p>
+        <div class="sb"><div data-rows></div>
+          <div class="footer">
+            <div class="card">
+              <div class="hdr"><svg class="sp"><use href="#i-sp"/></svg>New in J5 Code</div>
+              <div class="entry">
+                <div class="et">Open links</div>
+                <div class="d">Share a thread by link. Guests join as themselves.</div>
+                <a class="lm">Learn more <svg><use href="#i-ext"/></svg></a>
+              </div>
+              <div class="entry">
+                <div class="et">Agent message cards</div>
+                <div class="d">Messages between agents render as markdown.</div>
+              </div>
+              <div class="entry">
+                <div class="et">Peering</div>
+                <div class="d">Agents on your other machines can message each other.</div>
+                <a class="lm">Learn more <svg><use href="#i-ext"/></svg></a>
+              </div>
+              <span class="x"><svg><use href="#i-x"/></svg></span>
+            </div>
+            <div data-util></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+  </div>
+
+  <!-- C -->
+  <div class="col C">
+    <div class="side"><h2>C · A pill next to the update button</h2>
+    <p class="desc">A one-line pill in the utility row. Hover or click opens the list in a popover, the way the update pill shows release notes. × on the pill dismisses.</p><p class="hint">Takes no room from the threads. The content is one hover away, so it is less "shown" and more "available". Popover drawn open here.</p></div>
+    <div class="pair">
+      <div>
+        <p class="label">One</p>
+        <div class="sb"><div data-rows></div>
+          <div class="footer">
+            <div class="util">
+              <span class="ib"><svg><use href="#i-set"/></svg></span>
+              <span class="ib"><svg><use href="#i-pr"/></svg></span>
+              <span class="ib"><svg><use href="#i-fa"/></svg></span>
+              <span class="ib"><svg><use href="#i-ch"/></svg></span>
+              <span class="cpill" style="margin-left:auto"><svg class="sp"><use href="#i-sp"/></svg>1 new<span class="x"><svg><use href="#i-x"/></svg></span></span>
+              <span class="pill" style="margin-left:0"><svg><use href="#i-rf"/></svg></span>
+              <div class="pop">
+                <div class="ph">New: Peering</div>
+                <div class="entry" style="padding-top:2px">
+                  <div class="d">Agents on your other machines can message each other.</div>
+                  <a class="lm">Learn more <svg><use href="#i-ext"/></svg></a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p class="label">Three</p>
+        <div class="sb"><div data-rows></div>
+          <div class="footer">
+            <div class="util">
+              <span class="ib"><svg><use href="#i-set"/></svg></span>
+              <span class="ib"><svg><use href="#i-pr"/></svg></span>
+              <span class="ib"><svg><use href="#i-fa"/></svg></span>
+              <span class="ib"><svg><use href="#i-ch"/></svg></span>
+              <span class="cpill" style="margin-left:auto"><svg class="sp"><use href="#i-sp"/></svg>3 new<span class="x"><svg><use href="#i-x"/></svg></span></span>
+              <span class="pill" style="margin-left:0"><svg><use href="#i-rf"/></svg></span>
+              <div class="pop">
+                <div class="ph">New in J5 Code</div>
+                <div class="entry">
+                  <div class="et">Open links</div>
+                  <div class="d">Share a thread by link. Guests join as themselves.</div>
+                  <a class="lm">Learn more <svg><use href="#i-ext"/></svg></a>
+                </div>
+                <div class="entry">
+                  <div class="et">Agent message cards</div>
+                  <div class="d">Messages between agents render as markdown.</div>
+                </div>
+                <div class="entry">
+                  <div class="et">Peering</div>
+                  <div class="d">Agents on your other machines can message each other.</div>
+                  <a class="lm">Learn more <svg><use href="#i-ext"/></svg></a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+  </div>
+</div>
+
+<script>
+  for (const el of document.querySelectorAll('[data-rows]')) el.replaceWith(document.getElementById('rows').content.cloneNode(true));
+  for (const el of document.querySelectorAll('[data-util]')) el.replaceWith(document.getElementById('util').content.cloneNode(true));
+  (function(){ const bg=getComputedStyle(document.documentElement).getPropertyValue('--background').trim(); let dark=false; if(bg){ const cv=document.createElement('canvas'); cv.width=cv.height=1; const ctx=cv.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,1,1); ctx.fillStyle=bg; ctx.fillRect(0,0,1,1); const [r,g,b]=ctx.getImageData(0,0,1,1).data; dark=(r*299+g*587+b*114)/1000<128; } document.documentElement.classList.toggle('dark',dark); document.getElementById('dk').checked=dark; })();
+  document.getElementById('dk').addEventListener('change', e => document.documentElement.classList.toggle('dark', e.target.checked));
+</script>
+</body>
+</html>
