@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { settingsNavItems, settingsPageShown } from "./settingsAccess.logic";
+import { ownerSomewhereState, settingsNavItems, settingsPageShown } from "./settingsAccess.logic";
 
 const UPSTREAM = [
   { to: "/settings/general" },
@@ -31,5 +31,22 @@ describe("Settings for an Owner", () => {
   it("lists every page upstream lists, and shows every page", () => {
     expect(settingsNavItems(UPSTREAM, true, LICENSES)).toBe(UPSTREAM);
     expect(settingsPageShown({ path: "/settings/brand-new", ownerSomewhere: true })).toBe(true);
+  });
+});
+
+describe("whether the person owns a connected server", () => {
+  it("is not known until the catalog is read and a server has answered", () => {
+    expect(ownerSomewhereState({ catalogReady: false, answers: [] })).toBe("loading");
+    expect(ownerSomewhereState({ catalogReady: true, answers: [null] })).toBe("loading");
+    expect(ownerSomewhereState({ catalogReady: true, answers: ["other", null] })).toBe("loading");
+  });
+
+  it("is settled by one server that says so, whatever the others have answered", () => {
+    expect(ownerSomewhereState({ catalogReady: true, answers: [null, "owner"] })).toBe(true);
+    expect(ownerSomewhereState({ catalogReady: true, answers: ["other", "other"] })).toBe(false);
+  });
+
+  it("waits while the catalog lists no server yet, as it does before the client's own is added", () => {
+    expect(ownerSomewhereState({ catalogReady: true, answers: [] })).toBe("loading");
   });
 });

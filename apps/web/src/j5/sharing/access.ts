@@ -17,6 +17,7 @@ import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useEnvironmentScope } from "../../state/session";
 import { j5Sharing } from "../state";
+import { ownerSomewhereState } from "./settingsAccess.logic";
 import { provideSharingMenuAccess } from "./sharingMenu";
 import { provideSharingThreadOperability } from "./threadOperability";
 
@@ -158,14 +159,28 @@ export function useOwnedEnvironmentIds(): ReadonlySet<EnvironmentId> {
   return useAtomValue(ownedEnvironmentIdsAtom);
 }
 
+const ownerSomewhereAtom = Atom.make((get) => {
+  const catalog = get(environmentCatalog.catalogValueAtom);
+  return ownerSomewhereState({
+    catalogReady: catalog.isReady,
+    answers: [...catalog.entries.keys()].map((id) => {
+      const access = get(j5Sharing.connectionAccess(id));
+      return access === null ? null : isOwnerAccess(access) ? "owner" : "other";
+    }),
+  });
+}).pipe(Atom.withLabel("j5:access:owner-somewhere"));
+
+/** Whether the person owns a connected server, or `"loading"`; see `ownerSomewhereState`. */
+export function useOwnerSomewhere(): boolean | "loading" {
+  return useAtomValue(ownerSomewhereAtom);
+}
+
 /**
- * Whether the person owns at least one connected server. A client connected to no server yet is
- * held to nothing: there is no server whose Owners it could be kept from.
+ * Whether the person owns at least one connected server, counting one not yet known: J5's own
+ * Settings pages ask, and are reached only once Settings knows.
  */
 export function useIsOwnerSomewhere(): boolean {
-  const owned = useAtomValue(ownedEnvironmentIdsAtom).size;
-  const total = useAtomValue(environmentCatalog.catalogValueAtom).entries.size;
-  return owned > 0 || total === 0;
+  return useOwnerSomewhere() !== false;
 }
 
 /** Whether the person owns this server; see `useOwnedEnvironmentIds`. */

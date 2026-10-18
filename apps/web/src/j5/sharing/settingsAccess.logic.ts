@@ -15,6 +15,23 @@ export const LICENSES_PATH = "/settings/open-source-licenses";
 /** Where Settings opens for someone who owns no connected server. */
 export const FIRST_PAGE_FOR_EVERYONE = "/settings/appearance";
 
+/**
+ * Whether the person owns a connected server, or `"loading"` until that is known: the catalog has
+ * not been read, it lists no server yet, or no server has said they own it while one has not
+ * answered. The catalog is read before the client's own server is added to it, so an empty one is
+ * a client still starting; a web or desktop client always has its own server. While loading,
+ * Settings shows what it shows anyone, so nobody sees an Owner's list before their answer.
+ */
+export function ownerSomewhereState(input: {
+  readonly catalogReady: boolean;
+  /** Each server's answer; `null` for one that has not answered. */
+  readonly answers: ReadonlyArray<"owner" | "other" | null>;
+}): boolean | "loading" {
+  if (!input.catalogReady || input.answers.length === 0) return "loading";
+  if (input.answers.includes("owner")) return true;
+  return input.answers.includes(null) ? "loading" : false;
+}
+
 /** Whether Settings shows a page, by its path. */
 export const settingsPageShown = (input: {
   readonly path: string;

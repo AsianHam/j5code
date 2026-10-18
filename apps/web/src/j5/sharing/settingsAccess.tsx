@@ -4,7 +4,7 @@ import { ScrollTextIcon } from "lucide-react";
 import { type ComponentType, type ReactNode, useMemo } from "react";
 
 import type { SettingsPath } from "../../components/settings/settingsSearch";
-import { useIsOwnerSomewhere, useOwnedEnvironmentIds } from "./access";
+import { useOwnedEnvironmentIds, useOwnerSomewhere } from "./access";
 import {
   FIRST_PAGE_FOR_EVERYONE,
   LICENSES_PATH,
@@ -31,7 +31,7 @@ const LICENSES_ITEM = {
 export function useSettingsNavItems<Item extends NavItem>(items: ReadonlyArray<Item>) {
   return settingsNavItems<NavItem>(
     items,
-    useIsOwnerSomewhere(),
+    useOwnerSomewhere() === true,
     LICENSES_ITEM,
   ) as ReadonlyArray<Item>;
 }
@@ -40,7 +40,7 @@ export function useSettingsNavItems<Item extends NavItem>(items: ReadonlyArray<I
 export function useShownSettingsSearchItems<Item extends { readonly to: string }>(
   items: ReadonlyArray<Item>,
 ): ReadonlyArray<Item> {
-  const ownerSomewhere = useIsOwnerSomewhere();
+  const ownerSomewhere = useOwnerSomewhere() === true;
   return ownerSomewhere ? items : items.filter((item) => PAGES_FOR_EVERYONE.has(item.to));
 }
 
@@ -55,8 +55,12 @@ export function SettingsPageGate({
   readonly pathname: string;
   readonly children: ReactNode;
 }) {
-  const ownerSomewhere = useIsOwnerSomewhere();
-  if (settingsPageShown({ path: pathname, ownerSomewhere })) return children;
+  const ownerSomewhere = useOwnerSomewhere();
+  if (settingsPageShown({ path: pathname, ownerSomewhere: ownerSomewhere === true })) {
+    return children;
+  }
+  // An Owner reloading one of their pages waits for the answer rather than being sent away.
+  if (ownerSomewhere === "loading") return null;
   return <Navigate to={FIRST_PAGE_FOR_EVERYONE} replace />;
 }
 
