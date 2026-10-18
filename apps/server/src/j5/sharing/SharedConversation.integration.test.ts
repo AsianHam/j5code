@@ -19,7 +19,7 @@ import { makeHarness, modelSelection, projectId } from "../test-support/threadLa
 import * as PersonAccess from "./PersonAccess.ts";
 import * as SharedConversation from "./SharedConversation.ts";
 import * as SharedThreads from "./SharedThreads.ts";
-import { quietAccessLayer } from "./test-support/conversationHarness.ts";
+import { quietAccessLayer, quietLifecycleLayer } from "./test-support/conversationHarness.ts";
 
 /**
  * A shared conversation over upstream's real orchestrator and its real projections, with no
@@ -36,6 +36,7 @@ const layerFor = (harness: ReturnType<typeof makeHarness>) =>
   SharedConversation.layer.pipe(
     Layer.provideMerge(SharedThreads.layer),
     Layer.provide(quietAccessLayer),
+    Layer.provide(quietLifecycleLayer),
     Layer.provideMerge(PersonAccess.layer),
     Layer.provideMerge(humanPersonRegistryLayer),
     Layer.provideMerge(harness.layer),

@@ -108,6 +108,20 @@ export interface A2ALifecycleServiceShape {
    * registered at creation (mobile, imported, system-started) become participants.
    */
   readonly registerExistingThreads: Effect.Effect<number, A2ALifecycleBridgeError>;
+  /**
+   * Ends every open ask to one person that they can no longer answer, as their access changed:
+   * `mayAnswer` says, per asking agent, whether they can still write to its thread. Each asking
+   * agent is told its ask was dropped, so it does not wait for a reply that cannot come. Asks to
+   * everyone here are not one person's and are left. Returns the asks it ended.
+   */
+  readonly endAsksOf: <E>(input: {
+    readonly personId: ParticipantId;
+    readonly mayAnswer: (asker: {
+      readonly threadId: string | null;
+      readonly projectId: string;
+    }) => Effect.Effect<boolean, E>;
+    readonly endedAt: string;
+  }) => Effect.Effect<ReadonlyArray<ExchangeId>, E | A2ALifecycleError>;
 }
 
 export class A2ALifecycleService extends Context.Service<
@@ -157,6 +171,19 @@ const participantArchiveCommandId = (projectId: LedgerProjectId, participantId: 
   CommCommandId.make(
     `command:j5:a2a:lifecycle:participant:${stablePart(projectId)}:${stablePart(participantId)}`,
   );
+
+/** What an agent is told when the person it asked can no longer write to its thread. */
+export const formatAccessEndedNotice = (input: {
+  readonly exchangeId: ExchangeId;
+  readonly personId: ParticipantId;
+}): string =>
+  [
+    `[Cross-agent messaging system notice: exchange dropped]`,
+    `Exchange ${input.exchangeId} ended because ${input.personId} can no longer write to your thread, so they will not answer it (receiver-retired).`,
+    "If you still need an answer, ask someone who can write to your thread, or everyone here; call j5_list_participants to see who.",
+    "Facts: replyRequired=false; retryAllowed=false; replacementRequired=false.",
+    "This is a platform-authored terminal notice, not a peer reply.",
+  ].join("\n\n");
 
 export const formatLifecycleNotice = (input: {
   readonly exchangeId: ExchangeId;
@@ -635,11 +662,86 @@ const makeLayer = (daemon: boolean) =>
         yield* Effect.forkScoped(run);
       }
 
+      const endAsksOf: A2ALifecycleServiceShape["endAsksOf"] = (input) =>
+        lifecyclePermit.withPermit(
+          Effect.gen(function* () {
+            const asks = yield* sql<ExchangeRow & { readonly sender_thread_id: string | null }>`
+              SELECT exchange.project_id, exchange.exchange_id, exchange.sender_id,
+                exchange.receiver_id, membership.thread_id AS sender_thread_id
+              FROM j5_a2a_exchange AS exchange
+              LEFT JOIN j5_a2a_membership AS membership
+                ON membership.project_id = exchange.project_id
+               AND membership.participant_id = exchange.sender_id
+              WHERE exchange.status = 'open' AND exchange.receiver_id = ${input.personId}
+              ORDER BY exchange.project_id, exchange.opened_seq, exchange.exchange_id
+            `;
+            const ended: Array<ExchangeId> = [];
+            for (const exchange of asks) {
+              const answerable = yield* input.mayAnswer({
+                threadId: exchange.sender_thread_id,
+                projectId: exchange.project_id,
+              });
+              if (answerable) continue;
+              const disposition = "receiver-retired" as const;
+              const exchangeId = ExchangeId.make(exchange.exchange_id);
+              const projectId = LedgerProjectId.make(exchange.project_id);
+              const messageId = noticeMessageId(exchange, disposition);
+              const correlationId = noticeCorrelationId(exchange, disposition);
+              const asker = ParticipantId.make(exchange.sender_id);
+              yield* ledger.appendEvents({
+                commandId: dropCommandId(exchange, disposition),
+                projectId,
+                acceptedAt: input.endedAt,
+                events: [
+                  {
+                    kind: "exchange.dropped",
+                    sender: asker,
+                    receiver: input.personId,
+                    exchangeId,
+                    correlationId,
+                    payload: {
+                      disposition,
+                      cause: { kind: "access-ended", participantId: input.personId, projectId },
+                      facts: {
+                        replyRequired: false,
+                        retryAllowed: false,
+                        replacementRequired: false,
+                      },
+                      noticeMessageId: messageId,
+                    },
+                    createdAt: input.endedAt,
+                  },
+                  {
+                    kind: "message.sent",
+                    sender: LIFECYCLE_PARTICIPANT_ID,
+                    receiver: asker,
+                    exchangeId,
+                    correlationId,
+                    payload: {
+                      messageId,
+                      text: formatAccessEndedNotice({ exchangeId, personId: input.personId }),
+                      originProjectId: projectId,
+                      receiverProjectId: projectId,
+                      exchangeRole: "terminal_notice",
+                      envelopeChannel: "lifecycle_notice",
+                    },
+                    createdAt: input.endedAt,
+                  },
+                ],
+              });
+              ended.push(exchangeId);
+            }
+            if (ended.length > 0) yield* worker.notify;
+            return ended;
+          }),
+        );
+
       return A2ALifecycleService.of({
         archiveParticipant,
         handleStoredEvent,
         replayCommittedEvents,
         registerExistingThreads,
+        endAsksOf,
       });
     }),
   );

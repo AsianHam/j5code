@@ -357,6 +357,8 @@ export const ExchangeDroppedPayload = Schema.Struct({
       "participant-deleted",
       "delivery-refused",
       "peer-removed",
+      // A person asked can no longer write to the asking agent's thread, so cannot answer it.
+      "access-ended",
     ]),
     participantId: ParticipantId,
     projectId: LedgerProjectId,

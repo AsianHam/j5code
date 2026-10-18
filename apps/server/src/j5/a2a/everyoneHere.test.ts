@@ -13,6 +13,8 @@ import { runMigrations } from "../../persistence/Migrations.ts";
 import { live as deliveryTransportLive } from "./DeliveryTransport.ts";
 import { A2ADeliveryWorker, manualLayer as deliveryWorkerLayer } from "./DeliveryWorker.ts";
 import { A2AHumanInbox, layer as humanInboxLayer } from "./HumanInboxService.ts";
+import { A2ALifecycleService, manualLayer as lifecycleLayer } from "./LifecycleService.ts";
+import { SharedThreads, layer as sharedThreadsLayer } from "../sharing/SharedThreads.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
 import { noneLayer as peerDirectoryNoneLayer } from "./PeerDirectory.ts";
@@ -68,7 +70,14 @@ const testLayer = (() => {
     Layer.provide(database),
     Layer.provide(transport),
   );
-  return Layer.mergeAll(database, ledger, send, inbox, worker);
+  const lifecycle = lifecycleLayer.pipe(
+    Layer.provide(ledger),
+    Layer.provide(database),
+    Layer.provide(worker),
+    Layer.provide(Layer.mock(ThreadManagementService)({})),
+  );
+  const shared = sharedThreadsLayer.pipe(Layer.provide(database));
+  return Layer.mergeAll(database, ledger, send, inbox, worker, lifecycle, shared);
 })();
 
 /**
@@ -237,4 +246,70 @@ it.effect(
       yield* sql`UPDATE j5_a2a_person_level SET level = 'viewer' WHERE person_id = ${PRIYA}`;
       assert.deepStrictEqual(yield* intents(PRIYA), []);
     }).pipe(Effect.provide(testLayer)),
+);
+
+/** What the access core's subscriber runs for a person whose access changed. */
+const endUnanswerableAsks = (personId: ParticipantId) =>
+  Effect.gen(function* () {
+    const shared = yield* SharedThreads;
+    return yield* (yield* A2ALifecycleService).endAsksOf({
+      personId,
+      endedAt: AT,
+      mayAnswer: (asker) =>
+        shared.writesTo(personId, {
+          threadId: asker.threadId === null ? null : ThreadId.make(asker.threadId),
+          projectId: asker.projectId,
+        }),
+    });
+  });
+
+const exchangeStatus = (exchangeId: string) =>
+  SqlClient.SqlClient.pipe(
+    Effect.flatMap(
+      (sql) => sql<{ readonly status: string }>`
+        SELECT status FROM j5_a2a_exchange WHERE exchange_id = ${exchangeId}
+      `,
+    ),
+    Effect.map((rows) => rows[0]?.status),
+  );
+
+it.effect(
+  "an ask to someone who can no longer write to the agent's thread ends, and the agent is told",
+  () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const toPriya = yield* ask(PRIYA, "priya-lowered");
+      const toSam = yield* ask(SAM, "sam-stays");
+      const toEveryone = yield* ask(EVERYONE_HERE_PERSON_ID, "everyone-stays");
+      // Lowered to Viewer: her ask can never be answered, so it ends.
+      yield* sql`UPDATE j5_a2a_person_level SET level = 'viewer' WHERE person_id = ${PRIYA}`;
+      assert.deepStrictEqual(yield* endUnanswerableAsks(PRIYA), [toPriya]);
+      assert.strictEqual(yield* exchangeStatus(toPriya), "dropped");
+      // The asking agent is told, so it does not wait for her.
+      const notices = yield* sql<{ readonly receiver_id: string; readonly message_text: string }>`
+      SELECT receiver_id, message_text FROM j5_a2a_delivery
+      WHERE exchange_id = ${toPriya} AND exchange_role = 'terminal_notice'
+    `;
+      assert.lengthOf(notices, 1);
+      assert.strictEqual(notices[0]!.receiver_id, agent.id);
+      assert.include(notices[0]!.message_text, `${PRIYA} can no longer write to your thread`);
+      // Others' asks, and the ask to everyone here, stay open; telling it again ends nothing more.
+      assert.strictEqual(yield* exchangeStatus(toSam), "open");
+      assert.strictEqual(yield* exchangeStatus(toEveryone), "open");
+      assert.deepStrictEqual(yield* endUnanswerableAsks(PRIYA), []);
+    }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("an ask to someone removed from the server ends", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const sql = yield* SqlClient.SqlClient;
+    const toSam = yield* ask(SAM, "sam-removed");
+    // As the access core removes a person: their levels go, and they are marked removed.
+    yield* sql`DELETE FROM j5_a2a_person_level WHERE person_id = ${SAM}`;
+    yield* sql`UPDATE j5_a2a_human_person SET removed_at = ${AT} WHERE person_id = ${SAM}`;
+    assert.deepStrictEqual(yield* endUnanswerableAsks(SAM), [toSam]);
+    assert.strictEqual(yield* exchangeStatus(toSam), "dropped");
+  }).pipe(Effect.provide(testLayer)),
 );

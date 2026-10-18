@@ -247,7 +247,8 @@ export const makeJ5A2AAuxiliaryLayer = (
     playbookDefinitionWatchLayer.pipe(Layer.provide(playbookStoreLayer)),
     // Shared conversations: what a person's message carries to the agent, and who wrote it; and
     // the server's Owners in every agent's standing instructions.
-    sharedConversationLayer,
+    // Ends a person's asks through the one lifecycle service, whose permit orders every drop.
+    sharedConversationLayer.pipe(Layer.provide(lifecycleServiceProvided)),
     ownersInInstructionsLayer,
   ).pipe(Layer.provideMerge(sharedThreadsLayer), Layer.provideMerge(peerRegistryProvided));
   // The person's permanent artifact delete, which also marks a handoff that pointed at the file.

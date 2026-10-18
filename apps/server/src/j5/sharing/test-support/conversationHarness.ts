@@ -7,6 +7,7 @@ import * as Context from "effect/Context";
 import * as Stream from "effect/Stream";
 
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import { A2ALifecycleService } from "../../a2a/LifecycleService.ts";
 import * as Access from "../Access.ts";
 import * as SharedConversation from "../SharedConversation.ts";
 import * as SharedThreads from "../SharedThreads.ts";
@@ -46,11 +47,20 @@ const threadsLayer = Layer.effect(
 );
 
 /**
+ * The asks lifecycle, ending nothing: a test of who may answer an ask builds the real one over
+ * a ledger (`everyoneHere.test.ts`).
+ */
+export const quietLifecycleLayer = Layer.mock(A2ALifecycleService)({
+  endAsksOf: () => Effect.succeed([]),
+});
+
+/**
  * People, levels, devices and the access core, with shared conversations over them and the
  * write hook that records a thread shared, over one in-memory database.
  */
 export const conversationLayer = SharedConversation.layer.pipe(
   Layer.provideMerge(SharedThreads.layer),
+  Layer.provide(quietLifecycleLayer),
   Layer.provide(threadsLayer),
   Layer.provideMerge(upstreamLayer),
   Layer.provideMerge(
