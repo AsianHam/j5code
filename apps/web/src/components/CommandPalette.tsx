@@ -1,5 +1,6 @@
 "use client";
 
+import { useHighlightsPaletteItems } from "../j5/highlights/highlightsPalette";
 import { useSharingPaletteItems } from "../j5/sharing/sharingPalette";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -1935,6 +1936,7 @@ function OpenCommandPaletteDialog(props: {
     activeThread,
     projectRef: contextualProjectRef,
   });
+  const highlightsPaletteItems = useHighlightsPaletteItems();
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
   if (projects.length > 0) {
     const activeProjectTitle =
@@ -2324,7 +2326,7 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
-  actionItems.push(...sharingPaletteItems);
+  actionItems.push(...sharingPaletteItems, ...highlightsPaletteItems);
 
   // Target the active thread or draft's project, falling back to the first sidebar group.
   const contextualProjectGroup =

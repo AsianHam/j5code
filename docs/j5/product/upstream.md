@@ -422,6 +422,20 @@ A guest is brought in with one of upstream's own single-use pairing links, which
 
 **Decided:** Jackson, 2026-10-09 ([multi-player session](../worklog/2026-10-09-multi-player-session.md)) and 2026-10-11 ([#531](https://github.com/Jacksondr5/j5code/issues/531), [#532](https://github.com/Jacksondr5/j5code/issues/532): folder-keyed requests refused, a reduced configuration, the preview browser set aside). Per-thread levels in the client: Jackson, 2026-10-12 ([#532](https://github.com/Jacksondr5/j5code/issues/532)); reporting a View guest as lacking "Operate tasks" was dropped because it cannot express View on one thread and Collaborate on another. Recorded in FORK.md case 69.
 
+### Clients
+
+#### D35. A client says what is new after it updates
+
+**Upstream:** a client tells the person about an update only before it installs: the desktop update button's release notes on the nightly track, and the "Update downloaded" toast's link to the GitHub release. After the update, nothing in any client says what changed.
+
+**J5:** a substantial new feature can ship a highlight, a short entry committed with the feature. A client that has a highlight its person hasn't seen shows a button with a count in the sidebar's row of utility buttons, beside the update button. The button opens the list, and each entry is dismissed on its own. The command palette's "What's new" reopens every entry. A new client marks the entries it ships with as seen when first run finishes, so it starts with nothing to show. See [Highlights](features/highlights.md).
+
+**Why:** headline features went unnoticed unless someone read GitHub, and the release notes upstream shows are a list of changes, not an introduction.
+
+**Consequences:** the button sits in upstream's sidebar row, the reopen command in upstream's palette, a helper that brings the sidebar back in upstream's sidebar layout, and the first-run mark in upstream's onboarding hook, which is the one place first run finishes (`FORK.md` case 75). What a client has seen is kept in its own storage, so a browser keeps one record per address. A client's highlights follow its own build, which can be newer than the server it is connected to. Upstream won't take this as a new feature, so it stays J5's.
+
+**Decided:** Jackson, 2026-10-17 ([#624](https://github.com/Jacksondr5/j5code/issues/624)). Recorded in FORK.md case 75.
+
 ### Awaiting a decision
 
 These already diverge on `j5/main`, but no human ruling is on record. Each landed as an implementer's call inside a merged PR. The person rules on each one; an approved entry moves up into its section, and a rejected one becomes a fix.
@@ -521,3 +535,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-13 — D33: a guest is not shown the Automations section or three Settings pages that could only fail for them (the build lead, under Jackson's 2026-10-13 standing permission; [#535](https://github.com/Jacksondr5/j5code/issues/535)).
 - 2026-10-13 — D33: the first-run gate and the sidebar's empty state approved, for a guest on every connected server only; the Settings pages left out for a guest follow the same rule (Jackson; [#535](https://github.com/Jacksondr5/j5code/issues/535)).
 - 2026-10-13 — D34 added: an agent's browser tab is private unless it names a profile (Jackson).
+- 2026-10-17 — D35 added: a client says what is new after it updates (Jackson, [#624](https://github.com/Jacksondr5/j5code/issues/624)).

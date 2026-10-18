@@ -13,6 +13,7 @@ import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { HumanInboxBell } from "../../j5/a2a/HumanInboxBell";
 import { J5Wordmark } from "../../j5/branding/J5Wordmark";
 import { FleetRailEntry } from "../../j5/fleet/FleetRailEntry";
+import { SidebarHighlightsButton } from "../../j5/highlights/SidebarHighlightsButton";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { useThreadShells } from "../../state/entities";
@@ -241,7 +242,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   }, [closeMobileSidebar, navigateToMainApp]);
 
   return (
-    <SidebarMenu className="flex-row items-center">
+    <SidebarMenu className="@container/utility flex-row items-center">
       {isOnUtilityPage ? (
         <SidebarMenuItem className="min-w-0 flex-1">
           <SidebarMenuButton onClick={handleBackClick}>
@@ -275,6 +276,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
         </>
       )}
+      <SidebarHighlightsButton />
       <SidebarUpdatePill />
     </SidebarMenu>
   );

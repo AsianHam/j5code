@@ -56,6 +56,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { HighlightsSidebarReveal } from "../j5/highlights/highlightsPalette";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -346,6 +347,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <SidebarControl />
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />
+        <HighlightsSidebarReveal />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

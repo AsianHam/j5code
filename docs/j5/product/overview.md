@@ -27,6 +27,7 @@ These areas are J5's. Their definitions are the source of truth; build within th
 | Fleet page and sidebar roster         | Measured status for every agent and Crew: the Fleet page and the sidebar's spawned-children expander.                                          | [Fleet page](features/fleet-page.md)                                                                                                  |
 | Shared server and cross-device        | Several people on one server, as members or as guests with grants, and messages crossing between servers. Authority never replicates.          | [Shared server](features/shared-server.md), [shared conversations](features/shared-conversations.md), [cross-device](cross-device.md) |
 | Skills                                | A skill catalog and links that make one skill available across providers.                                                                      | user guide `docs/user/skills.md`                                                                                                      |
+| Highlights                            | A short "What's new" a client shows once after it updates to a build with a substantial new feature.                                           | [Highlights](features/highlights.md)                                                                                                  |
 
 ## Everything else is upstream's
 
