@@ -18,11 +18,16 @@ import {
   type RemovePeerRequest,
 } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
 import { connectionPersonId } from "../sharing/connectionPerson.ts";
-import { PersonAccess, type SessionIdentity } from "../sharing/PersonAccess.ts";
+import { requireWrites } from "../sharing/connectionWriter.ts";
+import { PersonAccess, type SessionIdentity, reachPersonId } from "../sharing/PersonAccess.ts";
+import { SharedConversation } from "../sharing/SharedConversation.ts";
+import { SharedThreads } from "../sharing/SharedThreads.ts";
 import { ClientActionsService } from "./ClientActionsService.ts";
+import { crewCaptainThread } from "./crewCaptainThread.ts";
 import { PeerAdminService, peerAdminRefusal } from "./PeerAdminService.ts";
 
 const METHODS = J5_CLIENT_ACTION_WS_METHODS;
@@ -76,22 +81,51 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
   const actions = yield* ClientActionsService;
   const peers = yield* PeerAdminService;
   const people = yield* PersonAccess;
+  const shared = yield* SharedThreads;
+  const conversation = yield* SharedConversation;
+  const sql = yield* SqlClient.SqlClient;
   // An answer is the connection's own person's, whatever the client sends.
   const personOf = connectionPersonId(session).pipe(Effect.provideService(PersonAccess, people));
+  /**
+   * A Crew's roster, its further seats, its approvals and its stopping belong to everyone who can
+   * write to its Captain's thread (Crews AC23). A request naming nothing that exists goes on, and
+   * the action refuses it as not found.
+   */
+  const forCaptainOf = (target: Parameters<typeof crewCaptainThread>[1]) =>
+    requireWrites(session, crewCaptainThread(sql, target)).pipe(
+      Effect.provideService(PersonAccess, people),
+      Effect.provideService(SharedThreads, shared),
+    );
   return {
     [METHODS.previewCrewProposal]: (input: CrewProposalPreviewRequest) =>
-      actions.previewCrewProposal(input).pipe(Effect.catch(proposalFailure)),
+      forCaptainOf({ kind: "proposal", proposalId: input.proposalId }).pipe(
+        Effect.andThen(actions.previewCrewProposal(input).pipe(Effect.catch(proposalFailure))),
+      ),
     [METHODS.resolveCrewProposal]: (input: CrewProposalResolveRequest) =>
-      actions.resolveCrewProposal(input).pipe(Effect.catch(proposalFailure)),
-    [METHODS.stopCrew]: (input: CrewStopRequest) =>
-      actions.stopCrew(input).pipe(
-        Effect.catch(
-          failAsJ5ActionError({
-            refusals: ["CrewStopNotFoundError", "CrewStopRequestError"],
-            failed: "Stopping the crew failed.",
-          }),
+      forCaptainOf({ kind: "proposal", proposalId: input.proposalId }).pipe(
+        Effect.andThen(people.sessionReach(session).pipe(Effect.orElseSucceed(() => null))),
+        // In a shared conversation the Captain is told who decided (Shared conversations AC11).
+        Effect.flatMap((reach) =>
+          conversation.rosterDecider(
+            reach === null ? null : reachPersonId(reach),
+            input.proposalId,
+          ),
+        ),
+        Effect.flatMap((decidedBy) =>
+          actions.resolveCrewProposal(input, decidedBy).pipe(Effect.catch(proposalFailure)),
         ),
       ),
+    [METHODS.stopCrew]: (input: CrewStopRequest) =>
+      forCaptainOf({ kind: "crew", crewInstanceId: input.crewInstanceId })
+        .pipe(Effect.andThen(actions.stopCrew(input)))
+        .pipe(
+          Effect.catch(
+            failAsJ5ActionError({
+              refusals: ["CrewStopNotFoundError", "CrewStopRequestError"],
+              failed: "Stopping the crew failed.",
+            }),
+          ),
+        ),
     [METHODS.archiveCrew]: (input: CrewArchiveRequest) =>
       actions.archiveCrew(input).pipe(
         Effect.catch((error) =>
@@ -105,14 +139,27 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
         ),
       ),
     [METHODS.respondCrewRuntimeRequest]: (input: CrewRuntimeRequestRespondRequest) =>
-      actions.respondCrewRuntimeRequest(input).pipe(
-        Effect.catch(
-          failAsJ5ActionError({
-            refusals: ["CrewRuntimeRequestNotFoundError", "CrewRuntimeRequestConflictError"],
-            failed: "Answering the request failed.",
+      forCaptainOf({ kind: "seat", threadId: input.threadId })
+        .pipe(
+          Effect.andThen(people.sessionReach(session).pipe(Effect.orElseSucceed(() => null))),
+          Effect.flatMap((reach) => {
+            const personId = reach === null ? null : reachPersonId(reach);
+            return actions.respondCrewRuntimeRequest(
+              input,
+              personId === null
+                ? undefined
+                : (answer) => conversation.claimAnswer(personId, answer),
+            );
           }),
+        )
+        .pipe(
+          Effect.catch(
+            failAsJ5ActionError({
+              refusals: ["CrewRuntimeRequestNotFoundError", "CrewRuntimeRequestConflictError"],
+              failed: "Answering the request failed.",
+            }),
+          ),
         ),
-      ),
     [METHODS.answerHumanExchange]: (input: AnswerHumanExchangeRequest) =>
       personOf.pipe(
         Effect.flatMap((personId) =>

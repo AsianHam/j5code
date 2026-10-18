@@ -332,15 +332,27 @@ it.layer(testLayer)("a project guest and the artifact requests on the socket", (
       }).pipe(Effect.scoped),
   );
 
-  it.effect("is refused every J5 client read but the two that say nothing of anyone's work", () =>
+  it.effect("is refused every J5 client read but those that say nothing of anyone's work", () =>
     Effect.gen(function* () {
       // Neither names what changed or whose: agents' display names, and which reads moved.
       const sayNothing = new Set<string>([
         J5_CLIENT_READ_WS_METHODS.readParticipantIdentities,
         J5_CLIENT_READ_WS_METHODS.subscribeReadChanges,
       ]);
+      // Each answers for the person on the connection alone: their inbox, and a Crew's requests
+      // where they write to its Captain. A device no one has claimed is refused them.
+      const ownOnly = new Set<string>([
+        J5_CLIENT_READ_WS_METHODS.listHumanInbox,
+        J5_CLIENT_READ_WS_METHODS.readOpenInboxCount,
+        J5_CLIENT_READ_WS_METHODS.listCrewProposals,
+        J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests,
+        J5_CLIENT_READ_WS_METHODS.listCrewMemberships,
+      ]);
+      for (const method of ownOnly) {
+        assert.match(yield* authorized("stray", method, {}), /^refused: /, `stray ${method}`);
+      }
       for (const method of Object.values(J5_CLIENT_READ_WS_METHODS)) {
-        if (sayNothing.has(method)) continue;
+        if (sayNothing.has(method) || ownOnly.has(method)) continue;
         // The Fleet page is the server's: a project or thread scope does not reach it.
         for (const who of ["project-guest", "thread-guest", "stray"] as const) {
           assert.match(

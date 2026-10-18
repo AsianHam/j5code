@@ -204,6 +204,18 @@ export interface SharedConversationShape {
     proposalId: string,
   ) => Effect.Effect<string | null>;
   /**
+   * Writes down who is answering a prompt on a shared thread, for an answer that does not come as
+   * a client's command: a Crew seat's approval answered from the inbox (AC11, Crews AC23).
+   */
+  readonly claimAnswer: (
+    personId: ParticipantId,
+    answer: {
+      readonly threadId: ThreadId;
+      readonly requestId: string;
+      readonly commandId: CommandId;
+    },
+  ) => Effect.Effect<void>;
+  /**
    * Withdraws the messages a person still has queued on threads they can no longer write to
    * (AC16). Run after every change of access; also here for a test to call.
    */
@@ -437,30 +449,28 @@ const make = Effect.gen(function* () {
    * earlier answer, and a replayed command id all name no one. The first claim for a command
    * stands. A failure to record is logged and does not stop the answer.
    */
-  const recordAnswer = (personId: ParticipantId, command: OrchestrationV2Command) =>
-    command.type !== "runtime-request.respond" && command.type !== "thread.user-input.dismiss"
-      ? Effect.void
-      : Effect.gen(function* () {
-          if (!(yield* shared.isShared(command.threadId))) return;
-          const author = yield* authorOn(personId, command.threadId);
-          if (author === null) return;
-          const answeredAt = DateTime.formatIso(yield* DateTime.now);
-          yield* sql`
-            INSERT INTO j5_a2a_prompt_answer (
-              thread_id, request_id, command_id, person_id, display_name, level, answered_at
-            ) VALUES (
-              ${command.threadId}, ${command.requestId}, ${command.commandId},
-              ${author.personId}, ${author.displayName}, ${author.level}, ${answeredAt}
-            )
-            ON CONFLICT (thread_id, request_id, command_id) DO NOTHING
-          `;
-        }).pipe(
-          Effect.catch((cause) =>
-            Effect.logError("J5 shared conversation could not record who answered a prompt", {
-              cause,
-            }),
-          ),
-        );
+  const recordAnswer: SharedConversationShape["claimAnswer"] = (personId, answer) =>
+    Effect.gen(function* () {
+      if (!(yield* shared.isShared(answer.threadId))) return;
+      const author = yield* authorOn(personId, answer.threadId);
+      if (author === null) return;
+      const answeredAt = DateTime.formatIso(yield* DateTime.now);
+      yield* sql`
+        INSERT INTO j5_a2a_prompt_answer (
+          thread_id, request_id, command_id, person_id, display_name, level, answered_at
+        ) VALUES (
+          ${answer.threadId}, ${answer.requestId}, ${answer.commandId},
+          ${author.personId}, ${author.displayName}, ${author.level}, ${answeredAt}
+        )
+        ON CONFLICT (thread_id, request_id, command_id) DO NOTHING
+      `;
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logError("J5 shared conversation could not record who answered a prompt", {
+          cause,
+        }),
+      ),
+    );
 
   const stampCommand = Effect.fn("j5.sharing.sharedConversation.stampCommand")(function* (
     personId: ParticipantId,
@@ -514,7 +524,12 @@ const make = Effect.gen(function* () {
       }
       if (personId === null) return command;
       const admitted = yield* stampCommand(personId, command).pipe(Effect.catch(failClosed));
-      yield* recordAnswer(personId, admitted);
+      if (
+        admitted.type === "runtime-request.respond" ||
+        admitted.type === "thread.user-input.dismiss"
+      ) {
+        yield* recordAnswer(personId, admitted);
+      }
       return admitted;
     });
 
@@ -712,6 +727,7 @@ const make = Effect.gen(function* () {
         ),
       ),
     withdrawQueued,
+    claimAnswer: recordAnswer,
   });
 });
 

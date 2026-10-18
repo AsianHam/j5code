@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -37,6 +38,7 @@ import { COALESCE_WINDOW, ReadChanges, layer as readChangesLayer } from "./ReadC
 import { A2AParticipantNotFoundError } from "./SendService.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
 import { PersonAccess } from "../sharing/PersonAccess.ts";
+import { SharedThreads } from "../sharing/SharedThreads.ts";
 
 const METHODS = J5_CLIENT_READ_WS_METHODS;
 const database = NodeSqliteClient.layer({ filename: ":memory:" });
@@ -65,6 +67,12 @@ const connectionOf = (personId: ParticipantId | null) =>
       ),
   });
 
+/** The person here is an Owner: nothing they are listed is looked up thread by thread. */
+const writesEverywhere = Layer.mergeAll(
+  Layer.mock(SharedThreads)({}),
+  Layer.succeed(SqlClient.SqlClient, {} as SqlClient.SqlClient),
+);
+
 /** The handlers over a given reads service; the peer list is not under test here. */
 const handlersOver = (
   reads: Layer.Layer<ClientReadsService, SqlError>,
@@ -77,6 +85,7 @@ const handlersOver = (
         Layer.mock(PeerAdminService)({}),
         readChangesLayer,
         connectionOf(personId),
+        writesEverywhere,
       ),
     ),
   );
@@ -366,6 +375,7 @@ it.effect("streams the read revisions, starting with where they stand", () =>
           Layer.mock(ClientReadsService)({}),
           Layer.mock(PeerAdminService)({}),
           connectionOf(LOCAL_PERSON),
+          writesEverywhere,
         ),
       ),
     );

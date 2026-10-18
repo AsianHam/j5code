@@ -24,6 +24,7 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
@@ -36,6 +37,8 @@ import { ArchiveCrewPartialFailureError } from "./a2a/ArchiveCrewService.ts";
 import { A2AExchangeNotOpenError } from "./a2a/SendService.ts";
 import { ExchangeId, LedgerMessageId, ParticipantId } from "./a2a/contracts.ts";
 import { PersonAccess } from "./sharing/PersonAccess.ts";
+import { SharedConversation } from "./sharing/SharedConversation.ts";
+import { SharedThreads } from "./sharing/SharedThreads.ts";
 import {
   PeerAdminOperationError,
   PeerAdminService,
@@ -204,6 +207,10 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
             ceiling: null,
           }),
       }),
+      // Written to wherever the operator writes: nothing here is looked up for them.
+      Layer.mock(SharedThreads)({}),
+      Layer.succeed(SqlClient.SqlClient, {} as SqlClient.SqlClient),
+      Layer.mock(SharedConversation)({ rosterDecider: () => Effect.succeed(null) }),
       Layer.mock(ArtifactDeletion)({
         delete: (input) =>
           input.path === "plan.md"

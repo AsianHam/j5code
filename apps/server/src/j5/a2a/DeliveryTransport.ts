@@ -38,6 +38,8 @@ import {
   formatPeerEnvelope,
 } from "./EnvelopeFormatter.ts";
 import { outsideAgentNameRows } from "./outsideAgentNames.ts";
+import { authorLabel, personNameInLine } from "../sharing/authorLabel.ts";
+import { SharedThreads, layer as sharedThreadsLayer } from "../sharing/SharedThreads.ts";
 import { PeerDeliveryRefusalCode } from "./PeerInboundService.ts";
 import { PeerRegistryService } from "./PeerRegistryService.ts";
 import { peerProtocolHeaders, responseProtocolMismatch } from "./peerProtocol.ts";
@@ -309,6 +311,8 @@ export const formatAgentDeliveryEnvelope = (
     readonly originProjectTitle?: string | undefined;
     /** The label an outside agent signed in with. */
     readonly outsideAgentName?: string | undefined;
+    /** How a person who replies from the inbox is named, when the server holds a name. */
+    readonly humanSenderLabel?: string | undefined;
   },
 ): string => {
   switch (input.envelopeChannel) {
@@ -317,6 +321,7 @@ export const formatAgentDeliveryEnvelope = (
         ? isHumanParticipantId(input.senderId)
           ? formatClosedHumanEnvelope({
               senderId: input.senderId,
+              senderLabel: input.humanSenderLabel,
               message: input.message,
             })
           : formatClosedPeerEnvelope({
@@ -361,7 +366,7 @@ export const formatAgentDeliveryEnvelope = (
   }
 };
 
-export const live: Layer.Layer<
+const liveTransport: Layer.Layer<
   A2ADeliveryTransport,
   never,
   | ThreadManagement.ThreadManagementService
@@ -370,10 +375,12 @@ export const live: Layer.Layer<
   | SqlClient.SqlClient
   | PeerRegistryService
   | HttpClient.HttpClient
+  | SharedThreads
 > = Layer.effect(
   A2ADeliveryTransport,
   Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
+    const shared = yield* SharedThreads;
     const orchestrator = yield* OrchestratorV2;
     const outbox = yield* EffectOutboxV2;
     const peers = yield* PeerRegistryService;
@@ -542,10 +549,34 @@ export const live: Layer.Layer<
                     new A2ADeliveryTransportError({ operation: "read outside agent", cause }),
                 ),
               );
+          // A person's reply names them once the server holds a name, and says their level
+          // when the receiving thread is a shared conversation, as a typed message does.
+          const humanSenderLabel = !isHumanParticipantId(input.senderId)
+            ? undefined
+            : yield* Effect.gen(function* () {
+                const people = yield* sql<{ readonly display_name: string | null }>`
+                  SELECT display_name FROM j5_a2a_human_person WHERE person_id = ${input.senderId}
+                `;
+                const displayName = people[0]?.display_name ?? null;
+                if (displayName === null) return undefined;
+                const receiving = target.thread.id;
+                const level = (yield* shared.isShared(receiving))
+                  ? yield* shared.writerLevel(input.senderId, receiving)
+                  : null;
+                return level === null
+                  ? personNameInLine(displayName)
+                  : authorLabel({ displayName, level });
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new A2ADeliveryTransportError({ operation: "read the person replying", cause }),
+                ),
+              );
           const envelope = formatAgentDeliveryEnvelope({
             ...input,
             originProjectTitle: originProject[0]?.title,
             outsideAgentName: outsideAgent[0]?.display_name,
+            humanSenderLabel,
           });
           // Upstream links an agent-authored message to its sending thread. A machine and an
           // outside agent have none.
@@ -927,3 +958,14 @@ export const live: Layer.Layer<
     });
   }),
 );
+
+export const live: Layer.Layer<
+  A2ADeliveryTransport,
+  never,
+  | ThreadManagement.ThreadManagementService
+  | OrchestratorV2
+  | EffectOutboxV2
+  | SqlClient.SqlClient
+  | PeerRegistryService
+  | HttpClient.HttpClient
+> = liveTransport.pipe(Layer.provide(sharedThreadsLayer));

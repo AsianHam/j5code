@@ -1,5 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, type RuntimeRequestId, type ThreadId } from "@t3tools/contracts";
 import type {
   AnswerHumanExchangeRequest,
   AnswerHumanExchangeResponse,
@@ -77,6 +77,15 @@ export class ClientActionsService extends Context.Service<
     /** Answer a seat's provider approval from the Inbox; refused once the request resolved. */
     readonly respondCrewRuntimeRequest: (
       input: CrewRuntimeRequestRespondRequest,
+      /**
+       * Writes down who is answering, given the command that will carry the answer, before it is
+       * sent; a shared conversation's prompt shows who answered once upstream settles it.
+       */
+      claim?: (command: {
+        readonly threadId: ThreadId;
+        readonly requestId: RuntimeRequestId;
+        readonly commandId: CommandId;
+      }) => Effect.Effect<void>,
     ) => Effect.Effect<
       CrewRuntimeRequestRespondResponse,
       Failure<CrewRuntimeRequestService["Service"]["respond"]>
@@ -179,17 +188,15 @@ const make = Effect.gen(function* () {
         });
         return { crewInstanceId, status: result.status, members: createdSeats(result.members) };
       }),
-    respondCrewRuntimeRequest: ({ threadId, requestId, decision }) =>
+    respondCrewRuntimeRequest: ({ threadId, requestId, decision }, claim) =>
       freshId.pipe(
-        Effect.flatMap((id) =>
-          runtimeRequests.respond({
-            threadId,
-            requestId,
-            decision,
-            // Fresh per answer, so a second answer is refused by the request's state.
-            commandId: CommandId.make(`j5-crew-runtime-request:${id}`),
-          }),
-        ),
+        Effect.flatMap((id) => {
+          // Fresh per answer, so a second answer is refused by the request's state.
+          const commandId = CommandId.make(`j5-crew-runtime-request:${id}`);
+          return (claim?.({ threadId, requestId, commandId }) ?? Effect.void).pipe(
+            Effect.andThen(runtimeRequests.respond({ threadId, requestId, decision, commandId })),
+          );
+        }),
         Effect.as({ threadId, requestId }),
       ),
     answerHumanExchange: (input) =>

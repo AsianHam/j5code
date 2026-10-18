@@ -1,5 +1,5 @@
 {
-  "version": 26,
+  "version": 27,
   "peerMessage": "[Cross-agent message from {{senderId}} in project {{origin}}{{senderServer}}]\n\n{{message}}\n\n{{exchangeInstruction}}",
   "senderServer": ", on {{serverName}}",
   "machineMessage": "[Message from automation {{senderId}} in project {{origin}}]\n\n{{message}}\n\n{{machineInstruction}}",
@@ -8,6 +8,7 @@
   "outsideAgentInstruction": "This message came from an outside agent: one that runs outside this app. You cannot reply to it with j5_send_message.",
   "peerClosedMessage": "[Cross-agent message from {{senderId}} in project {{origin}}{{senderServer}}]\n\n{{message}}\n\n{{closedExchangeInstruction}}",
   "humanClosedMessage": "[Message from {{senderId}}]\n\n{{message}}\n\n{{closedExchangeInstruction}}",
+  "humanNamedClosedMessage": "[Message from {{senderLabel}} ({{senderId}})]\n\n{{message}}\n\n{{closedExchangeInstruction}}",
   "silenceNotice": "[Cross-agent messaging system notice: {{noticeType}}]\n\n{{message}}\n\nThis is a platform-authored delivery signal, not a peer reply.",
   "replyInstruction": "Reply once with j5_send_message(to=\"{{senderId}}\", exchange_id=\"{{exchangeId}}\", message=\"...\") to close the exchange. Follow-ups from the asker carrying this id join the same exchange.",
   "oneShotInstruction": "The sender did not request a reply to this message. Use j5_send_message without exchange_id only if a new message is needed.",

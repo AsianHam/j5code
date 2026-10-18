@@ -17,6 +17,7 @@ import {
 import {
   type ParticipantIdentitiesResponse,
   J5_ACCESS_WS_METHODS,
+  J5_CLIENT_ACTION_WS_METHODS,
   J5_CLIENT_READ_WS_METHODS,
   J5_PEOPLE_WS_METHODS,
   J5_PLAYBOOK_WS_METHODS,
@@ -209,8 +210,7 @@ const narrowedForAll: AccessRpcRule = { kind: "narrowed", unknownToo: true };
  *
  * Left out on purpose, so refused to a narrowed connection: everything that lists or changes the
  * server as a whole (adding, cloning or importing projects, archived threads, searching every
- * thread, usage, diagnostics, pull request lists, peers, the relay); the inbox and the Crew reads,
- * until they read the person from the session; and Persona and skill writes.
+ * thread, usage, diagnostics, pull request lists, peers, the relay); and Persona and skill writes.
  */
 export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   // A connection cannot start without these; each answers in a reduced form (`GuestView`).
@@ -357,6 +357,20 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [J5_AGENT_PERSONA_WS_METHODS.readAgentPersona]: serverHome,
   [J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaUsage]: serverHome,
   [J5_SKILL_CATALOG_WS_METHODS.getSkillCatalogStatus]: serverHome,
+
+  // A person's own inbox, and a Crew's requests where they write to its Captain: each handler
+  // reads the person from the session and lists or answers only what is theirs (Inbox AC14,
+  // Crews AC23).
+  [J5_CLIENT_READ_WS_METHODS.listHumanInbox]: narrowed,
+  [J5_CLIENT_READ_WS_METHODS.readOpenInboxCount]: narrowed,
+  [J5_CLIENT_ACTION_WS_METHODS.answerHumanExchange]: narrowed,
+  [J5_CLIENT_READ_WS_METHODS.listCrewProposals]: narrowed,
+  [J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests]: narrowed,
+  [J5_CLIENT_READ_WS_METHODS.listCrewMemberships]: narrowed,
+  [J5_CLIENT_ACTION_WS_METHODS.previewCrewProposal]: narrowed,
+  [J5_CLIENT_ACTION_WS_METHODS.resolveCrewProposal]: narrowed,
+  [J5_CLIENT_ACTION_WS_METHODS.respondCrewRuntimeRequest]: narrowed,
+  [J5_CLIENT_ACTION_WS_METHODS.stopCrew]: narrowed,
 
   // Which J5 reads have moved, which says nothing of what changed; and agents' names, each only
   // for an agent the person may know.

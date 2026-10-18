@@ -1886,6 +1886,10 @@ it.effect(
         INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
         VALUES (${personId}, 1, ${createdAt})
       `;
+        yield* sql`
+        INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+        VALUES (${personId}, 'server', '', 'owner', ${createdAt}, ${createdAt})
+      `;
         const ask = {
           commandId: CommCommandId.make("command:joined-message-path:ask"),
           senderThreadId: target.threadId,
@@ -2236,6 +2240,7 @@ it.effect(
         const personId = ParticipantId.make("human:settlement-review");
         const acceptedAt = DateTime.formatIso(yield* DateTime.now);
         yield* sql`INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at) VALUES (${personId}, 1, ${acceptedAt})`;
+        yield* sql`INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at) VALUES (${personId}, 'server', '', 'owner', ${acceptedAt}, ${acceptedAt})`;
         const send = yield* A2ASendService;
         const delivery = yield* A2ADeliveryWorker;
         const inbox = yield* A2AHumanInbox;
@@ -2321,6 +2326,7 @@ it.effect.each([false, true])(
         const personId = ParticipantId.make("human:restart-review");
         const acceptedAt = DateTime.formatIso(yield* DateTime.now);
         yield* sql`INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at) VALUES (${personId}, 1, ${acceptedAt})`;
+        yield* sql`INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at) VALUES (${personId}, 'server', '', 'owner', ${acceptedAt}, ${acceptedAt})`;
         const askInput = {
           commandId: CommCommandId.make("command:restart:ask"),
           senderThreadId: target.threadId,
@@ -2520,6 +2526,7 @@ it.effect(
         const personId = ParticipantId.make("human:project-remove");
         const acceptedAt = DateTime.formatIso(yield* DateTime.now);
         yield* sql`INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at) VALUES (${personId}, 1, ${acceptedAt})`;
+        yield* sql`INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at) VALUES (${personId}, 'server', '', 'owner', ${acceptedAt}, ${acceptedAt})`;
         const peerAsk = yield* send.send({
           commandId: CommCommandId.make("command:project-remove:peer-ask"),
           senderThreadId: survivor.threadId,
