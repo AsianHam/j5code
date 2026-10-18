@@ -328,6 +328,7 @@ const READ_SCOPED_COMMANDS = [
   J5_ACCESS_WS_METHODS.claimDevice,
   J5_ACCESS_WS_METHODS.setFirstOwnerName,
   J5_ACCESS_WS_METHODS.leave,
+  J5_ACCESS_WS_METHODS.markRetiredLinksSeen,
   J5_PEOPLE_WS_METHODS.renameSelf,
 ] as const;
 
