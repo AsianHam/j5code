@@ -1920,7 +1920,23 @@ it.effect(
           message: "Verified the intended recipient and the durable receipt.",
           acceptedAt: createdAt,
         };
-        const replied = yield* inbox.answer(answer);
+        // As a shared conversation records a reply when it is accepted: who sent it, by the
+        // name and level they had then, and the note due, which the delivery then carries.
+        const note =
+          "<j5_shared_conversation>\nWho can write: Jackson (owner).\n</j5_shared_conversation>";
+        const replied = yield* inbox.answer(answer, (reply) =>
+          sql`
+            INSERT INTO j5_a2a_message_author (
+              thread_id, message_id, person_id, display_name, level, note, told_json,
+              stored_prefix, created_at
+            ) VALUES (
+              ${reply.threadId}, ${deliveryMessageId(reply.messageId)}, ${personId}, 'Jackson',
+              'owner', ${note}, '[]', '', ${createdAt}
+            )
+          `.pipe(Effect.asVoid, Effect.orDie),
+        );
+        // Renamed after the reply was accepted: it still reaches the agent under the old name.
+        yield* sql`UPDATE j5_a2a_human_person SET display_name = 'Jack' WHERE person_id = ${personId}`;
         assert.deepStrictEqual(yield* inbox.answer(answer), replied);
         assert.equal(replied.exchangeState, "closed");
         assert.deepStrictEqual(yield* inbox.list(personId), []);
@@ -1960,6 +1976,12 @@ it.effect(
         assert.equal(inputs[0]?.threadId, target.threadId);
         assert.equal(inputs[0]?.message.messageId, upstreamMessageId);
         assert.include(inputs[0]!.message.text, answer.message);
+        assert.isTrue(
+          inputs[0]!.message.text.startsWith(
+            `${note}\n[Message from Jackson (owner) (${personId})]\n\n${answer.message}`,
+          ),
+          inputs[0]!.message.text,
+        );
         assert.equal(inputs[0]?.message.createdBy, "user");
         assert.deepStrictEqual(yield* delivery.drain, []);
         assert.equal(yield* worker.drain(), 0);

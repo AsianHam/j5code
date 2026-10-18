@@ -34,12 +34,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
 
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
-import type { ParticipantId } from "../a2a/contracts.ts";
+import type { LedgerMessageId, ParticipantId } from "../a2a/contracts.ts";
+import { deliveryMessageId } from "../a2a/DeliveryTransport.ts";
+import { closedHumanEnvelopePrefix } from "../a2a/EnvelopeFormatter.ts";
 import { Access } from "./Access.ts";
 import { authorLabel, beginsWithSlash, personNameInLine } from "./authorLabel.ts";
 import {
   PersonAccess,
-  type PersonAccessStorageError,
+  PersonAccessStorageError,
   layer as personAccessLayer,
 } from "./PersonAccess.ts";
 import { SharedThreads, type ThreadWriter } from "./SharedThreads.ts";
@@ -218,6 +220,15 @@ export interface SharedConversationShape {
     },
   ) => Effect.Effect<void>;
   /**
+   * Records a person's reply from the inbox to an agent on a shared thread, as it is accepted: who
+   * sent it, by the name and level they have now (People and access AC47), and any note due
+   * (AC4), which the reply then carries at its top when it is delivered. Elsewhere, nothing.
+   */
+  readonly recordReply: (
+    personId: ParticipantId,
+    reply: { readonly threadId: ThreadId; readonly messageId: LedgerMessageId },
+  ) => Effect.Effect<void, PersonAccessStorageError>;
+  /**
    * Withdraws the messages a person still has queued on threads they can no longer write to
    * (AC16). Run after every change of access; also here for a test to call.
    */
@@ -280,8 +291,8 @@ const make = Effect.gen(function* () {
   )`;
 
   /**
-   * Who the agent was last told can write to a thread: what the newest message known to have
-   * reached it with a note said. `null` for an agent that has been told nothing that still
+   * Who the agent was last told can write to a thread: what the message with a note whose run
+   * started last said. `null` for an agent that has been told nothing that still
    * stands. A note on a message whose run has not started has told the agent nothing yet, and
    * may never, since the message can be withdrawn or its run fail first. So until one is known to
    * have run, every message carries the note (AC4).
@@ -304,7 +315,15 @@ const make = Effect.gen(function* () {
       WHERE author.thread_id = ${threadId} AND author.told_json IS NOT NULL
       ORDER BY author.rowid DESC
     `;
-    const reached = rows.find(reachedAgent);
+    // The agent last read the carrier whose run started last, which is not always the one sent
+    // last: a queue can be reordered, or a later message steered in ahead.
+    const reached = rows
+      .filter(reachedAgent)
+      .reduce<(typeof rows)[number] | undefined>(
+        (latest, row) =>
+          latest === undefined || row.started_at! > latest.started_at! ? row : latest,
+        undefined,
+      );
     return reached === undefined ? null : yield* decodeTold(reached.told_json);
   });
 
@@ -351,7 +370,9 @@ const make = Effect.gen(function* () {
   ) {
     // Upstream keys a message by its id alone and writes a send that names one it holds over it.
     // So a message id is its sender's own: one recorded for someone else, or one upstream holds
-    // that is no one's here, is refused; a retry of their own send finds their record and goes on.
+    // that is no one's here, is refused. A retry of a person's own send goes on only when that
+    // send was recorded here, in a shared conversation; a retry of one sent just before the thread
+    // became shared finds no record and is refused as already sent.
     const recorded = yield* sql<{ readonly person_id: string }>`
       SELECT person_id FROM j5_a2a_message_author WHERE message_id = ${messageId}
     `;
@@ -798,8 +819,10 @@ const make = Effect.gen(function* () {
         Effect.catchCause((cause) =>
           Effect.logWarning("J5 shared conversation's prompt stream failed; resuming", {
             cause,
-          }).pipe(Effect.andThen(Effect.sleep(Duration.seconds(1)))),
+          }),
         ),
+        // A pause before each resumption, whether the stream failed or ended, so it never spins.
+        Effect.andThen(Effect.sleep(Duration.seconds(1))),
       ),
     ),
   );
@@ -841,6 +864,32 @@ const make = Effect.gen(function* () {
         ),
       ),
     withdrawQueued,
+    recordReply: (personId, reply) =>
+      Effect.gen(function* () {
+        if (!(yield* shared.isShared(reply.threadId))) return;
+        const author = yield* authorOn(personId, reply.threadId);
+        if (author === null) return;
+        const carried = yield* announce(reply.threadId, null);
+        const prefix = closedHumanEnvelopePrefix({
+          senderId: personId,
+          senderLabel: authorLabel(author),
+          note: carried.note,
+        });
+        yield* recordAuthor(
+          reply.threadId,
+          deliveryMessageId(reply.messageId),
+          author,
+          carried,
+          prefix,
+        );
+      }).pipe(
+        Effect.mapError((cause) =>
+          cause._tag === "PersonAccessStorageError"
+            ? cause
+            : new PersonAccessStorageError({ operation: "record a reply's author", cause }),
+        ),
+        Effect.withSpan("j5.sharing.sharedConversation.recordReply"),
+      ),
     claimAnswer: (personId, answer) => recordAnswer(personId, answer, false),
   });
 });

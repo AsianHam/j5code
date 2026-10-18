@@ -122,17 +122,21 @@ const taken = Effect.fn("test.taken")(function* (
   return runId === null ? null : RunId.make(runId);
 });
 
-/** A run moved on as upstream moves it: `started` once the provider was handed it. */
+/**
+ * A run moved on as upstream moves it: `started` once the provider was handed it, at the time
+ * given or `AT`.
+ */
 const setRun = Effect.fn("test.setRun")(function* (
   messageId: string,
   status: string,
-  started: boolean,
+  started: boolean | string,
 ) {
   const sql = yield* SqlClient.SqlClient;
+  const startedAt = started === false ? null : started === true ? AT : started;
   yield* sql`
     UPDATE orchestration_v2_projection_runs
     SET status = ${status},
-      payload_json = json_set(payload_json, '$.startedAt', ${started ? AT : null})
+      payload_json = json_set(payload_json, '$.startedAt', ${startedAt})
     WHERE run_id = ${`run:${messageId}`}
   `;
 });
@@ -170,7 +174,7 @@ it.effect(
       const text = yield* say(owner, message(threadId, "Keep the migration step."));
       assert.isTrue(hasNote(text));
       assert.include(text, "Who can write: Jackson (owner), Priya (collaborator).");
-      assert.include(text, "carry no such line: Jackson (owner) wrote them.");
+      assert.include(text, "carry no header of their own were written by Jackson (owner).");
       assert.include(text, "an Owner's word settles it");
       assert.isTrue(
         afterNote(text).startsWith("[Message from Jackson (owner)]\n\nKeep the migration"),
@@ -308,7 +312,7 @@ it.effect("a thread started in a project already shared is shared from its first
     const text = admitted.initialMessage!.text;
     assert.include(text, "Who can write: Jackson (owner), Priya (collaborator).");
     // A new thread has no messages from before.
-    assert.notInclude(text, "carry no such line");
+    assert.notInclude(text, "from before it was shared");
     assert.isTrue(afterNote(text).startsWith("[Message from Jackson (owner)]\n\nStart."));
     // In another project no one else writes to, a launch goes on as sent.
     const elsewhere = {
@@ -606,6 +610,55 @@ it.effect(
       assert.deepStrictEqual(
         recorded.map((row) => row.thread_id),
         ["thread:created", "thread:empty-launch"],
+      );
+    }).pipe(Effect.provide(conversationLayer)),
+);
+
+it.effect(
+  "what the agent was last told follows the order its runs started, not the order sent",
+  () =>
+    Effect.gen(function* () {
+      const owner = yield* jackson;
+      const threadId = yield* thread("thread:reordered");
+      yield* personWith("Priya", onThread(threadId));
+      // M1 carries the first note; Sam is then added, so M2 carries a note naming him.
+      const first = message(threadId, "One.");
+      yield* say(owner, first, "queued");
+      yield* personWith("Sam", onThread(threadId));
+      const second = message(threadId, "Two.");
+      assert.include(yield* say(owner, second, "queued"), "Sam (collaborator)");
+      // The queue is reordered: M2 runs first, then M1 with the older list.
+      yield* setRun(second.messageId, "completed", "2026-10-18T00:00:01.000Z");
+      yield* setRun(first.messageId, "completed", "2026-10-18T00:00:02.000Z");
+      // The agent last read that only Jackson and Priya could write, so it is told of Sam again.
+      assert.include(
+        yield* say(owner, message(threadId, "Three.")),
+        "Sam (collaborator) can now write to this thread.",
+      );
+    }).pipe(Effect.provide(conversationLayer)),
+);
+
+it.effect(
+  "a reply from the inbox is recorded as it is accepted, with the note due (AC4, AC47)",
+  () =>
+    Effect.gen(function* () {
+      const owner = yield* jackson;
+      const access = yield* Access;
+      const threadId = yield* thread("thread:inbox-reply");
+      const priya = yield* personWith("Priya", onThread(threadId));
+      const conversation = yield* SharedConversation;
+      yield* conversation.recordReply(priya, {
+        threadId,
+        messageId: "message:j5:a2a:reply" as never,
+      });
+      // Renamed before it is delivered: the record keeps the name she had.
+      yield* access.rename({ personId: priya, displayName: "Priya K" });
+      const [reply] = (yield* authors(threadId, owner)).authors;
+      assert.strictEqual(reply!.name, "Priya");
+      assert.isTrue(hasNote(reply!.storedPrefix));
+      assert.isTrue(
+        reply!.storedPrefix.endsWith(`\n[Message from Priya (collaborator) (${priya})]\n\n`),
+        reply!.storedPrefix,
       );
     }).pipe(Effect.provide(conversationLayer)),
 );

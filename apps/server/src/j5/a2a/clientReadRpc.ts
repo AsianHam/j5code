@@ -11,7 +11,6 @@ import {
 } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
 import { connectionPersonId } from "../sharing/connectionPerson.ts";
@@ -19,7 +18,6 @@ import { connectionReads, connectionWrites } from "../sharing/connectionWriter.t
 import { PersonAccess, type SessionIdentity } from "../sharing/PersonAccess.ts";
 import { SharedThreads } from "../sharing/SharedThreads.ts";
 import { ClientReadsService } from "./ClientReadsService.ts";
-import { crewCaptainThread } from "./crewCaptainThread.ts";
 import { ParticipantId } from "./contracts.ts";
 import { PeerAdminService } from "./PeerAdminService.ts";
 import { ReadChanges } from "./ReadChanges.ts";
@@ -73,7 +71,6 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
   const changes = yield* ReadChanges;
   const people = yield* PersonAccess;
   const shared = yield* SharedThreads;
-  const sql = yield* SqlClient.SqlClient;
   // The inbox is the connection's own person's, whatever the client asks.
   const personOf = connectionPersonId(session).pipe(Effect.provideService(PersonAccess, people));
   // A Crew's requests are listed to whoever can write to its Captain's thread (Crews AC23).
@@ -81,7 +78,10 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
     Effect.provideService(PersonAccess, people),
     Effect.provideService(SharedThreads, shared),
   );
-  const reaches = connectionReads(session).pipe(Effect.provideService(PersonAccess, people));
+  const reaches = connectionReads(session).pipe(
+    Effect.provideService(PersonAccess, people),
+    Effect.provideService(SharedThreads, shared),
+  );
   return {
     [METHODS.listHumanInbox]: (input: HumanInboxListRequest) =>
       personOf.pipe(
@@ -102,10 +102,12 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
         const listed = yield* clientReads.crewProposals.pipe(
           Effect.catch(failed("Reading crew proposals failed.")),
         );
-        const mayAnswer = yield* writes;
+        // Listed to whoever reaches the Captain: a Viewer sees a roster's prompt and how it was
+        // answered, with nothing to press (Shared conversations AC12).
+        const reachesCaptain = yield* reaches;
         return {
           proposals: yield* Effect.filter(listed.proposals, (proposal) =>
-            mayAnswer(Effect.succeed(ThreadId.make(proposal.captainThreadId))),
+            reachesCaptain(Effect.succeed(ThreadId.make(proposal.captainThreadId))),
           ),
         };
       }),
@@ -116,17 +118,20 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
         );
         const mayAnswer = yield* writes;
         return {
+          // A seat's approval is the seat's own prompt: whoever writes to the seat's thread
+          // answers it, everyone who writes to its Captain's included.
           requests: yield* Effect.filter(listed.requests, (request) =>
-            mayAnswer(
-              crewCaptainThread(sql, { kind: "crew", crewInstanceId: request.crewInstanceId }),
-            ),
+            mayAnswer(Effect.succeed(request.threadId)),
           ),
         };
       }),
     [METHODS.listCrewMemberships]: (input: ThreadHomesRequest) =>
       Effect.gen(function* () {
         // A narrowed person is told the Crews of the threads they reach, and no others.
-        const threadIds = yield* Effect.filter(input.threadIds, yield* reaches);
+        const reachesThread = yield* reaches;
+        const threadIds = yield* Effect.filter(input.threadIds, (threadId) =>
+          reachesThread(Effect.succeed(threadId)),
+        );
         return yield* clientReads
           .crewMemberships(threadIds)
           .pipe(Effect.catch(failed("Crew membership read failed.")));

@@ -1,57 +1,32 @@
 import type { ThreadId } from "@t3tools/contracts";
-import { J5ActionError } from "@t3tools/contracts/j5";
+import { J5ActionError, levelReaches } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 
 import { PersonAccess, type SessionIdentity, isWide } from "./PersonAccess.ts";
 import { SharedThreads } from "./SharedThreads.ts";
 
+/**
+ * What a connection may do with the threads a request names, for a request that is not a
+ * command upstream checks: reading or answering a Crew's prompts, deciding a roster, stopping or
+ * archiving a Crew (Crews AC23). A service session and someone who writes to every thread pass
+ * without the thread being looked up; anyone else passes where their level there allows; a
+ * device no one has claimed nowhere.
+ */
+
 const unreadable = () =>
-  new J5ActionError({ code: "storage", message: "Could not read what you can write to." });
+  new J5ActionError({ code: "storage", message: "Could not read what is shared with you." });
 
-/**
- * Refuses a request about a thread the connection cannot write to, for a request that is not a
- * command upstream checks: answering a Crew seat's approval, deciding a roster, stopping a Crew
- * (Crews AC23). A service session and someone who writes to every thread pass without the thread
- * being looked up; anyone else passes where they can write; a device no one has claimed nowhere.
- * `thread` names the thread, or `null` for a request naming nothing that exists, which goes on
- * for its own action to refuse as not found.
- */
-export const requireWrites = <E>(
-  session: SessionIdentity,
-  thread: Effect.Effect<ThreadId | null, E>,
-) =>
-  Effect.gen(function* () {
-    const people = yield* PersonAccess;
-    const reach = yield* people.sessionReach(session).pipe(Effect.mapError(unreadable));
-    if (isWide(reach)) return;
-    const threadId = yield* thread.pipe(Effect.mapError(unreadable));
-    if (threadId === null) return;
-    const level =
-      reach.kind === "person"
-        ? yield* (yield* SharedThreads)
-            .writerLevel(reach.person.personId, threadId)
-            .pipe(Effect.mapError(unreadable))
-        : null;
-    if (level === null) {
-      return yield* new J5ActionError({
-        code: "NotShared",
-        message: "You cannot write to this Crew's Captain, so this is not yours to answer.",
-      });
-    }
-  });
-
-/**
- * For a read that lists what belongs to many threads: whether the connection writes to the thread
- * an entry names. A service session and someone who writes to every thread write to all of them,
- * read once, and the thread is not looked up; a thread that is `null` is no one's.
- */
-export const connectionWrites = (session: SessionIdentity) =>
+/** Whether the connection writes to, or only reaches, the thread an entry names. */
+const connectionAt = (session: SessionIdentity, needs: "write" | "read") =>
   Effect.gen(function* () {
     const people = yield* PersonAccess;
     const shared = yield* SharedThreads;
     const reach = yield* people.sessionReach(session).pipe(Effect.mapError(unreadable));
+    const everywhere =
+      isWide(reach) || (needs === "read" && reach.kind === "person" && reach.serverLevel !== null);
+    // A thread that is `null` names nothing that exists.
     return <E>(thread: Effect.Effect<ThreadId | null, E>) =>
-      isWide(reach)
+      everywhere
         ? Effect.succeed(true)
         : reach.kind !== "person"
           ? Effect.succeed(false)
@@ -60,26 +35,73 @@ export const connectionWrites = (session: SessionIdentity) =>
               Effect.flatMap((threadId) =>
                 threadId === null
                   ? Effect.succeed(false)
-                  : shared.writerLevel(reach.person.personId, threadId).pipe(
-                      Effect.map((level) => level !== null),
-                      Effect.mapError(unreadable),
-                    ),
+                  : needs === "write"
+                    ? shared.writerLevel(reach.person.personId, threadId).pipe(
+                        Effect.map((level) => level !== null),
+                        Effect.mapError(unreadable),
+                      )
+                    : people.threadLevel(reach.person.personId, threadId).pipe(
+                        Effect.map((level) => level !== null),
+                        Effect.mapError(unreadable),
+                      ),
               ),
             );
   });
 
+/** For a read that lists what belongs to many threads: whether the connection writes to one. */
+export const connectionWrites = (session: SessionIdentity) => connectionAt(session, "write");
+
 /** The same for reading: whether the connection reaches a thread at all. */
-export const connectionReads = (session: SessionIdentity) =>
+export const connectionReads = (session: SessionIdentity) => connectionAt(session, "read");
+
+const refusal = (needs: "write" | "read") =>
+  new J5ActionError({
+    code: "NotShared",
+    message:
+      needs === "write"
+        ? "You cannot write to this thread, so this is not yours to answer."
+        : "This is not shared with you on this server.",
+  });
+
+/**
+ * Refuses a request about a thread the connection cannot write to, or reach, as `needs` says. A
+ * request naming nothing that exists (`null`) goes on, for its own action to refuse as not found.
+ */
+const requireAt =
+  (needs: "write" | "read") =>
+  <E>(session: SessionIdentity, thread: Effect.Effect<ThreadId | null, E>) =>
+    Effect.gen(function* () {
+      const at = yield* connectionAt(session, needs);
+      // The thread is looked up only when the check needs it; a lookup that names nothing
+      // passes, and every other refusal stands, a device no one has claimed included.
+      let namesNothing = false;
+      const allowed = yield* at(
+        thread.pipe(
+          Effect.tap((threadId) => Effect.sync(() => (namesNothing = threadId === null))),
+        ),
+      );
+      if (!allowed && !namesNothing) return yield* refusal(needs);
+    });
+
+export const requireWrites = requireAt("write");
+export const requireReaches = requireAt("read");
+
+/**
+ * Refuses anyone who is not an Owner of the server, for now, as command admission refuses them
+ * archiving or deleting a thread (People and access AC14). A service session passes.
+ */
+export const requireOwner = (session: SessionIdentity) =>
   Effect.gen(function* () {
-    const people = yield* PersonAccess;
-    const reach = yield* people.sessionReach(session).pipe(Effect.mapError(unreadable));
-    return (threadId: ThreadId) =>
-      isWide(reach) || (reach.kind === "person" && reach.serverLevel !== null)
-        ? Effect.succeed(true)
-        : reach.kind !== "person"
-          ? Effect.succeed(false)
-          : people.threadLevel(reach.person.personId, threadId).pipe(
-              Effect.map((level) => level !== null),
-              Effect.mapError(unreadable),
-            );
+    const reach = yield* (yield* PersonAccess)
+      .sessionReach(session)
+      .pipe(Effect.mapError(unreadable));
+    const owner =
+      reach.kind === "service" ||
+      (reach.kind === "person" && levelReaches(reach.serverLevel, "owner"));
+    if (!owner) {
+      return yield* new J5ActionError({
+        code: "OwnersOnly",
+        message: "Only an Owner of this server archives a Crew, for now. Ask an Owner to do it.",
+      });
+    }
   });

@@ -93,6 +93,7 @@ export class ClientActionsService extends Context.Service<
     /** Answer an Exchange an agent opened with the person, then wake delivery. */
     readonly answerHumanExchange: (
       input: AnswerHumanExchangeRequest & { readonly personId: ParticipantId },
+      beforeReply?: Parameters<A2AHumanInbox["Service"]["answer"]>[1],
     ) => Effect.Effect<
       typeof AnswerHumanExchangeResponse.Type,
       Failure<A2AHumanInbox["Service"]["answer"]>
@@ -199,18 +200,21 @@ const make = Effect.gen(function* () {
         }),
         Effect.as({ threadId, requestId }),
       ),
-    answerHumanExchange: (input) =>
+    answerHumanExchange: (input, beforeReply) =>
       Effect.gen(function* () {
         const acceptedAt = DateTime.formatIso(yield* DateTime.now);
-        const result = yield* inbox.answer({
-          commandId: CommCommandId.make(
-            `command:j5:a2a:human:${encodeURIComponent(input.personId)}:${encodeURIComponent(input.exchangeId)}:${encodeURIComponent(input.clientRequestId)}`,
-          ),
-          personId: input.personId,
-          exchangeId: ExchangeId.make(input.exchangeId),
-          message: input.message,
-          acceptedAt,
-        });
+        const result = yield* inbox.answer(
+          {
+            commandId: CommCommandId.make(
+              `command:j5:a2a:human:${encodeURIComponent(input.personId)}:${encodeURIComponent(input.exchangeId)}:${encodeURIComponent(input.clientRequestId)}`,
+            ),
+            personId: input.personId,
+            exchangeId: ExchangeId.make(input.exchangeId),
+            message: input.message,
+            acceptedAt,
+          },
+          beforeReply,
+        );
         yield* worker.notify;
         return { result };
       }),

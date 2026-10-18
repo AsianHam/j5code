@@ -22,7 +22,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
 import { connectionPersonId } from "../sharing/connectionPerson.ts";
-import { requireWrites } from "../sharing/connectionWriter.ts";
+import { requireOwner, requireReaches, requireWrites } from "../sharing/connectionWriter.ts";
 import { PersonAccess, type SessionIdentity, reachPersonId } from "../sharing/PersonAccess.ts";
 import { SharedConversation } from "../sharing/SharedConversation.ts";
 import { SharedThreads } from "../sharing/SharedThreads.ts";
@@ -87,18 +87,23 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
   // An answer is the connection's own person's, whatever the client sends.
   const personOf = connectionPersonId(session).pipe(Effect.provideService(PersonAccess, people));
   /**
-   * A Crew's roster, its further seats, its approvals and its stopping belong to everyone who can
-   * write to its Captain's thread (Crews AC23). A request naming nothing that exists goes on, and
-   * the action refuses it as not found.
+   * A Crew's roster, its further seats and its stopping belong to everyone who can write to its
+   * Captain's thread (Crews AC23); a seat's approval, to everyone who can write to the seat's.
+   * A request naming nothing that exists goes on, and the action refuses it as not found.
    */
-  const forCaptainOf = (target: Parameters<typeof crewCaptainThread>[1]) =>
-    requireWrites(session, crewCaptainThread(sql, target)).pipe(
+  const services = <A, E>(effect: Effect.Effect<A, E, PersonAccess | SharedThreads>) =>
+    effect.pipe(
       Effect.provideService(PersonAccess, people),
       Effect.provideService(SharedThreads, shared),
     );
+  const forCaptainOf = (target: Parameters<typeof crewCaptainThread>[1]) =>
+    services(requireWrites(session, crewCaptainThread(sql, target)));
+  // A Viewer reads a roster's prompt and how it was answered, with nothing to press (AC12).
+  const readsCaptainOf = (target: Parameters<typeof crewCaptainThread>[1]) =>
+    services(requireReaches(session, crewCaptainThread(sql, target)));
   return {
     [METHODS.previewCrewProposal]: (input: CrewProposalPreviewRequest) =>
-      forCaptainOf({ kind: "proposal", proposalId: input.proposalId }).pipe(
+      readsCaptainOf({ kind: "proposal", proposalId: input.proposalId }).pipe(
         Effect.andThen(actions.previewCrewProposal(input).pipe(Effect.catch(proposalFailure))),
       ),
     [METHODS.resolveCrewProposal]: (input: CrewProposalResolveRequest) =>
@@ -127,19 +132,23 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
           ),
         ),
     [METHODS.archiveCrew]: (input: CrewArchiveRequest) =>
-      actions.archiveCrew(input).pipe(
-        Effect.catch((error) =>
-          error._tag === "ArchiveCrewPartialFailureError"
-            ? failAsJ5ActionError({
-                refusals: [],
-                failed:
-                  "Archiving the crew stopped partway; the seats already retired stay retired. Try again.",
-              })(error)
-            : failAsJ5ActionError({ failed: "Archiving the crew failed." })(error),
+      services(requireOwner(session))
+        .pipe(Effect.andThen(actions.archiveCrew(input)))
+        .pipe(
+          Effect.catch((error) =>
+            error._tag === "ArchiveCrewPartialFailureError"
+              ? failAsJ5ActionError({
+                  refusals: [],
+                  failed:
+                    "Archiving the crew stopped partway; the seats already retired stay retired. Try again.",
+                })(error)
+              : failAsJ5ActionError({ failed: "Archiving the crew failed." })(error),
+          ),
         ),
-      ),
     [METHODS.respondCrewRuntimeRequest]: (input: CrewRuntimeRequestRespondRequest) =>
-      forCaptainOf({ kind: "seat", threadId: input.threadId })
+      // A seat's own prompt is answered by whoever writes to the seat's thread, which includes
+      // everyone who writes to its Captain's.
+      services(requireWrites(session, Effect.succeed(input.threadId)))
         .pipe(
           Effect.andThen(people.sessionReach(session).pipe(Effect.orElseSucceed(() => null))),
           Effect.flatMap((reach) => {
@@ -164,7 +173,9 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
       personOf.pipe(
         Effect.flatMap((personId) =>
           actions
-            .answerHumanExchange({ ...input, personId })
+            .answerHumanExchange({ ...input, personId }, (reply) =>
+              conversation.recordReply(personId, reply),
+            )
             .pipe(Effect.catch(failAsJ5ActionError({ failed: "Human inbox operation failed." }))),
         ),
       ),

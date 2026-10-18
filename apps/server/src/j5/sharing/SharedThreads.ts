@@ -177,10 +177,21 @@ const make = Effect.gen(function* () {
       threadId,
       launchingIn = null,
     ) {
-      const recorded = yield* sql<{ readonly found: number }>`
-        SELECT 1 AS found FROM j5_a2a_shared_thread WHERE thread_id = ${threadId}
+      // One read answers for nearly every thread: whether it is recorded shared, and whether
+      // anyone but the first owner can write to anything at all. On a server one person uses,
+      // that is all a message costs.
+      const known = yield* sql<{ readonly recorded: number; readonly others: number }>`
+        SELECT
+          EXISTS (SELECT 1 FROM j5_a2a_shared_thread WHERE thread_id = ${threadId}) AS recorded,
+          EXISTS (
+            SELECT 1 FROM j5_a2a_person_level AS held
+            JOIN j5_a2a_human_person AS person ON person.person_id = held.person_id
+            WHERE person.is_local_operator = 0 AND person.removed_at IS NULL
+              AND held.level IN ('collaborator', 'owner')
+          ) AS others
       `.pipe(Effect.mapError(storage("read whether a thread is shared")));
-      if (recorded.length > 0) return true;
+      if (known[0]?.recorded === 1) return true;
+      if (known[0]?.others !== 1) return false;
       if ((yield* writers(threadId, launchingIn)).length < 2) return false;
       yield* recordShared([threadId]).pipe(
         Effect.mapError(storage("record that a thread is shared")),

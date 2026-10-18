@@ -157,7 +157,7 @@ it.effect(
       const carried = (yield* conversation.threadAuthors(owner, threadId)).authors.find(
         (author) => author.messageId === carrier.messageId,
       )!;
-      assert.include(carried.note, "carry no such line: Jackson (owner) wrote them.");
+      assert.include(carried.note, "carry no header of their own were written by Jackson (owner).");
       assert.strictEqual(
         yield* storedText(threadId, carrier.messageId),
         `${carried.storedPrefix}What does the plan change?`,

@@ -13,7 +13,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -68,10 +67,7 @@ const connectionOf = (personId: ParticipantId | null) =>
   });
 
 /** The person here is an Owner: nothing they are listed is looked up thread by thread. */
-const writesEverywhere = Layer.mergeAll(
-  Layer.mock(SharedThreads)({}),
-  Layer.succeed(SqlClient.SqlClient, {} as SqlClient.SqlClient),
-);
+const writesEverywhere = Layer.mock(SharedThreads)({});
 
 /** The handlers over a given reads service; the peer list is not under test here. */
 const handlersOver = (

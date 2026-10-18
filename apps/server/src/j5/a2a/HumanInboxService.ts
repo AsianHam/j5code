@@ -129,6 +129,15 @@ export interface A2AHumanInboxShape {
   ) => Effect.Effect<ReadonlyArray<HumanInboxItem>, A2AHumanInboxError>;
   readonly answer: (
     input: AnswerHumanExchangeInput,
+    /**
+     * Runs once the reply is known to be one this person may give, before it is recorded, with
+     * the asking agent's thread and the reply's message id: a shared conversation records who
+     * is replying, and any note due, as they stand now.
+     */
+    beforeReply?: (reply: {
+      readonly threadId: ThreadId;
+      readonly messageId: LedgerMessageId;
+    }) => Effect.Effect<void, PersonAccessStorageError>,
   ) => Effect.Effect<SendMessageResult, A2AHumanInboxError>;
 }
 
@@ -159,18 +168,23 @@ export const layer: Layer.Layer<A2AHumanInbox, never, A2ALedger | SqlClient.SqlC
           return personId;
         });
 
-      /** Whether a person may answer what an agent asks: they can write to its thread. */
-      const writesToAsker = (
-        personId: ParticipantId,
-        asker: { readonly threadId: string | null; readonly projectId: string },
-      ) =>
-        Effect.gen(function* () {
-          if (yield* writesEveryThread(sql, personId)) return true;
-          return yield* shared.writesTo(personId, {
-            threadId: asker.threadId === null ? null : ThreadId.make(asker.threadId),
-            projectId: asker.projectId,
-          });
-        });
+      /**
+       * Whether a person may answer what an agent asks: they can write to its thread. Built once
+       * per person, so a list reads whether they write to every thread once, not row by row.
+       */
+      const writerOfAskers = (personId: ParticipantId) =>
+        writesEveryThread(sql, personId).pipe(
+          Effect.map(
+            (everywhere) =>
+              (asker: { readonly threadId: string | null; readonly projectId: string }) =>
+                everywhere
+                  ? Effect.succeed(true)
+                  : shared.writesTo(personId, {
+                      threadId: asker.threadId === null ? null : ThreadId.make(asker.threadId),
+                      projectId: asker.projectId,
+                    }),
+          ),
+        );
 
       const list: A2AHumanInboxShape["list"] = (personId, status = "open") =>
         Effect.gen(function* () {
@@ -222,8 +236,9 @@ export const layer: Layer.Layer<A2AHumanInbox, never, A2ALedger | SqlClient.SqlC
               inbox.project_id,
               inbox.exchange_id
           `;
+          const writesToAsker = yield* writerOfAskers(personId);
           const visible = yield* Effect.filter(rows, (row) =>
-            writesToAsker(personId, {
+            writesToAsker({
               threadId: row.sender_thread_id,
               projectId: row.project_id,
             }),
@@ -251,7 +266,7 @@ export const layer: Layer.Layer<A2AHumanInbox, never, A2ALedger | SqlClient.SqlC
           );
         });
 
-      const answer: A2AHumanInboxShape["answer"] = (input) =>
+      const answer: A2AHumanInboxShape["answer"] = (input, beforeReply) =>
         Effect.gen(function* () {
           yield* assertPersonId(input.personId);
           if (!(yield* isHumanPerson(sql, input.personId))) {
@@ -293,7 +308,7 @@ export const layer: Layer.Layer<A2AHumanInbox, never, A2ALedger | SqlClient.SqlC
             return yield* new A2AParticipantNotFoundError({ participantId: input.personId });
           }
           if (
-            !(yield* writesToAsker(input.personId, {
+            !(yield* (yield* writerOfAskers(input.personId))({
               threadId: exchange.sender_thread_id,
               projectId: exchange.project_id,
             }))
@@ -322,6 +337,12 @@ export const layer: Layer.Layer<A2AHumanInbox, never, A2ALedger | SqlClient.SqlC
           if ((acceptedReplies[0]?.count ?? 0) > 0) {
             if (forEveryone) return yield* alreadyAnswered;
             return yield* new A2AExchangeAlreadyAnsweredError({ exchangeId: input.exchangeId });
+          }
+          if (beforeReply !== undefined && exchange.sender_thread_id !== null) {
+            yield* beforeReply({
+              threadId: ThreadId.make(exchange.sender_thread_id),
+              messageId,
+            });
           }
           if (forEveryone) {
             // The first reply to an ask to everyone closes it for all of them: two people

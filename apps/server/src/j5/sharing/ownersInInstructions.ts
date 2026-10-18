@@ -1,6 +1,7 @@
 import { setServerOwners } from "@t3tools/provider-core/j5/orchestrationInstructions";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -10,9 +11,10 @@ import { personNameInLine } from "./authorLabel.ts";
 /**
  * Every agent's standing instructions name the server's Owners (Shared conversations AC9). The
  * names are set where the instructions are kept (`provider-core`'s J5 instructions, which
- * upstream's constant re-exports live), when the server starts and after each change of access,
- * so a session or turn that starts later reads the Owners as they are then. Pi bakes the
- * instructions into its extension when it is generated, and is not told.
+ * upstream's constant re-exports live): when the server starts, after each change of access made
+ * here, and as each turn's runtime policy is resolved, just before a provider reads the
+ * instructions (`makeOwnersRefresh`), which also catches a change made by the `j5` CLI in its own
+ * process. Pi bakes the instructions into its extension when it is generated, and is not told.
  */
 export const refreshOwnersInInstructions = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -47,3 +49,14 @@ export const ownersInInstructionsLayer = Layer.effectDiscard(
     );
   }),
 );
+
+/**
+ * The same read, for a caller that may run without the database, such as the runtime-policy
+ * resolver a test builds alone: there it does nothing.
+ */
+export const makeOwnersRefresh = Effect.gen(function* () {
+  const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
+  return Option.isNone(sql)
+    ? Effect.void
+    : refreshOwnersInInstructions.pipe(Effect.provideService(SqlClient.SqlClient, sql.value));
+});

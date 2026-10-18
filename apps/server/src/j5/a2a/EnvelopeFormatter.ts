@@ -112,21 +112,34 @@ export const formatClosedHumanEnvelope = (input: {
   readonly senderId: ParticipantId;
   /** `Jackson`, or `Jackson (owner)` in a shared conversation; already fit for one line. */
   readonly senderLabel?: string | undefined;
+  /** A shared conversation's note the reply carries, at its very top, as a message carries one. */
+  readonly note?: string | null | undefined;
   readonly message: string;
 }): string => {
   const label = input.senderLabel?.replace(/[\]\s]+/g, " ").trim() ?? "";
-  return label.length === 0
-    ? render(config.humanClosedMessage, {
-        senderId: input.senderId,
-        message: input.message,
-        closedExchangeInstruction: config.closedExchangeInstruction,
-      })
-    : render(config.humanNamedClosedMessage, {
-        senderLabel: label,
-        senderId: input.senderId,
-        message: input.message,
-        closedExchangeInstruction: config.closedExchangeInstruction,
-      });
+  const envelope =
+    label.length === 0
+      ? render(config.humanClosedMessage, {
+          senderId: input.senderId,
+          message: input.message,
+          closedExchangeInstruction: config.closedExchangeInstruction,
+        })
+      : render(config.humanNamedClosedMessage, {
+          senderLabel: label,
+          senderId: input.senderId,
+          message: input.message,
+          closedExchangeInstruction: config.closedExchangeInstruction,
+        });
+  return input.note == null ? envelope : `${input.note}\n${envelope}`;
+};
+
+/** Exactly the platform's text such a reply begins with, before the person's words. */
+export const closedHumanEnvelopePrefix = (
+  input: Omit<Parameters<typeof formatClosedHumanEnvelope>[0], "message">,
+) => {
+  const words = "\u0000";
+  const envelope = formatClosedHumanEnvelope({ ...input, message: words });
+  return envelope.slice(0, envelope.indexOf(words));
 };
 
 /** A3 supplies notice derivation; A2 owns this channel's stable rendering shape. */
