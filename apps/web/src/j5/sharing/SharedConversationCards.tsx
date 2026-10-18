@@ -1,10 +1,9 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import type { MessageAuthor } from "@t3tools/contracts/j5";
 import type { ReactNode } from "react";
 
 import { PersonAvatar } from "./PersonAvatar";
 import { isSettledPrompt } from "./sharedTimeline.logic";
-import { isSharedNote, usePromptAnswer } from "./sharedTimeline";
+import { isSharedNote, useAnySharedMessageAuthor, usePromptAnswer } from "./sharedTimeline";
 
 /**
  * The note the platform gave the agent with a message (who can write, how to read the author's
@@ -31,10 +30,27 @@ export function renderSharedConversationNote(props: {
 }
 
 /**
- * The line above another person's message in a shared conversation: their initials and name, and
- * who edited it while it was queued. The level the agent is told is not drawn (AC17).
+ * The line above a message of a shared conversation. Above another person's: their initials and
+ * name, and who edited it while it was queued; the level the agent is told is not drawn (AC17).
+ * Above the reader's own, only who edited it, so no one finds words they did not type under
+ * their name without being told.
  */
-export function SharedMessageAuthorLine({ author }: { readonly author: MessageAuthor }) {
+export function SharedMessageAuthorLine({
+  threadRef,
+  message,
+}: {
+  readonly threadRef: ScopedThreadRef | null;
+  readonly message: { readonly id: string };
+}) {
+  const author = useAnySharedMessageAuthor(threadRef, message);
+  if (author === undefined) return null;
+  if (author.you) {
+    return author.editedBy === null ? null : (
+      <p className="me-1 text-2xs text-muted-foreground/70" data-j5-shared-conversation="author">
+        Edited by {author.editedBy}
+      </p>
+    );
+  }
   const name = author.name ?? "Someone without a name";
   return (
     <p

@@ -2332,7 +2332,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           )}
         </p>
       ) : null}
-      {sharedAuthor ? <SharedMessageAuthorLine author={sharedAuthor} /> : null}
+      <SharedMessageAuthorLine threadRef={ctx.threadRef} message={row.message} />
       {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}

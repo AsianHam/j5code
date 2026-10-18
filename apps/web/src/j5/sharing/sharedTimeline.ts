@@ -50,9 +50,17 @@ export function useSharedMessageAuthor(
   thread: ScopedThreadRef | null,
   message: { readonly id: string },
 ): MessageAuthor | undefined {
-  const record = useThreadAuthorsValue(thread?.environmentId ?? null, thread?.threadId ?? null);
-  const author = authorIndex(record).authors.get(message.id);
+  const author = useAnySharedMessageAuthor(thread, message);
   return author === undefined || author.you ? undefined : author;
+}
+
+/** Who sent a message of a shared conversation, the reader included. */
+export function useAnySharedMessageAuthor(
+  thread: ScopedThreadRef | null,
+  message: { readonly id: string },
+): MessageAuthor | undefined {
+  const record = useThreadAuthorsValue(thread?.environmentId ?? null, thread?.threadId ?? null);
+  return authorIndex(record).authors.get(message.id);
 }
 
 /** Who answered one of the agent's prompts in a shared conversation (AC11). */
