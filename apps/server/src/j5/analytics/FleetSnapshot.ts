@@ -134,7 +134,7 @@ const makeLayer = (daemon: boolean) =>
             (SELECT COALESCE(SUM(n), 0) FROM pull_requests) AS "pullRequests",
             (SELECT COALESCE(MAX(n), 0) FROM pull_requests) AS "mostPullRequests",
             (
-              SELECT COUNT(*) FROM j5_a2a_human_person WHERE is_local_operator = 0
+              SELECT COUNT(*) FROM j5_a2a_human_person WHERE is_local_operator = 0 AND removed_at IS NULL
             ) AS "guests",
             (
               SELECT COUNT(DISTINCT scope_id) FROM j5_a2a_person_level
