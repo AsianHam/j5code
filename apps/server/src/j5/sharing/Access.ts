@@ -11,7 +11,9 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -75,6 +77,15 @@ export class DeviceAlreadyClaimedError extends Schema.TaggedError<DeviceAlreadyC
   }
 }
 
+export class StaleMcpApprovalError extends Schema.TaggedError<StaleMcpApprovalError>()(
+  "StaleMcpApprovalError",
+  {},
+) {
+  override get message(): string {
+    return "The server's Owners changed after this MCP client was approved. Approve it again.";
+  }
+}
+
 /** What changed for a person, told after it commits. */
 export interface AccessChange {
   readonly personId: ParticipantId;
@@ -132,6 +143,20 @@ export interface AccessShape {
    */
   readonly renewOutdatedDevices: Effect.Effect<number, ChangeError>;
   readonly subscribe: Effect.Effect<PubSub.Subscription<AccessChange>, never, Scope.Scope>;
+  /**
+   * How many times the server's Owners have lost a member since it started. An MCP client's
+   * approval records it, and is issued a session only while it is unchanged (`issueMcpClient`).
+   */
+  readonly ownersChanged: Effect.Effect<number>;
+  /**
+   * Issues an approved MCP client's session only if no Owner was lowered or removed since it was
+   * approved, under the same lock as a change of level: one committed first voids the approval,
+   * and one that waits finds the session and ends it.
+   */
+  readonly issueMcpClient: <A, E, R>(
+    approvedAt: number,
+    issue: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | StaleMcpApprovalError | PersonAccessStorageError, R>;
 }
 
 export class Access extends Context.Service<Access, AccessShape>()("t3/j5/sharing/Access") {}
@@ -225,8 +250,13 @@ const make = Effect.gen(function* () {
     });
   });
 
-  /** Every MCP client on the server, ended: they were approved by Owners, and the Owners changed. */
+  const ownersChanged = yield* Ref.make(0);
+  /**
+   * Every MCP client on the server, ended, and every approval not yet issued voided: they were
+   * approved by Owners, and the Owners changed.
+   */
   const endMcpClients = Effect.gen(function* () {
+    yield* Ref.update(ownersChanged, (count) => count + 1);
     const active = yield* sessions
       .listActive()
       .pipe(Effect.mapError((cause) => new AccessRenewalError({ sessionId: "", cause })));
@@ -372,6 +402,18 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.withSpan("j5.sharing.access.renewOutdatedDevices")),
 
     subscribe: PubSub.subscribe(changes),
+
+    ownersChanged: Ref.get(ownersChanged),
+
+    issueMcpClient: (approvedAt, issue) =>
+      committed(
+        Effect.gen(function* () {
+          if ((yield* Ref.get(ownersChanged)) !== approvedAt) {
+            return yield* new StaleMcpApprovalError({});
+          }
+          return yield* issue;
+        }),
+      ),
   });
 });
 
@@ -400,4 +442,33 @@ export const renewOutdatedDevicesAtStartup = Layer.effectDiscard(
       Effect.logError("J5 could not renew devices into their level at startup", { cause }),
     ),
   ),
+);
+
+/**
+ * For upstream's MCP authorization (FORK.md case 70): what an approval records, and the issue of
+ * its session held to it. On a server without J5's access layer, approvals issue as upstream has
+ * them.
+ */
+export interface McpApprovalGuard {
+  readonly approvedAt: Effect.Effect<number>;
+  readonly issue: <A, E, R>(
+    approvedAt: number | undefined,
+    issue: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | StaleMcpApprovalError | PersonAccessStorageError, R>;
+}
+
+export const makeMcpApprovalGuard: Effect.Effect<McpApprovalGuard> = Effect.serviceOption(
+  Access,
+).pipe(
+  Effect.map((access): McpApprovalGuard => ({
+    approvedAt: Option.match(access, {
+      onNone: () => Effect.succeed(0),
+      onSome: (service) => service.ownersChanged,
+    }),
+    issue: (approvedAt, issue) =>
+      Option.match(access, {
+        onNone: () => issue,
+        onSome: (service) => service.issueMcpClient(approvedAt ?? -1, issue),
+      }),
+  })),
 );

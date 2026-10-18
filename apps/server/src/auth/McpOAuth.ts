@@ -27,6 +27,7 @@ import { HttpServerRequest } from "effect/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { makeMcpApprovalGuard } from "../j5/sharing/Access.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -184,6 +185,8 @@ interface PendingCode {
   readonly resource: string;
   readonly access: AuthMcpClientAccess;
   readonly expiresAtMs: number;
+  // J5: the Owners' generation when it was approved (FORK.md case 70).
+  readonly j5ApprovedAt?: number;
 }
 
 export type ApprovalDecision = Exclude<AuthMcpApprovalDecision, { readonly _tag: "deny" }>;
@@ -244,6 +247,8 @@ const make = Effect.gen(function* () {
     .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
     .pipe(Effect.orDie);
   const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
+  // J5: an approval is issued only while the server's Owners are unchanged (FORK.md case 70).
+  const j5McpApprovals = yield* makeMcpApprovalGuard;
 
   const sign = (domain: string, payload: string) => signPayload(`${domain}.${payload}`, signingKey);
 
@@ -386,6 +391,7 @@ const make = Effect.gen(function* () {
   const mintCode = (authorization: AuthorizationRequest, access: AuthMcpClientAccess) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
+      const j5ApprovedAt = yield* j5McpApprovals.approvedAt;
       const code = Buffer.from(yield* crypto.randomBytes(32).pipe(Effect.orDie)).toString(
         "base64url",
       );
@@ -401,6 +407,7 @@ const make = Effect.gen(function* () {
           resource: authorization.resource,
           access,
           expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
+          j5ApprovedAt,
         });
         return next;
       });
@@ -496,12 +503,15 @@ const make = Effect.gen(function* () {
       ) {
         return yield* fail("invalid_grant", "The authorization code is invalid or expired.");
       }
-      const issued = yield* environmentAuth
-        .issueMcpClientSession({
-          label: pending.clientName,
-          access: pending.access,
-          client: deriveAuthClientMetadata({ request }),
-        })
+      const issued = yield* j5McpApprovals
+        .issue(
+          pending.j5ApprovedAt,
+          environmentAuth.issueMcpClientSession({
+            label: pending.clientName,
+            access: pending.access,
+            client: deriveAuthClientMetadata({ request }),
+          }),
+        )
         .pipe(
           Effect.catch((cause) =>
             Effect.logError("Could not issue an MCP client session.", { cause }).pipe(
