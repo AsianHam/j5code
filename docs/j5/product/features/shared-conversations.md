@@ -25,7 +25,7 @@ A **shared conversation** is a thread that more than one person can write to: on
 
 **Thread state is shared, for now.** Whether a thread is archived, settled, snoozed or pinned, and whether it has been read, is one value for everyone on the server, as upstream keeps it.
 
-**Each person reads their own messages as they always have**, and other people's in the same bubble on the left, with the author's name and picture. The level the agent is told is not drawn. A person's picture is their GitHub profile picture, from a username they enter in their own client.
+**Each person reads their own messages as they always have**, and other people's in the same bubble on the left, with the author's name. The level the agent is told is not drawn.
 
 **A shared conversation is shared whole.** A person added to it reads it from the beginning. Hiding the earlier part would be a promise the platform cannot keep, since a collaborator can ask the agent what was said. A person whose access ends loses the thread, and their messages stay in it under their name.
 
@@ -34,6 +34,7 @@ A **shared conversation** is a thread that more than one person can write to: on
 Set aside on purpose, each tracked where it is linked. An item leaves this list when the definition takes it in.
 
 - The read marker, snooze and pin kept per person rather than per thread ([#629](https://github.com/Jacksondr5/j5code/issues/629)).
+- A person's picture beside their messages: the GitHub profile picture for a username they enter in their own client ([#637](https://github.com/Jacksondr5/j5code/issues/637)).
 - Seeing who else is reading or typing in a thread, and the rest of the set-aside list ([#542](https://github.com/Jacksondr5/j5code/issues/542)).
 
 ## Acceptance criteria
@@ -74,22 +75,20 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 ### Reading
 
-17. A person's own messages render as they do in a thread that is not shared; another person's message, a command included, renders in the same bubble on the left, with that person's picture beside it and their name above it, and no level.
-18. A person's picture is the GitHub profile picture for the username they entered in their client's settings; a person with no username, or a picture that cannot be loaded, shows initials on a coloured circle.
-19. The server stores a person's GitHub username and never a picture address; an Owner can clear it from the People page.
+17. A person's own messages render as they do in a thread that is not shared; another person's message, a command included, renders in the same bubble on the left, with that person's name above it and initials on a coloured circle beside it, and no level.
 
 ### History
 
-20. A person added to a thread can read all of it, from its first message.
-21. When a person's access to a thread ends, by removal or by their leaving, their messages remain in it under their name.
+18. A person added to a thread can read all of it, from its first message.
+19. When a person's access to a thread ends, by removal or by their leaving, their messages remain in it under their name.
 
 ### Thread state
 
-22. For now, archive, settle, snooze, pin and the read marker are one value per thread, shared by everyone on the server.
+20. For now, archive, settle, snooze, pin and the read marker are one value per thread, shared by everyone on the server.
 
 ## Scenarios
 
-- **Two people, one agent.** The user gives a teammate Collaborator on a thread in Billing Migration. The teammate's first message reaches the agent with a note naming the user (owner) and the teammate (collaborator), saying the earlier messages were the user's, and then `[Message from Priya (collaborator)]`. On the user's screen the message is a card with Priya's picture; on hers it is an ordinary message. (AC1, AC3, AC7, AC17, AC6)
+- **Two people, one agent.** The user gives a teammate Collaborator on a thread in Billing Migration. The teammate's first message reaches the agent with a note naming the user (owner) and the teammate (collaborator), saying the earlier messages were the user's, and then `[Message from Priya (collaborator)]`. On the user's screen the message is a card with Priya's name; on hers it is an ordinary message. (AC1, AC3, AC7, AC17, AC6)
 - **A team server.** On L2 Support Rotation's server everyone on shift is a Collaborator at server scope. A thread an engineer starts is a shared conversation from its first message, and an agent asked a week later "what did Sam tell you?" can answer, because every message carried its author. (AC1, AC6)
 - **A request that conflicts.** Priya asks the agent to drop a migration step; the user said earlier to keep it. The agent asks in the thread, naming both, and the user says to keep it. (AC7)
 - **A command.** Priya types `/compact`. It reaches the provider as typed and the conversation is compacted; the timeline shows it as Priya's. (AC5)
@@ -97,26 +96,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 - **A Crew, end to end.** Priya asks the agent for a Crew, edits a seat's model on the roster and approves it. A seat later needs a command approved; the request reaches her inbox and the user's, and she approves it. (AC10, AC13)
 - **The agent is busy.** The user sees the agent heading the wrong way and stops it; Priya steers it with a correction instead. Either can fix a typo in the other's queued message. (AC15)
 - **Watching.** A Viewer on the thread sees each prompt and how it was answered, with the controls disabled. (AC12)
-- **Access removed.** The user removes Priya. Her queued message is withdrawn, the agent is told she can no longer write, and her earlier messages still carry her name. (AC4, AC21, AC16)
-
-## History
-
-20. A person added to a thread can read all of it, from its first message.
-21. When a person's access to a thread ends, by removal or by their leaving, their messages remain in it under their name.
-
-## Scenarios
-
-- **Two people, one agent.** A member gives a guest Collaborate on a thread in Billing Migration, and writes "reviewing the migration plan with me" in the Share dialog. The agent receives a system note naming the guest, the line the member wrote, and where guests stand. The guest asks the agent a question; it arrives under their name and the agent answers it. On the member's screen the question is a card with the guest's picture; on the guest's it is an ordinary message. (AC1, AC3, AC5, AC6, AC17, AC18)
-- **A request beyond the work.** The guest asks the agent to delete the staging database. The agent does not, and writes in the thread that it is holding off and asks the member, by name, whether to go ahead. The member says no and the rule stands. Everything is visible to both. (AC5, AC7)
-- **A question for one of them.** The agent needs a decision only the member can make. Its attempt to send the member an ask through the inbox is refused with an error telling it to ask in the thread. It writes the question there, addressed to the member by name. (AC13)
-- **A prompt anyone can answer.** The guest asks the agent to run the migration tests, and the agent's access mode requires approval for the command. The prompt appears for both people; the guest approves it, and it now reads as approved by the guest. Later the agent raises a question prompt with two options; the member picks one before the guest does, and the guest sees which was picked and by whom. (AC8, AC9)
-- **A Crew.** The guest asks the agent for a Crew to split the work, the agent proposes a roster, and the guest approves it. The guest sees each seat's model and access and cannot change them. (AC8, AC10)
-- **The agent is busy.** The guest sends a message while the agent is running tests. It queues. They spot a typo, fix it while it waits, and it reaches the agent when the tests finish. They see no control for stopping the run; the member stops it when asked. (AC14, AC15, AC16)
-- **A private thread.** The member's other threads in the project have no guest collaborator. Their messages carry no name, and an agent there asks through the inbox as before. (AC2, AC13)
-- **Joining late.** A second guest is given View on the thread a week in. They read it from its first message. (AC20)
-- **Watching.** That second guest sees each prompt the agent raises and how it was answered, and no buttons. (AC11)
-- **Access removed.** The member removes the first guest's grant. The thread leaves the guest's list, the agent is told they can no longer write, and their earlier messages still carry their name for the member. (AC4, AC21)
-- **A guest leaves.** The second guest is finished with the thread and leaves it from their own client. It goes from their list, and the member sees on the People page that the guest no longer has it. (AC4, AC21)
+- **Access removed.** The user removes Priya. Her queued message is withdrawn, the agent is told she can no longer write, and her earlier messages still carry her name. (AC4, AC19, AC16)
 
 ## History
 
@@ -130,3 +110,4 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 - 2026-10-17 — criteria renumbered in order, after the rewrite retired the former AC6, AC10, AC13, AC14 and AC15 (Jackson). Former numbers: AC5 → AC7; AC7 → AC8; AC8 → AC10; AC9 → AC11; AC11 → AC12; AC12 → AC13; AC16 → AC15; AC22 → AC5; AC1 to AC4 and AC17 to AC21 unchanged. The rewrite's own line above uses the new numbers. Code comments that cite the former numbers are rewritten with the rebuild.
 - 2026-10-17 — what holds only for now is marked so, and a Later list names what is set aside, with the issue that tracks each (Jackson).
+- 2026-10-18 — a person's picture moves to the Later list (Jackson, 2026-10-17, for the build of [#636](https://github.com/Jacksondr5/j5code/issues/636)): AC17 draws initials, and former AC18 and AC19 are retired; former AC20 to AC22 are now AC18 to AC20. A copy of the guest-era History and Scenarios left in by the rewrite is removed.
