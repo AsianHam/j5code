@@ -37,7 +37,7 @@ import { ReadChanges, layer as readChangesLayer } from "../a2a/ReadChanges.ts";
  * Sessions that are no person's device and are not narrowed: agents signed in over MCP, peer
  * servers, the machine participants of `j5 a2a`, and the CLI's own sessions. Each holds only the
  * permissions upstream issued it for its purpose. MCP clients are approved only by an Owner, and
- * lowering or removing an Owner revokes every one of them (`Access`).
+ * lowering or removing an Owner refuses an approval still waiting (`Access.issueMcpClient`).
  */
 export const isServiceSubject = (subject: string) =>
   subject.startsWith("peer:") ||
