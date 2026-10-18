@@ -13,6 +13,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -293,6 +294,45 @@ it.layer(testLayer)("access gate", (it) => {
           identity: { kind: "unknown" },
         },
       ]);
+    }),
+  );
+
+  it.effect("lets a Viewer read only the resource an app in their thread was published with", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const mine = yield* thread("thread:mcp-app");
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          'item:weather', ${mine}, 1, 'dynamic_tool', 'completed', '2026-10-18T00:00:00.000Z',
+          ${JSON.stringify({
+            type: "dynamic_tool",
+            toolName: "weather.get_weather",
+            output: {
+              t3McpApp: {
+                attachmentId: "thread-1-abc-html",
+                server: "weather",
+                tool: "get_weather",
+                resourceUri: "ui://weather/dashboard",
+              },
+            },
+          })}
+        )
+      `;
+      const { session } = yield* signed(
+        "App watcher",
+        [{ scope: { kind: "thread", threadId: mine }, level: "viewer" }],
+        LEVEL_PERMISSIONS.viewer,
+      );
+      const read = (uri: string) =>
+        call(session, WS_METHODS.mcpAppsReadResource, {
+          threadId: mine,
+          itemId: "item:weather",
+          uri,
+        });
+      assert.strictEqual(yield* read("ui://weather/dashboard"), "ran");
+      assert.match(yield* read("ui://weather/secrets"), /^refused/);
     }),
   );
 

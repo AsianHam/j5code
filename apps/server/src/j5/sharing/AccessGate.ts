@@ -105,6 +105,11 @@ type AccessRpcRule = (
   | { readonly kind: "anyone" }
   /** Agents' names, each told only when the person may know that agent (`participantVisible`). */
   | { readonly kind: "identities" }
+  /**
+   * An MCP app's resource, in a thread the person reaches: a Viewer only the one the app the
+   * payload names was published with, a Collaborator any on that app's server.
+   */
+  | { readonly kind: "mcpAppResource" }
   | { readonly kind: "server" }
   | { readonly kind: "narrowed" }
   | {
@@ -226,7 +231,7 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [WS_METHODS.scheduledTasksSubscribe]: narrowed,
   [WS_METHODS.providerUploadFeedback]: onThread("collaborator"),
   [WS_METHODS.mcpAppsToolInfo]: onThread("viewer"),
-  [WS_METHODS.mcpAppsReadResource]: onThread("viewer"),
+  [WS_METHODS.mcpAppsReadResource]: { kind: "mcpAppResource" },
   [WS_METHODS.mcpAppsCallTool]: onThread("collaborator"),
   [WS_METHODS.mcpAppsUpdateModelContext]: onThread("collaborator"),
   // Its preview tabs. A Viewer reads the list; driving a tab is writing.
@@ -672,6 +677,26 @@ export const layerRpcAuthorization = (
                 if (threadId === undefined) return Effect.succeed(false);
                 return access.threadLevel(personId, ThreadId.make(threadId)).pipe(
                   Effect.map((held) => levelReaches(held, rule.level)),
+                  Effect.catch(refuseUnreadable),
+                );
+              }
+              case "mcpAppResource": {
+                const threadId = payloadThreadId(payload);
+                const itemId = stringField("itemId")(payload);
+                const uri = stringField("uri")(payload);
+                if (threadId === undefined || itemId === undefined || uri === undefined) {
+                  return Effect.succeed(false);
+                }
+                return access.threadLevel(personId, ThreadId.make(threadId)).pipe(
+                  Effect.flatMap((held) =>
+                    levelReaches(held, "collaborator")
+                      ? Effect.succeed(true)
+                      : !levelReaches(held, "viewer")
+                        ? Effect.succeed(false)
+                        : access
+                            .mcpAppResource(ThreadId.make(threadId), itemId)
+                            .pipe(Effect.map((published) => published === uri)),
+                  ),
                   Effect.catch(refuseUnreadable),
                 );
               }

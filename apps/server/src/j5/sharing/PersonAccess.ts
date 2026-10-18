@@ -17,6 +17,7 @@ import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
+import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 
 import { ParticipantId } from "../a2a/contracts.ts";
 import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
@@ -248,6 +249,11 @@ export interface PersonAccessShape {
     personId: ParticipantId,
     participant: { readonly participantId: string; readonly threadId: string | null },
   ) => Effect.Effect<boolean, PersonAccessStorageError>;
+  /** The resource an MCP app a tool published in a thread draws from; `null` for none there. */
+  readonly mcpAppResource: (
+    threadId: ThreadId,
+    itemId: string,
+  ) => Effect.Effect<string | null, PersonAccessStorageError>;
   /** Everyone who reaches a thread or a project, with how. */
   readonly scopePeople: (
     scope: Exclude<PersonScope, { readonly kind: "server" }>,
@@ -369,6 +375,8 @@ const encodeCeiling = Schema.encodeSync(StoredCeiling);
 // A ceiling that cannot be read holds nothing, so a device under it gains nothing.
 const decodeCeiling = (stored: string | null): ReadonlyArray<string> | null =>
   stored === null ? null : Option.getOrElse(decodeStoredCeiling(stored), () => []);
+
+const decodeItem = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 const toDevice = (row: DeviceRow): BoundDevice => ({
   sessionId: row.session_id as AuthSessionId,
@@ -696,6 +704,25 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           return false;
         },
         Effect.mapError(storage("read whether a person may know an agent")),
+      ),
+
+      mcpAppResource: Effect.fn("j5.sharing.personAccess.mcpAppResource")(
+        function* (threadId, itemId) {
+          const rows = yield* sql<{ readonly payload_json: string }>`
+            SELECT payload_json FROM orchestration_v2_projection_turn_items
+            WHERE turn_item_id = ${itemId} AND thread_id = ${threadId}
+          `;
+          const item = rows[0] === undefined ? undefined : decodeItem(rows[0].payload_json);
+          if (item === undefined || Option.isNone(item)) return null;
+          const value = item.value as { readonly toolName?: unknown; readonly output?: unknown };
+          return (
+            mcpAppFromToolItem({
+              toolName: typeof value.toolName === "string" ? value.toolName : null,
+              output: value.output,
+            })?.resourceUri ?? null
+          );
+        },
+        Effect.mapError(storage("read an MCP app's resource")),
       ),
 
       scopePeople: Effect.fn("j5.sharing.personAccess.scopePeople")(
