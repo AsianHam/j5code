@@ -28,7 +28,7 @@ const sourcesInput = {
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   stateAtom: environmentCatalog.stateAtom,
   configValueAtom: serverEnvironment.configValueAtom,
-  guestAtom: j5Sharing.isGuest,
+  guestAtom: j5Sharing.isNarrow,
 };
 
 // A person's inbox and the Crew requests in it hold asks from the threads they can write to, at

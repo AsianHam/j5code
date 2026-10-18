@@ -201,7 +201,7 @@ export function createSharingEnvironmentAtoms<R, E>(
    * Whether the connection is known to reach less than the whole server; false until the server
    * has said. Mobile's screens still call such a person a guest.
    */
-  const isGuest = Atom.family((environmentId: EnvironmentId) =>
+  const isNarrow = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => !reachesServer(get(connectionAccess(environmentId)))).pipe(
       Atom.withLabel(`j5:access:narrow:${environmentId}`),
     ),
@@ -210,7 +210,7 @@ export function createSharingEnvironmentAtoms<R, E>(
   return {
     connectionAccessQuery,
     connectionAccess,
-    isGuest,
+    isNarrow,
     /** Reads the connection's access again, after this client changed it (claim, leave, rename). */
     refreshConnectionAccess: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
       registry.refresh(connectionAccessQuery({ environmentId, input: {} })),

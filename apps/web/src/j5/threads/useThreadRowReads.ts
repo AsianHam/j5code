@@ -22,7 +22,7 @@ export const threadReadConnectionsAtom = Atom.make((get) => {
   for (const id of get(environmentCatalog.catalogValueAtom).entries.keys()) {
     const state = Option.getOrNull(AsyncResult.value(get(environmentCatalog.stateAtom(id))));
     const prepared = get(environmentSession.preparedConnectionValueAtom(id));
-    const readable = state?.phase === "connected" && !get(j5Sharing.isGuest(id));
+    const readable = state?.phase === "connected" && !get(j5Sharing.isNarrow(id));
     connections.set(id, readable ? Option.getOrNull(prepared) : null);
   }
   return connections;

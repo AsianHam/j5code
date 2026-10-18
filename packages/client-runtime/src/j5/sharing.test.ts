@@ -216,7 +216,7 @@ describe("a connection that holds two threads of a server", () => {
       const own = sharing.threadOperable(MEMBER_SERVER, VIEWED);
       for (const atom of [viewed, joined, draft, own]) yield* AtomRegistry.mount(registry, atom);
 
-      expect(yield* settlesAt(registry, sharing.isGuest(SHARED_SERVER), true)).toBe(true);
+      expect(yield* settlesAt(registry, sharing.isNarrow(SHARED_SERVER), true)).toBe(true);
       expect(yield* settlesAt(registry, joined, true)).toBe(true);
       expect(registry.get(viewed)).toBe(false);
       expect(registry.get(draft)).toBe(false);
@@ -272,8 +272,8 @@ describe("a connection that holds two threads of a server", () => {
       const runtime = Atom.runtime(layer);
       const sharing = createSharingEnvironmentAtoms(runtime);
       const atoms = createJ5EnvironmentAtoms(runtime);
-      yield* AtomRegistry.mount(registry, sharing.isGuest(SHARED_SERVER));
-      expect(yield* settlesAt(registry, sharing.isGuest(SHARED_SERVER), true)).toBe(true);
+      yield* AtomRegistry.mount(registry, sharing.isNarrow(SHARED_SERVER));
+      expect(yield* settlesAt(registry, sharing.isNarrow(SHARED_SERVER), true)).toBe(true);
 
       const own = atoms.fleet({ environmentId: MEMBER_SERVER, input: {} });
       const shared = atoms.fleet({ environmentId: SHARED_SERVER, input: {} });
@@ -293,8 +293,8 @@ describe("a connection that holds two threads of a server", () => {
       const runtime = Atom.runtime(layer);
       const sharing = createSharingEnvironmentAtoms(runtime);
       const atoms = createJ5EnvironmentAtoms(runtime);
-      yield* AtomRegistry.mount(registry, sharing.isGuest(SHARED_SERVER));
-      expect(yield* settlesAt(registry, sharing.isGuest(SHARED_SERVER), true)).toBe(true);
+      yield* AtomRegistry.mount(registry, sharing.isNarrow(SHARED_SERVER));
+      expect(yield* settlesAt(registry, sharing.isNarrow(SHARED_SERVER), true)).toBe(true);
 
       const listed = yield* Effect.promise(() =>
         atoms.listArtifacts.run(registry, {
@@ -366,7 +366,7 @@ describe("an Owner's connection", () => {
           sharing.connectionAccessQuery({ environmentId: MEMBER_SERVER, input: {} }),
         ),
       );
-      expect(registry.get(sharing.isGuest(MEMBER_SERVER))).toBe(false);
+      expect(registry.get(sharing.isNarrow(MEMBER_SERVER))).toBe(false);
       expect(registry.get(operable)).toBe(true);
     }),
   );
