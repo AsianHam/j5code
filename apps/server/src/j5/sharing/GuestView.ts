@@ -33,14 +33,15 @@ import {
 } from "./PersonAccess.ts";
 
 /**
- * What a guest's connection is told (Shared server AC12, AC23). A guest's client cannot connect
- * without the server configuration, the lifecycle welcome and the sidebar feed, so a guest gets
- * each in a reduced form: what a client needs to draw a granted thread, and none of the host's
- * paths, network addresses, provider accounts or settings. Its providers are named, with their
- * models, and nothing more. That holds outside the threads a guest
- * was granted. A granted thread's own contents are shared whole: its thread load and its feed
- * carry its worktree path and working directory, as its history already does. A member's
- * connection gets upstream's answer untouched; nothing here looks past the session's subject.
+ * What a narrowed connection is told (People and access AC24, AC25): a person whose scope is
+ * narrower than the server, a Viewer at server scope, or a device no one has claimed. Its client
+ * cannot connect without the server configuration, the lifecycle welcome and the sidebar feed. A
+ * Viewer gets each in a reduced form: what a client needs to draw a thread in reach, and none of
+ * the host's paths, network addresses, provider accounts or settings; its providers are named,
+ * with their models, and nothing more. A Collaborator, who can open a terminal on the host, gets
+ * upstream's configuration, and a sidebar cut to what they reach with its folders kept. A thread
+ * in reach is shared whole: its thread load and its feed carry its worktree path and working
+ * directory, as its history already does. A wide connection gets upstream's answers untouched.
  */
 
 /** Stands in for every host path a required field would otherwise carry. */
@@ -51,8 +52,8 @@ const reduceEnvironment = (
 ): ExecutionEnvironmentDescriptor => ({
   environmentId: environment.environmentId,
   // The server's own name and platform, which its public descriptor
-  // (`/.well-known/t3/environment`) gives anyone who can reach it. A person who is a guest of
-  // two servers tells them apart by name.
+  // (`/.well-known/t3/environment`) gives anyone who can reach it. A Viewer on two servers tells
+  // them apart by name.
   label: environment.label,
   platform: environment.platform,
   serverVersion: environment.serverVersion,
@@ -62,7 +63,7 @@ const reduceEnvironment = (
   capabilities: { repositoryIdentity: false },
 });
 
-/** What the read requests a guest may make can do; they say nothing about the host. */
+/** What the read requests a Viewer may make can do; they say nothing about the host. */
 const PROTOCOL_FLAGS = [
   "shellResumeCompletionMarker",
   "threadResumeCompletionMarker",
@@ -87,9 +88,9 @@ const reduceModel = (model: ServerProviderModel): ServerProviderModel => ({
 });
 
 /**
- * A provider as a guest's client is told of it: which one it is, what it is called and the models
+ * A provider as a Viewer's client is told of it: which one it is, what it is called and the models
  * it offers. Upstream's composer shows its "enable a provider" setup state when the list is empty,
- * and with these it shows a thread's model and, for a guest with View, its own read-only state.
+ * and with these it shows a thread's model and, for a Viewer, its own read-only state.
  * Nothing of the provider's sign-in, version, health, paths, usage, skills or commands is sent:
  * each is left out or given its emptiest valid value. Built field by field, so a field upstream
  * adds later is left out until it is listed here.
@@ -109,12 +110,12 @@ const reduceProvider = (provider: ServerProvider): ServerProvider => ({
   skills: [],
 });
 
-/** The providers a guest is told of: every one a thread could be running on, reduced. */
+/** The providers a Viewer is told of: every one a thread could be running on, reduced. */
 const reduceProviders = (providers: ServerConfig["providers"]) =>
   providers.filter((provider) => provider.enabled).map(reduceProvider);
 
 /**
- * The configuration a guest's client is given. Built field by field, so a field upstream adds
+ * The configuration a Viewer's client is given. Built field by field, so a field upstream adds
  * later is left out until it is listed here.
  */
 export const reduceServerConfig = (config: ServerConfig): ServerConfig => ({
@@ -140,10 +141,10 @@ export const reduceServerConfig = (config: ServerConfig): ServerConfig => ({
 });
 
 /**
- * A project as a guest's client is told of it: enough to draw the thread under its project's name
+ * A project as a Viewer's client is told of it: enough to draw the thread under its project's name
  * and chosen icon. The icon a person chose (`projectIcon`: a named glyph, an emoji or a monogram)
  * is plain data and passes. A favicon file is asked for by the project's folder upstream, which a
- * guest is not told, so its path is replaced by one that names the project by id, and J5 serves
+ * Viewer is not told, so its path is replaced by one that names the project by id, and J5 serves
  * the file (`GuestProjectIcons.ts`).
  */
 const reduceProject = (project: OrchestrationProjectShell): OrchestrationProjectShell => ({
@@ -183,7 +184,7 @@ export interface ConnectionView {
   readonly lifecycleStream: <E, R>(
     stream: Stream.Stream<ServerLifecycleStreamEvent, E, R>,
   ) => Stream.Stream<ServerLifecycleStreamEvent, E, R>;
-  /** `subscribe` is upstream's sidebar feed; a guest's is read through its grants. */
+  /** `subscribe` is upstream's sidebar feed, read through what a narrowed person reaches. */
   readonly shellStream: <R>(
     input: ShellSubscribeInput,
     subscribe: (
@@ -219,7 +220,7 @@ const makeShellFilter = (access: PersonAccess["Service"], reach: SessionReach, r
   const project = reduce ? reduceProject : identity<OrchestrationProjectShell>;
   const thread = reduce ? reduceThread : identity<OrchestrationV2ThreadShell>;
 
-  /** The threads a guest's grants cover, and the projects those threads or a grant name. */
+  /** The threads a person reaches, and the projects those threads or a level name. */
   const snapshot = Effect.fn("j5.sharing.guestView.shellSnapshot")(function* (
     full: OrchestrationV2ShellSnapshot,
   ) {
@@ -238,7 +239,7 @@ const makeShellFilter = (access: PersonAccess["Service"], reach: SessionReach, r
   });
 
   /**
-   * One run of upstream's feed, read through the guest's grants. Sequence numbers and the
+   * One run of upstream's feed, read through what the person reaches. Sequence numbers and the
    * completion marker pass through as upstream sent them. `restart` asks for the feed to begin
    * again when a change cannot be told as one item.
    */
@@ -259,7 +260,7 @@ const makeShellFilter = (access: PersonAccess["Service"], reach: SessionReach, r
               case "synchronized":
                 return pass(item);
               case "snapshot": {
-                // A repository-identity refresh names host folders, and a guest's projects carry
+                // A repository-identity refresh names host folders, and a narrowed sidebar's projects carry
                 // no repository identity for it to fill in.
                 if (item.resolvedRepositoryIdentityRoots !== undefined) return drop;
                 const reduced = yield* snapshot(item.snapshot);
@@ -311,7 +312,7 @@ const shellFailure = (cause: unknown) =>
   isShellFailure(cause)
     ? cause
     : new OrchestrationV2GetShellSnapshotError({
-        message: "Failed to read what is shared with this guest",
+        message: "Failed to read what is shared with this person",
         cause,
       });
 
