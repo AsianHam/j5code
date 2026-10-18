@@ -114,8 +114,17 @@ export function joinView(description: LinkDescription): JoinView {
     : { kind: "name", prefill: description.personName, placeholder: null };
 }
 
-/** The refusals the join route answers with a reason the page words itself. */
-export type JoinRefusal = "dead" | "name_taken" | "paired_as_someone_else" | "already_yours";
+/**
+ * The refusals the join route answers with a reason the page words itself. `invalid_request` is
+ * a join without a name where one is needed, as when the browser joining as itself turns out to
+ * be no one's: the page then asks for a name.
+ */
+export type JoinRefusal =
+  | "dead"
+  | "name_taken"
+  | "paired_as_someone_else"
+  | "already_yours"
+  | "invalid_request";
 
 export function joinRefusal(status: number, body: unknown): JoinRefusal | null {
   const error =
@@ -123,6 +132,7 @@ export function joinRefusal(status: number, body: unknown): JoinRefusal | null {
       ? (body as { readonly error: unknown }).error
       : null;
   if (status === 404) return "dead";
+  if (status === 400 && error === "invalid_request") return "invalid_request";
   if (status === 409 && error === "name_taken") return "name_taken";
   if (status === 409 && error === "paired_as_someone_else") return "paired_as_someone_else";
   if (status === 409 && error === "already_yours") return "already_yours";
@@ -140,6 +150,8 @@ export function refusalWords(refusal: JoinRefusal, description: LinkDescription)
       return someoneElsesWords(description.personName);
     case "already_yours":
       return ALREADY_YOURS;
+    case "invalid_request":
+      return "Give the name people and agents should call you, then join.";
   }
 }
 

@@ -120,6 +120,14 @@ describe("a refused join", () => {
     expect(refusalWords(refusal!, link({}))).toBe("Someone on openclaw already has that name.");
   });
 
+  it("asks for a name when the join needed one", () => {
+    const refusal = joinRefusal(400, { error: "invalid_request", message: "A name is needed." });
+    expect(refusal).toBe("invalid_request");
+    expect(refusalWords(refusal!, link({}))).toBe(
+      "Give the name people and agents should call you, then join.",
+    );
+  });
+
   it("does not take an unknown refusal for one it knows", () => {
     expect(joinRefusal(409, { error: "something_new" })).toBeNull();
   });

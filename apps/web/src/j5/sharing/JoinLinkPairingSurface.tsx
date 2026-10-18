@@ -136,7 +136,12 @@ function JoinSurface({
   readonly description: LinkDescription;
   readonly onAuthenticated: () => void;
 }) {
-  const view = joinView(description);
+  // A join refused for want of a name asks for one, whatever the description said.
+  const [askName, setAskName] = useState(false);
+  const described = joinView(description);
+  const view: typeof described = askName
+    ? { kind: "name", prefill: "", placeholder: null }
+    : described;
   const [name, setName] = useState(view.kind === "name" ? view.prefill : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -163,6 +168,7 @@ function JoinSurface({
           setDead(true);
           return;
         }
+        if (refusal === "invalid_request" && view.kind !== "name") setAskName(true);
         setError(
           refusal === null
             ? "The server could not let you in. Try again."
