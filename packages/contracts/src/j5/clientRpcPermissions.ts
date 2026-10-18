@@ -10,7 +10,6 @@ import { J5_ARTIFACT_WS_METHODS } from "./artifacts.ts";
 import { J5_ACCESS_WS_METHODS } from "./access.ts";
 import { J5_PEOPLE_WS_METHODS } from "./people.ts";
 import { J5_PLAYBOOK_WS_METHODS } from "./playbook.ts";
-import { J5_SHARING_WS_METHODS } from "./sharing.ts";
 import { J5_SKILL_CATALOG_WS_METHODS } from "./skillCatalog.ts";
 import { J5_SKILL_LINK_WS_METHODS } from "./skillLinks.ts";
 
@@ -54,18 +53,6 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_CLIENT_ACTION_WS_METHODS.removePeer]: AuthAccessWriteScope,
   [J5_CLIENT_ACTION_WS_METHODS.listPeerAddresses]: AuthAccessWriteScope,
   [J5_CLIENT_ACTION_WS_METHODS.probePeer]: AuthAccessWriteScope,
-
-  [J5_SHARING_WS_METHODS.createGuest]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.putGrant]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.removeGrant]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.removePerson]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.revokeDevice]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.createLink]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.renamePerson]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.setOwnerName]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.revokeLink]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.createOpenLink]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.revokeOpenLink]: AuthAccessWriteScope,
 
   // A connection's own place on the server: saying whose its device is, naming the first owner,
   // leaving a scope, renaming oneself, an Owner marking a notice seen. Every device holds what

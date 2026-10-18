@@ -22,7 +22,6 @@ import {
   J5_PEOPLE_WS_METHODS,
   J5_PLAYBOOK_WS_METHODS,
   J5_SHARED_CONVERSATION_WS_METHODS,
-  J5_SHARING_WS_METHODS,
   type PersonLevel,
   levelReaches,
 } from "@t3tools/contracts/j5";
@@ -51,7 +50,6 @@ import {
   PairingIntents,
   peopleLayer as peopleRecordsLayer,
 } from "./PairingIntents.ts";
-import { layer as legacyPeopleLayer } from "./LegacyPeople.ts";
 import { layer as linksLayer } from "./Links.ts";
 import { McpApprovalGeneration } from "./McpApproval.ts";
 import { layer as peopleLayer } from "./People.ts";
@@ -385,10 +383,6 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [J5_ACCESS_WS_METHODS.claimDevice]: narrowedForAll,
   [J5_ACCESS_WS_METHODS.setFirstOwnerName]: narrowed,
   [J5_ACCESS_WS_METHODS.leave]: narrowed,
-  [J5_SHARING_WS_METHODS.getConnectionAccess]: narrowedForAll,
-  [J5_SHARING_WS_METHODS.subscribeThreadAccess]: narrowed,
-  [J5_SHARING_WS_METHODS.listOwnGrants]: narrowed,
-  [J5_SHARING_WS_METHODS.leaveGrant]: narrowed,
   // Renaming oneself (AC46); who reaches a thread or project, by name and level (AC26); who
   // wrote what in a thread one reads.
   [J5_PEOPLE_WS_METHODS.renameSelf]: narrowed,
@@ -396,9 +390,6 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [J5_PEOPLE_WS_METHODS.subscribeScopePeopleChanges]: { kind: "scope", level: "viewer" },
   [J5_SHARED_CONVERSATION_WS_METHODS.listThreadAuthors]: onThread("viewer"),
   [J5_SHARED_CONVERSATION_WS_METHODS.subscribeThreadAuthorsChanges]: onThread("viewer"),
-  // Who else reaches a thread: their names and levels, no more (AC26).
-  [J5_SHARING_WS_METHODS.listThreadPeople]: onThread("viewer"),
-  [J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges]: onThread("viewer"),
 };
 
 /**
@@ -653,7 +644,7 @@ export const gateEnvironmentAuth = <A, E, R>(
     R
   >,
 ) =>
-  Layer.mergeAll(peopleLayer, legacyPeopleLayer).pipe(
+  peopleLayer.pipe(
     Layer.provideMerge(linksLayer),
     Layer.provideMerge(renewOutdatedDevicesAtStartup),
     Layer.provideMerge(layerGatedEnvironmentAuth),
