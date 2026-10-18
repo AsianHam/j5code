@@ -326,7 +326,7 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
   const bootstrapCredential = urlCredential ?? getDesktopBootstrapCredential();
   if (!bootstrapCredential) {
     // J5: a session J5 ended for a change of level renews with its own cookie (FORK.md case 70).
-    if (await renewPrimarySession()) return { status: "authenticated" };
+    if ((await renewPrimarySession()) === "renewed") return { status: "authenticated" };
     return {
       status: "requires-auth",
       auth: currentSession.auth,
