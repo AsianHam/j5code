@@ -377,7 +377,7 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths and n
 
 **J5:** each device belongs to a person, and the person's scope and level decide what it reaches ([People and access](features/people-and-access.md)).
 
-- **Who a device is** is recorded by J5 against upstream's session as it is issued, without changing upstream's tables. Sessions that are no person's device are left as upstream issues them and are not narrowed: those of peer servers, of `j5 a2a` machine senders, of MCP clients and of the CLI's `auth session issue`. MCP clients are approved only by an Owner, and lowering or removing an Owner ends every one of them, for the remaining Owners to approve again (provisional, for Jackson to confirm).
+- **Who a device is** is recorded by J5 against upstream's session as it is issued, without changing upstream's tables. Sessions that are no person's device are left as upstream issues them and are not narrowed: those of peer servers, of `j5 a2a` machine senders, of MCP clients and of the CLI's `auth session issue`. MCP clients are approved only by an Owner, and lowering or removing an Owner refuses an approval still waiting to be exchanged, for the remaining Owners to approve again. Ending the MCP clients a lowered or removed Owner approved is Later ([#639](https://github.com/Jacksondr5/j5code/issues/639)).
 - **A device holds exactly its person's level's permissions**, mapped onto upstream's in one place. When the level changes, J5 revokes the device's session. The device then renews it on J5's own route, proving itself with the old token, and gets a session holding the new permissions. J5 never hands upstream more permissions for a request than the device holds.
 - **A person whose scope is narrower than the server** has a connection narrowed to it:
   - every HTTP route and WebSocket request is refused unless J5 has listed it;
@@ -411,7 +411,7 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths and n
 
 - **A lowered level reaches an open socket at once,** because upstream closes a session's sockets when it is revoked, replaced or expires.
 - **A change of level makes the person's devices reconnect once.**
-- **A device offline past its session's lifetime, and an MCP client, are paired again by hand** after a change of level.
+- **A device offline past its session's lifetime is paired again by hand** after a change of level. An MCP client holds no person's level, so a change of level does not touch it.
 - **Each advance checks four things:**
   - whether upstream added a place that sends configuration, lifecycle events or sidebar items;
   - whether every route still signs in through the functions J5 wraps;
@@ -572,6 +572,6 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-17 — D35 added: a client says what is new after it updates (Jackson, [#624](https://github.com/Jacksondr5/j5code/issues/624)).
 - 2026-10-17 — D33 rewritten for the people model: a person's scope and level decide what a connection reaches, a device holds exactly its level's permissions and renews its session when the level changes, and a link is J5's own token. What D33 described of the build is now defined in [People and access](features/people-and-access.md) (Jackson, 2026-10-16 and 2026-10-17; [#608](https://github.com/Jacksondr5/j5code/issues/608)). D36 added: `j5 pair` names the person a device is for (Jackson, 2026-10-16).
 - 2026-10-17 — the advance onto upstream's nightly `v0.1.1-nightly.20261017.3238`: D1 takes upstream's third `delegate_task` rule, a child's own worktree; D2 admits three new tools; D4 holds a delivery after a failed worktree setup and is re-checked; D6 re-checked; D19 adds the agents' systemd names and `j5code://` prompt links (#633 for a forwarding page); D20's release check reaches "Update everything"; D28 has one server per home; D33's sockets close when a session is revoked, and upstream's merge of its standard and administrative permissions (pingdotgg/t3code#20432) leaves the level mapping unchanged, since it names each level's permissions; D36's upstream default is every permission (Jackson's decisions of that day for D2, D4 and D19; the rest follow upstream).
-- 2026-10-18 — D33: the sessions that are no person's device, and MCP clients ended when an Owner is lowered or removed (provisional; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
+- 2026-10-18 — D33: the sessions that are no person's device, and MCP clients approved only by an Owner, with an approval still waiting refused when an Owner is lowered or removed (Jackson; [#636](https://github.com/Jacksondr5/j5code/issues/636), [#639](https://github.com/Jacksondr5/j5code/issues/639)).
 - 2026-10-18 — D33: a Viewer is listed a thread's preview tabs and does not watch them, for now (provisional; [#540](https://github.com/Jacksondr5/j5code/issues/540)).
 - 2026-10-18 — D36: a bare `j5 auth pairing create` makes a link for a device the server asks about, so upstream's desktop app still connects over SSH; `j5 pair` still refuses (provisional, for Jackson to confirm; [#636](https://github.com/Jacksondr5/j5code/issues/636)).

@@ -151,8 +151,7 @@ export interface AccessShape {
   /**
    * Issues an MCP client's session approved at `generation`, unless an Owner was lowered or
    * removed since: the approval may have been an Owner's who is not one now, and is refused to be
-   * approved again. Held under the same lock as a change of level, so a change that waits finds
-   * the session and ends it.
+   * approved again. Held under the same lock as a change of level, so the two never cross.
    */
   readonly issueMcpClient: <A, E, R>(
     generation: number,
@@ -288,24 +287,11 @@ const make = Effect.gen(function* () {
 
   const ownersGeneration = yield* Ref.make(0);
   /**
-   * Every MCP client on the server, ended, and every approval not yet issued voided: they were
-   * approved by Owners, and the Owners changed.
+   * Every MCP approval not yet issued, voided: it may have been an Owner's who is not one now.
+   * MCP clients already issued keep their sessions; ending only those the lowered Owner approved
+   * is Later.
    */
-  const endMcpClients = Effect.gen(function* () {
-    yield* Ref.update(ownersGeneration, (generation) => generation + 1);
-    const active = yield* sessions
-      .listActive()
-      .pipe(Effect.mapError((cause) => new AccessRenewalError({ sessionId: "", cause })));
-    for (const session of active.filter((entry) => entry.subject === "mcp-client")) {
-      yield* sessions
-        .revoke(session.sessionId)
-        .pipe(
-          Effect.mapError(
-            (cause) => new AccessRenewalError({ sessionId: session.sessionId, cause }),
-          ),
-        );
-    }
-  });
+  const voidWaitingMcpApprovals = Ref.update(ownersGeneration, (generation) => generation + 1);
 
   /**
    * Runs a change to one person and renews whichever of their devices it requires, all in one
@@ -327,7 +313,7 @@ const make = Effect.gen(function* () {
             yield* revokeForRenewal(device.sessionId);
           }
         }
-        if (before.owner && !after.owner) yield* endMcpClients;
+        if (before.owner && !after.owner) yield* voidWaitingMcpApprovals;
         return result;
       }),
     ).pipe(Effect.tap(() => tell({ personId, kind: "reach" })));
@@ -392,7 +378,7 @@ const make = Effect.gen(function* () {
               .pipe(Effect.mapError((cause) => new AccessRenewalError({ sessionId, cause })));
           }
           yield* afterChange(personId);
-          if (owner) yield* endMcpClients;
+          if (owner) yield* voidWaitingMcpApprovals;
         }),
       );
       yield* tell({ personId, kind: "removed" });

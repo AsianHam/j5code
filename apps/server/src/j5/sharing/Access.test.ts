@@ -17,7 +17,6 @@ import { PairingIntents } from "./PairingIntents.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 import { makeSessionRenewal } from "./SessionRenewal.ts";
 import {
-  PROJECT,
   accessLayer,
   accessLayerWithHook,
   device,
@@ -186,27 +185,18 @@ it.layer(accessLayer)("Access", (it) => {
     }),
   );
 
-  it.effect("ends every MCP client when an Owner is lowered", () =>
+  it.effect("leaves MCP clients already issued alone when an Owner is lowered", () =>
     Effect.gen(function* () {
       const access = yield* Access;
       const maria = yield* person("Maria", [{ scope: { kind: "server" }, level: "owner" }]);
       const agent = yield* device(null, [AuthOrchestrationReadScope], { subject: "mcp-client" });
-      const peer = yield* device(null, [AuthOrchestrationReadScope], { subject: "peer:home" });
-
-      yield* access.setLevel({
-        personId: maria.personId,
-        scope: { kind: "project", projectId: PROJECT },
-        level: "collaborator",
-      });
-      assert.isTrue(yield* isLive(agent.sessionId), "an Owner who only gained keeps them");
 
       yield* access.setLevel({
         personId: maria.personId,
         scope: { kind: "server" },
         level: "collaborator",
       });
-      assert.isFalse(yield* isLive(agent.sessionId));
-      assert.isTrue(yield* isLive(peer.sessionId));
+      assert.isTrue(yield* isLive(agent.sessionId));
     }),
   );
 
