@@ -6,6 +6,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as PairingGrantStore from "../../auth/PairingGrantStore.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import { Links } from "./Links.ts";
 import { PairingIntents } from "./PairingIntents.ts";
 import { People } from "./People.ts";
@@ -345,6 +346,64 @@ it.layer(peopleLayer)("Links", (it) => {
         (yield* (yield* PersonAccess.PersonAccess).listLevels(before!.person.personId)).length,
         1,
       );
+    }),
+  );
+
+  it.effect("pairs nothing once a link is revoked, whether its credential was taken or not", () =>
+    Effect.gen(function* () {
+      const links = yield* Links;
+      const grants = yield* PairingGrantStore.PairingGrantStore;
+      const intents = yield* PairingIntents;
+      const sessions = yield* SessionStore.SessionStore;
+      yield* namedOwner;
+      const joinFor = Effect.fn("test.joinFor")(function* (name: string) {
+        const backup = yield* person(name, [{ scope: { kind: "server" }, level: "owner" }]);
+        const link = yield* links.create(ownerDesktop, {
+          kind: "device",
+          personId: backup.personId,
+        });
+        const joined = yield* links.join({ token: link.token, name: undefined, session: null });
+        if (joined.kind !== "pair") return yield* Effect.die("a device link pairs");
+        return { link, credential: joined.credential };
+      });
+      const issue = (credential: string) =>
+        Effect.gen(function* () {
+          const grant = yield* grants.consume(credential);
+          return yield* intents.issueSession({
+            grant,
+            credential,
+            issue: sessions.issue({ subject: grant.subject, scopes: grant.scopes }),
+          });
+        });
+
+      // Revoked between the join and the exchange: the credential is revoked with the link.
+      const waiting = yield* joinFor("Backup before");
+      yield* links.revoke(waiting.link.linkId);
+      assert.strictEqual(
+        (yield* grants.consume(waiting.credential).pipe(Effect.flip))._tag,
+        "UnavailableBootstrapCredentialError",
+      );
+
+      // Revoked after upstream took the credential, before the session is issued.
+      const taken = yield* joinFor("Backup during");
+      const grant = yield* grants.consume(taken.credential);
+      yield* links.revoke(taken.link.linkId);
+      const refused = yield* intents
+        .issueSession({
+          grant,
+          credential: taken.credential,
+          issue: sessions.issue({ subject: grant.subject, scopes: grant.scopes }),
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(
+        refused._tag === "PairingIntentError" ? refused.reason : null,
+        "link_revoked",
+      );
+
+      // A link the join spent still pairs its device.
+      const kept = yield* joinFor("Backup kept");
+      const session = yield* issue(kept.credential);
+      assert.include([...session.scopes], "access:write");
     }),
   );
 

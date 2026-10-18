@@ -65,7 +65,14 @@ export const isPairedAsSomeoneElse = (error: { readonly diagnostic?: string | un
 export class PairingIntentError extends Schema.TaggedError<PairingIntentError>()(
   "PairingIntentError",
   {
-    reason: Schema.Literals(["not_wired", "retired", "scopes", "no_person", "storage"]),
+    reason: Schema.Literals([
+      "not_wired",
+      "retired",
+      "scopes",
+      "no_person",
+      "link_revoked",
+      "storage",
+    ]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -79,6 +86,8 @@ export class PairingIntentError extends Schema.TaggedError<PairingIntentError>()
         return "This link carries more than its person may hold now, and pairs nothing.";
       case "no_person":
         return "This link was made for someone who is no longer on this server.";
+      case "link_revoked":
+        return "This link was revoked before the device paired.";
       case "storage":
         return "Could not record whose device this is.";
     }
@@ -307,6 +316,16 @@ const make: Layer.Layer<PairingIntents, never, SqlClient.SqlClient | ReadChanges
                 // whatever pairing path it came by.
                 const person = yield* people.readPerson(intent.personId);
                 if (person === null) return yield* new PairingIntentError({ reason: "no_person" });
+                // A J5 link revoked after its join pairs nothing, even from a credential upstream
+                // took before the revocation. A link spent by the join is still good for it.
+                if (intent.linkId !== null) {
+                  const link = yield* sql<{ readonly revoked_at: string | null }>`
+                    SELECT revoked_at FROM j5_a2a_link WHERE link_id = ${intent.linkId}
+                  `;
+                  if (link[0] !== undefined && link[0].revoked_at !== null) {
+                    return yield* new PairingIntentError({ reason: "link_revoked" });
+                  }
+                }
                 const levels = yield* people.listLevels(intent.personId);
                 const allowed = devicePermissions(
                   highestLevel(levels.map((held) => held.level)),

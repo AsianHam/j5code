@@ -432,16 +432,18 @@ const make = Effect.gen(function* () {
           .pipe(Effect.map((reach) => (reach.kind === "person" ? reach.person : null)));
 
   /** One transaction for a join; a failure to commit is storage's, and the rest pass through. */
-  const committed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    sql
-      .withTransaction(effect)
-      .pipe(
-        Effect.mapError((cause) =>
-          isSqlError(cause)
-            ? new LinkStorageError({ operation: "join with a link", cause })
-            : (cause as Exclude<E, SqlError.SqlError>),
-        ),
-      );
+  const committed =
+    (operation: string) =>
+    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      sql
+        .withTransaction(effect)
+        .pipe(
+          Effect.mapError((cause) =>
+            isSqlError(cause)
+              ? new LinkStorageError({ operation, cause })
+              : (cause as Exclude<E, SqlError.SqlError>),
+          ),
+        );
 
   /** Spends a link for one person; a link a race already spent is refused like any other. */
   const spend = Effect.fn("j5.sharing.links.spend")(function* (linkId: string) {
@@ -575,13 +577,28 @@ const make = Effect.gen(function* () {
     list,
 
     revoke: Effect.fn("j5.sharing.links.revoke")(function* (linkId) {
-      const at = yield* now;
-      const rows = yield* sql`
-        UPDATE j5_a2a_link SET revoked_at = COALESCE(revoked_at, ${at})
-        WHERE link_id = ${linkId}
-        RETURNING link_id
-      `.pipe(Effect.mapError(storage("revoke a link")));
-      if (rows.length === 0) return yield* new LinkNotFoundError({ linkId });
+      yield* committed("revoke a link")(
+        Effect.gen(function* () {
+          const at = yield* now;
+          const rows = yield* sql`
+            UPDATE j5_a2a_link SET revoked_at = COALESCE(revoked_at, ${at})
+            WHERE link_id = ${linkId}
+            RETURNING link_id
+          `.pipe(Effect.mapError(storage("revoke a link")));
+          if (rows.length === 0) return yield* new LinkNotFoundError({ linkId });
+          // A join already made has a credential waiting to be exchanged; it goes with the link.
+          // One upstream already took is refused when its session would be issued
+          // (`PairingIntents`), since its link is revoked.
+          const waiting = yield* sql<{ readonly pairing_link_id: string }>`
+            SELECT pairing_link_id FROM j5_a2a_pairing_intent WHERE link_id = ${linkId}
+          `.pipe(Effect.mapError(storage("read a link's credentials")));
+          for (const credential of waiting) {
+            yield* grants
+              .revoke(credential.pairing_link_id)
+              .pipe(Effect.mapError(storage("revoke a link's credential")));
+          }
+        }),
+      );
       yield* peopleChanged;
     }),
 
@@ -612,7 +629,7 @@ const make = Effect.gen(function* () {
     }),
 
     join: Effect.fn("j5.sharing.links.join")(function* (input) {
-      const outcome = yield* committed(
+      const outcome = yield* committed("join with a link")(
         Effect.gen(function* () {
           const found = yield* usable(input.token);
           if (found === null) return yield* new LinkRefusedError({});
