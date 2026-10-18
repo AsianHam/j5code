@@ -120,6 +120,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 - Settings worked through page by page for Collaborators and Viewers, and with it archiving and deleting for those who are not Owners ([#630](https://github.com/Jacksondr5/j5code/issues/630)).
 - An authoritative identity: a sign-in, such as a company's, that proves who a person is ([#632](https://github.com/Jacksondr5/j5code/issues/632)).
 - Sharing on mobile ([#609](https://github.com/Jacksondr5/j5code/issues/609)).
+- A Viewer watching a thread's preview tabs ([#540](https://github.com/Jacksondr5/j5code/issues/540)).
 - Leaving one thread inside a project or server one holds as a whole, and the rest of the set-aside list ([#542](https://github.com/Jacksondr5/j5code/issues/542)).
 
 ## Acceptance criteria
@@ -155,7 +156,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 ### What each scope shows
 
-21. A thread's scope shows its conversation, the agents beneath it, its diffs, its preview tabs, the pages its tools published and the scheduled tasks bound to it.
+21. A thread's scope shows its conversation, the agents beneath it, its diffs, its preview tabs, the pages its tools published and the scheduled tasks bound to it. For now, a Viewer sees a thread's preview tabs listed and does not watch them.
 22. A project's scope adds every thread in the project, the project's artifacts, its Playbooks, the skills in its workspace and its other scheduled tasks; a person whose scope is a thread sees a link to an artifact and cannot open it.
 23. The server's scope adds every project, the Fleet page, Personas and the skills installed for the server's providers.
 24. A Viewer is shown no files, file contents, terminals, settings, providers or connections at any scope.
@@ -217,3 +218,4 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 - 2026-10-16 — defined (Jackson): the principles, three layers, scopes and levels, home scopes, one kind of link, devices and the first owner, names, leaving and removal. Absorbs [Shared server](shared-server.md) AC3 to AC35 and the access model that register entry D33 described ([record](../../worklog/2026-10-16-people-and-access-session.md)).
 - 2026-10-17 — what holds only for now is marked so, and a Later list names what is set aside, with the issue that tracks each (Jackson).
 - 2026-10-18 — someone who is not an Owner sees their own row on the People page, so they can leave a project or the server as AC48 says (AC27, AC28; provisional, for Jackson to confirm; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
+- 2026-10-18 — for now a Viewer sees a thread's preview tabs listed, and watching them is set aside (AC21; Jackson's 2026-10-11 deferral of [#540](https://github.com/Jacksondr5/j5code/issues/540); provisional, for Jackson to confirm).
