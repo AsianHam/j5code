@@ -3470,6 +3470,12 @@ it.effect("keeps a delivery unsent while a failed worktree setup holds the recei
         retryable: null,
       });
       // The failed run had been preparing a worktree that never got bound to the thread.
+      yield* (yield* OrchestratorV2).dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:held-worktree:unbind"),
+        threadId: target.threadId,
+        worktreePath: null,
+      });
       const failed = (yield* threads.getThreadProjection(target.threadId)).runs.find(
         (run) => run.status === "failed",
       )!;

@@ -88,7 +88,10 @@ it.effect("collects planner statistics for an existing database on open", () => 
       const rows = yield* sql<{ readonly stat: string }>`
         SELECT stat FROM sqlite_stat1 WHERE idx = 'stats_probe_thread_idx'
       `;
-      assert.deepEqual([...rows], [{ stat: "1000 100" }]);
+      // J5: optimize's analysis limit makes the per-value estimate approximate once J5's own
+      // tables are in the database (1000 96 rather than 1000 100), so only the row count is exact.
+      assert.lengthOf(rows, 1);
+      assert.match(rows[0]!.stat, /^1000 \d+$/);
     }).pipe(Effect.provide(persistence()));
   }).pipe(
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),

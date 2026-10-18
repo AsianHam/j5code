@@ -1200,6 +1200,7 @@ function makeNativeResumeHarness(input: {
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadRecords: projectionRead,
           getTurnStartContext: projectionRead,
           getRuntimeRecoveryProjection: projectionRead,
           getTurnStartHistory: () => Effect.succeed([]),

@@ -34,7 +34,7 @@ export class DatabaseProjectionsInvalidError extends Schema.TaggedError<Database
   { path: Schema.String },
 ) {
   override get message() {
-    return "Database projections need repair before compaction. Start J5 Code once so it rebuilds them, then run doctor again. If this CLI is older than the one that wrote the database, update T3 Code first.";
+    return "Database projections need repair before compaction. Start J5 Code once so it rebuilds them, then run doctor again. If this CLI is older than the one that wrote the database, update J5 Code first.";
   }
 }
 
