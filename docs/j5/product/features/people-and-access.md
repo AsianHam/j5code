@@ -93,7 +93,7 @@ A Viewer never sees files, terminals, settings, providers or connections, at any
 
 ### Settings
 
-Settings configures a server, so it belongs to that server's Owners. Settings and the People page list only the servers where the person is an Owner, with a picker to choose among them, so an Owner of several servers manages them all from one client. For now, someone who is an Owner of no connected server sees only the pages about their own device and, on the People page, their own row, from which they leave; and Settings is not divided page by page between the levels: each of upstream's pages would need its own work to be right for every level and scope, so a page is for Owners unless it is one of the few about the device itself.
+Settings configures a server, so it belongs to that server's Owners. Settings and the People page list only the servers where the person is an Owner, with a picker to choose among them, so an Owner of several servers manages them all from one client. For now, someone who is an Owner of no connected server sees only the pages about their own device and, on the People page, their own row, from which they leave, and who reaches each project they reach; and Settings is not divided page by page between the levels: each of upstream's pages would need its own work to be right for every level and scope, so a page is for Owners unless it is one of the few about the device itself.
 
 ### Links
 
@@ -165,8 +165,8 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 ### Settings and the first screen
 
-27. An Owner sees all of Settings for each server they own. Settings lists only the servers where the person is an Owner, with a picker to choose among them. The People page lists them too, and for a server where the person is not an Owner it shows only their own row.
-28. For now, someone who is an Owner of no connected server is shown only the Settings pages about their own device, Appearance, Snap-shot and Open-source licenses, and the People page with their own row on each server. Settings search finds only the pages a person is shown.
+27. An Owner sees all of Settings for each server they own. Settings lists only the servers where the person is an Owner, with a picker to choose among them. The People page lists them too, and for a server where the person is not an Owner it shows only their own row and, read only, who reaches each project they reach (AC26).
+28. For now, someone who is an Owner of no connected server is shown only the Settings pages about their own device, Appearance, Snap-shot and Open-source licenses, and the People page with their own row and the projects they reach on each server. Settings search finds only the pages a person is shown.
 29. A Settings page is shown to someone who is not an Owner only if it is one of those listed; any other page, including one upstream adds later, is shown to Owners only.
 30. The setup wizard is offered only to an Owner of the server the client opened first, decided by that server's answer. Someone whose scope covers nothing, because they left or lost the last thing they reached, sees "Nothing is shared with you".
 
@@ -217,6 +217,6 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 - 2026-10-16 — defined (Jackson): the principles, three layers, scopes and levels, home scopes, one kind of link, devices and the first owner, names, leaving and removal. Absorbs [Shared server](shared-server.md) AC3 to AC35 and the access model that register entry D33 described ([record](../../worklog/2026-10-16-people-and-access-session.md)).
 - 2026-10-17 — what holds only for now is marked so, and a Later list names what is set aside, with the issue that tracks each (Jackson).
-- 2026-10-18 — someone who is not an Owner sees their own row on the People page, so they can leave a project or the server as AC48 says (AC27, AC28; provisional, for Jackson to confirm; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
+- 2026-10-18 — someone who is not an Owner sees their own row on the People page, so they can leave a project or the server as AC48 says, and who reaches each project they reach, as AC26 says (AC27, AC28; provisional, for Jackson to confirm; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
 - 2026-10-18 — for now a Viewer sees a thread's preview tabs listed, and watching them is set aside (AC21; Jackson's 2026-10-11 deferral of [#540](https://github.com/Jacksondr5/j5code/issues/540); provisional, for Jackson to confirm).
 - 2026-10-18 — a bare `j5 auth pairing create` makes a link for a device the server asks about, since upstream's desktop app runs it over SSH; `j5 pair` still refuses (AC4; provisional, for Jackson to confirm; register D36).
