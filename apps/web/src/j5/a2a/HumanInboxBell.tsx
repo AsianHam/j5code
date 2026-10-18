@@ -48,7 +48,7 @@ export function HumanInboxBell({ onBackdrop }: { readonly onBackdrop: boolean })
     <Link
       aria-label={label}
       className={cn(
-        "relative z-10 flex size-7 shrink-0 items-center justify-center rounded-md outline-hidden transition-colors [-webkit-app-region:no-drag] focus-visible:ring-2 focus-visible:ring-ring",
+        "relative z-10 flex size-7 shrink-0 items-center justify-center rounded-md outline-hidden transition-colors [-webkit-app-region:no-drag] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         onBackdrop
           ? "text-white/80 hover:bg-white/15 hover:text-white"
           : "text-muted-foreground hover:bg-sidebar-row-hover hover:text-foreground",

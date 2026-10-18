@@ -9,8 +9,6 @@ import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 import { J5_UPSTREAM_T3_CODE_VERSION } from "../j5/upstreamVersion.ts";
 
-// Deliberately uses the shared CLI gate syntax: comparator groups joined by ||.
-// Prereleases and unrecognized release tags remain unknown.
 const StableVersion = TrimmedNonEmptyString.pipe(
   Schema.check(Schema.makeFilter((value) => /^\d+\.\d+\.\d+$/.test(value))),
 );
@@ -102,7 +100,6 @@ export function resolveProviderCompatibility(
   };
 }
 
-/** A remote policy replaces its matching bundled policy; omission keeps the bundle. */
 export function applyProviderCompatibility(
   snapshot: ServerProvider,
   policies: ReadonlyArray<ProviderCompatibilityPolicy> | undefined,

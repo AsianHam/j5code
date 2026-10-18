@@ -406,11 +406,9 @@ export const AgentHandoff = Schema.Struct({
 });
 export type AgentHandoff = typeof AgentHandoff.Type;
 
-// ---------------------------------------------------------------------------
 // Library management RPCs. These ride the upstream WebSocket RPC transport via one
 // `WsRpcGroup.merge(...)` call so environment scoping, remote connections, and
 // mobile keep working without a second wire path, while every definition stays here.
-// ---------------------------------------------------------------------------
 
 export const J5_AGENT_PERSONA_WS_METHODS = {
   getAgentPersonaCatalog: "j5.agentPersonas.getCatalog",

@@ -581,10 +581,10 @@ How to test is in .agents/skills/j5-live-test/SKILL.md.
 }
 
 /**
- * The scopes of the server's startup pairing URL (`AuthAdministrativeScopes`
- * in packages/contracts/src/auth.ts). A URL minted with `pair` gets only the
- * standard client scopes unless every scope is named, and without the access
- * and relay scopes a tester cannot use Connections settings.
+ * Every scope a client can be given (`AuthStandardClientScopes` in
+ * packages/contracts/src/auth.ts). A bare `pair` grants them all since upstream
+ * #20432, but a `--base` server built before it grants no access or relay
+ * scopes, and without those a tester cannot use Connections settings.
  */
 export const PAIRING_SCOPES = [
   "orchestration:read",
@@ -2199,7 +2199,6 @@ const USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts [--fresh | --peer
 export function parseCommand(args: ReadonlyArray<string>): {
   readonly command: LiveTestCommand;
   readonly mode: LiveTestMode;
-  /** The ref given with `--base`. */
   readonly baseRef?: string;
 } {
   // --base is the one flag with a value; take the pair out before sorting the rest.

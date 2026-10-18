@@ -111,7 +111,7 @@ const make = Effect.gen(function* () {
   const inbox = yield* A2AHumanInbox;
   const worker = yield* A2ADeliveryWorker;
   // A random source that fails is the host's fault, not a refusal a client can act on.
-  const freshId = (yield* Crypto.Crypto).randomUUIDv4.pipe(Effect.orDie);
+  const freshId = (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie);
   const projectProposal = projectCrewProposal(yield* PlaybookStore);
 
   return ClientActionsService.of({

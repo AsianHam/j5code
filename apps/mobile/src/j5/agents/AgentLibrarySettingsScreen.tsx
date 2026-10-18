@@ -12,8 +12,8 @@ import {
 } from "@t3tools/client-runtime/j5/agent-personas";
 import { AgentEditorModal } from "./AgentEditorModal";
 import { AgentFolderPickerModal } from "./AgentFolderPickerModal";
-import { ControlPillMenu } from "../../components/ControlPill";
-import { SymbolView } from "../../components/AppSymbol";
+import { Menu } from "../../components/ui/Menu";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import {
   agentPersonaFolderNudges,
   agentPersonaFolderStatusLabel,
@@ -38,8 +38,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { pickAgentDefinitions } from "./pickAgentDefinitions";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { AppText as Text } from "../../components/AppText";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { agentPersonaEnvironment } from "./agentPersonaAtoms";
@@ -447,7 +447,7 @@ function MemberAgentLibrarySettingsScreen() {
               </Text>
             ) : (
               <View className="self-start" pointerEvents={locked ? "none" : "auto"}>
-                <ControlPillMenu
+                <Menu
                   actions={[
                     {
                       id: "agent",
@@ -480,7 +480,7 @@ function MemberAgentLibrarySettingsScreen() {
                       type="monochrome"
                     />
                   </Pressable>
-                </ControlPillMenu>
+                </Menu>
               </View>
             )}
           </View>
@@ -586,7 +586,7 @@ function MemberAgentLibrarySettingsScreen() {
                             </Pressable>
                           </>
                         )}
-                        <ControlPillMenu
+                        <Menu
                           actions={[
                             {
                               id: "duplicate",
@@ -642,7 +642,7 @@ function MemberAgentLibrarySettingsScreen() {
                               type="monochrome"
                             />
                           </Pressable>
-                        </ControlPillMenu>
+                        </Menu>
                         {persona.removed ? null : (
                           <Pressable
                             accessibilityRole="button"

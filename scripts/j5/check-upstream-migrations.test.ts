@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
+import reviewedNightly3238 from "../../apps/server/src/j5/persistence/reviewed-v0.1.1-nightly.20261017.3238.v1.json" with { type: "json" };
 import reviewed from "../../apps/server/src/j5/persistence/reviewed-v2-reconcile.v1.json" with { type: "json" };
 import {
   inspectMigrationChanges,
@@ -67,6 +68,27 @@ describe("upstream migration compatibility audit", () => {
       kind: "invalid_manifest",
       name: "One",
     });
+  });
+});
+
+describe("reviewed pin → upstream nightly 3238", () => {
+  it("chains from the previous review and appends only 061 and 062", () => {
+    const { sourceMigrations, targetMigrations, targetRef } = reviewedNightly3238;
+    expect(sourceMigrations).toEqual(reviewed.targetMigrations);
+    expect(matchesReviewedBridge(sourceMigrations, targetMigrations, targetRef)).toBe(true);
+    // Neither review vouches for the other's transition.
+    expect(matchesReviewedBridge(sourceMigrations, targetMigrations, reviewed.targetRef)).toBe(
+      false,
+    );
+    expect(
+      inspectMigrationChanges(sourceMigrations, targetMigrations)
+        .filter(({ kind }) => kind !== "implementation_changed")
+        .map(({ kind }) => kind),
+    ).toEqual([]);
+    expect(targetMigrations.slice(-2).map(({ id, name }) => [id, name])).toEqual([
+      [61, "PullRequestReviewGuides"],
+      [62, "ThreadFailureLookupIndex"],
+    ]);
   });
 });
 

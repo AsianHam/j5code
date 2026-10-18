@@ -18,9 +18,22 @@ import { A2ALedger } from "../../../j5/a2a/LedgerService.ts";
 import { noneLayer as peerDirectoryNoneLayer } from "../../../j5/a2a/PeerDirectory.ts";
 import { ParticipantPlacementService } from "../../../j5/a2a/PlacementService.ts";
 import { A2ASendService } from "../../../j5/a2a/SendService.ts";
+import { A2ADeliveryWorker } from "../../../j5/a2a/DeliveryWorker.ts";
+import { A2AHomeRegistrar } from "../../../j5/a2a/HomeRegistrar.ts";
+import { AgentCrewInstanceService } from "../../../j5/a2a/AgentCrewInstanceService.ts";
+import { ArchiveCrewService } from "../../../j5/a2a/ArchiveCrewService.ts";
+import { CrewProposalService } from "../../../j5/a2a/CrewProposalService.ts";
+import { CrewStopService } from "../../../j5/a2a/CrewStopService.ts";
+import { PeerRegistryService } from "../../../j5/a2a/PeerRegistryService.ts";
+import { PlaybookCrewRelay } from "../../../j5/playbooks/PlaybookCrewRelay.ts";
+import { PlaybookStore } from "../../../j5/playbooks/PlaybookStore.ts";
+import { SpawnCompositionService } from "../../../j5/a2a/SpawnCompositionService.ts";
+import { SpawnWorkspaceService } from "../../../j5/a2a/spawnWorkspace.ts";
+import { ThreadRegistration } from "../../../j5/a2a/ThreadRegistration.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
@@ -28,6 +41,13 @@ import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskServ
 import * as SecretRequests from "../../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
+import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
+import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as PreviewManager from "../../../preview/Manager.ts";
+import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
+import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -56,10 +76,31 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(ProjectService.ProjectService)({}),
+  Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
   ServerSettings.layerTest({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+  Layer.mock(PreviewManager.PreviewManager)({}),
+  Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+  Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(ThreadSearch.ThreadSearch)({}),
+  // J5 tools declare these at registration; listing tools never calls them.
+  Layer.mock(A2ADeliveryWorker)({}),
+  Layer.mock(A2AHomeRegistrar)({}),
+  Layer.mock(AgentCrewInstanceService)({}),
+  Layer.mock(ArchiveCrewService)({}),
+  Layer.mock(CrewProposalService)({}),
+  Layer.mock(CrewStopService)({}),
+  Layer.mock(PeerRegistryService)({}),
+  Layer.mock(PlaybookCrewRelay)({}),
+  Layer.mock(PlaybookStore)({}),
+  Layer.mock(SpawnCompositionService)({}),
+  Layer.mock(SpawnWorkspaceService)({}),
+  Layer.mock(ThreadRegistration)({}),
 );
 
 const ToolsListPayload = Schema.fromJsonString(
@@ -191,8 +232,6 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const toolNames = tools.map((tool) => tool.name);
       expect(toolNames).toContain("t3_worktree_handoff");
       expect(toolNames).toContain("t3_worktree_status");
-      // The worktree registration merges alongside the other toolkits rather
-      // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("orchestrator_capabilities");
       expect(toolNames).toContain("schedule_task");
@@ -281,6 +320,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "preview_type",
         "preview_upload",
         "preview_wait_for",
+        "read_pull_request_guide",
         "request_secret",
         "run_scheduled_task_now",
         "schedule_task",
@@ -310,6 +350,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "t3_thread_search",
         "t3_thread_transfers",
         "t3_thread_update",
+        "t3_workflow_stop",
         "t3_worktree_handoff",
         "t3_worktree_list",
         "t3_worktree_status",
@@ -319,6 +360,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "unwatch_pull_request",
         "update_scheduled_task",
         "watch_pull_request",
+        "write_pull_request_guides",
       ]);
 
       const restricted = yield* McpSessionRegistry.issueActiveMcpCredential({
@@ -440,9 +482,6 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         unread_peer_count: 0,
       });
 
-      // The handoff tool mutates thread state, reaches the network (origin
-      // fetch), and runs project setup scripts, so its MCP hints must not
-      // promise a read-only, closed-world, non-destructive tool.
       const handoff = tools.find((tool) => tool.name === "t3_worktree_handoff");
       expect(handoff?.annotations?.readOnlyHint).toBe(false);
       expect(handoff?.annotations?.destructiveHint).toBe(true);

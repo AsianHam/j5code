@@ -105,7 +105,7 @@ function CrewGateCard(props: {
                 <button
                   type="button"
                   disabled={environmentId === undefined}
-                  className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-transparent"
+                  className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-transparent"
                   onClick={() => openSeat(seat.threadId)}
                 >
                   <Tooltip>
@@ -222,7 +222,7 @@ function CrewSeatsCard(props: {
               <button
                 type="button"
                 disabled={threadRef === null}
-                className="flex w-full min-w-0 flex-wrap items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-transparent"
+                className="flex w-full min-w-0 flex-wrap items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-transparent"
                 onClick={() => openSeat(seat.threadId)}
               >
                 <span

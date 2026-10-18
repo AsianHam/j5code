@@ -8,7 +8,6 @@ import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
 import { dispatchFailure, newCommandId, readThread } from "../../../mcp/threadAccess.ts";
 import { ThreadToolkit } from "../../../mcp/toolkits/thread/tools.ts";
-import type { OrchestratorV2Error } from "../../../orchestration-v2/Orchestrator.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import { AgentCrewInstanceService } from "../AgentCrewInstanceService.ts";
 import { makeCrewSeatArchiveGuard } from "../crewSeatArchiveGuard.ts";
@@ -47,7 +46,7 @@ export const J5AdaptedThreadToolkit = Toolkit.make(
 
 const isLineageError = Schema.is(Schema.instanceOf(J5ThreadLineageError));
 /** A lineage refusal in its own words; anything else as upstream reports a dispatch failure. */
-const lineageFailure = (cause: OrchestratorV2Error) =>
+const lineageFailure = (cause: Parameters<typeof dispatchFailure>[0]) =>
   isLineageError(cause)
     ? new OrchestratorMcpFailure({
         code: cause.phase === "admission" ? "invalid_request" : "orchestration_error",

@@ -270,7 +270,7 @@ export function FleetPage() {
 function FleetSectionExpander(props: { readonly label: string; readonly children: ReactNode }) {
   return (
     <details className="group/section mt-3">
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-muted-foreground outline-hidden marker:hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-muted-foreground outline-hidden marker:hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
         <ChevronRightIcon
           aria-hidden
           className="size-3.5 transition-transform duration-150 group-open/section:rotate-90"
@@ -432,7 +432,7 @@ function FleetNodeRows(
             id={fleetCrewAnchorId(environmentId, crew.crewInstanceId)}
           >
             <summary
-              className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground outline-hidden marker:hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden"
+              className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground outline-hidden marker:hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden"
               style={{ paddingInlineStart: `${0.75 + (node.row.depth + 1) * 1.25}rem` }}
             >
               <ChevronRightIcon
@@ -554,7 +554,7 @@ function RetiredCrewItem(props: FleetRowsProps & FleetProjectCrew<ScopedFleetLed
         className="group/retired-crew"
         id={fleetCrewAnchorId(ledgerProject.environmentId, crew.crewInstanceId)}
       >
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-sm outline-hidden marker:hidden hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-sm outline-hidden marker:hidden hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
           <ChevronRightIcon
             aria-hidden
             className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-open/retired-crew:rotate-90"
@@ -631,7 +631,7 @@ function RetiredCrewCaptain(
       ) : (
         <button
           type="button"
-          className="text-foreground/80 underline underline-offset-2 outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          className="text-foreground/80 underline underline-offset-2 outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           onClick={() => props.onOpenThread(props.environmentId, captainThreadId)}
         >
           {thread.title}
@@ -688,7 +688,7 @@ function FleetRowItem(
         type="button"
         className={cn(
           FLEET_GRID_CLASS,
-          "w-full px-3 py-2 text-left text-sm outline-hidden hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default",
+          "w-full px-3 py-2 text-left text-sm outline-hidden hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default",
         )}
         style={{ paddingInlineStart: `${0.75 + props.row.depth * 1.25}rem` }}
         disabled={agent.threadId === null}

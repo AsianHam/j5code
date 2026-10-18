@@ -14,6 +14,7 @@ import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
+  makeEnvironmentHttpApiUrlBuilder,
   RemoteEnvironmentAuthFetchError,
   RemoteEnvironmentAuthTimeoutError,
   type RemoteEnvironmentRequestError,
@@ -51,17 +52,6 @@ const withEnvironmentCredentials = <A, E, R>(
     ? request.pipe(Effect.provideService(FetchHttpClient.RequestInit, { credentials: "include" }))
     : request;
 
-/**
- * Build request-bound headers from the current environment credential:
- * - primary/local connections carry no credential,
- * - bearer connections send a static `Bearer` token,
- * - relay connections send a `DPoP` access token with a freshly signed proof
- *   bound to this request's method and URL.
- *
- * The DPoP signer is passed in (not resolved from context) and is only required
- * for relay/DPoP connections, so bearer/primary connections work even when no
- * signer is available.
- */
 const buildEnvironmentAuthHeaders = (
   authorization: PreparedHttpAuthorization | null,
   method: HttpMethod.HttpMethod,
@@ -109,10 +99,6 @@ const withEnvironmentRequestSpan = <A, E, R>(
     : request.pipe(Effect.withSpan(span));
 
 /**
- * Resolve relay credentials at request time without replacing the live socket.
- * A rejected credential gets one refresh and retry, with a new request-bound
- * proof. Cookie and bearer requests keep their existing authentication behavior.
- *
  * A DPoP request is T3 Connect work, so its span starts an exported trace that
  * the environment continues; its local caller's span would leave that trace
  * without a root.
@@ -133,6 +119,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <A, E, R>(input: {
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
   readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly method: HttpMethod.HttpMethod;
+  /** The URL to sign for an origin; a relay refresh can move the environment to a new one. */
   readonly url: (httpBaseUrl: string) => string;
   readonly timeoutMs: number;
   readonly request: (input: {
@@ -233,8 +220,14 @@ export const executeAuthenticatedEnvironmentHttpRequest = <
   E,
   R,
 >(
-  input: Omit<Parameters<typeof executeEnvironmentRequest<A, E, R>>[0], "request"> & {
+  input: Omit<Parameters<typeof executeEnvironmentRequest<A, E, R>>[0], "request" | "url"> & {
     readonly group: Group;
+    /**
+     * The URL to sign, from the group's contract URL builder. It encodes path
+     * params exactly like the request client, so the DPoP proof matches the
+     * URL actually sent.
+     */
+    readonly url: (urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[Group]) => string;
     readonly request: (input: {
       readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>>;
       readonly headers: EnvironmentHttpAuthHeaders;
@@ -250,6 +243,7 @@ export const executeAuthenticatedEnvironmentHttpRequest = <
       Effect.Services<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>> | R
     >({
       ...input,
+      url: (httpBaseUrl) => input.url(makeEnvironmentHttpApiUrlBuilder(httpBaseUrl)[input.group]),
       request: ({ httpBaseUrl, headers }) =>
         Effect.flatMap(makeEnvironmentHttpApiGroupClient(httpBaseUrl, input.group), (client) =>
           input.request({ client, headers }),

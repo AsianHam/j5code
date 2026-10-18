@@ -9,7 +9,7 @@ import {
   type SkillCatalogStatus,
   type SkillCatalogUpdateResult,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -320,7 +320,7 @@ export const createSkillCatalogTool = (deps: SkillCatalogToolDeps) => {
     const catalog = yield* installerEffect(() =>
       loadCatalog(path.join(catalogDir, "catalog.yaml")),
     );
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     // A Promise keeps mutating after fiber interruption. Hold the permit through
     // reconciliation and persistence so disconnects cannot overlap another apply
     // or refresh providers before the links have settled.

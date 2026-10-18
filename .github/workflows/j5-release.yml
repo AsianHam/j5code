@@ -302,14 +302,15 @@ jobs:
       # differ in `node:sqlite`: the first nightly could not take its
       # pre-migration snapshot, so its server would not start on a database with
       # pending migrations. These tests open, copy and migrate real database
-      # files. `vp test run` uses the `node` on PATH (VP_NODE_VERSION does not
-      # move it), so the first line fails the step if that is not the embedded
+      # files, and take the one-owner lock on `server-owner.sqlite`.
+      # `vp test run` uses the `node` on PATH (VP_NODE_VERSION does not move
+      # it), so the first line fails the step if that is not the embedded
       # version.
       - name: Run the database startup tests on the Node the executable embeds
         working-directory: apps/server
         run: |
           test "$(node --version)" = "v26.8.2"
-          pnpm exec vp test run src/j5/persistence src/persistence
+          pnpm exec vp test run src/j5/persistence src/persistence src/serverRuntimeState.test.ts
 
       - uses: actions/setup-node@v6
         with:

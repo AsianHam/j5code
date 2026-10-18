@@ -181,7 +181,8 @@ export const sendAsOutsideAgent = Effect.fn("j5.a2a.mcp.sendAsOutsideAgent")(fun
   const mode = input.mode ?? "queue";
   const attachments = input.attachments ?? [];
   const acceptedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
-  const requestKey = input.client_request_id ?? (yield* (yield* Crypto.Crypto).randomUUIDv4);
+  const requestKey =
+    input.client_request_id ?? (yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie));
   const send = (claimed?: ReadonlyArray<ChatAttachment>) =>
     service.sendAsOutsideAgent({
       commandId: commandIdFor(requestKey),

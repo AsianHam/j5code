@@ -107,7 +107,7 @@ const makeTestLayer = (
     Layer.provide(transport),
   );
   const threadManagement = Layer.mock(ThreadManagementService)({
-    streamStoredEventsFrom: ({ afterSequence } = {}) =>
+    streamStoredEventsFrom: ({ afterSequence }: { readonly afterSequence?: number } = {}) =>
       storedEvents.pipe(Stream.filter((event) => event.sequence > (afterSequence ?? 0))),
   });
   const lifecycle = lifecycleLayer.pipe(

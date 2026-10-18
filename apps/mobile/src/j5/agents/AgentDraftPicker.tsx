@@ -2,9 +2,9 @@ import { agentPersonaMentionItems } from "@t3tools/client-runtime/j5/agent-menti
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { Menu } from "../../components/ui/Menu";
 import { useEnvironmentQuery } from "../../state/query";
 import { selectDraftAgent } from "./agentDraftState";
 import { agentPersonaEnvironment } from "./agentPersonaAtoms";
@@ -22,7 +22,7 @@ export function AgentDraftPicker(props: {
   if (agents.length === 0) return null;
   return (
     <View pointerEvents={props.disabled ? "none" : "auto"}>
-      <ControlPillMenu
+      <Menu
         actions={agents.map((agent) => ({
           id: `agent:${agent.personaId}`,
           title: agent.label,
@@ -49,7 +49,7 @@ export function AgentDraftPicker(props: {
           />
           <Text className="text-sm text-foreground">Persona</Text>
         </Pressable>
-      </ControlPillMenu>
+      </Menu>
     </View>
   );
 }

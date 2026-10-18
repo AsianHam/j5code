@@ -4,8 +4,8 @@ import * as NodeFS from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 
 const source = NodeFS.readFileSync(new URL("./ArtifactsPage.tsx", import.meta.url), "utf8");
-const chatViewSource = NodeFS.readFileSync(
-  new URL("../../components/ChatView.tsx", import.meta.url),
+const rightPanelSource = NodeFS.readFileSync(
+  new URL("../../components/chat/RightPanelSurfaceContent.tsx", import.meta.url),
   "utf8",
 );
 
@@ -18,10 +18,10 @@ describe("artifact previews", () => {
   });
 
   it("renders a project-scoped artifact browser in the thread right panel", () => {
-    expect(chatViewSource).toContain('renderedRightPanelSurface?.kind === "artifacts"');
-    expect(chatViewSource).toContain("<ArtifactsPage");
-    expect(chatViewSource).toContain("embedded");
-    expect(chatViewSource).toContain("initialPath: renderedRightPanelSurface.selectedPath");
+    expect(rightPanelSource).toContain('case "artifacts":');
+    expect(rightPanelSource).toContain("<ArtifactsPage");
+    expect(rightPanelSource).toContain("embedded");
+    expect(rightPanelSource).toContain("initialPath: surface.selectedPath");
     expect(source).toContain("useState<string | null>(() => initialPath ?? null)");
     expect(source).toContain("grid-cols-[var(--artifact-file-pane-width)_minmax(0,1fr)]");
   });

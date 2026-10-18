@@ -6,7 +6,7 @@ import type {
 import { useState } from "react";
 import { Modal, Pressable, ScrollView, Switch, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 
 export function AgentImportConflictModal(props: {
   error: AgentPersonaImportConflictError;

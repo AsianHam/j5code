@@ -117,7 +117,7 @@ it.effect.each([40, 47, 50, 53, 54, 55, 56, 59])(
     }).pipe(Effect.provide(memory())),
 );
 
-// ---- Pin 67a2be0fdb (`54 = OrchestrationV2`, `55 = RemoveRedundantProjectionIndexes`) ----
+// Pin 67a2be0fdb (`54 = OrchestrationV2`, `55 = RemoveRedundantProjectionIndexes`).
 
 it.effect("the pin fixture records exactly the history J5 0.0.48 leaves", () =>
   Effect.gen(function* () {
@@ -135,7 +135,7 @@ it.effect("upstream renumbers a pin database without replaying V2 or touching J5
     const rows = yield* snapshotRows();
 
     const executed = yield* runJ5CompatibleUpstreamMigrations();
-    assert.deepStrictEqual(ids(executed), [54, 57, 58, 59, 60]);
+    assert.deepStrictEqual(ids(executed), [54, 57, 58, 59, 60, 61, 62]);
     const upgraded = yield* readHistory();
     assert.deepStrictEqual(
       upgraded.map(({ migration_id, name }) => [migration_id, name] as const),
@@ -166,7 +166,10 @@ it.effect("rolls the renumbering back when it fails, then a retry completes it",
     yield* assertRefused(/injected failure/);
     assert.deepStrictEqual(yield* readManifest(), pinMigrationHistory);
     yield* sql`DROP TRIGGER inject`;
-    assert.deepStrictEqual(ids(yield* runJ5CompatibleUpstreamMigrations()), [54, 57, 58, 59, 60]);
+    assert.deepStrictEqual(
+      ids(yield* runJ5CompatibleUpstreamMigrations()),
+      [54, 57, 58, 59, 60, 61, 62],
+    );
     assert.deepStrictEqual(yield* runJ5CompatibleUpstreamMigrations(), []);
   }).pipe(Effect.provide(memory())),
 );
@@ -188,7 +191,7 @@ it.effect("never reruns a recorded 050 backfill when upgrading a pin database", 
   }).pipe(Effect.provide(memory())),
 );
 
-// ---- The snapshot taken before the renumbering ----
+// The snapshot taken before the renumbering.
 
 const readContent = (filename: string) => {
   const database = new NodeSqlite.DatabaseSync(filename, { readOnly: true });
@@ -269,7 +272,7 @@ it.effect("startup snapshots a pin database, upgrades it, and the second start i
   ),
 );
 
-// ---- Histories whose upgrade arms ended with J5 0.0.48 ----
+// Histories whose upgrade arms ended with J5 0.0.48.
 
 it.effect.each(retiredHistories)(
   "refuses the %s history and points at J5 0.0.48, without writes",
@@ -280,7 +283,7 @@ it.effect.each(retiredHistories)(
     }).pipe(Effect.provide(memory())),
 );
 
-// ---- Everything else is upstream's call ----
+// Everything else is upstream's call.
 
 it.effect("hands an upstream V2 preview database (53 = OrchestrationV2) to upstream", () =>
   Effect.gen(function* () {

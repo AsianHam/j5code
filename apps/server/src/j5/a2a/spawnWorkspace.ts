@@ -27,7 +27,10 @@ import {
   ThreadLaunchService,
 } from "../../orchestration-v2/ThreadLaunchService.ts";
 import type { OrchestratorV2Error } from "../../orchestration-v2/Orchestrator.ts";
-import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
+import {
+  ThreadManagementService,
+  type ThreadManagementProviderInstanceDisabledError,
+} from "../../orchestration-v2/ThreadManagementService.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
 import { lifecycleCommandId, type SpawnStableInput } from "./spawnIds.ts";
 
@@ -320,7 +323,10 @@ export interface SpawnWorkspaceServiceShape {
    */
   readonly startBrief: (
     input: StartSpawnBriefInput,
-  ) => Effect.Effect<void, OrchestratorV2Error | ThreadLaunchError>;
+  ) => Effect.Effect<
+    void,
+    OrchestratorV2Error | ThreadLaunchError | ThreadManagementProviderInstanceDisabledError
+  >;
 }
 
 export class SpawnWorkspaceService extends Context.Service<

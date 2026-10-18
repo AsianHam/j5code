@@ -4,12 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import {
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { repointCliLauncherToSelf } from "./launcherLink.ts";
 
@@ -38,16 +33,16 @@ it.layer(NodeServices.layer)("j5 launcher link", (it) => {
       const { home, baseDir, running, link } = yield* makeUpdatedHome;
 
       const repointed = yield* repointCliLauncherToSelf(baseDir).pipe(
-        Effect.provideService(HostProcessEnvironment, { HOME: home }),
-        Effect.provideService(HostProcessExecutablePath, running),
+        Effect.provideService(HostProcess.Environment, { HOME: home }),
+        Effect.provideService(HostProcess.ExecutablePath, running),
       );
 
       assert.equal(Option.getOrUndefined(repointed), link);
       assert.equal(yield* fs.readLink(link), running);
     }).pipe(
       Effect.scoped,
-      Effect.provideService(HostProcessPlatform, "linux"),
-      Effect.provideService(HostProcessIsExecutable, true),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.IsExecutable, true),
     ),
   );
 
@@ -58,16 +53,16 @@ it.layer(NodeServices.layer)("j5 launcher link", (it) => {
       const { home, baseDir, previous, link } = yield* makeUpdatedHome;
 
       const repointed = yield* repointCliLauncherToSelf(baseDir).pipe(
-        Effect.provideService(HostProcessEnvironment, { HOME: home }),
-        Effect.provideService(HostProcessExecutablePath, path.join(home, "elsewhere/j5")),
+        Effect.provideService(HostProcess.Environment, { HOME: home }),
+        Effect.provideService(HostProcess.ExecutablePath, path.join(home, "elsewhere/j5")),
       );
 
       assert.isTrue(Option.isNone(repointed));
       assert.equal(yield* fs.readLink(link), previous);
     }).pipe(
       Effect.scoped,
-      Effect.provideService(HostProcessPlatform, "linux"),
-      Effect.provideService(HostProcessIsExecutable, true),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.IsExecutable, true),
     ),
   );
 });

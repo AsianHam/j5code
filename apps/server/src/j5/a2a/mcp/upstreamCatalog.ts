@@ -59,6 +59,7 @@ export const J5OrchestratorToolkit = Toolkit.make(
   OrchestratorToolkit.tools.t3_thread_list,
   OrchestratorToolkit.tools.t3_thread_read,
   OrchestratorToolkit.tools.t3_thread_update,
+  OrchestratorToolkit.tools.t3_workflow_stop,
 );
 
 // `t3_thread_fork` and `t3_thread_organize` are J5's own (see threadTools.ts).

@@ -3,6 +3,7 @@ import {
   CheckpointScopeId,
   CommandId,
   MessageId,
+  NodeId,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
@@ -22,7 +23,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
-import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -37,7 +37,6 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("provider-session.detach"),
     providerSessionId: ProviderSessionId,
     detail: Schema.optional(Schema.String),
-    /** Set on terminal detaches (thread archive/delete): revoke the thread's MCP credentials. */
     revokeMcpCredential: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
@@ -49,6 +48,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerSessionId: ProviderSessionId,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
+    subagent: Schema.optional(Schema.Struct({ id: NodeId, nativeTaskId: Schema.String })),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.steer"),
@@ -96,7 +96,6 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("terminal.cleanup"),
   }),
-  /** Closes a deleted thread's preview sessions, ending their server browser tabs. */
   Schema.Struct({
     type: Schema.Literal("preview.cleanup"),
   }),
@@ -111,7 +110,6 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
       Schema.Struct({ type: Schema.Literal("regenerate") }),
     ]),
   }),
-  /** Follows a Stop: sends `thread.stop` to every delegated task under the stopped thread. */
   Schema.Struct({
     type: Schema.Literal("delegated-tasks.stop"),
     reason: Schema.optional(Schema.String),
@@ -149,16 +147,10 @@ export const OrchestrationEffectStatusV2 = Schema.Literals([
 export type OrchestrationEffectStatusV2 = typeof OrchestrationEffectStatusV2.Type;
 
 /**
- * How long a succeeded or cancelled effect row is kept after it completes.
- * Claiming, recovery, the orchestrator and storage cleanup only ask whether a
- * row is pending, running or failed, so a missing succeeded or cancelled row
- * reads the same as a present one. Its one other use is deduplication: `enqueue`
- * ignores an id that already exists, and ids are deterministic per command or
- * run. Command retries are deduplicated by their receipts first, and a run's
- * effects are re-enqueued only around one server restart, so a week is far
- * longer than either and leaves recent history for debugging.
- * Failed rows are kept: storage cleanup keeps a deleted thread's worktree while
- * any of its effects failed.
+ * Command retries are deduplicated by their receipts first, and a run's effects
+ * are re-enqueued only around one server restart, so a week is far longer than
+ * either and leaves recent history for debugging. Failed rows are kept: storage
+ * cleanup keeps a deleted thread's worktree while any of its effects failed.
  */
 export const SETTLED_EFFECT_RETENTION = Duration.days(7);
 const PRUNE_BATCH_SIZE = 500;
@@ -212,10 +204,6 @@ export interface EffectOutboxV2Shape {
   readonly get: (
     effectId: string,
   ) => Effect.Effect<Option.Option<OrchestrationEffectV2>, EffectOutboxError>;
-  /** Wait for a durable terminal outcome, including outcomes committed before subscribing. */
-  readonly awaitSettled: (
-    effectId: string,
-  ) => Effect.Effect<OrchestrationEffectV2, EffectOutboxError>;
   readonly listByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
@@ -227,6 +215,8 @@ export interface EffectOutboxV2Shape {
   readonly signalCancellations: (effectIds: ReadonlyArray<string>) => Effect.Effect<void>;
   readonly awaitCancellation: (effectId: string) => Effect.Effect<void>;
   readonly clearCancellation: (effectId: string) => Effect.Effect<void>;
+  /** Resolves once the effect is neither pending nor running, or right away when it does not exist. */
+  readonly awaitSettled: (effectId: string) => Effect.Effect<void, EffectOutboxError>;
   readonly reconcileAfterProcessLoss: Effect.Effect<
     { readonly requeued: number; readonly cancelled: number },
     EffectOutboxError
@@ -252,7 +242,6 @@ export interface EffectOutboxV2Shape {
     readonly workerId: string;
     readonly error: string;
   }) => Effect.Effect<boolean, EffectOutboxError>;
-  /** Deletes succeeded and cancelled rows older than `SETTLED_EFFECT_RETENTION`. Returns the count. */
   readonly pruneSettled: Effect.Effect<number, EffectOutboxError>;
 }
 
@@ -305,23 +294,27 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
   EffectOutboxV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // Availability is only a bounded latency hint; durable rows remain
-    // authoritative. Retaining a small burst lets multiple worker slots wake
-    // for distinct threads without allowing notifications to grow unbounded.
     const available = yield* Queue.dropping<void>(64);
-    const settlements = yield* PubSub.unbounded<string>();
     const cancellationSignals = new Map<string, Deferred.Deferred<void>>();
+    const settledSignals = new Map<string, Deferred.Deferred<void>>();
+    const signalSettled = (effectIds: ReadonlyArray<string>) =>
+      Effect.forEach(
+        effectIds,
+        (effectId) => {
+          const signal = settledSignals.get(effectId);
+          if (signal === undefined) return Effect.void;
+          settledSignals.delete(effectId);
+          return Deferred.succeed(signal, undefined);
+        },
+        { discard: true },
+      );
     const notifyAvailable = (count = 1) =>
       Queue.offerAll(
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
-    // Each thread runs its effects one at a time, in enqueue (rowid) order. An earlier
-    // effect waiting out a retry backoff still blocks later ones, so a turn
-    // cannot start while a failed rollback is about to restore files. A claim
-    // that skips restart continuations is not blocked by them either.
-    // Title generation is correlated metadata work, so it has its own
-    // per-thread lane and cannot delay provider lifecycle effects.
+    // An earlier effect waiting out a retry backoff still blocks later ones, so
+    // a turn cannot start while a failed rollback is about to restore files.
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
@@ -412,9 +405,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             `,
             { concurrency: 1, discard: true },
           );
-          // Do not signal here: callers enqueue inside a larger transaction,
-          // and workers must only observe availability after that transaction
-          // commits. EventSink owns the corresponding post-commit notification.
+          // EventSink owns the corresponding post-commit notification.
         }).pipe(Effect.mapError((cause) => new EffectOutboxError({ operation: "enqueue", cause }))),
       get: (effectId) =>
         sql<EffectRow>`
@@ -430,28 +421,6 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               : rowToEffect(row).pipe(Effect.map(Option.some));
           }),
           Effect.mapError((cause) => new EffectOutboxError({ operation: "get", effectId, cause })),
-        ),
-      awaitSettled: (effectId) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            // Subscribe first: settlement between the read and the wait must wake us.
-            const subscription = yield* PubSub.subscribe(settlements);
-            while (true) {
-              const row = yield* service.get(effectId);
-              if (Option.isNone(row)) {
-                return yield* new EffectOutboxError({
-                  operation: "await-settled",
-                  effectId,
-                  cause: "The requested effect does not exist.",
-                });
-              }
-              if (["succeeded", "failed", "cancelled"].includes(row.value.status)) return row.value;
-              let settledId: string;
-              do {
-                settledId = yield* PubSub.take(subscription);
-              } while (settledId !== effectId);
-            }
-          }),
         ),
       awaitAvailable: Queue.take(available),
       notifyAvailable,
@@ -503,18 +472,24 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             },
             { discard: true },
           );
-          // Cancellation can unblock other pending work on the same thread.
-          // This method is deliberately post-commit, so it is also the safe
-          // place to wake claimers after the durable status change.
-          if (effectIds.length > 0) {
-            yield* PubSub.publishAll(settlements, effectIds);
-            yield* notifyAvailable(effectIds.length);
-          }
+          yield* signalSettled(effectIds);
+          if (effectIds.length > 0) yield* notifyAvailable(effectIds.length);
         }),
       awaitCancellation: (effectId) => Deferred.await(cancellationSignal(effectId)),
       clearCancellation: (effectId) =>
         Effect.sync(() => {
           cancellationSignals.delete(effectId);
+        }),
+      awaitSettled: (effectId) =>
+        Effect.gen(function* () {
+          // Registered before the read, so a settle right after it still resolves.
+          const signal = settledSignals.get(effectId) ?? Deferred.makeUnsafe<void>();
+          settledSignals.set(effectId, signal);
+          const effect = yield* service.get(effectId);
+          if (Option.exists(effect, ({ status }) => status === "pending" || status === "running")) {
+            return yield* Deferred.await(signal);
+          }
+          yield* signalSettled([effectId]);
         }),
       reconcileAfterProcessLoss: Effect.gen(function* () {
         const now = DateTime.formatIso(yield* DateTime.now);
@@ -531,7 +506,6 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             AND effect_type IN ${sql.in(PROCESS_BOUND_EFFECT_TYPES)}
           RETURNING effect_id
         `;
-        yield* service.signalCancellations(cancelledRows.map((row) => row.effect_id));
         const requeuedRows = yield* sql<{ readonly effect_id: string }>`
           UPDATE orchestration_v2_effect_outbox
           SET
@@ -629,7 +603,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           `;
           if (rows.length === 1) {
             cancellationSignals.delete(effectId);
-            yield* PubSub.publish(settlements, effectId);
+            yield* signalSettled([effectId]);
             yield* notifyAvailable();
           }
           return rows.length === 1;
@@ -688,7 +662,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           `;
           if (rows.length === 1) {
             cancellationSignals.delete(effectId);
-            yield* PubSub.publish(settlements, effectId);
+            yield* signalSettled([effectId]);
             yield* notifyAvailable();
           }
           return rows.length === 1;
@@ -728,7 +702,6 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
   }),
 );
 
-/** Prunes settled effect rows once the server is active, then every hour. */
 export const layerPruneWorker = Layer.effectDiscard(
   Effect.gen(function* () {
     const outbox = yield* EffectOutboxV2;

@@ -11,8 +11,8 @@ import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { Alert, Platform, Pressable, Share, View } from "react-native";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { Menu } from "../../components/ui/Menu";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { beginForegroundHandoff } from "../../lib/foreground-handoff";
 import { useServerConfigs } from "../../state/entities";
@@ -264,7 +264,7 @@ export const PlaybookLibrarySettingsSection = memo(function PlaybookLibrarySetti
         Reusable prompts that guide an agent through ordered steps. Create and refine them in a
         conversation.
       </Text>
-      <ControlPillMenu
+      <Menu
         actions={workspaces.map((entry) => ({
           id: entry.key,
           title: `${entry.title}${connectedEnvironments.length > 1 ? ` · ${connectedEnvironments.find((env) => env.environmentId === entry.environmentId)?.environmentLabel ?? entry.environmentId}` : ""}`,
@@ -282,7 +282,7 @@ export const PlaybookLibrarySettingsSection = memo(function PlaybookLibrarySetti
         >
           <Text className="text-foreground">{workspace?.title ?? "No projects available"}</Text>
         </Pressable>
-      </ControlPillMenu>
+      </Menu>
       {workspace && (
         <Text className="text-xs text-muted-foreground">
           {query.data?.workspaceRoot ?? workspace.workspaceRoot}/.j5/playbooks

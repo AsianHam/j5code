@@ -2,8 +2,8 @@ import { presentAgentPersonaAssignment } from "@t3tools/client-runtime/j5/agent-
 import type { OrchestrationV2AgentPersonaAssignment } from "@t3tools/contracts";
 import { View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 
 /** Compact "which persona is this" chip for thread rows. */
 export function AgentIdentityChip(props: {

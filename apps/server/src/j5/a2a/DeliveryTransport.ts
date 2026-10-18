@@ -12,7 +12,10 @@ import {
   type PeerDeliveryRequest,
 } from "@t3tools/contracts/j5";
 import { codexModelFamily, normalizeModelSlug } from "@t3tools/shared/model";
-import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  latestExecutedRun,
+  usageLimitBlockedRun,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -375,10 +378,21 @@ export const live: Layer.Layer<
     const outbox = yield* EffectOutboxV2;
     const peers = yield* PeerRegistryService;
     const httpClient = yield* HttpClient.HttpClient;
+    const settledEffect = Effect.fn(function* (effectId: string) {
+      yield* outbox.awaitSettled(effectId).pipe(Effect.timeout("30 seconds"));
+      const row = yield* outbox.get(effectId);
+      if (Option.isNone(row)) {
+        return yield* new A2ADeliveryTransportError({
+          operation: "await peer steering",
+          cause: `Steering effect ${effectId} does not exist.`,
+        });
+      }
+      return row.value;
+    });
     const awaitSteeringOutcome = Effect.fn(function* (effectId: string) {
       // Only bound the observer. The provider effect may still acknowledge later;
       // retries must inspect that same durable effect, never inject a new one.
-      const outcome = yield* outbox.awaitSettled(effectId).pipe(Effect.timeout("30 seconds"));
+      const outcome = yield* settledEffect(effectId);
       if (outcome.status !== "succeeded") {
         return yield* new A2ADeliveryTransportError({
           operation: "await peer steering",
@@ -426,7 +440,7 @@ export const live: Layer.Layer<
             (effect) => effect.request.type === "provider-turn.steer",
           );
           if (steer !== undefined) {
-            const outcome = yield* outbox.awaitSettled(steer.id).pipe(Effect.timeout("30 seconds"));
+            const outcome = yield* settledEffect(steer.id);
             return outcome.status === "succeeded" ? ("delivered" as const) : ("cancelled" as const);
           }
           const projection = yield* threads.getThreadProjection(participant.threadId);
@@ -571,13 +585,21 @@ export const live: Layer.Layer<
           // queue, so the held messages run first and it joins the back (#580). A retry of an
           // accepted delivery never resumes again. Upstream refuses to resume a thread stopped by
           // a usage limit, so that delivery waits unsent, as a held one, until the thread continues.
+          // So does one whose worktree setup failed, as upstream holds a message queued then
+          // (`worktreeMissingRun` in Orchestrator.ts): resuming would run it in the project checkout.
           const heldQueueRun = target.runs.find(
             (run) => run.status === "queued" && run.queueHeld === true,
           );
+          const latestRun = latestExecutedRun(target.runs);
+          const worktreeSetupFailed =
+            (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
+            latestRun.workspacePreparation?.type === "worktree" &&
+            target.thread.worktreePath === null;
           const queueBehindHeld =
             alreadyAccepted || heldQueueRun === undefined || target.runs.some(isActiveRun)
               ? Effect.void
-              : usageLimitBlockedRun(
+              : worktreeSetupFailed ||
+                  usageLimitBlockedRun(
                     target.runs,
                     target.turnItems,
                     target.providerSessions
@@ -628,7 +650,9 @@ export const live: Layer.Layer<
             if (yield* landed()) return;
             const askedRun = requestedSteeringRun(target, input.envelopeChannel, mode);
             if (askedRun !== undefined) {
-              yield* orchestrator
+              // Through ThreadManagement, so a project's disabled provider is refused as upstream's
+              // own steer is.
+              yield* threads
                 .dispatch({
                   type: "message.dispatch",
                   commandId: askedCommandId,
@@ -671,7 +695,7 @@ export const live: Layer.Layer<
           } else {
             // Pin the checked run and model. If it completed before admission,
             // upstream can accept this same message as a queued follow-up.
-            yield* orchestrator.dispatch({
+            yield* threads.dispatch({
               type: "message.dispatch",
               commandId: sendInput.commandId,
               threadId: sendInput.threadId,

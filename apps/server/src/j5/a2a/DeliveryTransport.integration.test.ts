@@ -2,6 +2,7 @@ import {
   AgentCrewInstanceService,
   layer as crewInstanceLayer,
 } from "./AgentCrewInstanceService.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { PlacementCommandId } from "./placementContracts.ts";
 import { dispatchCommand as dispatchIntakeCommand } from "../../orchestration-v2/ThreadMessageIntake.ts";
 import { J5AdaptedThreadToolkit, J5AdaptedThreadHandlersLive } from "./mcp/threadTools.ts";
@@ -65,7 +66,7 @@ import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2InterruptInput,
-  ProviderAdapterV2Shape,
+  ProviderAdapterV2,
   ProviderAdapterV2SteerInput,
   ProviderAdapterV2TurnInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -234,7 +235,7 @@ interface DeliveryHarness {
   readonly activeTurns: Ref.Ref<ReadonlyMap<ThreadId, FakeActiveTurn>>;
 }
 
-const makeOrchestrationAdapter = (harness: DeliveryHarness): ProviderAdapterV2Shape => ({
+const makeOrchestrationAdapter = (harness: DeliveryHarness): ProviderAdapterV2["Service"] => ({
   instanceId: modelSelection.instanceId,
   driver,
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
@@ -389,6 +390,7 @@ const makeTestLayer = (
       }),
     ),
     Layer.provide(mcpSessionRegistryTestLayer),
+    Layer.provide(McpProviderSessions.layer),
     Layer.provide(checkpointStoreTestLayer),
     Layer.provide(serverConfigLayer),
     Layer.provideMerge(ServerSettingsService.layerTest(settings)),
@@ -1947,7 +1949,8 @@ it.effect(
         );
         yield* worker.drain();
         yield* Fiber.join(running);
-        assert.equal((yield* outbox.awaitSettled(start!.id)).status, "succeeded");
+        yield* outbox.awaitSettled(start!.id);
+        assert.equal(Option.getOrThrow(yield* outbox.get(start!.id)).status, "succeeded");
         const inputs = yield* Ref.get(harness.startedInputs);
         assert.lengthOf(inputs, 1);
         assert.equal(inputs[0]?.threadId, target.threadId);
@@ -3447,6 +3450,57 @@ it.effect("keeps a delivery unsent while a usage limit blocks the receiver's hel
 
       assert.instanceOf(error, A2ADeliveryHeldError);
       const after = yield* threads.getThreadProjection(target.threadId);
+      assert.equal(after.runs.find((run) => run.id === earlierRunId)?.status, "queued");
+      assert.isFalse(after.messages.some((row) => row.id === deliveryMessageId(target.messageId)));
+    }).pipe(Effect.provide(makeTestLayer(harness)));
+  }),
+);
+
+it.effect("keeps a delivery unsent while a failed worktree setup holds the receiver's queue", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("held-worktree", "gpt-5.4");
+      const threads = yield* ThreadManagementService;
+      const transport = yield* A2ADeliveryTransport;
+      const earlierRunId = yield* idleWithHeldQueue(harness, target, {
+        class: "provider_error",
+        message: "Worktree setup failed.",
+        code: null,
+        retryable: null,
+      });
+      // The failed run had been preparing a worktree that never got bound to the thread.
+      yield* (yield* OrchestratorV2).dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:held-worktree:unbind"),
+        threadId: target.threadId,
+        worktreePath: null,
+      });
+      const failed = (yield* threads.getThreadProjection(target.threadId)).runs.find(
+        (run) => run.status === "failed",
+      )!;
+      yield* (yield* EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("event:held-worktree:preparation"),
+            type: "run.updated",
+            threadId: target.threadId,
+            runId: failed.id,
+            providerInstanceId: failed.providerInstanceId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              ...failed,
+              workspacePreparation: { type: "worktree", baseRef: "main", startFromOrigin: false },
+            },
+          },
+        ],
+      });
+
+      const error = yield* transport.deliverAgent(target.delivery).pipe(Effect.flip);
+
+      assert.instanceOf(error, A2ADeliveryHeldError);
+      const after = yield* threads.getThreadProjection(target.threadId);
+      assert.isNull(after.thread.worktreePath);
       assert.equal(after.runs.find((run) => run.id === earlierRunId)?.status, "queued");
       assert.isFalse(after.messages.some((row) => row.id === deliveryMessageId(target.messageId)));
     }).pipe(Effect.provide(makeTestLayer(harness)));

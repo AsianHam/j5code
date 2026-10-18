@@ -19,11 +19,15 @@ import * as Layer from "effect/Layer";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { layerFromAdapters as makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
-import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import * as Projections from "../../orchestration-v2/ProjectionStore.ts";
 import * as Threads from "../../orchestration-v2/ThreadManagementService.ts";
+import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
+import { ThreadLaunchService } from "../../orchestration-v2/ThreadLaunchService.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import * as Mcp from "../../mcp/OrchestratorMcpService.ts";
 import { McpInvocationContext } from "../../mcp/McpInvocationContext.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -74,7 +78,7 @@ const adapter = {
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("live provider execution is disabled in this test"),
-} as ProviderAdapterV2Shape;
+} as ProviderAdapter.ProviderAdapterV2["Service"];
 const database = SqlitePersistenceMemory;
 const adapters = makeLayer([adapter]);
 const orchestration = makeOrchestratorV2ReplayLayerWithRegistry(
@@ -82,7 +86,12 @@ const orchestration = makeOrchestratorV2ReplayLayerWithRegistry(
   adapters,
   { databaseLayer: database, runEffectWorker: false },
 );
-const threads = Threads.layer.pipe(Layer.provide(orchestration));
+const settings = ServerSettings.layerTest({});
+const threads = Threads.layer.pipe(
+  Layer.provide(orchestration),
+  Layer.provide(settings),
+  Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(database))),
+);
 const registry = Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([provider]) });
 const mcp = Mcp.layer.pipe(
   Layer.provide(threads),
@@ -91,6 +100,9 @@ const mcp = Mcp.layer.pipe(
   Layer.provide(Layer.mock(ScheduledTaskService)({})),
   Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
   Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+  Layer.provide(Layer.mock(GitVcsDriver)({})),
+  Layer.provide(Layer.mock(ThreadLaunchService)({})),
+  Layer.provide(settings),
   Layer.provide(NodeServices.layer),
 );
 const testLayer = Layer.mergeAll(

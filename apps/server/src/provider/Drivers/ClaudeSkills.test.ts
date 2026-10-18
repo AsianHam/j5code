@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveProviderSkillPaths } from "../../j5/skills/skillPaths.ts";
 
 import { discoverClaudeSkills, skillOverrideSettingsPaths } from "./ClaudeSkills.ts";
@@ -101,7 +101,7 @@ it.layer(NodeServices.layer)("Claude plugin inventory", (it) => {
       });
       const discovered = yield* discoverClaudeSkills({ homePath: configDir }, undefined, {
         PROGRAMDATA: programData,
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
       const skills = yield* resolveProviderSkillPaths(discovered);
       assert.deepStrictEqual(skills, [
         {
@@ -529,7 +529,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           ["---", "description: Run: browser objectives.", field, "---"].join("\n"),
         );
       }
-      // A stray file (not a directory with SKILL.md) must be skipped.
       yield* fs.makeDirectory(skillsDir, { recursive: true });
       yield* fs.writeFileString(path.join(skillsDir, "README.md"), "not a skill");
 
@@ -568,8 +567,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["env-skill"],
       );
 
-      // An explicit homePath wins over the environment variable, matching
-      // makeClaudeEnvironment which overwrites CLAUDE_CONFIG_DIR for the CLI.
       const explicitHome = path.join(tempDir, "explicit-home");
       yield* writeSkill(
         path.join(explicitHome, "skills"),
@@ -858,9 +855,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
   it.effect("lets the administrator's managed policy outrank every other settings file", () =>
     Effect.gen(function* () {
-      // The function is pure on its `path` argument, so hand it the
-      // implementation matching each platform under test rather than the
-      // host's.
       const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerPosix));
       const win32Path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
 
@@ -888,8 +882,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["C:\\Users\\me\\.claude\\settings.json"],
       );
 
-      // Only the repository root's local file joins in, after the
-      // workspace's own local file so it wins.
       assert.deepEqual(
         skillOverrideSettingsPaths(
           path,
@@ -907,7 +899,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           "/etc/claude-code/managed-settings.json",
         ],
       );
-      // A workspace that is the root itself is not read twice.
       assert.deepEqual(
         skillOverrideSettingsPaths(path, "/home/.claude", "/repo", "linux", {}, "/repo"),
         [
@@ -961,8 +952,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir });
 
-      // The frontmatter name is not the command, so an override naming it is
-      // not the override Claude Code would apply either.
       assert.deepEqual(
         skills.map((skill) => [skill.name, skill.enabled]),
         [["probe-alias", true]],

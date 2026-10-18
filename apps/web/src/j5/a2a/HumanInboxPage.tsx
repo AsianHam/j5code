@@ -267,7 +267,7 @@ function OpenInboxItem({
   return (
     <li className="border-b border-border/70 last:border-b-0">
       <details className="group/details">
-        <summary className="flex cursor-pointer list-none items-start gap-3 px-1 py-4 outline-hidden marker:hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:gap-4 [&::-webkit-details-marker]:hidden">
+        <summary className="flex cursor-pointer list-none items-start gap-3 px-1 py-4 outline-hidden marker:hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:gap-4 [&::-webkit-details-marker]:hidden">
           <Badge className="mt-0.5" variant={urgency.variant}>
             <span className="uppercase tracking-wide">{urgency.label}</span>
           </Badge>
@@ -361,7 +361,7 @@ function AnsweredShelf({
   if (items.length === 0) return null;
   return (
     <details className="group/shelf border-t border-border pt-4">
-      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md py-2 text-sm font-medium text-muted-foreground outline-hidden marker:hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md py-2 text-sm font-medium text-muted-foreground outline-hidden marker:hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
         <ChevronRightIcon
           aria-hidden
           className="size-4 transition-transform duration-150 group-open/shelf:rotate-90"

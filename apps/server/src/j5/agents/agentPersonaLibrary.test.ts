@@ -10,7 +10,7 @@ import {
   ProviderInstanceId,
   type OrchestrationV2AgentPersonaAssignment,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -275,7 +275,7 @@ describe("imported persona library", () => {
   );
 
   // Needs mkfifo; Windows has no FIFOs to reject.
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "refuses to import a target that is not a regular file or folder",
     () =>
       Effect.gen(function* () {

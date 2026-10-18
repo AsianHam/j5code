@@ -3,9 +3,9 @@ import { assert, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
-  AuthAdministrativeScopes,
   type AuthEnvironmentScope,
   AuthOrchestrationReadScope,
+  AuthRelayWriteScope,
   AuthSessionId,
   AuthStandardClientScopes,
   ProjectId,
@@ -1113,11 +1113,20 @@ it.layer(testLayer)("who may make and end an open link", (it) => {
         subject,
         scopes,
       });
-      const admin = session("one-time-token", AuthAdministrativeScopes);
-      const paired = session("one-time-token", AuthStandardClientScopes);
+      const admin = session("one-time-token", AuthStandardClientScopes);
+      // A device paired without Manage access.
+      const paired = session(
+        "one-time-token",
+        AuthStandardClientScopes.filter(
+          (scope) =>
+            scope !== AuthAccessReadScope &&
+            scope !== AuthAccessWriteScope &&
+            scope !== AuthRelayWriteScope,
+        ),
+      );
       const reader = session("one-time-token", [AuthOrchestrationReadScope, AuthAccessReadScope]);
       // Even one that somehow held every permission.
-      const guest = session(PersonAccess.GUEST_SESSION_SUBJECT, AuthAdministrativeScopes);
+      const guest = session(PersonAccess.GUEST_SESSION_SUBJECT, AuthStandardClientScopes);
       for (const method of [
         J5_SHARING_WS_METHODS.createOpenLink,
         J5_SHARING_WS_METHODS.revokeOpenLink,

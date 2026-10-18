@@ -1,5 +1,5 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -53,7 +53,7 @@ export const discoverClaudePluginSkills = Effect.fn("discoverClaudePluginSkills"
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const registry = yield* readPluginJson(
     path.join(configDir, "plugins", "installed_plugins.json"),
   ).pipe(

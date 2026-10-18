@@ -78,6 +78,7 @@ const rawCapabilities = {
           ],
         },
       ],
+      runtimeModes: ["approval-required", "full-access"] as const,
       canRunChildTask: false,
       canRunCrossProviderChildTask: false,
       constraints: ["Provider authentication is required."],
@@ -155,6 +156,8 @@ it.effect("maps capabilities without inherited or delegation claims", () =>
           driverKind: "codex",
           displayName: "Codex",
           models: rawCapabilities.providers[0]!.models,
+          // Delegation refuses a runtime mode the provider does not list, so the caller sees them.
+          runtimeModes: ["approval-required", "full-access"],
           constraints: ["Provider authentication is required."],
         },
       ],

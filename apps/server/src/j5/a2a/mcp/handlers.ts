@@ -657,7 +657,8 @@ const handlers = {
         );
       }
       const acceptedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
-      const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+      const requestKey =
+        input.client_request_id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
       const send = (claimed?: ReadonlyArray<ChatAttachment>) =>
         service.send({
           commandId: commandIdForRequest({
@@ -1044,7 +1045,8 @@ const handlers = {
           );
         }
       }
-      const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+      const requestKey =
+        input.client_request_id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
       const stableInput = {
         providerSessionId: spawner.requestNamespace,
         requestKey,
@@ -1348,7 +1350,8 @@ const handlers = {
       Effect.gen(function* () {
         const crypto = yield* Crypto.Crypto;
         const captain = yield* preflightCrewCaptain(scope, "j5_propose_crew");
-        const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+        const requestKey =
+          input.client_request_id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
         // The Captain's playbooks are the ones its own j5_playbook_list shows.
         const playbook =
           input.playbook === undefined
@@ -1384,7 +1387,8 @@ const handlers = {
       Effect.gen(function* () {
         const crypto = yield* Crypto.Crypto;
         const captain = yield* preflightCrewCaptain(scope, "j5_request_crew_member");
-        const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+        const requestKey =
+          input.client_request_id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
         const outcome = yield* (yield* CrewProposalService)
           .requestMember({
             requestKey: `${scope.thread.providerSessionId}:${requestKey}`,
@@ -1519,7 +1523,8 @@ const handlers = {
           ),
         );
       }
-      const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+      const requestKey =
+        input.client_request_id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
       const commandId = lifecycleCommandId({
         // An outside agent's retry keys are namespaced by its client session.
         providerSessionId: scope?.thread.providerSessionId ?? invocation.requestNamespace,
@@ -1549,7 +1554,8 @@ const handlers = {
       Effect.gen(function* () {
         const crypto = yield* Crypto.Crypto;
         const caller = yield* resolveCallerMembership(scope);
-        const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+        const requestKey =
+          input.client_request_id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
         const outcome = yield* (yield* CrewStopService)
           .stop({
             callerParticipantId: caller.participantId,
@@ -1592,7 +1598,8 @@ const handlers = {
       Effect.gen(function* () {
         const crypto = yield* Crypto.Crypto;
         const caller = yield* resolveCallerMembership(scope);
-        const requestKey = input.client_request_id ?? (yield* crypto.randomUUIDv4);
+        const requestKey =
+          input.client_request_id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
         const archivedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
         const outcome = yield* (yield* ArchiveCrewService).archive({
           providerSessionId: scope.thread.providerSessionId,

@@ -88,11 +88,9 @@ export class SkillCatalogError extends Schema.TaggedError<SkillCatalogError>()(
   },
 ) {}
 
-// ---------------------------------------------------------------------------
 // Skill catalog RPCs. These ride the upstream WebSocket RPC transport via one
 // `WsRpcGroup.merge(...)` call so environment scoping, remote connections, and
 // mobile keep working without a second wire path, while every definition stays here.
-// ---------------------------------------------------------------------------
 
 export const J5_SKILL_CATALOG_WS_METHODS = {
   getSkillCatalogStatus: "j5.skills.status",

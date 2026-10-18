@@ -15,8 +15,8 @@ import type {
 import { useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { AppText as Text } from "../../components/ui/AppText";
+import { Menu } from "../../components/ui/Menu";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { agentPersonaEnvironment } from "./agentPersonaAtoms";
@@ -135,7 +135,7 @@ export function AgentRoutePolicyFields(props: {
             <View className="flex-row items-start gap-2">
               <View className="min-w-0 flex-1 gap-2">
                 <Text className="text-sm font-t3-medium">{label}</Text>
-                <ControlPillMenu
+                <Menu
                   actions={modelGroups.map((harness) => ({
                     id: harness.driver,
                     title: harness.label,
@@ -169,7 +169,7 @@ export function AgentRoutePolicyFields(props: {
                   >
                     <Text numberOfLines={1}>{selected?.label}</Text>
                   </Pressable>
-                </ControlPillMenu>
+                </Menu>
               </View>
               <View className="w-28">
                 <EditorChoice

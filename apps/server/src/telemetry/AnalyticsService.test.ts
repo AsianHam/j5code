@@ -11,7 +11,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
@@ -58,11 +58,6 @@ const SentBatch = Schema.fromJsonString(
   }),
 );
 
-/**
- * HTTP client that reads each batch, then fails as if the connection dropped
- * before the response arrived. PostHog stores these batches, so the server
- * must not send them forever.
- */
 const layerAcceptThenFailClient = (batches: Array<ReadonlyArray<{ readonly uuid: string }>>) =>
   Layer.succeed(
     HttpClient.HttpClient,
@@ -107,8 +102,8 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         ),
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(HostProcessPlatform, "win32"),
-            Layer.succeed(HostProcessArchitecture, "x64"),
+            Layer.succeed(HostProcess.Platform, "win32"),
+            Layer.succeed(HostProcess.Architecture, "x64"),
             layerAcceptThenFailClient(batches),
           ),
         ),
@@ -119,7 +114,6 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         for (let index = 0; index < 20; index += 1) {
           yield* analytics.record("test.retry", { index });
         }
-        // Before the fix this loop sent the batch about once a second.
         for (let second = 0; second < 600; second += 1) {
           yield* TestClock.adjust("1 second");
         }
@@ -170,8 +164,8 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         Layer.provide(layerConfig),
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(HostProcessPlatform, "linux"),
-            Layer.succeed(HostProcessArchitecture, "arm64"),
+            Layer.succeed(HostProcess.Platform, "linux"),
+            Layer.succeed(HostProcess.Architecture, "arm64"),
           ),
         ),
         Layer.provideMerge(NodeHttpServer.layerTest),
@@ -267,8 +261,8 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         Layer.provide(layerConfig),
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(HostProcessPlatform, "linux"),
-            Layer.succeed(HostProcessArchitecture, "arm64"),
+            Layer.succeed(HostProcess.Platform, "linux"),
+            Layer.succeed(HostProcess.Architecture, "arm64"),
           ),
         ),
         Layer.provideMerge(NodeHttpServer.layerTest),

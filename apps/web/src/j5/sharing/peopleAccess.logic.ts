@@ -8,6 +8,7 @@ const HIDDEN_FROM_A_GUEST: ReadonlySet<string> = new Set([
   "/settings/archived",
   "/settings/personas",
   "/settings/skills",
+  "/settings/diagnostics",
 ]);
 
 /**

@@ -13,7 +13,10 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { inboxAnswerableApprovals } from "@t3tools/shared/j5/crewRuntimeRequests";
 import type { OrchestratorV2Error } from "../../orchestration-v2/Orchestrator.ts";
-import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
+import {
+  ThreadManagementService,
+  type ThreadManagementProviderInstanceDisabledError,
+} from "../../orchestration-v2/ThreadManagementService.ts";
 import { AgentCrewInstanceService, type AgentCrewInstance } from "./AgentCrewInstanceService.ts";
 import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
 
@@ -46,7 +49,7 @@ export class CrewRuntimeRequestConflictError extends Data.TaggedError(
 /** The answer could not be sent for a reason other than the request's state; the route logs it. */
 export class CrewRuntimeRequestDispatchError extends Data.TaggedError(
   "CrewRuntimeRequestDispatchError",
-)<{ readonly cause: OrchestratorV2Error }> {
+)<{ readonly cause: OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError }> {
   override get message() {
     return "The answer could not be sent.";
   }

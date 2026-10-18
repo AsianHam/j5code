@@ -63,7 +63,7 @@ export function SidebarHighlightsButton() {
                 render={
                   <button
                     aria-label={label}
-                    className="relative inline-flex size-8 cursor-pointer items-center justify-center rounded-full bg-sidebar-control-surface text-sidebar-foreground outline-hidden ring-ring transition-colors hover:bg-sidebar-row-hover focus-visible:ring-2"
+                    className="relative inline-flex size-8 cursor-pointer items-center justify-center rounded-full bg-sidebar-control-surface text-sidebar-foreground outline-hidden ring-ring transition-colors hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset"
                     type="button"
                   >
                     <GiftIcon aria-hidden className="size-4" />

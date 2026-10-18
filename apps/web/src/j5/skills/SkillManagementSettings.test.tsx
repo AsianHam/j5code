@@ -546,7 +546,8 @@ it("hides empty providers in the current scope, retains cached skills, and keeps
   const panel = await renderPanel();
   const headers = () =>
     panel.root.findAllByType("thead").map((header) => header.findAllByType("th").map(textContent));
-  expect(headers()).toEqual([["Skill", "Codex Codex", "OpenCode OpenCode"]]);
+  // The mocked registry has no OpenCode client, so its icon falls back to initials.
+  expect(headers()).toEqual([["Skill", "Codex Codex", "OP OpenCode OpenCode"]]);
   expect(discoveryText()).not.toContain("Claude");
   expect(discoveryText()).not.toContain("Antigravity");
   expect(inventoryText()).toContain("Stale");
@@ -554,7 +555,7 @@ it("hides empty providers in the current scope, retains cached skills, and keeps
   await act(async () =>
     panel.root.findByType("input").props.onChange({ target: { value: "review" } }),
   );
-  expect(headers()).toEqual([["Skill", "Codex Codex", "OpenCode OpenCode"]]);
+  expect(headers()).toEqual([["Skill", "Codex Codex", "OP OpenCode OpenCode"]]);
   await act(async () =>
     panel.root.findAllByType("select")[1]!.props.onChange({ target: { value: claudeId } }),
   );
@@ -570,7 +571,7 @@ it("hides empty providers in the current scope, retains cached skills, and keeps
   await act(async () =>
     panel.root.findAllByType("select")[0]!.props.onChange({ target: { value: "" } }),
   );
-  expect(headers()).toEqual([["Skill", "Claude Claude", "OpenCode OpenCode"]]);
+  expect(headers()).toEqual([["Skill", "Claude Claude", "OP OpenCode OpenCode"]]);
 });
 
 it("groups skills in origin order, collapses categories independently, and reveals search matches", async () => {

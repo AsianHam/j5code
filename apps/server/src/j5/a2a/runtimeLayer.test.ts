@@ -19,6 +19,12 @@ import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../mcp/PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
+import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
+import { ManagedProjectFolders } from "../../project/ManagedProjectFolders.ts";
+import { PreviewManager } from "../../preview/Manager.ts";
+import { PullRequestReviewGuideService } from "../../pullRequest/PullRequestReviewGuideService.ts";
+import { SourceControlRepositoryService } from "../../sourceControl/SourceControlRepositoryService.ts";
+import { ThreadSearch } from "../../orchestration-v2/ThreadSearch.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import { EnvironmentAuth } from "../../auth/EnvironmentAuth.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
@@ -254,6 +260,12 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
                 Layer.mock(VcsProcess)({}),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 Layer.mock(PreviewBrowser.PreviewBrowser)({}),
+                Layer.mock(GitVcsDriver)({}),
+                Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+                Layer.mock(PreviewManager)({}),
+                Layer.mock(PullRequestReviewGuideService)({}),
+                Layer.mock(SourceControlRepositoryService)({}),
+                Layer.mock(ThreadSearch)({}),
                 ServerSettingsService.layerTest(),
               ),
             ),
