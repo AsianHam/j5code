@@ -12,7 +12,6 @@ import {
   J5SharedConversationRpcGroup,
   J5ClientReadRpcGroup,
   J5PlaybookRpcGroup,
-  J5SharingRpcGroup,
 } from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -38,11 +37,9 @@ import { Access } from "./sharing/Access.ts";
 import { makeAccessRpcHandlers } from "./sharing/accessRpc.ts";
 import { makePeopleRpcHandlers } from "./sharing/peopleRpc.ts";
 import { makeSharedConversationRpcHandlers } from "./sharing/sharedConversationRpc.ts";
-import { LegacyPeople } from "./sharing/LegacyPeople.ts";
 import { Links } from "./sharing/Links.ts";
 import { People } from "./sharing/People.ts";
 import { PersonAccess, type SessionIdentity } from "./sharing/PersonAccess.ts";
-import { makeSharingRpcHandlers } from "./sharing/sharingRpc.ts";
 import { makeSkillCatalogRpcHandlers } from "./skills/skillCatalogRpc.ts";
 import { makeSkillLinkRpcHandlers } from "./skills/skillLinkRpc.ts";
 
@@ -53,7 +50,6 @@ const J5WsRpcGroup = J5AgentPersonaRpcGroup.merge(
   J5SkillLinkRpcGroup,
   J5PlaybookRpcGroup,
   J5ClientActionRpcGroup,
-  J5SharingRpcGroup,
   J5AccessRpcGroup,
   J5PeopleRpcGroup,
   J5SharedConversationRpcGroup,
@@ -72,7 +68,6 @@ type J5WsRpcServices =
   | ReadChanges
   | ArtifactDeletion
   | PersonAccess
-  | LegacyPeople
   | People
   | Links
   | Access;
@@ -91,7 +86,6 @@ export const j5WsRpcServices = Effect.context<J5WsRpcServices>().pipe(
       ReadChanges,
       ArtifactDeletion,
       PersonAccess,
-      LegacyPeople,
       People,
       Links,
       Access,
@@ -143,11 +137,6 @@ export const layerJ5WsRpc = (
         })),
         ...makePeopleRpcHandlers({ people: yield* People, links: yield* Links, session }),
         ...makeSharedConversationRpcHandlers(),
-        ...makeSharingRpcHandlers({
-          access: yield* PersonAccess,
-          people: yield* LegacyPeople,
-          session,
-        }),
       });
     }),
   ).pipe(Layer.provide(Layer.succeedContext(services)));
