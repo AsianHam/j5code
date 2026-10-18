@@ -3,8 +3,11 @@ import { LEVEL_PERMISSIONS } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as SessionStore from "../../auth/SessionStore.ts";
+import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
 import { People } from "./People.ts";
 import * as PersonAccess from "./PersonAccess.ts";
+import { makeSessionRenewal } from "./SessionRenewal.ts";
 import {
   PROJECT,
   anySessionId,
@@ -97,6 +100,46 @@ it.layer(peopleLayer)("People", (it) => {
           people.scopePeople(outsiderPhone.identity, { kind: "thread", threadId: builder }),
         ),
         "ScopeNotSharedError",
+      );
+    }),
+  );
+
+  it.effect("lists a device waiting to renew, and an Owner ends it so it never renews", () =>
+    Effect.gen(function* () {
+      const people = yield* People;
+      const sessions = yield* SessionStore.SessionStore;
+      const renewal = makeSessionRenewal({
+        sessions,
+        repository: yield* AuthSessionRepository,
+        people: yield* PersonAccess.PersonAccess,
+        sql: yield* SqlClient.SqlClient,
+      });
+      const lead = yield* person("Away lead", [{ scope: { kind: "server" }, level: "owner" }]);
+      const laptop = yield* device(lead.personId, LEVEL_PERMISSIONS.owner);
+      // Lowered while the laptop is away: its session is ended so that it renews.
+      yield* people.setLevel({
+        personId: lead.personId,
+        scope: { kind: "server" },
+        level: "collaborator",
+      });
+      const devicesOf = people
+        .list(ownerDesktop)
+        .pipe(
+          Effect.map(
+            (everyone) => everyone.find((entry) => entry.personId === lead.personId)?.devices ?? [],
+          ),
+        );
+      const listed = yield* devicesOf;
+      assert.deepStrictEqual(
+        listed.map((entry) => [entry.sessionId, entry.connected]),
+        [[laptop.sessionId, false]],
+      );
+
+      yield* people.revokeDevice(laptop.sessionId);
+      assert.deepStrictEqual(yield* devicesOf, []);
+      assert.strictEqual(
+        (yield* renewal.renewToken(laptop.token).pipe(Effect.flip))._tag,
+        "NotRenewableError",
       );
     }),
   );

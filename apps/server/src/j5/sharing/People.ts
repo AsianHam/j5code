@@ -1,6 +1,7 @@
 import type { AuthSessionId } from "@t3tools/contracts";
 import {
   type PeopleEntry,
+  type PersonDevice,
   type PersonLevel,
   type PersonScope,
   type ProjectOrThreadScope,
@@ -10,13 +11,16 @@ import {
   levelReaches,
 } from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SessionStore from "../../auth/SessionStore.ts";
+import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
 import { ParticipantId } from "../a2a/contracts.ts";
 import { Access, type AccessRenewalError } from "./Access.ts";
 import { Links, type LinkStorageError, type ScopeNotFoundError, requireScope } from "./Links.ts";
@@ -156,7 +160,12 @@ const NEARNESS = { thread: 0, ancestor: 1, project: 2, server: 3 } as const;
 export const layer: Layer.Layer<
   People,
   never,
-  PersonAccess | Access | Links | SessionStore.SessionStore | SqlClient.SqlClient
+  | PersonAccess
+  | Access
+  | Links
+  | SessionStore.SessionStore
+  | AuthSessionRepository
+  | SqlClient.SqlClient
 > = Layer.effect(
   People,
   Effect.gen(function* () {
@@ -164,6 +173,7 @@ export const layer: Layer.Layer<
     const access = yield* Access;
     const links = yield* Links;
     const sessions = yield* SessionStore.SessionStore;
+    const repository = yield* AuthSessionRepository;
     const sql = yield* SqlClient.SqlClient;
 
     /** A person id as a client sent it. One that could not be an id names no one. */
@@ -260,6 +270,43 @@ export const layer: Layer.Layer<
             ),
           );
         const sessionById = new Map(active.map((session) => [session.sessionId, session]));
+        // A device J5 ended so it can renew is no longer live upstream, but is still theirs, and
+        // an Owner may end it for good before it comes back.
+        const at = yield* DateTime.now;
+        const awaiting = new Map<string, PersonDevice>();
+        for (const record of records) {
+          for (const device of record.devices) {
+            if (sessionById.has(device.sessionId) || device.renewPendingSince === null) continue;
+            const stored = yield* repository
+              .getById({ sessionId: device.sessionId })
+              .pipe(
+                Effect.mapError(
+                  (cause) => new PeopleStorageError({ operation: "read a device", cause }),
+                ),
+              );
+            if (Option.isNone(stored) || !DateTime.isGreaterThan(stored.value.expiresAt, at)) {
+              continue;
+            }
+            const { client } = stored.value;
+            awaiting.set(device.sessionId, {
+              sessionId: device.sessionId,
+              client: {
+                deviceType: client.deviceType,
+                ...(client.label ? { label: client.label } : {}),
+                ...(client.ipAddress ? { ipAddress: client.ipAddress } : {}),
+                ...(client.userAgent ? { userAgent: client.userAgent } : {}),
+                ...(client.os ? { os: client.os } : {}),
+                ...(client.browser ? { browser: client.browser } : {}),
+              },
+              issuedAt: stored.value.issuedAt,
+              expiresAt: stored.value.expiresAt,
+              lastConnectedAt: stored.value.lastConnectedAt,
+              connected: false,
+              permissions: [...stored.value.scopes],
+              ceiling: device.ceiling === null ? null : [...device.ceiling],
+            });
+          }
+        }
         const deviceLinks = (yield* links.list).filter((link) => link.kind === "device");
         return records.map((record): PeopleEntry => ({
           personId: record.person.personId,
@@ -267,12 +314,15 @@ export const layer: Layer.Layer<
           firstOwner: record.person.firstOwner,
           you: record.person.personId === askerId,
           levels: record.levels,
-          // A recorded session upstream no longer lists has expired, been ended, or is waiting
-          // to renew; it is listed again once renewed.
+          // A recorded session upstream no longer lists, and that is not waiting to renew, has
+          // expired or been ended.
           devices: record.devices.flatMap((device) => {
             const session = sessionById.get(device.sessionId);
+            const waiting = awaiting.get(device.sessionId);
             return session === undefined
-              ? []
+              ? waiting === undefined
+                ? []
+                : [waiting]
               : [
                   {
                     sessionId: session.sessionId,
