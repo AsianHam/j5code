@@ -1,6 +1,6 @@
 ---
 name: j5-live-test
-description: Live-test a J5 Code change on a real server with real agents. Use when unit tests cannot prove the change, such as UI flows, agent turns, agent-to-agent messages, Crews, Playbooks, peering, first run, or PR screenshots. Covers asking for a test and running one. Sets up a safe test server with one script, then hands the browser steps to test-t3-app.
+description: Live-test a J5 Code change on a real server with real agents. Use when unit tests cannot prove the change, such as UI flows, agent turns, agent-to-agent messages, Crews, Playbooks, peering, first run, or PR screenshots and videos. Covers asking for a test and running one. Sets up a safe test server with one script, then hands the browser steps to test-t3-app.
 ---
 
 # Live-test J5 Code
@@ -27,6 +27,14 @@ what was not exercised live, and what the person must test by hand in the PR's
 
 Record each testing decision there too, with its reason: which rows you
 judged did not apply, and what you re-tested or did not after a later change.
+
+Put the report's videos in the PR description beside the screenshots. Once
+the description is saved, check each plays for a signed-out viewer: this must
+print `200 video/mp4`.
+
+```bash
+curl -sL -o /dev/null -w '%{http_code} %{content_type}\n' "<url>"
+```
 
 More than one tester can run at once. Each has its own server, and they share
 one browser, so one tester's timed-out call can cost another a single failed
@@ -166,6 +174,7 @@ send whoever asked for the test a short message with the verdict and that path.
    reason. Say how each was verified: live, by test, or from code.
 5. Bugs found, each with steps to reproduce.
 6. Rig problems: anything in the test setup that got in the way.
+7. Videos: each URL with a one-line caption. Leave out when empty.
 
 A claim without one of those three labels counts as not verified.
 
@@ -198,6 +207,44 @@ Repeat `--pair` for each state. For a state the change adds, use
 `--new "<caption>" <after.png>`. It prints the before/after table for the PR
 description. Run `rebuild` with no flag when you are done, which removes the
 base checkout. It refuses if you edited a file there, so do not.
+
+## PR videos
+
+Motion, timing, or an interaction sequence needs a video. Record base and head
+with the same steps, each on its own server as for screenshots.
+
+1. Resize the tab to 1280x800, call `preview_recording_start`, do the steps,
+   then call `preview_recording_stop`. It returns an MP4 in the server's data
+   directory. Copy it out under a name that says what it shows: GitHub shows
+   the name above the player.
+2. Open the PR in a new tab with `preview_open`, passing the "GitHub Video
+   Upload" profile from `preview_status` as `profileId`. If there is no PR
+   yet, open its tracking issue. That profile is signed in to the developer's
+   GitHub account: open nothing else under it.
+3. Call `preview_upload` with `locator: "#fc-new_comment_field"` and the MP4's
+   path. GitHub uploads it and writes a
+   `https://github.com/user-attachments/assets/<id>` URL into the comment
+   box. `preview_wait_for` cannot see text in that box, so read
+   `document.getElementById("new_comment_field").value` with
+   `preview_evaluate` until the URL is there.
+4. Empty the box (set its value to `""` and dispatch an `input` event), never
+   submit it, and close the tab.
+5. Check GitHub renders the URL as a player. This must print `<video`:
+
+   ```bash
+   printf '%s' "<url>" | jq -Rs '{text: ., mode: "gfm", context: "Jacksondr5/j5code"}' \
+     | gh api markdown --input - | grep -o '<video'
+   ```
+
+   This checks rendering only. The URL refuses signed-out requests until a
+   posted PR or comment contains it, so whoever opens the PR checks playback
+   (see "Ask for a test"). `curl -sI` gets a 403 even then; use a GET.
+
+6. Put each URL in the report with its caption. In the PR description, each
+   URL goes on a line of its own, which GitHub renders as a player.
+
+If the profile is missing, or GitHub shows it signed out, stop and ask the
+developer to sign in to it. Never sign in yourself.
 
 ## A server for the developer
 
