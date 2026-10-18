@@ -44,6 +44,7 @@ export default Effect.gen(function* () {
   // A person's answer to an approval or a question, by upstream's request id and the command
   // that carried it. Written as the answer is taken in, before upstream settles the prompt, so it
   // is a claim: who answered is the claim whose command upstream's event log shows settled it.
+  // `stored_prefix` is the mark the platform put on a question's answer, `''` for none.
   yield* sql`
     CREATE TABLE j5_a2a_prompt_answer (
       thread_id TEXT NOT NULL,
@@ -52,6 +53,7 @@ export default Effect.gen(function* () {
       person_id TEXT NOT NULL,
       display_name TEXT,
       level TEXT NOT NULL CHECK (level IN ('owner', 'collaborator')),
+      stored_prefix TEXT NOT NULL,
       answered_at TEXT NOT NULL,
       PRIMARY KEY (thread_id, request_id, command_id)
     )

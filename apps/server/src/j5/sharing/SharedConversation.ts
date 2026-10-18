@@ -449,18 +449,26 @@ const make = Effect.gen(function* () {
    * earlier answer, and a replayed command id all name no one. The first claim for a command
    * stands. A failure to record is logged and does not stop the answer.
    */
-  const recordAnswer: SharedConversationShape["claimAnswer"] = (personId, answer) =>
+  const recordAnswer = (
+    personId: ParticipantId,
+    answer: Parameters<SharedConversationShape["claimAnswer"]>[1],
+    /** Whether the answer is in words, which carry the answer line. */
+    marked: boolean,
+  ) =>
     Effect.gen(function* () {
       if (!(yield* shared.isShared(answer.threadId))) return;
       const author = yield* authorOn(personId, answer.threadId);
       if (author === null) return;
       const answeredAt = DateTime.formatIso(yield* DateTime.now);
+      const storedPrefix = marked ? `${answerLine(author)} ` : "";
       yield* sql`
         INSERT INTO j5_a2a_prompt_answer (
-          thread_id, request_id, command_id, person_id, display_name, level, answered_at
+          thread_id, request_id, command_id, person_id, display_name, level, stored_prefix,
+          answered_at
         ) VALUES (
           ${answer.threadId}, ${answer.requestId}, ${answer.commandId},
-          ${author.personId}, ${author.displayName}, ${author.level}, ${answeredAt}
+          ${author.personId}, ${author.displayName}, ${author.level}, ${storedPrefix},
+          ${answeredAt}
         )
         ON CONFLICT (thread_id, request_id, command_id) DO NOTHING
       `;
@@ -528,7 +536,10 @@ const make = Effect.gen(function* () {
         admitted.type === "runtime-request.respond" ||
         admitted.type === "thread.user-input.dismiss"
       ) {
-        yield* recordAnswer(personId, admitted);
+        // An answer in words had its mark put on it above; a decision or a dismissal has none.
+        const marked =
+          admitted.type === "runtime-request.respond" && admitted.answers !== undefined;
+        yield* recordAnswer(personId, admitted, marked);
       }
       return admitted;
     });
@@ -583,8 +594,10 @@ const make = Effect.gen(function* () {
       readonly person_id: string;
       readonly display_name: string | null;
       readonly level: WriterLevel;
+      readonly stored_prefix: string;
     }>`
-      SELECT answer.request_id, answer.person_id, answer.display_name, answer.level
+      SELECT answer.request_id, answer.person_id, answer.display_name, answer.level,
+        answer.stored_prefix
       FROM j5_a2a_prompt_answer AS answer
       WHERE answer.thread_id = ${threadId} AND ${settledItsPrompt}
       ORDER BY answer.answered_at, answer.request_id
@@ -605,6 +618,7 @@ const make = Effect.gen(function* () {
         name: row.display_name,
         level: row.level,
         you: row.person_id === viewer,
+        storedPrefix: row.stored_prefix,
       })),
     } satisfies ThreadAuthors;
   });
@@ -727,7 +741,7 @@ const make = Effect.gen(function* () {
         ),
       ),
     withdrawQueued,
-    claimAnswer: recordAnswer,
+    claimAnswer: (personId, answer) => recordAnswer(personId, answer, false),
   });
 });
 

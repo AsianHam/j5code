@@ -380,8 +380,20 @@ it.effect("an answer carries its author, and who answered shows once upstream se
       )
     `;
     assert.deepStrictEqual((yield* authors(threadId, owner)).answers, [
-      { requestId: "request:question", name: "Priya", level: "collaborator", you: false },
+      {
+        requestId: "request:question",
+        name: "Priya",
+        level: "collaborator",
+        you: false,
+        storedPrefix: "[Answer from Priya (collaborator)] ",
+      },
     ]);
+    // The prefix a client strips is what the platform put on the answer the agent read.
+    const [answered] = (yield* authors(threadId, owner)).answers;
+    assert.deepStrictEqual(admitted.answers, {
+      which: `${answered!.storedPrefix}the audit first`,
+      pick: [answered!.storedPrefix.trimEnd(), "A"],
+    });
   }).pipe(Effect.provide(conversationLayer)),
 );
 
