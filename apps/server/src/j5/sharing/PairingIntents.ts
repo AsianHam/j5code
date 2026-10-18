@@ -18,7 +18,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { ParticipantId } from "../a2a/contracts.ts";
 import { ReadChanges, layer as readChangesLayer } from "../a2a/ReadChanges.ts";
-import { PersonAccess, type SessionIdentity, layer as personAccessLayer } from "./PersonAccess.ts";
+import {
+  FIRST_OWNER_SUBJECTS,
+  PersonAccess,
+  type SessionIdentity,
+  layer as personAccessLayer,
+} from "./PersonAccess.ts";
 
 /**
  * Who a device belongs to, decided as upstream issues its session (People and access AC1 to AC4).
@@ -286,7 +291,17 @@ const make: Layer.Layer<PairingIntents, never, SqlClient.SqlClient | ReadChanges
                   if (input.grant.subject === J5_LINK_PAIRING_SUBJECT) {
                     return yield* new PairingIntentError({ reason: "no_person" });
                   }
-                  return { session: yield* input.issue.pipe(Effect.mapError(issueFailed)), intent };
+                  const session = yield* input.issue.pipe(Effect.mapError(issueFailed));
+                  // The startup link's and the desktop app's devices are the first owner's (AC2),
+                  // bound like anyone's so that every list of devices finds them.
+                  if (!FIRST_OWNER_SUBJECTS.has(input.grant.subject)) return { session, intent };
+                  const owner = yield* people.firstOwner;
+                  const boundAt = DateTime.formatIso(yield* DateTime.now);
+                  yield* sql`
+                    INSERT INTO j5_a2a_person_session (session_id, person_id, bound_at, ceiling_scopes)
+                    VALUES (${session.sessionId}, ${owner.personId}, ${boundAt}, NULL)
+                  `;
+                  return { session, intent: null, boundTo: owner.personId };
                 }
                 // An intent outlives its person: one for someone removed refuses the credential,
                 // whatever pairing path it came by.
@@ -333,7 +348,13 @@ const make: Layer.Layer<PairingIntents, never, SqlClient.SqlClient | ReadChanges
               ),
             );
           // Committed: the credential is used up and the person has a device.
-          if (issued.intent !== null) yield* people.announce(issued.intent.personId);
+          const boundTo =
+            issued.intent !== null
+              ? issued.intent.personId
+              : "boundTo" in issued
+                ? issued.boundTo
+                : null;
+          if (boundTo !== null) yield* people.announce(boundTo);
           return issued.session;
         }),
       });

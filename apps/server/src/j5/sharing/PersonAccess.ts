@@ -47,7 +47,9 @@ export const isServiceSubject = (subject: string) =>
 
 /**
  * Sessions that are the first owner's by how they were issued: the link the server prints when
- * it starts, the desktop app on its own machine, and the development credential (AC2).
+ * it starts, the desktop app on its own machine, and the development credential (AC2). The first
+ * two are bound to the first owner as they are issued (`PairingIntents`); the subject decides for
+ * the development credential, which upstream never stores, and for a session from before.
  */
 export const FIRST_OWNER_SUBJECTS: ReadonlySet<string> = new Set([
   "administrative-bootstrap",
