@@ -7,6 +7,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { noneLayer as peerDirectoryNoneLayer } from "./PeerDirectory.ts";
+import { runMigrations } from "../../persistence/Migrations.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
 import { ensureLocalOperatorHumanPerson } from "./HumanPersonRegistry.ts";
 import { A2ASendService, layer as sendLayer } from "./SendService.ts";
@@ -44,6 +45,7 @@ const makeTestLayer = () => {
 };
 
 const setup = Effect.fn("test.j5.a2a.machineSend.setup")(function* () {
+  yield* runMigrations();
   yield* runJ5A2AMigrations();
   const ledger = yield* A2ALedger;
   yield* ledger.ensureProject({ projectId: projectId, createdAt: timestamp });

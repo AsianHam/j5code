@@ -313,6 +313,7 @@ it.effect("delivers a cross-project reply to the asker and closes its Exchange o
       deliverHuman: () => Effect.void,
     };
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const ledgerService = yield* A2ALedger;
       const sendService = yield* A2ASendService;
@@ -615,6 +616,7 @@ it.effect("delivers a machine's send to its agent receiver instead of withdrawin
       deliverHuman: () => Effect.void,
     };
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const projectId = LedgerProjectId.make("project:delivery:machine");
       yield* (yield* A2ALedger).ensureProject({ projectId: projectId, createdAt: timestamp });
@@ -649,6 +651,7 @@ it.effect("delivers an outside agent's send, though it holds no membership", () 
       deliverHuman: () => Effect.void,
     };
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const projectId = LedgerProjectId.make("project:delivery:outside");
       yield* (yield* A2ALedger).ensureProject({ projectId: projectId, createdAt: timestamp });
@@ -685,6 +688,7 @@ it.effect("delivers each message the attachments from its own ledger's sent even
       deliverHuman: () => Effect.void,
     };
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       // Two ledgers built the same way number their events alike, so both
       // message.sent facts land on the same seq.
@@ -770,6 +774,7 @@ it.effect("delivers to the human through the idempotent inbox-data transport", (
     const layer = Layer.mergeAll(database, ledger, send, transport, worker);
 
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const ledgerService = yield* A2ALedger;
       const projectId = LedgerProjectId.make("project:delivery:human");
@@ -779,6 +784,11 @@ it.effect("delivers to the human through the idempotent inbox-data transport", (
       yield* sql`
         INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
         VALUES (${person.id}, 1, ${timestamp})
+      `;
+      // The first owner writes to every thread, as the server records them at startup.
+      yield* sql`
+        INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+        VALUES (${person.id}, 'server', '', 'owner', ${timestamp}, ${timestamp})
       `;
       const sent = yield* (yield* A2ASendService).send({
         commandId: CommCommandId.make("command:delivery:human"),
@@ -865,6 +875,7 @@ it.effect(
       const layer = Layer.mergeAll(database, ledger, send, inbox, transport, worker);
 
       yield* Effect.gen(function* () {
+        yield* runMigrations();
         yield* runJ5A2AMigrations();
         const ledgerService = yield* A2ALedger;
         const sendService = yield* A2ASendService;
@@ -877,6 +888,11 @@ it.effect(
         INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
         VALUES (${person.id}, 1, ${timestamp})
       `;
+        // The first owner writes to every thread, as the server records them at startup.
+        yield* sql`
+          INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+          VALUES (${person.id}, 'server', '', 'owner', ${timestamp}, ${timestamp})
+        `;
         const opened = yield* sendService.send({
           commandId: CommCommandId.make("command:delivery:human-followup-race:open"),
           senderThreadId: sender.threadId,
@@ -974,6 +990,7 @@ it.effect.each([true, false])(
       const layer = Layer.mergeAll(database, ledger, send, transport, worker);
 
       yield* Effect.gen(function* () {
+        yield* runMigrations();
         yield* runJ5A2AMigrations();
         const ledgerService = yield* A2ALedger;
         const sendService = yield* A2ASendService;
@@ -988,6 +1005,11 @@ it.effect.each([true, false])(
         INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
         VALUES (${person.id}, 1, ${timestamp})
       `;
+        // The first owner writes to every thread, as the server records them at startup.
+        yield* sql`
+          INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+          VALUES (${person.id}, 'server', '', 'owner', ${timestamp}, ${timestamp})
+        `;
         const opened = yield* sendService.send({
           commandId: CommCommandId.make("command:delivery:human-lifecycle:open"),
           senderThreadId: sender.threadId,
@@ -1211,6 +1233,7 @@ it.effect(
         Layer.provide(hooks),
       );
       yield* Effect.gen(function* () {
+        yield* runMigrations();
         yield* runJ5A2AMigrations();
         const projectId = LedgerProjectId.make("project:delivery:peer-race");
         yield* (yield* A2ALedger).ensureProject({ projectId: projectId, createdAt: timestamp });
