@@ -1,19 +1,20 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 
 import { toastManager } from "../../components/ui/toast";
-import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
 import { useEnvironments } from "../../state/environments";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useConnectionAccess } from "./access";
+import { refreshSharing, sharingManage } from "./sharingManage";
 
-// Keep an active toast across remounts, including Strict Mode effect replay.
+// Keep an active toast across remounts, including Strict Mode effect replay. Whether it was seen
+// is the server's: once an Owner closes it, it reads as seen on every browser of theirs.
 const shown = new Set<EnvironmentId>();
 
 /**
- * Tells an Owner, once per browser, that the share links made before the move to levels stopped
- * working. The server says how many while that is recent enough to matter, and only to an Owner.
+ * Tells an Owner, once, that the share links made before the move to levels stopped working. The
+ * server says how many until they mark it seen, and only to an Owner.
  */
 function ServerRetiredLinksNotice({
   environmentId,
@@ -24,28 +25,26 @@ function ServerRetiredLinksNotice({
 }) {
   const access = useConnectionAccess(environmentId);
   const navigate = useNavigate();
+  const markSeen = useAtomCommand(sharingManage.markRetiredLinksSeen, { reportFailure: false });
   const retired = access?.kind === "person" ? access.retiredLinks : null;
   useEffect(() => {
     if (retired === null || retired === 0 || shown.has(environmentId)) return;
-    const key = `j5:people:retired-links-notice:v1:${environmentId}`;
-    try {
-      if (getLocalStorageItem(key, Schema.Boolean)) return;
-    } catch {}
     shown.add(environmentId);
-    const persistDismissal = () => {
-      try {
-        setLocalStorageItem(key, true, Schema.Boolean);
-      } catch {}
+    let seen = false;
+    const persistSeen = () => {
+      if (seen) return;
+      seen = true;
+      void markSeen({ environmentId, input: {} }).then(() => refreshSharing(environmentId));
     };
     const dismiss = () => {
-      persistDismissal();
+      persistSeen();
       toastManager.close(id);
     };
     const id = toastManager.add({
       title: `Old share links on ${label} stopped working`,
       description: "Share links made before this update no longer work. Make new ones from People.",
       timeout: 0,
-      onClose: persistDismissal,
+      onClose: persistSeen,
       actionProps: {
         children: "Open People",
         onClick: () => {
@@ -59,7 +58,7 @@ function ServerRetiredLinksNotice({
         secondaryActionVariant: "ghost",
       },
     });
-  }, [environmentId, label, navigate, retired]);
+  }, [environmentId, label, markSeen, navigate, retired]);
   return null;
 }
 

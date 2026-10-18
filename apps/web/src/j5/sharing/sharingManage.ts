@@ -64,6 +64,7 @@ export const sharingManage = {
   claimDevice: command(J5_ACCESS_WS_METHODS.claimDevice),
   setFirstOwnerName: command(J5_ACCESS_WS_METHODS.setFirstOwnerName),
   leave: command(J5_ACCESS_WS_METHODS.leave),
+  markRetiredLinksSeen: command(J5_ACCESS_WS_METHODS.markRetiredLinksSeen),
 };
 
 export const peopleQuery = (environmentId: EnvironmentId) =>
