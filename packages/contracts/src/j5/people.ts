@@ -93,13 +93,27 @@ export type PeopleList = typeof PeopleList.Type;
 export const ScopeReachVia = Schema.Literals(["thread", "ancestor", "project", "server"]);
 export type ScopeReachVia = typeof ScopeReachVia.Type;
 
+/**
+ * One level by which someone reaches a thread or project: where it is held, by the name a person
+ * knows that place by, so the Share dialog can say "Viewer · via Live test repo" and change it
+ * there (AC36).
+ */
+export const ScopeReach = Schema.Struct({
+  via: ScopeReachVia,
+  level: PersonLevel,
+  scope: PersonScope,
+  /** The project's or thread's title; `null` for the server. */
+  scopeTitle: Schema.NullOr(Schema.String),
+});
+export type ScopeReach = typeof ScopeReach.Type;
+
 export const ScopePerson = Schema.Struct({
   /** Told to an Owner, who acts on the person by it; `null` for anyone else. */
   personId: Schema.NullOr(Schema.String),
   name: Schema.NullOr(Schema.String),
   /** The highest of `via`. */
   level: PersonLevel,
-  via: Schema.Array(Schema.Struct({ via: ScopeReachVia, level: PersonLevel })),
+  via: Schema.Array(ScopeReach),
   firstOwner: Schema.Boolean,
   you: Schema.Boolean,
 });

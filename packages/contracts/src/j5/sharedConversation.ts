@@ -14,6 +14,8 @@ import { J5ActionError } from "./actionError.ts";
 export const J5_SHARED_CONVERSATION_WS_METHODS = {
   /** Who sent each message and answered each prompt, for anyone who can read the thread. */
   listThreadAuthors: "j5.sharedConversation.listThreadAuthors",
+  /** Moves each time `listThreadAuthors` would answer differently for that thread. */
+  subscribeThreadAuthorsChanges: "j5.sharedConversation.subscribeThreadAuthorsChanges",
 } as const;
 
 /** The level a writer had when they wrote, as the author's line names it. */
@@ -33,10 +35,16 @@ export const MessageAuthor = Schema.Struct({
   /** The person asking wrote it. */
   you: Schema.Boolean,
   /**
-   * The platform's note this message carries to the agent, when it carries one: the stored text
-   * of the message begins with exactly this, then a line break, then the author's line.
+   * The platform's note this message carries to the agent, when it carries one, for a client to
+   * draw as a notice.
    */
   note: Schema.NullOr(Schema.String),
+  /**
+   * Exactly the platform's text the stored message begins with: the note, the author's line and
+   * any edited-by line, with the line breaks between them and before the person's words. A client
+   * strips this from the start of the text it shows and reads nothing of its format.
+   */
+  storedPrefix: Schema.String,
 });
 export type MessageAuthor = typeof MessageAuthor.Type;
 
@@ -60,10 +68,21 @@ export const ThreadAuthors = Schema.Struct({
 });
 export type ThreadAuthors = typeof ThreadAuthors.Type;
 
+export const ThreadAuthorsChange = Schema.Struct({ revision: Schema.Number });
+export type ThreadAuthorsChange = typeof ThreadAuthorsChange.Type;
+
+const SharedConversationError = Schema.Union([J5ActionError, EnvironmentAuthorizationError]);
+
 export const J5SharedConversationRpcGroup = RpcGroup.make(
   Rpc.make(J5_SHARED_CONVERSATION_WS_METHODS.listThreadAuthors, {
     payload: ThreadAuthorsRequest,
     success: ThreadAuthors,
-    error: Schema.Union([J5ActionError, EnvironmentAuthorizationError]),
+    error: SharedConversationError,
+  }),
+  Rpc.make(J5_SHARED_CONVERSATION_WS_METHODS.subscribeThreadAuthorsChanges, {
+    payload: ThreadAuthorsRequest,
+    success: ThreadAuthorsChange,
+    error: SharedConversationError,
+    stream: true,
   }),
 );

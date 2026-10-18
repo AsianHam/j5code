@@ -126,7 +126,12 @@ export type ReachVia = "thread" | "ancestor" | "project" | "server";
 export interface ScopePerson {
   readonly person: Person;
   readonly level: PersonLevel;
-  readonly via: ReadonlyArray<{ readonly via: ReachVia; readonly level: PersonLevel }>;
+  readonly via: ReadonlyArray<{
+    readonly via: ReachVia;
+    readonly level: PersonLevel;
+    /** Where the level is held, so it is changed there (AC36). */
+    readonly scope: PersonScope;
+  }>;
 }
 
 export class PersonAccessStorageError extends Schema.TaggedError<PersonAccessStorageError>()(
@@ -790,7 +795,11 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
               {
                 person: toPerson(row),
                 level,
-                via: held.map((entry) => ({ via: viaOf(entry, threadId), level: entry.level })),
+                via: held.map((entry) => ({
+                  via: viaOf(entry, threadId),
+                  level: entry.level,
+                  scope: toScope(entry),
+                })),
               },
             ];
           });

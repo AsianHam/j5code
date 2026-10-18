@@ -1,11 +1,13 @@
 import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthProvidersManageScope,
 } from "../auth.ts";
 import { J5_CLIENT_ACTION_WS_METHODS } from "../j5.ts";
 import { J5_AGENT_PERSONA_WS_METHODS } from "./agentPersona.ts";
 import { J5_ARTIFACT_WS_METHODS } from "./artifacts.ts";
+import { J5_ACCESS_WS_METHODS } from "./access.ts";
 import { J5_PEOPLE_WS_METHODS } from "./people.ts";
 import { J5_PLAYBOOK_WS_METHODS } from "./playbook.ts";
 import { J5_SHARING_WS_METHODS } from "./sharing.ts";
@@ -64,6 +66,14 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_SHARING_WS_METHODS.revokeLink]: AuthAccessWriteScope,
   [J5_SHARING_WS_METHODS.createOpenLink]: AuthAccessWriteScope,
   [J5_SHARING_WS_METHODS.revokeOpenLink]: AuthAccessWriteScope,
+
+  // A connection's own place on the server: saying whose its device is, naming the first owner,
+  // leaving a scope, renaming oneself. Every device holds what they need; the server checks each
+  // against the session itself.
+  [J5_ACCESS_WS_METHODS.claimDevice]: AuthOrchestrationReadScope,
+  [J5_ACCESS_WS_METHODS.setFirstOwnerName]: AuthOrchestrationReadScope,
+  [J5_ACCESS_WS_METHODS.leave]: AuthOrchestrationReadScope,
+  [J5_PEOPLE_WS_METHODS.renameSelf]: AuthOrchestrationReadScope,
 
   [J5_PEOPLE_WS_METHODS.setLevel]: AuthAccessWriteScope,
   [J5_PEOPLE_WS_METHODS.removeLevel]: AuthAccessWriteScope,

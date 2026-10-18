@@ -368,6 +368,7 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [J5_PEOPLE_WS_METHODS.listScopePeople]: { kind: "scope", level: "viewer" },
   [J5_PEOPLE_WS_METHODS.subscribeScopePeopleChanges]: { kind: "scope", level: "viewer" },
   [J5_SHARED_CONVERSATION_WS_METHODS.listThreadAuthors]: onThread("viewer"),
+  [J5_SHARED_CONVERSATION_WS_METHODS.subscribeThreadAuthorsChanges]: onThread("viewer"),
   // Who else reaches a thread: their names and levels, no more (AC26).
   [J5_SHARING_WS_METHODS.listThreadPeople]: onThread("viewer"),
   [J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges]: onThread("viewer"),

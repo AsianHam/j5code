@@ -32,7 +32,7 @@ export const DEFAULT_LINK_LIFETIME: LinkLifetime = "7d";
 
 /** What a person is told when a name is not one the server will take, before it is sent. */
 export const NAME_NOT_USABLE =
-  "Use a name of one line, up to 80 characters, with no invisible characters or square brackets.";
+  "Use a name of one line, up to 80 characters, with no invisible characters or square or angle brackets.";
 /** What a person is told when the name they chose is someone else's on this server. */
 export const NAME_IN_USE = "That name is already in use on this server. Choose another.";
 

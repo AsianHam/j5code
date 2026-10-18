@@ -14,7 +14,12 @@ import {
   WsRpcGroup,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
-import { J5_CLIENT_ACTION_WS_METHODS, J5_PLAYBOOK_WS_METHODS } from "@t3tools/contracts/j5";
+import {
+  J5_ACCESS_WS_METHODS,
+  J5_CLIENT_ACTION_WS_METHODS,
+  J5_PEOPLE_WS_METHODS,
+  J5_PLAYBOOK_WS_METHODS,
+} from "@t3tools/contracts/j5";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -298,15 +303,25 @@ const callEach = (client: Effect.Success<ReturnType<typeof clientFor>>["client"]
     ),
   }) satisfies Record<Tested, unknown>;
 
+const READ_SCOPED_COMMANDS = [
+  J5_ACCESS_WS_METHODS.claimDevice,
+  J5_ACCESS_WS_METHODS.setFirstOwnerName,
+  J5_ACCESS_WS_METHODS.leave,
+  J5_PEOPLE_WS_METHODS.renameSelf,
+] as const;
+
 describe("J5 client action RPC scopes", () => {
   it("guards every J5 method that needs more than read on the client, with the server's scope", () => {
     const guarded: Readonly<Record<string, AuthEnvironmentScope>> = CLIENT_GUARDED_RPC_SCOPES;
     for (const [method, scope] of Object.entries(J5_RPC_SCOPES)) {
       // A read needs no guard, whichever read scope it carries: the peer list is `access:read`.
+      // A command on the connection's own place needs only read, and is guarded all the same.
+      const readCommand = (READ_SCOPED_COMMANDS as ReadonlyArray<string>).includes(method);
       const unguarded =
-        scope === AuthOrchestrationReadScope ||
-        scope === AuthAccessReadScope ||
-        (UNGUARDED_QUERIES as ReadonlyArray<string>).includes(method);
+        !readCommand &&
+        (scope === AuthOrchestrationReadScope ||
+          scope === AuthAccessReadScope ||
+          (UNGUARDED_QUERIES as ReadonlyArray<string>).includes(method));
       assert.equal(guarded[method], unguarded ? undefined : scope, method);
     }
     // The allowlist names only methods it is needed for.
