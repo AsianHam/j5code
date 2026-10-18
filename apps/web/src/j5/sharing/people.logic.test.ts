@@ -9,6 +9,7 @@ import {
   accessRowView,
   deviceCeiling,
   placeLinks,
+  rosterProjectIds,
   linkMeta,
   personNamed,
   raisesToWriting,
@@ -247,5 +248,40 @@ describe("a device's ceiling, as its People row badges it", () => {
   it("is none for a device paired with every permission, which holds nothing back", () => {
     expect(deviceCeiling(device(LEVEL_PERMISSIONS.owner))).toBeNull();
     expect(deviceCeiling(device(null))).toBeNull();
+  });
+});
+
+describe("the projects whose people a non-Owner is shown", () => {
+  const listed = ["project:a", "project:b", "project:c"];
+
+  it("is each listed project they hold, in the server's order", () => {
+    const levels = [
+      {
+        scope: { kind: "project" as const, projectId: ProjectId.make("project:c") },
+        level: "viewer" as const,
+      },
+      { scope: { kind: "thread" as const, threadId: THREAD }, level: "collaborator" as const },
+      {
+        scope: { kind: "project" as const, projectId: ProjectId.make("project:a") },
+        level: "collaborator" as const,
+      },
+      {
+        scope: { kind: "project" as const, projectId: ProjectId.make("project:gone") },
+        level: "viewer" as const,
+      },
+    ];
+    expect(rosterProjectIds(levels, listed)).toEqual(["project:a", "project:c"]);
+  });
+
+  it("is every listed project for someone who holds the server", () => {
+    expect(rosterProjectIds([{ scope: { kind: "server" }, level: "viewer" }], listed)).toEqual(
+      listed,
+    );
+  });
+
+  it("is none for someone who holds only threads", () => {
+    expect(
+      rosterProjectIds([{ scope: { kind: "thread", threadId: THREAD }, level: "viewer" }], listed),
+    ).toEqual([]);
   });
 });

@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { AuthAccessReadScope, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import type {
   HeldPersonLevel,
@@ -9,7 +10,7 @@ import type {
   PersonLevel,
 } from "@t3tools/contracts/j5";
 import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, LogOutIcon, XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ConnectionStatusDot } from "../../components/ConnectionStatusDot";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -29,7 +30,7 @@ import { toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { useNowMinute } from "../../hooks/useNowMinute";
-import { useProject, useThreadShell } from "../../state/entities";
+import { useProject, useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
@@ -46,11 +47,13 @@ import {
   raisesToWriting,
   removeLevelWarning,
   removePersonWarning,
+  rosterProjectIds,
   type SummaryPart,
   summaryParts,
   threadsLabel,
 } from "./people.logic";
-import { LinkLine, WritingWarning } from "./ShareDialog";
+import { AccessRowLine, LinkLine, WritingWarning } from "./ShareDialog";
+import { useAccessRows } from "./scopeAccess";
 import { openSharingDialog } from "./sharingDialogs";
 import {
   linksQuery,
@@ -176,6 +179,7 @@ function ServerPeople({
           firstOwner={access.firstOwner}
         />
       </SettingsSection>
+      <ProjectRosters environmentId={environmentId} levels={access.levels} />
     </SettingsPageContainer>
   );
 }
@@ -762,6 +766,103 @@ function OwnLevelLine({
         <LogOutIcon className="size-3" />
         Leave
       </Button>
+    </div>
+  );
+}
+
+/**
+ * Who reaches each project this person reaches, for someone who manages no access (AC26): the
+ * names and levels the project's own list shows anyone in it. Changing them, links and devices
+ * are an Owner's; a thread's people are shown on the thread.
+ */
+function ProjectRosters({
+  environmentId,
+  levels,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly levels: ReadonlyArray<HeldPersonLevel>;
+}) {
+  const projects = useProjects();
+  const listed = projects.filter(
+    (project) => project.environmentId === environmentId && project.isScratch !== true,
+  );
+  const shown = new Set(
+    rosterProjectIds(
+      levels,
+      listed.map((project) => project.id),
+    ),
+  );
+  const rostered = listed.filter((project) => shown.has(project.id));
+  if (rostered.length === 0) return null;
+  return (
+    <SettingsSection title="Projects">
+      {rostered.map((project) => (
+        <ProjectRosterRow key={project.id} environmentId={environmentId} project={project} />
+      ))}
+    </SettingsSection>
+  );
+}
+
+function ProjectRosterRow({
+  environmentId,
+  project,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly project: EnvironmentProject;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className={ITEM_ROW_CLASSNAME}>
+      <div className="flex items-center gap-2.5">
+        <Button
+          size="icon-xs"
+          variant="ghost-muted"
+          aria-expanded={expanded}
+          aria-label={
+            expanded ? `Hide who reaches ${project.title}` : `Show who reaches ${project.title}`
+          }
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+        </Button>
+        <ProjectFavicon project={project} />
+        <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+          {project.title}
+        </h3>
+      </div>
+      {expanded ? <ProjectRoster environmentId={environmentId} projectId={project.id} /> : null}
+    </div>
+  );
+}
+
+function ProjectRoster({
+  environmentId,
+  projectId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+}) {
+  const scope = useMemo(() => ({ kind: "project" as const, projectId }), [projectId]);
+  const { rows, error } = useAccessRows(environmentId, scope);
+  const nowMs = Date.parse(useNowMinute());
+  return (
+    <div className="mt-2 ml-9.5 flex flex-col">
+      {rows === null ? (
+        <p className={ROW_NOTE_CLASSNAME}>{error ?? "Reading who reaches this project…"}</p>
+      ) : (
+        rows.map((row, index) => (
+          <AccessRowLine
+            // Someone who is not an Owner is told no ids.
+            key={row.personId ?? index}
+            environmentId={environmentId}
+            scope={scope}
+            row={row}
+            canManage={false}
+            unusedLinks={[]}
+            nowMs={nowMs}
+          />
+        ))
+      )}
     </div>
   );
 }

@@ -322,3 +322,19 @@ export function placeLinks(input: {
   }
   return { underPerson, after };
 }
+
+/**
+ * The projects whose people someone who manages no access is shown on People (AC26): each listed
+ * project they hold a level on, and every listed project when they hold the server, in the
+ * server's order. A thread's people are shown on the thread.
+ */
+export function rosterProjectIds(
+  levels: ReadonlyArray<HeldPersonLevel>,
+  listedProjectIds: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  if (levels.some((held) => held.scope.kind === "server")) return listedProjectIds;
+  const held = new Set<string>(
+    levels.flatMap((level) => (level.scope.kind === "project" ? [level.scope.projectId] : [])),
+  );
+  return listedProjectIds.filter((projectId) => held.has(projectId));
+}
