@@ -2167,13 +2167,17 @@ function guest(paths: LiveTestPaths, request: GuestRequest): void {
   );
   const pairingUrl = /Pairing URL: (\S+)/.exec(added.stdout ?? "")?.[1];
   if (added.status !== 0 || pairingUrl === undefined) {
+    // The CLI logs its refusal on stdout, as `ERROR (#1): <tag>: <message>` and a stack.
+    const refused = /ERROR \(#\d+\): \w+: ([\s\S]*?)\n\s+at /.exec(added.stdout ?? "")?.[1];
     throw new LiveTestRefusal(
       `The server did not add the person:\n${
-        (added.stderr ?? "")
+        refused ??
+        ((added.stderr ?? "")
           .split("\n")
           .filter((line) => !/ExperimentalWarning|--trace-warnings/.test(line))
           .join("\n")
-          .trim() || String(added.error ?? "it gave no reason")
+          .trim() ||
+          String(added.error ?? "it gave no reason"))
       }`,
     );
   }
