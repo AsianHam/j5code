@@ -223,6 +223,13 @@ export interface PersonAccessShape {
     personId: ParticipantId,
     projectId: ProjectId,
   ) => Effect.Effect<PersonLevel | null, PersonAccessStorageError>;
+  /** Where a scheduled task is bound: its thread, or else its project; `null` for no such task. */
+  readonly scheduledTaskHome: (
+    taskId: string,
+  ) => Effect.Effect<
+    { readonly projectId: ProjectId; readonly threadId: ThreadId | null } | null,
+    PersonAccessStorageError
+  >;
   /** The folders of the projects a person holds a level on as a whole. */
   readonly projectRoots: (
     personId: ParticipantId,
@@ -624,6 +631,22 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         },
         Effect.mapError(storage("read a person's level on a project")),
       ),
+
+      scheduledTaskHome: (taskId) =>
+        sql<{ readonly project_id: string; readonly thread_id: string | null }>`
+          SELECT project_id, thread_id FROM scheduled_tasks WHERE task_id = ${taskId}
+        `.pipe(
+          Effect.map((rows) =>
+            rows[0] === undefined
+              ? null
+              : {
+                  projectId: rows[0].project_id as ProjectId,
+                  threadId: rows[0].thread_id === null ? null : (rows[0].thread_id as ThreadId),
+                },
+          ),
+          Effect.mapError(storage("read where a scheduled task is bound")),
+          Effect.withSpan("j5.sharing.personAccess.scheduledTaskHome"),
+        ),
 
       projectRoots: (personId) =>
         sql<{ readonly workspace_root: string }>`

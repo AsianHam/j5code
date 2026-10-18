@@ -21,7 +21,7 @@ import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
 import * as AccessGate from "./AccessGate.ts";
 import { PAIRED_AS_SOMEONE_ELSE, PairingIntents } from "./PairingIntents.ts";
 import * as PersonAccess from "./PersonAccess.ts";
-import { accessLayer, device, person, thread } from "./test-support/accessHarness.ts";
+import { PROJECT, accessLayer, device, person, thread } from "./test-support/accessHarness.ts";
 
 it("names the few routes a narrowed connection keeps permissions on", () => {
   assert.deepStrictEqual(AccessGate.accessHttpRule("GET", "/ws"), { kind: "open" });
@@ -333,6 +333,54 @@ it.layer(testLayer)("access gate", (it) => {
         });
       assert.strictEqual(yield* read("ui://weather/dashboard"), "ran");
       assert.match(yield* read("ui://weather/secrets"), /^refused/);
+    }),
+  );
+
+  it.effect("lets a Collaborator change only the scheduled tasks bound where they write", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const mine = yield* thread("thread:scheduled-mine");
+      const other = yield* thread("thread:scheduled-other");
+      const task = (id: string, threadId: string) => sql`
+        INSERT INTO scheduled_tasks (
+          task_id, title, prompt, enabled, schedule_json, project_id, thread_id,
+          workspace_strategy_json, model_selection_json, runtime_mode, interaction_mode,
+          created_by, creation_source, created_at, updated_at, last_run_status, run_count
+        ) VALUES (
+          ${id}, 'Nightly', 'Run it', 1, '{}', ${PROJECT}, ${threadId}, '{}', '{}',
+          'full-access', 'default', 'user', 'web', '2026-10-18T00:00:00.000Z',
+          '2026-10-18T00:00:00.000Z', 'never', 0
+        )
+      `;
+      yield* task("task:mine", mine);
+      yield* task("task:other", other);
+      const { session } = yield* signed("Task keeper", [
+        { scope: { kind: "thread", threadId: mine }, level: "collaborator" },
+      ]);
+      assert.strictEqual(
+        yield* call(session, WS_METHODS.scheduledTasksRunNow, { id: "task:mine" }),
+        "ran",
+      );
+      assert.match(
+        yield* call(session, WS_METHODS.scheduledTasksRunNow, { id: "task:other" }),
+        /^refused/,
+      );
+      // Moving its own task onto a thread it does not write to is refused too.
+      assert.match(
+        yield* call(session, WS_METHODS.scheduledTasksUpsert, {
+          id: "task:mine",
+          projectId: PROJECT,
+          threadId: other,
+        }),
+        /^refused/,
+      );
+      assert.strictEqual(
+        yield* call(session, WS_METHODS.scheduledTasksUpsert, {
+          projectId: PROJECT,
+          threadId: mine,
+        }),
+        "ran",
+      );
     }),
   );
 

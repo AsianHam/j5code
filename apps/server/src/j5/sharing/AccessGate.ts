@@ -110,6 +110,11 @@ type AccessRpcRule = (
    * payload names was published with, a Collaborator any on that app's server.
    */
   | { readonly kind: "mcpAppResource" }
+  /**
+   * A change to a scheduled task, at Collaborator where it is bound: the task the payload's `id`
+   * names, and the thread or project an upsert binds it to.
+   */
+  | { readonly kind: "scheduledTask" }
   | { readonly kind: "server" }
   | { readonly kind: "narrowed" }
   | {
@@ -191,9 +196,8 @@ const narrowedForAll: AccessRpcRule = { kind: "narrowed", unknownToo: true };
  *
  * Left out on purpose, so refused to a narrowed connection: everything that lists or changes the
  * server as a whole (adding, cloning or importing projects, archived threads, searching every
- * thread, usage, diagnostics, pull request lists, peers, the relay); changing a scheduled task;
- * the inbox and the Crew reads, until they read the person from the session; and Persona, skill
- * and Playbook writes.
+ * thread, usage, diagnostics, pull request lists, peers, the relay); the inbox and the Crew reads,
+ * until they read the person from the session; and Persona and skill writes.
  */
 export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   // A connection cannot start without these; each answers in a reduced form (`GuestView`).
@@ -226,9 +230,17 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [WS_METHODS.worktreeSetupCancel]: onThread("collaborator"),
   [WS_METHODS.assetsPersistChatAttachments]: onThread("collaborator"),
   [WS_METHODS.secretsAnswerRequest]: onThread("collaborator"),
-  // The scheduled tasks bound to a thread or project the person reaches, read only (`GuestView`).
+  // The scheduled tasks bound to a thread or project the person reaches (`GuestView`), and a
+  // Collaborator's changes to them there (AC20).
   [WS_METHODS.scheduledTasksList]: narrowed,
   [WS_METHODS.scheduledTasksSubscribe]: narrowed,
+  [WS_METHODS.scheduledTasksUpsert]: { kind: "scheduledTask" },
+  [WS_METHODS.scheduledTasksSetEnabled]: { kind: "scheduledTask" },
+  [WS_METHODS.scheduledTasksRunNow]: { kind: "scheduledTask" },
+  [WS_METHODS.scheduledTasksDelete]: { kind: "scheduledTask" },
+  [WS_METHODS.scheduledTasksRotateWebhookToken]: { kind: "scheduledTask" },
+  [WS_METHODS.scheduledTasksListWebhookDeliveries]: { kind: "scheduledTask" },
+  [WS_METHODS.scheduledTasksGetWebhookDelivery]: { kind: "scheduledTask" },
   [WS_METHODS.providerUploadFeedback]: onThread("collaborator"),
   [WS_METHODS.mcpAppsToolInfo]: onThread("viewer"),
   [WS_METHODS.mcpAppsReadResource]: { kind: "mcpAppResource" },
@@ -315,6 +327,9 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [J5_ARTIFACT_WS_METHODS.subscribeArtifactChanges]: onProject("viewer"),
   [J5_ARTIFACT_WS_METHODS.deleteArtifact]: onProject("collaborator"),
   [J5_PLAYBOOK_WS_METHODS.readLibrary]: onProject("viewer"),
+  [J5_PLAYBOOK_WS_METHODS.exportPlaybook]: onProject("viewer"),
+  [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: onProject("collaborator"),
+  [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: onProject("collaborator"),
   [J5_SKILL_LINK_WS_METHODS.inspect]: onProject("viewer"),
   [J5_SKILL_LINK_WS_METHODS.preview]: onProject("collaborator"),
   [J5_SKILL_LINK_WS_METHODS.create]: onProject("collaborator"),
@@ -679,6 +694,32 @@ export const layerRpcAuthorization = (
                   Effect.map((held) => levelReaches(held, rule.level)),
                   Effect.catch(refuseUnreadable),
                 );
+              }
+              case "scheduledTask": {
+                const atHome = (home: {
+                  readonly projectId: string;
+                  readonly threadId: string | null;
+                }) =>
+                  (home.threadId === null
+                    ? access.projectLevel(personId, ProjectId.make(home.projectId))
+                    : access.threadLevel(personId, ThreadId.make(home.threadId))
+                  ).pipe(Effect.map((held) => levelReaches(held, "collaborator")));
+                const taskId = stringField("id")(payload);
+                const projectId = payloadProjectId(payload);
+                const threadId = field(payload, "threadId");
+                return Effect.gen(function* () {
+                  if (taskId !== undefined) {
+                    const home = yield* access.scheduledTaskHome(taskId);
+                    // A task that does not exist yet is an upsert's new task, bound below.
+                    if (home !== null && !(yield* atHome(home))) return false;
+                    if (home === null && projectId === undefined) return false;
+                  }
+                  if (projectId === undefined) return taskId !== undefined;
+                  return yield* atHome({
+                    projectId,
+                    threadId: typeof threadId === "string" ? threadId : null,
+                  });
+                }).pipe(Effect.catch(refuseUnreadable));
               }
               case "mcpAppResource": {
                 const threadId = payloadThreadId(payload);
