@@ -5,8 +5,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   accessRowsFromScope,
+  accessRowView,
+  placeLinks,
   linkMeta,
-  linksOn,
   personNamed,
   raisesToWriting,
   summaryParts,
@@ -126,19 +127,7 @@ const link = (overrides: Partial<PeopleLink>): PeopleLink => ({
   ...overrides,
 });
 
-describe("the links in force on a thing", () => {
-  it("are those made for it that have not expired", () => {
-    const links = [
-      link({ linkId: "here" }),
-      link({ linkId: "expired", expiresAt: DateTime.makeUnsafe(NOW - 1) }),
-      link({ linkId: "project", scope: { kind: "project", projectId: PROJECT } }),
-      link({ linkId: "device", kind: "device", scope: null, level: null, use: "one" }),
-    ];
-    expect(
-      linksOn(links, { kind: "thread", threadId: THREAD }, NOW).map((one) => one.linkId),
-    ).toEqual(["here"]);
-  });
-
+describe("the line under a link", () => {
   it("read as the design says", () => {
     expect(linkMeta(link({}), NOW)).toBe("Anyone with the link · Viewer · 6 days left · 2 joined");
     expect(linkMeta(link({ use: "one", expiresAt: DateTime.makeUnsafe(NOW + 2 * DAY) }), NOW)).toBe(
@@ -168,5 +157,80 @@ describe("what a person holds, in a line", () => {
       { kind: "project", level: "collaborator", projectId: PROJECT },
       { kind: "threads", level: "viewer", count: 2 },
     ]);
+  });
+});
+
+describe("one row of who has a thing", () => {
+  const row = (overrides: Partial<Parameters<typeof accessRowView>[0]>) =>
+    accessRowView({
+      personId: "p1",
+      name: "Marco R.",
+      level: "viewer",
+      here: null,
+      wider: null,
+      firstOwner: false,
+      you: false,
+      ...overrides,
+    });
+
+  it("says the level a wider scope gives, with that scope, over a lower level held here", () => {
+    expect(
+      row({
+        level: "collaborator",
+        here: "viewer",
+        wider: {
+          via: "project",
+          level: "collaborator",
+          scope: { kind: "project", projectId: PROJECT },
+          scopeTitle: "Live test repo",
+        },
+      }),
+    ).toEqual({
+      effective: "Collaborator · via Live test repo",
+      here: "viewer",
+      hereIsOutranked: true,
+    });
+  });
+
+  it("is the level held here when nothing wider outranks it", () => {
+    expect(row({ level: "collaborator", here: "collaborator" })).toEqual({
+      effective: "Collaborator",
+      here: "collaborator",
+      hereIsOutranked: false,
+    });
+  });
+
+  it("is the level alone for someone who is told no sources", () => {
+    expect(row({ level: "collaborator" }).effective).toBe("Collaborator");
+  });
+});
+
+describe("where the Share dialog lists each link", () => {
+  it("puts a further-device link under its person and an invite after the list", () => {
+    const device = link({
+      linkId: "device",
+      kind: "device",
+      scope: null,
+      level: null,
+      use: "one",
+      personId: "p1",
+    });
+    const invite = link({ linkId: "invite", use: "one", personName: "Sam" });
+    const elsewhere = link({
+      linkId: "elsewhere",
+      kind: "device",
+      scope: null,
+      level: null,
+      use: "one",
+      personId: "p9",
+    });
+    const placed = placeLinks({
+      links: [device, invite, elsewhere],
+      scope: { kind: "thread", threadId: THREAD },
+      listed: new Set(["p1"]),
+      nowMs: NOW,
+    });
+    expect(placed.underPerson.get("p1")?.map((one) => one.linkId)).toEqual(["device"]);
+    expect(placed.after.map((one) => one.linkId)).toEqual(["invite"]);
   });
 });

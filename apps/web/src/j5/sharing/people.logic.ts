@@ -153,24 +153,6 @@ export function historyNote(scope: PersonScope): string {
 export const linkInForce = (link: PeopleLink, nowMs: number) =>
   link.expiresAt.epochMilliseconds > nowMs;
 
-/**
- * The links in force on one thing. An unused link for one person sits under that person's row
- * when they are already listed; the rest, links for many among them, follow the list.
- */
-export function linksOn(
-  links: ReadonlyArray<PeopleLink>,
-  scope: PersonScope,
-  nowMs: number,
-): ReadonlyArray<PeopleLink> {
-  return links.filter(
-    (link) =>
-      link.kind === "invite" &&
-      link.scope !== null &&
-      sameScope(link.scope, scope) &&
-      linkInForce(link, nowMs),
-  );
-}
-
 /** "Anyone with the link · Viewer · 6 days left · 2 joined", or "link unused · 2 days left". */
 export function linkMeta(link: PeopleLink, nowMs: number): string {
   const left = lifetimeLeft(link.expiresAt.epochMilliseconds, nowMs);
@@ -282,4 +264,57 @@ export function leaveWording(scope: PersonScope, title: string) {
           ? "Every thread in it disappears from your list. To get them back, ask an Owner to share it again."
           : "Everything on this server that you reach through it disappears from your list. To get it back, ask an Owner to share it again.",
   };
+}
+
+/**
+ * What one row of "Who has it" says (AC26, AC36): the level the person reaches the thing with and,
+ * when it comes from a wider scope, that scope; and whether a level held on the thing itself is
+ * shown beside it, as its own control. A level held here that a wider one outranks is still the
+ * one an Owner changes here, so it is labelled as this thing's.
+ */
+export function accessRowView(row: AccessRow): {
+  readonly effective: string;
+  /** The level held on the thing itself, when there is one. */
+  readonly here: PersonLevel | null;
+  /** Whether that level is not the one the person reaches the thing with. */
+  readonly hereIsOutranked: boolean;
+} {
+  const widerWins =
+    row.wider !== null && (row.here === null || RANK[row.wider.level] < RANK[row.here]);
+  return {
+    effective: widerWins && row.wider !== null ? widerLabel(row.wider) : levelLabel(row.level),
+    here: row.here,
+    hereIsOutranked: widerWins && row.here !== null,
+  };
+}
+
+/**
+ * Where each link in force on a thing is listed (AC41): a further-device link under the person
+ * it is for, when they are in the list, and every other link after the list, an unused link for
+ * one person named by the name it offers.
+ */
+export function placeLinks(input: {
+  readonly links: ReadonlyArray<PeopleLink>;
+  readonly scope: PersonScope;
+  readonly listed: ReadonlySet<string>;
+  readonly nowMs: number;
+}): {
+  readonly underPerson: ReadonlyMap<string, ReadonlyArray<PeopleLink>>;
+  readonly after: ReadonlyArray<PeopleLink>;
+} {
+  const underPerson = new Map<string, PeopleLink[]>();
+  const after: PeopleLink[] = [];
+  for (const link of input.links) {
+    if (!linkInForce(link, input.nowMs)) continue;
+    if (link.kind === "device") {
+      if (link.personId === null || !input.listed.has(link.personId)) continue;
+      underPerson.set(link.personId, [...(underPerson.get(link.personId) ?? []), link]);
+      continue;
+    }
+    if (link.scope === null || !sameScope(link.scope, input.scope)) continue;
+    if (link.personId !== null && input.listed.has(link.personId)) {
+      underPerson.set(link.personId, [...(underPerson.get(link.personId) ?? []), link]);
+    } else after.push(link);
+  }
+  return { underPerson, after };
 }

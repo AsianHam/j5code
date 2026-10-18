@@ -41,12 +41,13 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { LinkLifetimeRow } from "./LinkLifetimeRow";
 import { PersonAvatar } from "./PersonAvatar";
 import {
+  accessRowView,
   type AccessRow,
   historyNote,
   levelLabel,
   levelsAt,
   linkMeta,
-  linksOn,
+  placeLinks,
   peopleMatching,
   personNamed,
   raisesToWriting,
@@ -101,18 +102,20 @@ export function ShareDialog({
   const nowMs = Date.parse(useNowMinute());
   const [made, setMade] = useState<PeopleLink | null>(null);
 
-  const linksHere = scope === null ? [] : linksOn(links.data?.links ?? [], scope, nowMs);
-  // An unused link for someone already listed sits under their row.
-  const listedIds = new Set(
-    (access.rows ?? []).flatMap((row) => (row.personId === null ? [] : [row.personId])),
-  );
+  const placed =
+    scope === null
+      ? null
+      : placeLinks({
+          links: links.data?.links ?? [],
+          scope,
+          listed: new Set(
+            (access.rows ?? []).flatMap((row) => (row.personId === null ? [] : [row.personId])),
+          ),
+          nowMs,
+        });
   const linkUnder = (personId: string | null) =>
-    personId === null
-      ? []
-      : linksHere.filter((link) => link.use === "one" && link.personId === personId);
-  const trailingLinks = linksHere.filter(
-    (link) => link.use === "many" || link.personId === null || !listedIds.has(link.personId),
-  );
+    personId === null ? [] : (placed?.underPerson.get(personId) ?? []);
+  const trailingLinks = placed?.after ?? [];
 
   if (made !== null && scope !== null) {
     return (
@@ -240,6 +243,7 @@ export function AccessRowLine({
   const [busy, setBusy] = useState(false);
   const name = row.name ?? "Someone without a name yet";
   const controls = canManage && row.personId !== null && row.here !== null && !row.firstOwner;
+  const view = accessRowView(row);
 
   const apply = async (level: PersonLevel) => {
     if (row.personId === null) return;
@@ -292,13 +296,20 @@ export function AccessRowLine({
           </Badge>
         ) : null}
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          {/* The level the person reaches the thing with, and the wider scope that gives it. */}
+          {!controls || view.hereIsOutranked ? (
+            <span className="text-xs text-muted-foreground">{view.effective}</span>
+          ) : null}
           {controls && row.here !== null ? (
             <>
+              {view.hereIsOutranked ? (
+                <span className="text-xs text-muted-foreground">· here</span>
+              ) : null}
               <LevelSelect
                 levels={levelsAt(scope)}
                 value={pending ?? row.here}
                 disabled={busy}
-                label={`Level for ${name}`}
+                label={`${name}'s level on this ${scope.kind}`}
                 onChange={choose}
               />
               <Button
@@ -311,15 +322,7 @@ export function AccessRowLine({
                 <XIcon className="size-3.5" />
               </Button>
             </>
-          ) : (
-            <span className="text-xs text-muted-foreground">
-              {row.here !== null
-                ? levelLabel(row.here)
-                : row.wider === null
-                  ? levelLabel(row.level)
-                  : widerLabel(row.wider)}
-            </span>
-          )}
+          ) : null}
         </span>
       </div>
       {pending !== null ? (

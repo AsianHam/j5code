@@ -7,7 +7,7 @@ import { Button } from "../../components/ui/button";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useEnvironmentQuery } from "../../state/query";
 import { PersonAvatar } from "./PersonAvatar";
-import { linksOn } from "./people.logic";
+import { placeLinks } from "./people.logic";
 import { useAccessRows } from "./scopeAccess";
 import { AccessRowLine, LinkLine } from "./ShareDialog";
 import { openSharingDialog } from "./sharingDialogs";
@@ -79,9 +79,13 @@ export function ThreadPeopleSection({
   const canManage = useAtomValue(sharingManage.createLink.permissionAtom(environmentId));
   const links = useEnvironmentQuery(canManage ? linksQuery(environmentId) : null);
   const nowMs = Date.parse(useNowMinute());
-  const linksHere = linksOn(links.data?.links ?? [], scope, nowMs).filter(
-    (link) => link.use === "many",
-  );
+  // The same places for links as the Share dialog's list.
+  const placed = placeLinks({
+    links: links.data?.links ?? [],
+    scope,
+    listed: new Set((rows ?? []).flatMap((row) => (row.personId === null ? [] : [row.personId]))),
+    nowMs,
+  });
   return (
     <ThreadDetailsSection
       headingId="j5-thread-people-heading"
@@ -112,11 +116,13 @@ export function ThreadPeopleSection({
               scope={scope}
               row={row}
               canManage={canManage}
-              unusedLinks={[]}
+              unusedLinks={
+                row.personId === null ? [] : (placed.underPerson.get(row.personId) ?? [])
+              }
               nowMs={nowMs}
             />
           ))}
-          {linksHere.map((link) => (
+          {placed.after.map((link) => (
             <LinkLine
               key={link.linkId}
               environmentId={environmentId}
@@ -124,6 +130,7 @@ export function ThreadPeopleSection({
               canManage={canManage}
               nowMs={nowMs}
               indent={false}
+              label={link.use === "one" ? `${link.personName ?? "One person"} · ` : null}
             />
           ))}
         </div>
