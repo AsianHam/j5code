@@ -215,7 +215,7 @@ export function CrewProposalCard(props: {
                 <div className="flex items-center justify-self-end gap-1">
                   <Button
                     aria-label={`Edit seat ${seat.seat}`}
-                    disabled={props.busy}
+                    disabled={props.busy || !canResolve}
                     size="sm"
                     type="button"
                     variant="ghost"
@@ -226,7 +226,7 @@ export function CrewProposalCard(props: {
                   </Button>
                   <Button
                     aria-label={`Remove seat ${seat.seat}`}
-                    disabled={props.busy || seats.length === 1}
+                    disabled={props.busy || !canResolve || seats.length === 1}
                     size="sm"
                     type="button"
                     variant="ghost"
@@ -256,7 +256,7 @@ export function CrewProposalCard(props: {
       <Button
         className="mt-3"
         aria-label="Add crew member"
-        disabled={props.busy}
+        disabled={props.busy || !canResolve}
         size="sm"
         type="button"
         variant="outline"
@@ -265,7 +265,8 @@ export function CrewProposalCard(props: {
         <PlusIcon className="size-4" />
         Add member
       </Button>
-      {editor !== null ? (
+      {/* Someone who cannot write to the Captain's thread, or no longer can, edits no seat. */}
+      {editor !== null && canResolve ? (
         <CrewSeatDialog
           seat={editor.seat}
           proposalId={proposal.id}
@@ -274,7 +275,7 @@ export function CrewProposalCard(props: {
           workspaceOptions={preview.data?.workspaceOptions}
           environmentId={props.environmentId}
           agents={agents}
-          disabled={props.busy}
+          disabled={props.busy || !canResolve}
           onClose={() => setEditor(null)}
           onSave={(draft) => {
             const next =
