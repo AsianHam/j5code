@@ -7,6 +7,7 @@ import {
   authorIndex,
   readThreadAuthors,
   useThreadAuthors,
+  useThreadAuthorsResult,
   useThreadAuthorsValue,
 } from "./sharedConversation";
 import {
@@ -79,22 +80,26 @@ export function sharedMessageTypedText(
 /**
  * A thread's queued messages with the words their authors typed, for the queue's rows and the
  * composer an edit loads (Shared conversations AC15): the server records a message's author when
- * it is queued.
+ * it is queued. Until the thread's record has been read, or has failed, no queued row is shown,
+ * as the timeline holds a message back, so no line meant for the agent is drawn or edited.
  */
 export function useSharedQueuedRuns<
   Queued extends { readonly run: { readonly userMessageId: string }; readonly text: string },
 >(environmentId: EnvironmentId, threadId: ThreadId, queued: ReadonlyArray<Queued>) {
-  const record = useThreadAuthorsValue(environmentId, threadId);
+  const { record, failed } = useThreadAuthorsResult(environmentId, threadId);
   const { authors } = authorIndex(record);
+  const held = record === null && !failed;
   return useMemo(
     () =>
-      authors.size === 0
-        ? queued
-        : queued.map((item) => {
-            const author = authors.get(item.run.userMessageId);
-            return author === undefined ? item : { ...item, text: typedText(item.text, author) };
-          }),
-    [authors, queued],
+      held
+        ? []
+        : authors.size === 0
+          ? queued
+          : queued.map((item) => {
+              const author = authors.get(item.run.userMessageId);
+              return author === undefined ? item : { ...item, text: typedText(item.text, author) };
+            }),
+    [authors, held, queued],
   );
 }
 

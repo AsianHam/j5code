@@ -74,12 +74,23 @@ export function useThreadAuthorsValue(
   environmentId: EnvironmentId | null,
   threadId: ThreadId | null,
 ): ThreadAuthors | null {
+  return useThreadAuthorsResult(environmentId, threadId).record;
+}
+
+/** The same, with whether the latest read failed, as on a server without the record. */
+export function useThreadAuthorsResult(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+): { readonly record: ThreadAuthors | null; readonly failed: boolean } {
   const result = useAtomValue(
     environmentId === null || threadId === null
       ? NO_RECORD
       : threadAuthors({ environmentId, input: { threadId } }),
   );
-  return Option.getOrNull(AsyncResult.value(result));
+  return {
+    record: Option.getOrNull(AsyncResult.value(result)),
+    failed: AsyncResult.isFailure(result),
+  };
 }
 
 /** A thread's record by message and by prompt, built once per answer the server gives. */
