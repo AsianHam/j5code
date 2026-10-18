@@ -156,9 +156,14 @@ export function useOwnedEnvironmentIds(): ReadonlySet<EnvironmentId> {
   return useAtomValue(ownedEnvironmentIdsAtom);
 }
 
-/** Whether the person owns at least one connected server. */
+/**
+ * Whether the person owns at least one connected server. A client connected to no server yet is
+ * held to nothing: there is no server whose Owners it could be kept from.
+ */
 export function useIsOwnerSomewhere(): boolean {
-  return useAtomValue(ownedEnvironmentIdsAtom).size > 0;
+  const owned = useAtomValue(ownedEnvironmentIdsAtom).size;
+  const total = useAtomValue(environmentCatalog.catalogValueAtom).entries.size;
+  return owned > 0 || total === 0;
 }
 
 /** Whether the person owns this server; see `useOwnedEnvironmentIds`. */
