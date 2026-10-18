@@ -72,7 +72,7 @@ are missing, install them and run it again.
 | `stop`    | Stops the server. Run it when you finish                              |
 | `rebuild` | Stops, discards the test home, builds a new one, and starts it        |
 
-`guest "<name>" [--thread <id> | --project <id>] [--level view|collaborate]`
+`guest "<name>" [--thread <id> | --project <id>] [--level viewer|collaborator]`
 adds a second person to the running test server and prints their pairing URL.
 Open it in a new tab (`reuseExistingTab: false`). Each tab is its own person,
 so open one per person and never pair a second person in a tab that already
