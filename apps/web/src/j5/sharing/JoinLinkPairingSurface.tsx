@@ -64,10 +64,33 @@ const messageOf = (error: unknown) =>
  * nothing about, an ordinary pairing link among them, is handed to upstream's pairing page.
  */
 export function JoinLinkPairingSurface(props: ComponentProps<typeof PairingRouteSurface>) {
-  const [token] = useState(() => peekPairingTokenFromUrl());
-  // Only a link J5 made is asked about. An ordinary pairing link goes to upstream's page at once
-  // and its token is sent nowhere else.
-  const [marked] = useState(() => isMarkedShareLink(window.location.href));
+  // A link opened in a tab already on this page changes only the address's fragment, which loads
+  // nothing: the page starts again for each new link. Joining takes the token out of the address,
+  // which is not a new link.
+  const [link, setLink] = useState(() => ({
+    token: peekPairingTokenFromUrl(),
+    marked: isMarkedShareLink(window.location.href),
+  }));
+  useEffect(() => {
+    const onHashChange = () => {
+      const token = peekPairingTokenFromUrl();
+      if (token !== null) setLink({ token, marked: isMarkedShareLink(window.location.href) });
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+  return <LinkSurface key={link.token ?? ""} {...props} token={link.token} marked={link.marked} />;
+}
+
+function LinkSurface({
+  token,
+  marked,
+  ...props
+}: ComponentProps<typeof PairingRouteSurface> & {
+  readonly token: string | null;
+  /** Only a link J5 made is asked about; an ordinary pairing link's token is sent nowhere else. */
+  readonly marked: boolean;
+}) {
   const [state, setState] = useState<JoinPageState | null>(
     token === null || !marked ? { kind: "upstream" } : null,
   );

@@ -663,6 +663,9 @@ function AddForm({
   );
 }
 
+// A name that ends in a full stop, "Marco R.", ends the sentence itself.
+const endSentence = (text: string) => (text.endsWith(".") ? text : `${text}.`);
+
 /** The link just made, with its route, address and code to send (design §1, "After Make link"). */
 function MadeLink({
   environmentId,
@@ -693,7 +696,7 @@ function MadeLink({
       ? `Anyone who opens it joins as a Viewer of ${scopeTitle} until it expires in ${left}.`
       : link.kind === "device"
         ? `Open it on the device to add. It pairs one more device as ${person ?? "them"}, and expires in ${left}.`
-        : `Send it to ${person ?? "them"}. Opening it pairs one device as them. ${level ?? "Access"} on ${scopeTitle}, expires in ${left}.`;
+        : `${endSentence(`Send it to ${person ?? "them"}`)} Opening it pairs one device as them. ${level ?? "Access"} on ${scopeTitle}, expires in ${left}.`;
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogPopup className="max-w-md">
