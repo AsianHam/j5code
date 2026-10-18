@@ -311,7 +311,8 @@ export interface PersonAccessShape {
   }) => Effect.Effect<void, PersonAccessStorageError | FirstOwnerFixedError>;
   /**
    * Takes everything a person holds away: their levels and their devices' bindings. Their record
-   * stays, without a name anyone else is kept from, so their messages keep the name they had.
+   * stays, without a name anyone else is kept from, so their messages keep the name they had, and
+   * so do their pairing intents, each now naming someone removed.
    * Reports the sessions that were theirs, for the caller to end upstream.
    */
   readonly removePerson: (
@@ -953,7 +954,9 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
                 RETURNING session_id
               `;
               yield* sql`DELETE FROM j5_a2a_person_level WHERE person_id = ${personId}`;
-              yield* sql`DELETE FROM j5_a2a_pairing_intent WHERE person_id = ${personId}`;
+              // Their pairing intents stay, as a record that each credential was for someone
+              // since removed: a credential upstream had already taken when they were removed
+              // then pairs nothing, and is never taken for a device no one has claimed.
               const removedAt = DateTime.formatIso(yield* DateTime.now);
               yield* sql`
                 UPDATE j5_a2a_human_person SET removed_at = ${removedAt}, name_key = NULL

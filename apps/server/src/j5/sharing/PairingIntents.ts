@@ -288,6 +288,8 @@ const make: Layer.Layer<PairingIntents, never, SqlClient.SqlClient | ReadChanges
                   }
                   return { session: yield* input.issue.pipe(Effect.mapError(issueFailed)), intent };
                 }
+                // An intent outlives its person: one for someone removed refuses the credential,
+                // whatever pairing path it came by.
                 const person = yield* people.readPerson(intent.personId);
                 if (person === null) return yield* new PairingIntentError({ reason: "no_person" });
                 const levels = yield* people.listLevels(intent.personId);

@@ -127,6 +127,38 @@ it.layer(accessLayer)("PairingIntents", (it) => {
     }),
   );
 
+  it.effect("pairs nothing from a credential upstream took before its person was removed", () =>
+    Effect.gen(function* () {
+      const intents = yield* PairingIntents;
+      const access = yield* Access;
+      const sessions = yield* SessionStore.SessionStore;
+      // A Connections link made by an Owner, under Manage access.
+      const leaving = yield* person("Leaving owner", [
+        { scope: { kind: "server" }, level: "owner" },
+      ]);
+      yield* intents.record({
+        pairingLinkId: "pairing:connections-taken",
+        credential: "credential-connections-taken",
+        personId: leaving.personId,
+        linkId: null,
+        ceiling: LEVEL_PERMISSIONS.owner,
+      });
+      // Upstream has taken the credential and is about to issue; the Owner is removed first.
+      yield* access.removePerson(leaving.personId);
+      const refused = yield* intents
+        .issueSession({
+          grant: { subject: "one-time-token", scopes: LEVEL_PERMISSIONS.owner },
+          credential: "credential-connections-taken",
+          issue: sessions.issue({ scopes: LEVEL_PERMISSIONS.owner }),
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(
+        refused._tag === "PairingIntentError" ? refused.reason : null,
+        "no_person",
+      );
+    }),
+  );
+
   it.effect("pairs nothing from a J5 link's credential whose person is gone", () =>
     Effect.gen(function* () {
       const intents = yield* PairingIntents;
