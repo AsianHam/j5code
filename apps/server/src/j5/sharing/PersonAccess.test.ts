@@ -102,7 +102,9 @@ it.layer(accessLayer)("PersonAccess", (it) => {
 
       const reaching = yield* people.scopePeople({ kind: "thread", threadId: seat });
       const sams = reaching.find((entry) => entry.person.personId === sam.personId);
-      assert.deepStrictEqual(sams?.via, [{ via: "ancestor", level: "collaborator" }]);
+      assert.deepStrictEqual(sams?.via, [
+        { via: "ancestor", level: "collaborator", scope: { kind: "thread", threadId: captain } },
+      ]);
       assert.isTrue(reaching.some((entry) => entry.person.personId === maria.personId));
     }),
   );
