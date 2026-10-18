@@ -13,6 +13,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
+import { connectionPersonId } from "../sharing/connectionPerson.ts";
+import { PersonAccess, type SessionIdentity } from "../sharing/PersonAccess.ts";
 import { ClientReadsService } from "./ClientReadsService.ts";
 import { ParticipantId } from "./contracts.ts";
 import { PeerAdminService } from "./PeerAdminService.ts";
@@ -58,27 +60,25 @@ const participantIds = (ids: ReadonlyArray<string>) =>
       () => new J5ActionError({ code: "invalid_request", message: "A participant id is invalid." }),
     ),
   );
-const optionalPerson = (personId: string | undefined) =>
-  personId === undefined || personId.length === 0
-    ? Effect.succeed(undefined)
-    : participantIds([personId]).pipe(Effect.map(([id]) => id));
-
 /** Handlers for `J5ClientReadRpcGroup`: each calls one service method and maps its failure. */
-export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers")(function* () {
+export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers")(function* (
+  session: SessionIdentity,
+) {
   const reads = yield* ClientReadsService;
   const peers = yield* PeerAdminService;
   const changes = yield* ReadChanges;
+  const people = yield* PersonAccess;
+  // The inbox is the connection's own person's, whatever the client asks.
+  const personOf = connectionPersonId(session).pipe(Effect.provideService(PersonAccess, people));
   return {
     [METHODS.listHumanInbox]: (input: HumanInboxListRequest) =>
-      optionalPerson(input.personId).pipe(
+      personOf.pipe(
         Effect.flatMap((personId) =>
-          reads
-            .humanInbox({ status: input.status, ...(personId === undefined ? {} : { personId }) })
-            .pipe(Effect.catch(inboxFailure)),
+          reads.humanInbox({ status: input.status, personId }).pipe(Effect.catch(inboxFailure)),
         ),
       ),
-    [METHODS.readOpenInboxCount]: (input: OpenInboxCountRequest) =>
-      optionalPerson(input.personId).pipe(
+    [METHODS.readOpenInboxCount]: (_input: OpenInboxCountRequest) =>
+      personOf.pipe(
         Effect.flatMap((personId) =>
           reads.openInboxCount(personId).pipe(Effect.catch(inboxFailure)),
         ),

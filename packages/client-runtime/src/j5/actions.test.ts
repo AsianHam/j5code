@@ -237,6 +237,11 @@ describe("J5 client permission guards", () => {
       expect(guarded.length).toBeGreaterThan(Object.keys(ACTIONS).length);
       for (const [method, scope] of guarded) {
         const permissions = createCommandPermissions(runtime, method);
+        // A command on the connection's own place needs only read, which every device holds.
+        if (scope === AuthOrchestrationReadScope) {
+          expect(registry.get(permissions.permissionAtom(work)), method).toBe(true);
+          continue;
+        }
         expect(registry.get(permissions.permissionAtom(work)), method).toBe(false);
         expect(
           (yield* permissions.authorize(registry, work).pipe(Effect.flip)).requiredPermission,
@@ -245,7 +250,7 @@ describe("J5 client permission guards", () => {
       }
       registry.set(
         sessions(work),
-        AsyncResult.success(granting([AuthOrchestrationOperateScope, AuthAccessWriteScope])),
+        AsyncResult.success(granting([...new Set(guarded.map(([, scope]) => scope))])),
       );
       for (const [method] of guarded) {
         const permissions = createCommandPermissions(runtime, method);

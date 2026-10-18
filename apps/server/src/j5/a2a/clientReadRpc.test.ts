@@ -1,6 +1,7 @@
 import {
   AuthAccessReadScope,
   AuthOrchestrationReadScope,
+  AuthSessionId,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -28,22 +29,56 @@ import { A2AArchiveFacts, A2AArchiveFactsError } from "./ArchiveFactsService.ts"
 import { makeClientReadRpcHandlers } from "./clientReadRpc.ts";
 import { ClientReadsService, layer as clientReadsLayer } from "./ClientReadsService.ts";
 import { CrewRuntimeRequestService } from "./CrewRuntimeRequestService.ts";
-import { A2AHumanInbox, A2AHumanPersonIdError } from "./HumanInboxService.ts";
-import { A2ALocalOperatorNotFoundError } from "./HumanPersonRegistry.ts";
+import { A2AHumanInbox } from "./HumanInboxService.ts";
 import { A2ALedger } from "./LedgerService.ts";
 import { PeerAdminService } from "./PeerAdminService.ts";
 import { ParticipantPlacementService } from "./PlacementService.ts";
 import { COALESCE_WINDOW, ReadChanges, layer as readChangesLayer } from "./ReadChanges.ts";
 import { A2AParticipantNotFoundError } from "./SendService.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
+import { PersonAccess } from "../sharing/PersonAccess.ts";
 
 const METHODS = J5_CLIENT_READ_WS_METHODS;
 const database = NodeSqliteClient.layer({ filename: ":memory:" });
 
+const LOCAL_PERSON = ParticipantId.make("human:local-operator");
+const SESSION = {
+  sessionId: AuthSessionId.make("session:client-reads"),
+  subject: "one-time-token",
+};
+
+/** A connection that is the given person's device, or no one's. */
+const connectionOf = (personId: ParticipantId | null) =>
+  Layer.mock(PersonAccess)({
+    sessionReach: () =>
+      Effect.succeed(
+        personId === null
+          ? { kind: "service" as const }
+          : {
+              kind: "person" as const,
+              person: { personId, displayName: null, firstOwner: true },
+              levels: [],
+              serverLevel: "owner" as const,
+              highest: "owner" as const,
+              ceiling: null,
+            },
+      ),
+  });
+
 /** The handlers over a given reads service; the peer list is not under test here. */
-const handlersOver = (reads: Layer.Layer<ClientReadsService, SqlError>) =>
-  makeClientReadRpcHandlers().pipe(
-    Effect.provide(Layer.mergeAll(reads, Layer.mock(PeerAdminService)({}), readChangesLayer)),
+const handlersOver = (
+  reads: Layer.Layer<ClientReadsService, SqlError>,
+  personId: ParticipantId | null = LOCAL_PERSON,
+) =>
+  makeClientReadRpcHandlers(SESSION).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        reads,
+        Layer.mock(PeerAdminService)({}),
+        readChangesLayer,
+        connectionOf(personId),
+      ),
+    ),
   );
 
 /**
@@ -56,6 +91,7 @@ const handlersWith = (given: {
   readonly playbooks?: Layer.Layer<PlaybookStore, SqlError>;
   readonly runtimeRequests?: Layer.Layer<CrewRuntimeRequestService>;
   readonly archiveFacts?: Layer.Layer<A2AArchiveFacts>;
+  readonly personId?: ParticipantId | null;
 }) =>
   handlersOver(
     clientReadsLayer.pipe(
@@ -75,6 +111,7 @@ const handlersWith = (given: {
         ),
       ),
     ),
+    given.personId === undefined ? LOCAL_PERSON : given.personId,
   );
 
 /** The refusal a call ended in, as the client receives it. */
@@ -94,21 +131,15 @@ it("requires read scope for every client read and the change stream, and access:
   }
 });
 
-it.effect("returns the resolved person above an empty inbox and preserves explicit selection", () =>
+it.effect("reads the inbox of the connection's own person, and of no one else", () =>
   Effect.gen(function* () {
-    const localPersonId = ParticipantId.make("human:local-operator");
-    const explicitPersonId = ParticipantId.make("human:second-person");
-    const missingPersonId = ParticipantId.make("human:missing-person");
     const requested: Array<string | undefined> = [];
     const requestedStatuses: Array<string | undefined> = [];
     const handlers = yield* handlersWith({
       inbox: Layer.mock(A2AHumanInbox)({
         resolvePersonId: (personId) => {
           requested.push(personId);
-          if (personId === missingPersonId) {
-            return Effect.fail(new A2AParticipantNotFoundError({ participantId: personId }));
-          }
-          return Effect.succeed(personId ?? localPersonId);
+          return Effect.succeed(personId ?? ParticipantId.make("human:someone-else"));
         },
         list: (_personId, status) => {
           requestedStatuses.push(status);
@@ -117,62 +148,37 @@ it.effect("returns the resolved person above an empty inbox and preserves explic
       }),
     });
     const list = handlers[METHODS.listHumanInbox];
-
-    assert.deepStrictEqual(yield* list({ status: "open" }), {
-      personId: localPersonId,
-      items: [],
-    });
-    assert.deepStrictEqual(yield* list({ status: "open", personId: explicitPersonId }), {
-      personId: explicitPersonId,
-      items: [],
-    });
-    // A person who is not one of this server's people is a refusal in its own words.
-    const missing = yield* refusalOf(list({ status: "open", personId: missingPersonId }));
-    assert.equal(missing.code, "A2AParticipantNotFoundError");
-    assert.include(missing.message, "Participant human:missing-person is not currently reachable");
-    // An empty selection is no selection: the local person's inbox.
-    assert.deepStrictEqual(yield* list({ status: "answered", personId: "" }), {
-      personId: localPersonId,
-      items: [],
-    });
-    assert.deepStrictEqual(requested, [undefined, explicitPersonId, missingPersonId, undefined]);
-    assert.deepStrictEqual(requestedStatuses, ["open", "open", "answered"]);
+    assert.deepStrictEqual(yield* list({ status: "open" }), { personId: LOCAL_PERSON, items: [] });
+    // A person named on the wire is not read: the request has nowhere to name one.
+    assert.deepStrictEqual(
+      yield* list({ status: "answered", personId: "human:someone-else" } as never),
+      { personId: LOCAL_PERSON, items: [] },
+    );
+    assert.deepStrictEqual(requested, [LOCAL_PERSON, LOCAL_PERSON]);
+    assert.deepStrictEqual(requestedStatuses, ["open", "answered"]);
   }),
 );
 
-it.effect("refuses a bad person selection in its own words, not as a server failure", () =>
+it.effect("refuses an inbox to a connection that is no one's, in its own words", () =>
   Effect.gen(function* () {
-    const invalidPerson = ParticipantId.make("agent:client-reads:not-human");
-    const missingPerson = ParticipantId.make("human:client-reads:missing");
+    const handlers = yield* handlersWith({ personId: null });
+    assert.deepStrictEqual(yield* refusalOf(handlers[METHODS.readOpenInboxCount]({})), {
+      code: "NoPerson",
+      message: "This device is no one's on this server, so it has no inbox here.",
+    });
+  }),
+);
+
+it.effect("refuses an inbox person the registry does not hold in its own words", () =>
+  Effect.gen(function* () {
     const handlers = yield* handlersWith({
       inbox: Layer.mock(A2AHumanInbox)({
-        resolvePersonId: (personId) => {
-          if (personId === invalidPerson) {
-            return Effect.fail(new A2AHumanPersonIdError({ personId }));
-          }
-          if (personId === missingPerson) {
-            return Effect.fail(new A2AParticipantNotFoundError({ participantId: personId }));
-          }
-          return Effect.fail(new A2ALocalOperatorNotFoundError());
-        },
+        resolvePersonId: (personId) =>
+          Effect.fail(new A2AParticipantNotFoundError({ participantId: personId! })),
       }),
     });
-    const count = handlers[METHODS.readOpenInboxCount];
-
-    assert.deepStrictEqual(yield* refusalOf(count({ personId: invalidPerson })), {
-      code: "A2AHumanPersonIdError",
-      message:
-        "Person agent:client-reads:not-human is not a durable human:<person-id>. Select an explicit person-scoped inbox.",
-    });
-    assert.deepStrictEqual(yield* refusalOf(count({ personId: missingPerson })), {
-      code: "A2AParticipantNotFoundError",
-      message:
-        "Participant human:client-reads:missing is not currently reachable. Call j5_list_participants and choose an agent row with canReceiveMessage=true, or a human row with canOpenExchange=true to open an ask.",
-    });
-    assert.deepStrictEqual(yield* refusalOf(count({})), {
-      code: "A2ALocalOperatorNotFoundError",
-      message: "The host-local human operator registry entry is missing.",
-    });
+    const refused = yield* refusalOf(handlers[METHODS.readOpenInboxCount]({}));
+    assert.equal(refused.code, "A2AParticipantNotFoundError");
   }),
 );
 
@@ -208,8 +214,8 @@ it.effect("keeps identity requests exact, ordered, and total, and refuses an id 
     });
     assert.lengthOf(received, 1);
 
-    assert.deepStrictEqual(yield* handlers[METHODS.readOpenInboxCount]({ personId: unknown }), {
-      personId: unknown,
+    assert.deepStrictEqual(yield* handlers[METHODS.readOpenInboxCount]({}), {
+      personId: LOCAL_PERSON,
       count: 3,
     });
   }),
@@ -354,9 +360,13 @@ it.effect("streams the read revisions, starting with where they stand", () =>
     const changes = yield* ReadChanges;
     yield* changes.notify("crew");
     // The handlers stream the server's one instance, the one the writers notify.
-    const handlers = yield* makeClientReadRpcHandlers().pipe(
+    const handlers = yield* makeClientReadRpcHandlers(SESSION).pipe(
       Effect.provide(
-        Layer.merge(Layer.mock(ClientReadsService)({}), Layer.mock(PeerAdminService)({})),
+        Layer.mergeAll(
+          Layer.mock(ClientReadsService)({}),
+          Layer.mock(PeerAdminService)({}),
+          connectionOf(LOCAL_PERSON),
+        ),
       ),
     );
     const first = yield* handlers[METHODS.subscribeReadChanges]().pipe(

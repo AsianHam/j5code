@@ -81,7 +81,7 @@ export class ClientActionsService extends Context.Service<
     >;
     /** Answer an Exchange an agent opened with the person, then wake delivery. */
     readonly answerHumanExchange: (
-      input: AnswerHumanExchangeRequest,
+      input: AnswerHumanExchangeRequest & { readonly personId: ParticipantId },
     ) => Effect.Effect<
       typeof AnswerHumanExchangeResponse.Type,
       Failure<A2AHumanInbox["Service"]["answer"]>
@@ -197,7 +197,7 @@ const make = Effect.gen(function* () {
           commandId: CommCommandId.make(
             `command:j5:a2a:human:${encodeURIComponent(input.personId)}:${encodeURIComponent(input.exchangeId)}:${encodeURIComponent(input.clientRequestId)}`,
           ),
-          personId: ParticipantId.make(input.personId),
+          personId: input.personId,
           exchangeId: ExchangeId.make(input.exchangeId),
           message: input.message,
           acceptedAt,

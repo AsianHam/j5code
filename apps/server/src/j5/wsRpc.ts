@@ -114,8 +114,8 @@ export const layerJ5WsRpc = (
           artifacts: artifactWorkspace,
           deletion: yield* ArtifactDeletion,
         }),
-        ...(yield* makeClientActionRpcHandlers()),
-        ...(yield* makeClientReadRpcHandlers()),
+        ...(yield* makeClientActionRpcHandlers(session)),
+        ...(yield* makeClientReadRpcHandlers(session)),
         ...(yield* makeAgentPersonaRpcHandlers({
           providers: providerRegistry.getProviders,
         })),

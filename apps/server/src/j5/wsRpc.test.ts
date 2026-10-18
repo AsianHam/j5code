@@ -1,4 +1,5 @@
 import {
+  AuthSessionId,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
@@ -33,7 +34,8 @@ import { CrewRuntimeRequestConflictError } from "./a2a/CrewRuntimeRequestService
 import { CrewStopNotFoundError, CrewStopOperationError } from "./a2a/CrewStopService.ts";
 import { ArchiveCrewPartialFailureError } from "./a2a/ArchiveCrewService.ts";
 import { A2AExchangeNotOpenError } from "./a2a/SendService.ts";
-import { ExchangeId, LedgerMessageId } from "./a2a/contracts.ts";
+import { ExchangeId, LedgerMessageId, ParticipantId } from "./a2a/contracts.ts";
+import { PersonAccess } from "./sharing/PersonAccess.ts";
 import {
   PeerAdminOperationError,
   PeerAdminService,
@@ -186,6 +188,22 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
             label: "Work VM",
           }),
       }),
+      // The operator's own device: an answer is theirs.
+      Layer.mock(PersonAccess)({
+        sessionReach: () =>
+          Effect.succeed({
+            kind: "person" as const,
+            person: {
+              personId: ParticipantId.make("human:local"),
+              displayName: null,
+              firstOwner: true,
+            },
+            levels: [],
+            serverLevel: "owner" as const,
+            highest: "owner" as const,
+            ceiling: null,
+          }),
+      }),
       Layer.mock(ArtifactDeletion)({
         delete: (input) =>
           input.path === "plan.md"
@@ -205,7 +223,10 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
             deletion: yield* ArtifactDeletion,
           });
           return {
-            ...(yield* makeClientActionRpcHandlers()),
+            ...(yield* makeClientActionRpcHandlers({
+              sessionId: AuthSessionId.make("session:operator"),
+              subject: "administrative-bootstrap",
+            })),
             [J5_ARTIFACT_WS_METHODS.deleteArtifact]:
               artifacts[J5_ARTIFACT_WS_METHODS.deleteArtifact],
             [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: () =>
@@ -223,7 +244,7 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   });
 
 const operator = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as const;
-const answer = { personId: "human:local", message: "Yes", clientRequestId: "reply:1" };
+const answer = { message: "Yes", clientRequestId: "reply:1" };
 
 /** How a call ended: served, or refused for want of a scope. */
 const outcome = <A, E extends { readonly _tag: string }>(call: Effect.Effect<A, E>) =>

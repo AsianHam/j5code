@@ -276,7 +276,7 @@ it.effect(
     const seen = calls();
     return Effect.gen(function* () {
       const actions = yield* ClientActionsService;
-      const personId = "human:local-operator";
+      const personId = ParticipantId.make("human:local-operator");
       const first = ExchangeId.make("exchange:same-client:first");
       const second = ExchangeId.make("exchange:same-client:second");
       const clientRequestId = "reused-client-request";

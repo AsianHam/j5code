@@ -128,7 +128,6 @@ export async function submitHumanInboxAnswer(input: {
   readonly send: (
     environmentId: EnvironmentId,
     request: {
-      readonly personId: string;
       readonly exchangeId: string;
       readonly message: string;
       readonly clientRequestId: string;
@@ -151,8 +150,8 @@ export async function submitHumanInboxAnswer(input: {
           ? previousAttempt
           : { message: input.message, clientRequestId: input.randomUUID() };
       input.attempts.set(itemKey, attempt);
+      // The server answers as the connection's own person; the request names no one.
       await input.send(input.item.environmentId, {
-        personId: input.item.personId,
         exchangeId: input.item.exchangeId,
         message: input.message,
         clientRequestId: attempt.clientRequestId,
