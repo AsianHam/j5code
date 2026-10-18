@@ -65,7 +65,7 @@ export class LinkRefusedError extends Schema.TaggedError<LinkRefusedError>()(
   // One answer for a link that never existed, has expired, was revoked, was used, or opens
   // something no longer there, so a caller without a working link learns nothing (AC42).
   override get message(): string {
-    return "This link doesn't work. Ask whoever sent it for a new one.";
+    return "This link doesn't work. It may have been used, expired or revoked. Ask whoever sent it for a new one.";
   }
 }
 
