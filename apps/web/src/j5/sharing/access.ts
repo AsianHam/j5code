@@ -1,7 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  draftLevelFor,
   isOwnerAccess,
   reachesServer,
+  sharingAllowsOperate,
   type KnownConnectionAccess,
 } from "@t3tools/client-runtime/j5/sharing";
 import {
@@ -13,8 +16,10 @@ import type { PersonLevel } from "@t3tools/contracts/j5";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { useThreadShell } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { j5Sharing } from "../state";
 import { ownerSomewhereState } from "./settingsAccess.logic";
@@ -87,6 +92,19 @@ export function useCanOperateThread(
   const level = useAtomValue(
     environmentId === null ? NOTHING_WITHHELD : j5Sharing.threadOperable(environmentId, threadId),
   );
+  // A draft is no thread on the server yet, so its project decides (People and access AC14).
+  const ref =
+    environmentId === null || threadId === null ? null : scopeThreadRef(environmentId, threadId);
+  const draftProjectId = useComposerDraftStore((store) =>
+    ref === null ? null : (store.getDraftSessionByRef(ref)?.projectId ?? null),
+  );
+  const persisted = useThreadShell(ref) !== null;
+  const access = useConnectionAccess(environmentId);
+  if (draftProjectId !== null && !persisted) {
+    return (
+      permitted && sharingAllowsOperate({ access, level: draftLevelFor(access, draftProjectId) })
+    );
+  }
   return permitted && level;
 }
 

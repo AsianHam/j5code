@@ -67,6 +67,28 @@ export const threadLevelFor = (
   return access.wide ? serverLevelOf(access) : streamed;
 };
 
+/**
+ * The level a connection holds over a thread it is starting in a project, which the server does
+ * not know yet: what it holds over the project, from the project itself or the server. A level on
+ * one of the project's threads does not reach a new thread there.
+ */
+export const draftLevelFor = (
+  access: KnownConnectionAccess,
+  projectId: string,
+): PersonLevel | null => {
+  if (access === null) return null;
+  if (access.kind === "service") return "owner";
+  if (access.kind === "unknown") return null;
+  return highestLevel(
+    access.levels.flatMap((held) =>
+      held.scope.kind === "server" ||
+      (held.scope.kind === "project" && held.scope.projectId === projectId)
+        ? [held.level]
+        : [],
+    ),
+  );
+};
+
 /** Whether the level a connection holds over a thread lets it write there; see `KnownConnectionAccess`. */
 export const sharingAllowsOperate = (input: {
   readonly access: KnownConnectionAccess;

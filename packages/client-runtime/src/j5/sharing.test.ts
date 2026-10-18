@@ -27,6 +27,7 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   createSharingEnvironmentAtoms,
+  draftLevelFor,
   reachesServer,
   sharingAllowsOperate,
   threadLevelFor,
@@ -204,6 +205,42 @@ const settlesAt = <A>(registry: AtomRegistry.AtomRegistry, atom: Atom.Atom<A>, e
     Stream.runHead,
     Effect.map(Option.isSome),
   );
+
+describe("what a connection may do with a thread it is starting", () => {
+  const PROJECT = ProjectId.make("project:shared");
+
+  it("lets a project's Collaborator write to a new thread in it", () => {
+    const access = person([
+      { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
+    ]);
+    expect(sharingAllowsOperate({ access, level: draftLevelFor(access, PROJECT) })).toBe(true);
+  });
+
+  it("does not let them write to one in another project", () => {
+    const access = person([
+      { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
+    ]);
+    expect(sharingAllowsOperate({ access, level: draftLevelFor(access, "project:other") })).toBe(
+      false,
+    );
+  });
+
+  it("does not let a thread's Collaborator start another thread in its project", () => {
+    const access = person([
+      { scope: { kind: "thread", threadId: ThreadId.make("thread:one") }, level: "collaborator" },
+    ]);
+    expect(draftLevelFor(access, PROJECT)).toBeNull();
+  });
+
+  it("gives a server's Viewer their server level, and the highest of the two", () => {
+    const access = person([
+      { scope: { kind: "server" }, level: "viewer" },
+      { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
+    ]);
+    expect(draftLevelFor(SERVER_VIEWER, PROJECT)).toBe("viewer");
+    expect(draftLevelFor(access, PROJECT)).toBe("collaborator");
+  });
+});
 
 describe("a connection that holds two threads of a server", () => {
   it.effect("reads one thread and writes to another on the same server", () =>
