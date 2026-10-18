@@ -80,7 +80,7 @@ agreement.
 As `j5dev` (Ansible reconciles all of this):
 
 1. **Toolchain.** `git`, `gh`, `sqlite3`, `build-essential`, `python3`, `fnm`, and via fnm the Node
-   version in the checkout's `.nvmrc` (currently 24.14.0). Install the pnpm version from the repo's
+   version in the checkout's `.nvmrc` (currently 24.22.0). Install the pnpm version from the repo's
    `packageManager` field under that
    Node; the server's Node distribution has no Corepack executable. Rust is **not** required —
    it is only used for desktop packaging. J5 sets no Codex CLI minimum of its own: Settings →
