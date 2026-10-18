@@ -187,7 +187,16 @@ function JoinSurface({
         return;
       }
       stripPairingTokenFromUrl();
-      await submitServerAuthCredential(result.credential);
+      // The link may have been revoked between the join and the pairing it allowed; the server
+      // then refuses the pairing, and the link no longer works.
+      const paired = await submitServerAuthCredential(result.credential).then(
+        () => true,
+        () => false,
+      );
+      if (!paired) {
+        setDead(true);
+        return;
+      }
       onAuthenticated();
     } catch (cause) {
       setError(messageOf(cause));
