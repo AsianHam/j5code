@@ -428,9 +428,8 @@ export const layer: Layer.Layer<
 
 /**
  * Renews at startup every device whose permissions are not what its level gives: a guest's device
- * from before levels, or any device after an upstream advance reshaped the mapping. A failure is
- * logged and the server starts; those devices keep what they held until their person's level
- * next changes.
+ * from before levels, or any device after an upstream advance reshaped the mapping. If it cannot
+ * be done the server does not start, rather than run with devices above their level.
  */
 export const renewOutdatedDevicesAtStartup = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -438,9 +437,12 @@ export const renewOutdatedDevicesAtStartup = Layer.effectDiscard(
     const renewed = yield* access.renewOutdatedDevices;
     if (renewed > 0) yield* Effect.logInfo("J5 renewed devices into their level", { renewed });
   }).pipe(
-    Effect.catch((cause) =>
-      Effect.logError("J5 could not renew devices into their level at startup", { cause }),
+    Effect.tapError((cause) =>
+      Effect.logError("J5 could not renew devices into their level; the server will not start", {
+        cause,
+      }),
     ),
+    Effect.orDie,
   ),
 );
 

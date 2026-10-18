@@ -574,7 +574,12 @@ export const layerGatedEnvironmentAuth = Layer.effect(
  */
 export const gateEnvironmentAuth = <A, E, R>(
   upstream: Layer.Layer<
-    A | EnvironmentAuth.EnvironmentAuth | PersonAccess | PairingIntents | SessionStore.SessionStore,
+    | A
+    | EnvironmentAuth.EnvironmentAuth
+    | PersonAccess
+    | PairingIntents
+    | SessionStore.SessionStore
+    | PairingGrantStore.PairingGrantStore,
     E,
     R
   >,
