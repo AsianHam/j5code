@@ -245,6 +245,25 @@ describe("ThreadA2ADeliveryRenderer", () => {
     }
   });
 
+  it("reads a named reply in the exact form the server writes it", () => {
+    // `humanNamedClosedMessage` in the server's `j5/a2a/envelopes.v1.json`:
+    // "[Message from {{senderLabel}} ({{senderId}})]\n\n{{message}}\n\n{{closedExchangeInstruction}}",
+    // with the label "Priya (collaborator)" in a shared conversation.
+    const closedInstruction = humanClosedRaw.slice(humanClosedRaw.lastIndexOf("\n\n") + 2);
+    const text = `[Message from Priya (collaborator) (human:viewer)]\n\nCall Acme first.\n\n${closedInstruction}`;
+    expect(
+      presentThreadA2ADelivery({
+        message: message({ id: deliveryId("human-server-form"), createdBy: "user", text }),
+      }),
+    ).toMatchObject({
+      kind: "human",
+      senderId: "human:viewer",
+      senderLabel: "Priya",
+      body: "Call Acme first.",
+      exchange: "closed",
+    });
+  });
+
   it("keeps a reply that carries only the id as it was", () => {
     const source = message({ id: deliveryId("human-id"), createdBy: "user", text: humanClosedRaw });
     expect(presentThreadA2ADelivery({ message: source })).toMatchObject({
