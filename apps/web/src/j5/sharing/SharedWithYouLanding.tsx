@@ -1,10 +1,8 @@
-import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId } from "@t3tools/contracts";
-import type { SharingOwnGrant } from "@t3tools/contracts/j5";
+import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { UsersIcon } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect } from "react";
 
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import {
@@ -17,53 +15,22 @@ import {
 import { SidebarInset } from "../../components/ui/sidebar";
 import { WorkspacePageHeader } from "../../components/WorkspacePageHeader";
 import { isElectron } from "../../env";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useProject, useThreadShell, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { useEnvironmentQuery } from "../../state/query";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { j5Sharing } from "./guestAccess";
-import { landingFor } from "./joinPage.logic";
-import { forgetLandingThread, landingThread } from "./landingThread";
-import {
-  rememberPairedThroughShareLink,
-  wasPairedThroughShareLink,
-} from "./pairedThroughShareLink";
-import { ownGrantsQuery } from "./sharingManage";
+import { useConnectionAccess } from "./access";
+import { landingFor } from "./landing.logic";
 
 /**
- * The first screen. A member gets `children`, upstream's own landing, at once and without
- * waiting on the server. A guest never starts a draft, which they could not send: they land on the one thread they were given, on a list when
- * they hold several things, and on a plain statement when nothing is shared with them
- * (Shared server AC23).
+ * The first screen; see `landingFor`. Anyone at server scope gets `children`, upstream's own
+ * landing, at once and without waiting on the server.
  */
-export function GuestLanding({ children }: { readonly children: ReactNode }) {
+export function SharedWithYouLanding({ children }: { readonly children: ReactNode }) {
   const environmentId = usePrimaryEnvironmentId();
-  if (environmentId === null) return children;
-  return <KnownServerLanding environmentId={environmentId}>{children}</KnownServerLanding>;
-}
-
-function KnownServerLanding({
-  environmentId,
-  children,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly children: ReactNode;
-}) {
-  const kind = useAtomValue(j5Sharing.connectionKind(environmentId));
-  const [pairedThroughShareLink] = useState(wasPairedThroughShareLink);
-  // What the server says replaces what this browser remembered, for the next time it opens.
-  useEffect(() => {
-    if (kind !== null) rememberPairedThroughShareLink(kind === "guest");
-  }, [kind]);
-  switch (landingFor({ kind, pairedThroughShareLink })) {
-    case "upstream":
-      return children;
-    case "hold":
-      return null;
-    case "guest":
-      return <GuestHome environmentId={environmentId} />;
-  }
+  const access = useConnectionAccess(environmentId);
+  const landing = landingFor(access);
+  if (environmentId === null || landing.kind === "upstream") return children;
+  return <Landing environmentId={environmentId} landing={landing} />;
 }
 
 function Frame({ children }: { readonly children: ReactNode }) {
@@ -81,56 +48,31 @@ function Frame({ children }: { readonly children: ReactNode }) {
   );
 }
 
-function GuestHome({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function Landing({
+  environmentId,
+  landing,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly landing: Exclude<ReturnType<typeof landingFor>, { readonly kind: "upstream" }>;
+}) {
   const navigate = useNavigate();
-  const grants = useEnvironmentQuery(ownGrantsQuery(environmentId));
-  // A member shares and stops sharing while this client is open, and the guest may just have
-  // left something. Each landing reads again, and acts on nothing it read before that.
-  const [asked, setAsked] = useState(false);
-  // The server restarts a guest's sidebar feed when their grants change, so a change in how many
-  // threads they are sent is the cue to read the grants again: a new share appears on its own.
-  const threadsSent = useThreadShells().filter(
-    (thread) => thread.environmentId === environmentId,
-  ).length;
-  useEffect(() => {
-    appAtomRegistry.refresh(ownGrantsQuery(environmentId));
-    setAsked(true);
-  }, [environmentId, threadsSent]);
-  const held = asked && !grants.isPending ? (grants.data?.grants ?? null) : null;
-  const only = held !== null && held.length === 1 ? held[0]!.target : null;
-  const onlyThreadId = only?.kind === "thread" ? only.threadId : null;
-  // A thread just joined by an open link is opened once the server's list holds it, and not
-  // before: upstream's thread page leaves an address its list does not hold yet.
-  const [joinedThreadId] = useState(landingThread);
-  const joinedThread = useThreadShell(
-    joinedThreadId === null ? null : scopeThreadRef(environmentId, joinedThreadId),
+  const openThreadId = landing.kind === "open" ? landing.threadId : null;
+  // Opened once the server's list holds it: upstream's thread page leaves an address its list
+  // does not hold yet, and the list can arrive after the answer that named it.
+  const listed = useThreadShell(
+    openThreadId === null ? null : scopeThreadRef(environmentId, openThreadId),
   );
-  const openThreadId = joinedThread?.id ?? onlyThreadId;
-
   useEffect(() => {
-    if (openThreadId === null) return;
-    forgetLandingThread();
+    if (openThreadId === null || listed === null) return;
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(environmentId, openThreadId)),
       replace: true,
     });
-  }, [environmentId, navigate, openThreadId]);
+  }, [environmentId, listed, navigate, openThreadId]);
 
-  if (held === null) {
-    return grants.error === null || grants.isPending || !asked ? null : (
-      <Frame>
-        <Empty className="flex-1">
-          <EmptyHeader>
-            <EmptyTitle>What is shared with you could not be read</EmptyTitle>
-            <EmptyDescription>{grants.error}</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      </Frame>
-    );
-  }
-  if (openThreadId !== null) return null;
-  if (held.length === 0) {
+  if (landing.kind === "open") return null;
+  if (landing.kind === "nothing") {
     return (
       <Frame>
         <Empty className="flex-1">
@@ -140,7 +82,7 @@ function GuestHome({ environmentId }: { readonly environmentId: EnvironmentId })
           <EmptyHeader>
             <EmptyTitle>Nothing is shared with you</EmptyTitle>
             <EmptyDescription>
-              Ask a member of this server to share a thread or project with you. This device stays
+              Ask an Owner of this server to share a thread or project with you. This device stays
               paired, so a new share will appear here on its own.
             </EmptyDescription>
           </EmptyHeader>
@@ -151,21 +93,20 @@ function GuestHome({ environmentId }: { readonly environmentId: EnvironmentId })
   return (
     <Frame>
       <div className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-1 overflow-y-auto px-4 py-8">
-        {held.map((grant) =>
-          grant.target.kind === "thread" ? (
-            <SharedThread
-              key={`thread:${grant.target.threadId}`}
-              environmentId={environmentId}
-              grant={grant}
-            />
-          ) : (
-            <SharedProject
-              key={`project:${grant.target.projectId}`}
-              environmentId={environmentId}
-              grant={grant}
-            />
-          ),
-        )}
+        {landing.projectIds.map((projectId) => (
+          <SharedProject
+            key={`project:${projectId}`}
+            environmentId={environmentId}
+            projectId={projectId}
+          />
+        ))}
+        {landing.threadIds.map((threadId) => (
+          <SharedThread
+            key={`thread:${threadId}`}
+            environmentId={environmentId}
+            threadId={threadId}
+          />
+        ))}
       </div>
     </Frame>
   );
@@ -176,17 +117,16 @@ const ROW_CLASSNAME =
 
 function SharedThread({
   environmentId,
-  grant,
+  threadId,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly grant: SharingOwnGrant;
+  readonly threadId: ThreadId;
 }) {
-  const threadId = grant.target.kind === "thread" ? grant.target.threadId : null;
-  const thread = useThreadShell(threadId === null ? null : scopeThreadRef(environmentId, threadId));
+  const thread = useThreadShell(scopeThreadRef(environmentId, threadId));
   const project = useProject(
     thread === null ? null : scopeProjectRef(environmentId, thread.projectId),
   );
-  // The sidebar's feed can arrive after the grants do; the row waits for the thread it names.
+  // The sidebar's feed can arrive after the levels do; the row waits for the thread it names.
   if (thread === null) return null;
   return (
     <Link
@@ -209,13 +149,12 @@ const MOST_THREADS_LISTED = 8;
 
 function SharedProject({
   environmentId,
-  grant,
+  projectId,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly grant: SharingOwnGrant;
+  readonly projectId: ProjectId;
 }) {
-  const projectId = grant.target.kind === "project" ? grant.target.projectId : null;
-  const project = useProject(projectId === null ? null : scopeProjectRef(environmentId, projectId));
+  const project = useProject(scopeProjectRef(environmentId, projectId));
   // Most recently active first, as the sidebar lists them.
   const lastActive = (thread: { latestUserMessageAt?: string | null; updatedAt: string }) =>
     thread.latestUserMessageAt ?? thread.updatedAt;
