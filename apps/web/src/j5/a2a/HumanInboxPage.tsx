@@ -322,7 +322,7 @@ function OpenInboxItem({
                   </span>
                 </>
               ) : null}
-              {openDuration ? (
+              {openDuration && closed === undefined ? (
                 <>
                   <span aria-hidden>·</span>
                   <time className="tabular-nums" dateTime={item.openedAt}>
