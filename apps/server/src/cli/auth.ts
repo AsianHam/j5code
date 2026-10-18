@@ -18,15 +18,19 @@ import * as ServerConfig from "../config.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import { cliEnvironmentAuth as j5CliEnvironmentAuth } from "../j5/sharing/AccessGate.ts";
 import {
+  pairingLinkForPerson as j5PairingLinkForPerson,
+  personPairingFlags as j5PersonPairingFlags,
+} from "../j5/sharing/cliPairing.ts";
+import {
   authLocationFlags,
   type CliAuthLocationFlags,
   DurationFromString,
   resolveCliAuthConfig,
 } from "./config.ts";
 
-const runWithEnvironmentAuth = <A, E>(
+const runWithEnvironmentAuth = <A, E, R = never>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E, R>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -87,6 +91,8 @@ const pairingCreateCommand = Command.make("create", {
   label: labelFlag,
   baseUrl: baseUrlFlag,
   json: jsonFlag,
+  // J5: the person the device is for (FORK.md case 79).
+  ...j5PersonPairingFlags,
 }).pipe(
   Command.withDescription("Issue a new client pairing token."),
   Command.withHandler((flags) =>
@@ -94,12 +100,18 @@ const pairingCreateCommand = Command.make("create", {
       flags,
       (environmentAuth) =>
         Effect.gen(function* () {
-          const issued = yield* environmentAuth.createPairingLink({
+          const { link: issued, said } = yield* j5PairingLinkForPerson({
+            flags,
             scopes: flags.scopes,
-            subject: "one-time-token",
-            ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
-            ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
+            mint: (scopes) =>
+              environmentAuth.createPairingLink({
+                scopes,
+                subject: "one-time-token",
+                ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
+                ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
+              }),
           });
+          yield* flags.json ? Console.error(said) : Console.log(said);
           const output = formatIssuedPairingCredential(issued, {
             json: flags.json,
             ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value } : {}),

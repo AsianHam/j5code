@@ -28,6 +28,12 @@ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } fr
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
+import { cliEnvironmentAuth as j5CliEnvironmentAuth } from "../j5/sharing/AccessGate.ts";
+import {
+  type PersonPairingFlags as J5PersonPairingFlags,
+  pairingLinkForPerson as j5PairingLinkForPerson,
+  personPairingFlags as j5PersonPairingFlags,
+} from "../j5/sharing/cliPairing.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import {
   type PersistedServerRuntimeState,
@@ -477,18 +483,25 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly ttl: Option.Option<Duration.Duration>;
   readonly label: Option.Option<string>;
+  readonly person: J5PersonPairingFlags;
 }) {
   return yield* Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    return yield* environmentAuth.createPairingLink({
+    // J5: the link is for the person `--person` names, and says so (FORK.md case 79).
+    return yield* j5PairingLinkForPerson({
+      flags: input.person,
       scopes: input.scopes,
-      subject: "one-time-token",
-      label: Option.getOrElse(input.label, () => "j5 pair"),
-      ...(Option.isSome(input.ttl) ? { ttl: input.ttl.value } : {}),
+      mint: (scopes) =>
+        environmentAuth.createPairingLink({
+          scopes,
+          subject: "one-time-token",
+          label: Option.getOrElse(input.label, () => "j5 pair"),
+          ...(Option.isSome(input.ttl) ? { ttl: input.ttl.value } : {}),
+        }),
     });
   }).pipe(
     Effect.provide(
-      EnvironmentAuth.layerRuntime.pipe(
+      j5CliEnvironmentAuth(EnvironmentAuth.layerRuntime).pipe(
         Layer.provide(ServerConfig.layer(input.config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, input.config.logLevel)),
       ),
@@ -529,6 +542,7 @@ export const pairCommand = Command.make("pair", {
   label: labelFlag,
   tailscale: tailscaleFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  ...j5PersonPairingFlags,
 }).pipe(
   Command.withDescription(
     "Mint a pairing token for a running J5 Code server and print it as a QR code.",
@@ -564,13 +578,15 @@ export const pairCommand = Command.make("pair", {
       }
 
       const config = yield* makePairServerConfig({ target, logLevel });
-      const issued = yield* mintPairingLink({
+      const { link: issued, said } = yield* mintPairingLink({
         config,
         scopes: flags.scopes,
         ttl: flags.ttl,
         label: flags.label,
+        person: flags,
       });
       const pairingUrl = buildPairingUrl(pairingBaseUrl, issued.credential);
+      yield* Console.log(said);
 
       yield* Console.log(
         formatPairOutput({
