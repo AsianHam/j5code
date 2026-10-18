@@ -34,7 +34,14 @@ describe("whether the setup wizard is offered", () => {
     expect(firstRunSetupOffered({ authenticated: true, settled: false, access: null })).toBe(false);
   });
 
-  it("leaves a server that cannot answer to upstream's own decision", () => {
-    expect(firstRunSetupOffered({ authenticated: true, settled: true, access: null })).toBe(true);
+  it("offers nothing on a read that failed: it is not an Owner's answer", () => {
+    expect(firstRunSetupOffered({ authenticated: true, settled: true, access: null })).toBe(false);
+  });
+
+  it("waits for the first owner's name, which is asked first", () => {
+    const nameless = { ...person(true), firstOwner: true, name: null } as ConnectionAccess;
+    expect(firstRunSetupOffered({ authenticated: true, settled: true, access: nameless })).toBe(
+      false,
+    );
   });
 });
