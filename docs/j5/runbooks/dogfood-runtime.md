@@ -36,11 +36,14 @@ exact source and verification limits.
 - **Every update snapshots the database first.** Both migration lanes (upstream's and J5's) are
   forward-only with no downgrade guard — an older server binary starts silently against a
   newer-migrated database and fails later at query time. The only reliable rollback is
-  previous-commit + restored snapshot, so the snapshot is not optional.
-- **Restarts interrupt active turns.** Automatic continuation is off by default. With
-  **Continue threads after restarts** enabled for the environment, upstream recovery may dispatch
-  “Continue where you left off.” for eligible interrupted work after an update, crash or machine
-  restart. Upstream does not continue a run the person stopped. This does not guarantee every
+  previous-commit + restored snapshot, so the snapshot is not optional. A second server on the
+  same home is refused (it exits with code 78), so an old and a new binary can't run on one home
+  at once.
+- **Restarts interrupt active turns.** The environment's **Continue threads after restarts**
+  setting is on by default, so upstream recovery may dispatch “Continue where you left off.” for
+  eligible interrupted work after an update, crash or machine restart, Crew seats and Peer Agents
+  included. It stops after three automatic continuations of a thread in a row, and skips a thread
+  that waits on the person. Upstream does not continue a run the person stopped. This does not guarantee every
   interrupted task will resume or complete. A2A deliveries remain in their durable queue and
   resume delivery on boot with idempotent retries. Prefer updating when the fleet is quiet.
 - **Native provider history is never silently replaced.** If a provider thread with a native
@@ -203,9 +206,9 @@ As `j5dev` (Ansible reconciles all of this):
    server itself do not prove that tailnet policy admits the client.
 
 6. **Pairing.** Headless serve prints pairing details after startup — read them with
-   `journalctl --user -u j5code -e`. The startup token carries admin scopes, and its link uses the
-   loopback origin. For a fresh standard-scope client token with the private HTTPS origin already
-   included, run:
+   `journalctl --user -u j5code -e`. The startup token carries every permission, and its link uses the
+   loopback origin. For a fresh client token, which carries the same permissions, with the private
+   HTTPS origin already included, run:
 
    ```sh
    cd ~/j5code
@@ -290,9 +293,9 @@ connection timeout and two-second total request timeout, separated by one-second
 check fails after about 90 seconds at most, rather than hanging on a stalled response.
 
 What happens after restart depends on the environment's **Continue threads after restarts**
-setting. With its default off, interrupted tasks need an explicit continuation prompt. With it
-on, eligible work can receive the automatic continuation described above; check whether recovery
-already started a turn before sending another prompt. Queued A2A deliveries drain on boot.
+setting. It is on by default, so eligible work can receive the automatic continuation described
+above; check whether recovery already started a turn before sending another prompt. With it off,
+interrupted tasks need an explicit continuation prompt. Queued A2A deliveries drain on boot.
 
 ## Rollback
 

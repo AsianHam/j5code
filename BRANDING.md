@@ -37,7 +37,17 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   (`apps/server/src/device/sshDeviceScript.ts`).
 - Release archives and installers (FORK.md case 40): `packages/shared/src/cliRelease.ts`
   (`CLI_RELEASE_REPOSITORY`), `scripts/install.sh`, `scripts/install.ps1`, and
-  `scripts/smoke-cli-archive.ts` (scratch `J5CODE_HOME`).
+  `scripts/smoke-cli-archive.ts` (scratch `J5CODE_HOME`). Update everything
+  (`apps/web/src/components/sidebar/useUpdateEverything.ts`) checks J5's GitHub release through
+  `apps/web/src/j5/updates/releasePublished.ts` and says "J5 Code <version> is not released yet";
+  `updateEverythingRun.tsx` names the app with `APP_BASE_NAME`.
+- One server per home (FORK.md case 25): the one-owner messages in `apps/server/src/serverOwnership.ts`,
+  `serviceLauncher.ts`, the desktop dialog in `apps/desktop/src/backend/DesktopBackendPool.ts` and
+  the WSL refusal in `apps/desktop/src/wsl/DesktopWslBackend.ts` say J5 Code, J5 home and
+  `J5CODE_HOME`.
+- Agent systemd units (FORK.md case 25): `apps/server/src/process/agentScope.ts` names the slices
+  `app-j5code-agents.slice` and `app-j5code-agents-<hash>.slice` and the scopes
+  `j5code-<name>-<id>.scope`, so J5's agents never share a slice with an installed T3 Code's.
 - Background service and CLI copy (FORK.md case 41): `apps/server/src/cloud/bootService.ts` and
   `cloud/j5/legacyBootService.ts` (service names), and `apps/server/src/cli/update.ts`, `uninstall.ts`,
   `updateProgress.ts`, and `service.ts` (`j5` strings, cgroup `/j5code.service`, `j5.cmd`).
@@ -49,7 +59,8 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
 - Triage (`j5 triage`): `apps/server/src/cli/triagePrompt.ts` and its byte-identical repo copy
   `.github/triage/PLAYBOOK.md` name J5 Code, clone and search `Jacksondr5/j5code`, refresh the
   playbook from `j5/main`, and file issues there with the `via-triage` template and label
-  (`.github/ISSUE_TEMPLATE/via-triage.yml`). Upstream's copies point at `pingdotgg/t3code` and
+  (`.github/ISSUE_TEMPLATE/via-triage.yml`). They say nothing of `npx`, since J5 publishes no npm
+  package. Upstream's copies point at `pingdotgg/t3code` and
   `main`; re-apply after an advance that touches them.
 - Security policy: `.github/SECURITY.md` is deleted. Upstream's file sends reports to T3 Tools'
   address, and J5 has no private reporting channel yet. Keep it deleted when an advance changes it.
@@ -59,16 +70,25 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   app name in `permissions/MacPermissionHelper.ts`, and `apps/desktop/src/compileCache.ts` (a
   `j5code` compile-cache directory). `DesktopAppIdentity.ts` sets Electron's app name to the
   display name without its parentheses ("J5 Code", "J5 Code Nightly"), where upstream joins base
-  name and stage, which would give "J5 Code Alpha".
+  name and stage, which would give "J5 Code Beta".
 - Desktop CLI launcher and its Settings install (FORK.md case 57): `DesktopCliShim.ts` (the file name
   `j5` / `j5.cmd`, the `MARKER` line, the exported `J5CODE_HOME`), `DesktopCliCommand.ts` (link
   names and messages), and `apps/web/src/components/settings/CliCommandSettingsRow.tsx` (copy).
   Upstream's files say `t3` and `T3CODE_HOME`; re-apply after an advance that touches them.
 - Desktop OS integration: `electron-launcher.mjs`, `ElectronProtocol.ts`,
-  `DesktopLinuxUrlHandler.ts`, and the server renderer-origin allowlist in `apps/server/src/http.ts`.
+  `DesktopLinuxUrlHandler.ts`, and the server renderer-origin allowlist, `DESKTOP_RENDERER_ORIGINS`
+  in `apps/server/src/httpCors.ts`.
 - Linux capture: `apps/desktop/src/snapShot/{KdeSnapShot,HyprlandSnapShot,GnomeCaptureSetup,linuxCaptureSession}.ts` and `apps/desktop/gnome-extension/`. These newly adopted integrations still use upstream helper directories, desktop/extension identities and bus names. They can collide with an installed T3 Code; OS integration isolation is incomplete until [#138](https://github.com/Jacksondr5/j5code/issues/138) is resolved.
 - Desktop packaging: `apps/desktop/package.json`, `scripts/build-desktop-artifact.ts` (including
-  the generated package's `homepage`, `https://j5.codes`), and both DMG background SVGs.
+  the generated package's `homepage`, `https://j5.codes`, and the macOS usage strings such as
+  `NSLocalNetworkUsageDescription`), and both DMG background SVGs.
+- Prompt links (FORK.md case 76): `packages/shared/src/promptLinks.ts` (`APP_SCHEME` and
+  `promptLinkDeepLink`'s default scheme are `j5code`, no https origin is J5's hosted app by
+  default, and its errors name J5 Code); "Copy prompt link" on web
+  (`components/promptLinks/copyPromptLink.ts`) and mobile
+  (`features/prompt-links/prompt-link-actions.ts`) copies a `j5code://` link; the prompt-link
+  views `NewThreadLinkView.tsx`, `linkedPrompt.ts` and `HostedPromptLinkLanding.tsx` (whose
+  download link is `https://j5.codes/download`) name J5 Code.
 - App icons: each channel's Icon Composer `text.svg` under `assets/` is a paper boat from the
   marketing site (`BoatSprite.astro`, `PersonaScene.astro`): production the Captain, dev a
   speedboat, nightly the Reviewer's sloop with its searchlight. Each is flattened to plain
@@ -91,6 +111,9 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   widget, and the Android subscription-usage widget, whose strings are in
   `src/widgets/SubscriptionUsage.android.tsx` and `app.config.ts`. Its deep link comes from
   `Linking.createURL` in `SubscriptionUsageCoordinator.tsx`, so it follows the app's scheme.
+  The mobile header's `components/CompactBrandTitle.tsx` draws `J5Wordmark` and labels itself
+  "J5 Code, …" (as do `WorkspaceRootScreen.tsx` and `PullRequestToolbar.android.tsx`), and
+  `ThreadFeed.tsx` says "Sent by J5 Code".
 - Mobile developer tooling: `scripts/mobile-native-client.ts` (development bundle id and the
   prebuilt iOS project/scheme/app name), `scripts/mobile-showcase.ts` (production app id, scheme
   and iOS project name), and `.agents/skills/test-t3-mobile/scripts/pair-client.sh` (app id and
@@ -105,7 +128,8 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   the sidebar's small `SidebarChrome.tsx` seam (it takes an optional `className`, so the brand uses
   upstream's `h-[1cap]` sizing), and the assistant author heading in
   `components/chat/MessagesTimeline.tsx` `AssistantTimelineRow`, which reads `APP_BASE_NAME` from
-  `branding.ts` instead of upstream's literal "T3 Code".
+  `branding.ts` instead of upstream's literal "T3 Code", as does the "Sent by" label on a message
+  the app wrote itself.
 - Shared client copy: `packages/client-runtime` has no branding import, so its user-visible
   strings stay product-neutral instead of naming T3 Code: `connection/compatibility.ts` ("Update the
   server on …"), `connection/outdatedHostUpdate.ts`, `relay/errorPresentation.ts`, and
@@ -113,7 +137,15 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
 - User-visible copy and marks (2026-10-04): every string a person or an agent reads names the
   product "J5 Code" (bare "T3" becomes "J5"), across web, desktop, mobile, the server's CLI and
   error messages, agent instructions and MCP tool titles, native capture helpers, and the
-  provider packages (`packages/provider-core`, `provider-pi`, `provider-muse`). Agent-visible MCP
+  provider packages (`packages/provider-core`, `provider-pi`, `provider-muse`, `provider-cursor`
+  and `provider-opencode`, including the Cursor Keychain message in `accountUsage.ts` and
+  OpenCode's server-URL hint in `settings.ts`) and the source-control packages (GitCafe's
+  "from J5 Code"). Server copy upstream added since the last pin includes `j5 doctor`
+  (`cli/doctor.ts`, `persistence/DatabaseMaintenance.ts`), the restart work-log rows
+  (`orchestration-v2/RestartContinuation.ts`), the note an agent reads after a restart cut its
+  background work (`RestartBackgroundNote.ts`), and in Settings "Open pull requests in J5 Code"
+  (`IntegrationsSettings.tsx`, `settingsSearch.ts`, `SettingsPanels.logic.ts`), `scopedSettings.ts`
+  and the `j5 connect link` hint in `ConnectionsSettings.tsx`. Agent-visible MCP
   tool descriptions and errors say "J5 thread"; `THREAD_READ_OBJECT` in
   `apps/web/src/components/chat/MessagesTimeline.logic.ts` (`" a J5 thread"`) must keep matching
   the label in `packages/shared/src/t3McpToolPresentation.ts`.
@@ -154,14 +186,18 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   case 50); the installer's other environment names (`T3CODE_CHANNEL`, `T3CODE_VERSION`,
   `T3CODE_INSTALL_BIN_DIR`, `T3CODE_RELEASE_BASE_URL`), `T3CODE_CLI_PATH`, the
   `T3_BOOT_SERVICE_UNIT` key, and the `__service-launcher` subcommand stay upstream's.
-- Database schema names, persisted mobile storage keys, internal CLI flags, and code identifiers.
+- Database schema names, storage keys, internal CLI flags, and code identifiers, including the
+  `"t3code"` message attribution value (`packages/client-runtime/src/userMessage.ts`), the
+  `application/x-t3code-*` drag types, the desktop's `--t3code-preview-passkey-bridge` argument and
+  `t3codeWebAuthn` field, and the `app.t3.context-fragment` clipboard type.
+- The GitHub and GitCafe API `user-agent: t3code` headers.
 - Documentation, including `docs/user/`: it keeps upstream's "T3 Code" wording, which marks what
   is upstream's and what is J5's for the agents that read it. Facts that J5 changes (paths, names,
   defaults) are still corrected there.
 - "T3 Connect" and "T3 Account": upstream's hosted relay and sign-in, named as upstream names
   them wherever they appear, along with `infra/relay` and the mobile legal links to `t3.codes`.
 - The `t3-code` MCP server key, its `T3 Code` MCP server `name` (`McpHttpServer.ts`), the Codex
-  client info ("T3 Code", `buildCodexInitializeParams` in `apps/server/src/provider/CodexProvider.ts`),
+  client info ("T3 Code", `CODEX_CLIENT_NAME` in `apps/server/src/provider/CodexProvider.ts`),
   and the Muse client info (`t3_code` / "T3 Code", `packages/provider-muse`): protocol identity
   that tool names, aliases (`t3McpToolPresentation.ts`) and recorded provider fixtures depend on.
 - Telemetry service names (`t3code-server`, `t3code-desktop`, `t3code-mobile`).
@@ -176,8 +212,12 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   path keeps its `t3-` name (`preview/PreviewBrowserHost.ts`); and
   `apps/desktop/src/app/DesktopLegacyLocalStorage.ts` names T3 Code's V1 profile folders
   (FORK.md case 25).
-- `apps/web/src/components/NightlyMobileBeta.tsx` still links T3 Code's TestFlight, beta group and
-  Play testing pages. No decision covers them yet.
+- `apps/web/src/components/settings/MobileAppSettingsRow.tsx` still holds T3 Code's App Store and
+  Google Play links; J5 hides the row (FORK.md case 77).
+- Upstream's npm launcher, which J5 doesn't publish (`scripts/npm-launcher/`,
+  `scripts/build-npm-launcher.ts`), and its Play Store APK mirror (`.github/scripts/mirror-play-apk.cjs`).
+- The SSH tunnel's "Remote T3 server" message in `packages/ssh/src/tunnel.ts`, which belongs to the
+  remote launch path that still uses `~/.t3/ssh-launch` (#339).
 - `t3.json`, its schema URL, the `refs/t3code/*` hidden refs, upstream's `README.md`,
   `packaging/aur`, the Linux capture helper identities (#138), the iOS widget's `T3Mark` image
   asset, and developer scripts under `scripts/` and `apps/server/scripts/`.
