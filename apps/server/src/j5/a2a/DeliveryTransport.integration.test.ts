@@ -3456,6 +3456,51 @@ it.effect("keeps a delivery unsent while a usage limit blocks the receiver's hel
   }),
 );
 
+it.effect("keeps a delivery unsent while a failed worktree setup holds the receiver's queue", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("held-worktree", "gpt-5.4");
+      const threads = yield* ThreadManagementService;
+      const transport = yield* A2ADeliveryTransport;
+      const earlierRunId = yield* idleWithHeldQueue(harness, target, {
+        class: "provider_error",
+        message: "Worktree setup failed.",
+        code: null,
+        retryable: null,
+      });
+      // The failed run had been preparing a worktree that never got bound to the thread.
+      const failed = (yield* threads.getThreadProjection(target.threadId)).runs.find(
+        (run) => run.status === "failed",
+      )!;
+      yield* (yield* EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("event:held-worktree:preparation"),
+            type: "run.updated",
+            threadId: target.threadId,
+            runId: failed.id,
+            providerInstanceId: failed.providerInstanceId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              ...failed,
+              workspacePreparation: { type: "worktree", baseRef: "main", startFromOrigin: false },
+            },
+          },
+        ],
+      });
+
+      const error = yield* transport.deliverAgent(target.delivery).pipe(Effect.flip);
+
+      assert.instanceOf(error, A2ADeliveryHeldError);
+      const after = yield* threads.getThreadProjection(target.threadId);
+      assert.isNull(after.thread.worktreePath);
+      assert.equal(after.runs.find((run) => run.id === earlierRunId)?.status, "queued");
+      assert.isFalse(after.messages.some((row) => row.id === deliveryMessageId(target.messageId)));
+    }).pipe(Effect.provide(makeTestLayer(harness)));
+  }),
+);
+
 it.effect("settles a held peer delivery once after resume without alarming", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;

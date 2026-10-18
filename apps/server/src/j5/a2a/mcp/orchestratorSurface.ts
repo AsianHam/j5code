@@ -28,6 +28,7 @@ export const J5OrchestratorProviderCapability = Schema.Struct({
       options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
     }),
   ),
+  runtimeModes: Schema.optional(Schema.Array(RuntimeMode)),
   constraints: Schema.Array(Schema.String),
 });
 
@@ -58,6 +59,7 @@ export const mapJ5OrchestratorCapabilities = (
       label: model.label,
       ...(model.options === undefined ? {} : { options: model.options }),
     })),
+    ...(provider.runtimeModes === undefined ? {} : { runtimeModes: provider.runtimeModes }),
     constraints: provider.constraints,
   })),
   features: {

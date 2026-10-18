@@ -57,6 +57,10 @@ describe("J5 orchestration instructions", () => {
     );
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "prior findings");
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "Track each round by its own `taskId`");
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      'For a child task that needs a separate checkout, use `delegate_task` with `isolation:"worktree"` across any provider or model. It starts from the parent local commit and runs project setup; uncommitted edits are not copied.',
+    );
   });
 
   it("documents structured schedules, webhooks included, instead of JSON strings", () => {
