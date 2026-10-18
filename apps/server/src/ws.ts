@@ -1188,7 +1188,7 @@ const layerWsRpc = (
       const j5View = yield* j5ConnectionView(currentSession);
       // J5: a person's commands are held to what their level and scope allow, and a Crew seat is
       // never archived alone (FORK.md cases 37 and 78).
-      const j5Commands = yield* j5CommandAdmission(j5CrewSeatArchiveGuard);
+      const j5Commands = yield* j5CommandAdmission(j5CrewSeatArchiveGuard, currentSession);
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -3127,11 +3127,11 @@ const layerWsRpc = (
         ...handlers,
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
           j5Commands
-            .admit(currentSession, command)
+            .admit(command)
             .pipe(Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand])),
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input: OrchestrationV2ThreadLaunchInput) =>
           j5Commands
-            .admitLaunch(currentSession, input)
+            .admitLaunch(input)
             .pipe(Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.launchThread])),
       };
     }),

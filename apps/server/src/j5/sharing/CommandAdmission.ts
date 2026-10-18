@@ -16,6 +16,7 @@ import {
   PersonAccess,
   type PersonAccessStorageError,
   type SessionIdentity,
+  type SessionReach,
   isWide,
 } from "./PersonAccess.ts";
 
@@ -136,23 +137,34 @@ const OWNERS_ONLY =
 
 export interface CommandAdmission {
   readonly admit: (
-    session: SessionIdentity,
     command: OrchestrationV2Command,
   ) => Effect.Effect<
     OrchestrationV2Command,
     EnvironmentAuthorizationError | OrchestrationV2DispatchCommandError
   >;
   readonly admitLaunch: (
-    session: SessionIdentity,
     input: OrchestrationV2ThreadLaunchInput,
   ) => Effect.Effect<OrchestrationV2ThreadLaunchInput, EnvironmentAuthorizationError>;
 }
 
+/**
+ * Built once per socket, with whose the socket is read when it opens: a change to that renews the
+ * session, which closes the socket (`Access`). A wide session's commands then cost nothing more;
+ * a narrowed one's read the level at each command's scope.
+ */
 export const makeCommandAdmission = (
   crewSeatArchiveGuard: CrewSeatArchiveGuard,
+  session: SessionIdentity,
 ): Effect.Effect<CommandAdmission, never, PersonAccess> =>
   Effect.gen(function* () {
     const access = yield* PersonAccess;
+    const reach = yield* access.sessionReach(session).pipe(
+      Effect.catch((cause) =>
+        Effect.logError("J5 could not read whose a socket is; holding its commands to nothing", {
+          cause,
+        }).pipe(Effect.as({ kind: "unknown" } as SessionReach)),
+      ),
+    );
     const refuseUnreadable = (cause: PersonAccessStorageError) =>
       Effect.logError("J5 could not read what a person reaches; refusing their command", {
         cause,
@@ -174,12 +186,10 @@ export const makeCommandAdmission = (
       });
 
     const requireLevel = (
-      session: SessionIdentity,
       scope: CommandScope,
       level: PersonLevel,
     ): Effect.Effect<void, EnvironmentAuthorizationError> =>
       Effect.gen(function* () {
-        const reach = yield* access.sessionReach(session);
         if (isWide(reach)) return;
         if (reach.kind !== "person") return yield* refused(NOT_SHARED);
         const held = yield* levelAt(reach.person.personId, scope);
@@ -187,10 +197,7 @@ export const makeCommandAdmission = (
       }).pipe(Effect.catchTags({ PersonAccessStorageError: refuseUnreadable }));
 
     const admit: CommandAdmission["admit"] = Effect.fn("j5.sharing.commandAdmission.admit")(
-      function* (session, command) {
-        const reach = yield* access
-          .sessionReach(session)
-          .pipe(Effect.catchTags({ PersonAccessStorageError: refuseUnreadable }));
+      function* (command) {
         if (OWNER_ONLY_COMMANDS.has(command.type)) {
           const owner =
             reach.kind === "service" ||
@@ -215,20 +222,20 @@ export const makeCommandAdmission = (
           | ((command: OrchestrationV2Command) => CommandScope)
           | undefined;
         if (scopeOf === undefined) return yield* refused(NOT_SHARED);
-        yield* requireLevel(session, scopeOf(command), "collaborator");
+        yield* requireLevel(scopeOf(command), "collaborator");
         return command;
       },
     );
 
     const admitLaunch: CommandAdmission["admitLaunch"] = Effect.fn(
       "j5.sharing.commandAdmission.admitLaunch",
-    )(function* (session, input) {
+    )(function* (input) {
       // Launching into a thread that exists writes to it; otherwise it starts one in a project.
       const scope: CommandScope =
         input.reuseExistingThread === true && input.threadId !== undefined
           ? { kind: "thread", threadId: input.threadId }
           : { kind: "project", projectId: input.projectId };
-      yield* requireLevel(session, scope, "collaborator");
+      yield* requireLevel(scope, "collaborator");
       return input;
     });
 

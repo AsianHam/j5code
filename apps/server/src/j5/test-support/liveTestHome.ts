@@ -34,6 +34,7 @@ import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -66,6 +67,7 @@ import {
 } from "../a2a/test-support/devDeliverySeed.ts";
 import { checkedPersonName } from "../sharing/People.ts";
 import * as PersonAccess from "../sharing/PersonAccess.ts";
+import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
 import {
   createLiveTestRepo,
   LIVE_TEST_HOLD_RELEASE_FILE,
@@ -463,7 +465,9 @@ function writeSettingsAndPersonas(home: string): void {
  */
 const nameOwner = (databasePath: string, ownerName: string) =>
   PersonAccess.PersonAccess.use((access) =>
-    access.firstOwner.pipe(
+    // The server records its first owner when it starts; this home has not started yet.
+    SqlClient.SqlClient.use(ensureLocalOperatorHumanPerson).pipe(
+      Effect.andThen(access.firstOwner),
       Effect.flatMap((owner) =>
         access.setName({ personId: owner.personId, displayName: ownerName }),
       ),
@@ -471,7 +475,7 @@ const nameOwner = (databasePath: string, ownerName: string) =>
   ).pipe(
     Effect.provide(
       PersonAccess.layer.pipe(
-        Layer.provide(SqlitePersistence.layerFromPath(databasePath)),
+        Layer.provideMerge(SqlitePersistence.layerFromPath(databasePath)),
         Layer.provide(NodeServices.layer),
       ),
     ),

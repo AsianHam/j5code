@@ -20,7 +20,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 
 import { ParticipantId } from "../a2a/contracts.ts";
-import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
+import { getLocalOperatorHumanPersonId } from "../a2a/HumanPersonRegistry.ts";
 import { ReadChanges, layer as readChangesLayer } from "../a2a/ReadChanges.ts";
 
 /**
@@ -467,8 +467,14 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         ORDER BY scope_kind DESC, scope_id
       `.pipe(Effect.map((rows) => rows.map(toHeld)));
 
+    // The first owner is recorded when the server starts (`HumanPersonRegistry`), so a request
+    // only reads them.
     const firstOwnerRow = Effect.gen(function* () {
-      const id = yield* ensureLocalOperatorHumanPerson(sql);
+      const id = yield* getLocalOperatorHumanPersonId(sql).pipe(
+        Effect.mapError(
+          (cause) => new PersonAccessStorageError({ operation: "read the first owner", cause }),
+        ),
+      );
       const row = yield* readPersonRow(id);
       if (row === undefined) {
         return yield* new PersonAccessStorageError({ operation: "read the first owner" });
@@ -497,6 +503,11 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
       "j5.sharing.personAccess.sessionReach",
     )(
       function* (session) {
+        // By subject first: these sessions are never bound, and need no read of their own.
+        if (isServiceSubject(session.subject)) return { kind: "service" as const };
+        if (FIRST_OWNER_SUBJECTS.has(session.subject)) {
+          return yield* personReach(toPerson(yield* firstOwnerRow), null);
+        }
         const bound = yield* sql<PersonRow & { readonly ceiling_scopes: string | null }>`
           SELECT person.person_id, person.display_name, person.is_local_operator,
             device.ceiling_scopes
@@ -509,10 +520,6 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         if (row !== undefined) {
           return yield* personReach(toPerson(row), decodeCeiling(row.ceiling_scopes));
         }
-        if (FIRST_OWNER_SUBJECTS.has(session.subject)) {
-          return yield* personReach(toPerson(yield* firstOwnerRow), null);
-        }
-        if (isServiceSubject(session.subject)) return { kind: "service" as const };
         return { kind: "unknown" as const };
       },
       Effect.mapError(storage("read whose a session is")),

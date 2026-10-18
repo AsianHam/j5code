@@ -19,6 +19,7 @@ import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
+import { humanPersonRegistryLayer } from "../../a2a/HumanPersonRegistry.ts";
 import * as Access from "../Access.ts";
 import * as PairingIntents from "../PairingIntents.ts";
 import * as PersonAccess from "../PersonAccess.ts";
@@ -44,7 +45,9 @@ const sessionStore = Layer.mergeAll(SessionStore.layer, PairingGrantStore.layer)
 );
 
 /** `PersonAccess`, `PairingIntents`, `Access` and `SessionStore` over one database. */
+// The first owner, recorded as the server records them when it starts.
 const recordsLayer = PairingIntents.peopleLayer.pipe(
+  Layer.provideMerge(humanPersonRegistryLayer),
   Layer.provideMerge(sessionStore),
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(NodeServices.layer),

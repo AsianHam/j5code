@@ -39,6 +39,7 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import { subscribeOrchestrationV2Shell } from "../../ws.ts";
 import type { PersonScope } from "@t3tools/contracts/j5";
 
+import { humanPersonRegistryLayer } from "../a2a/HumanPersonRegistry.ts";
 import * as GuestView from "./GuestView.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 
@@ -103,10 +104,11 @@ const layerProjects = Layer.unwrap(
     );
   }),
 );
-const layerTest = Layer.mergeAll(layerManagement, layerProjects, PersonAccess.layer).pipe(
-  Layer.provideMerge(ProjectStore.layer),
-  Layer.provideMerge(layerPersistence),
-);
+const layerTest = Layer.mergeAll(
+  layerManagement,
+  layerProjects,
+  PersonAccess.layer.pipe(Layer.provideMerge(humanPersonRegistryLayer)),
+).pipe(Layer.provideMerge(ProjectStore.layer), Layer.provideMerge(layerPersistence));
 
 const project = Effect.fn("test.project")(function* (id: string) {
   const sink = yield* EventSink.EventSinkV2;

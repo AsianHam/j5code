@@ -25,8 +25,8 @@ const admitted = Effect.fn("test.admitted")(function* (
   session: { readonly sessionId: string; readonly subject: string },
   sent: OrchestrationV2Command,
 ) {
-  const admission = yield* makeCommandAdmission(() => Effect.void);
-  return yield* admission.admit(session as never, sent).pipe(
+  const admission = yield* makeCommandAdmission(() => Effect.void, session as never);
+  return yield* admission.admit(sent).pipe(
     Effect.as("admitted"),
     Effect.catch((error) => Effect.succeed(`refused: ${error.message}`)),
   );
@@ -126,20 +126,15 @@ it.layer(accessLayer)("CommandAdmission", (it) => {
 
   it.effect("starts a thread only in a project the person writes to", () =>
     Effect.gen(function* () {
-      const admission = yield* makeCommandAdmission(() => Effect.void);
       const projectOnly = yield* deviceOf("Launcher", [
         { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
       ]);
+      const admission = yield* makeCommandAdmission(() => Effect.void, projectOnly);
       const launch = (projectId: string) =>
-        admission
-          .admitLaunch(
-            projectOnly as never,
-            { projectId } as unknown as OrchestrationV2ThreadLaunchInput,
-          )
-          .pipe(
-            Effect.as("admitted"),
-            Effect.catch(() => Effect.succeed("refused")),
-          );
+        admission.admitLaunch({ projectId } as unknown as OrchestrationV2ThreadLaunchInput).pipe(
+          Effect.as("admitted"),
+          Effect.catch(() => Effect.succeed("refused")),
+        );
       assert.strictEqual(yield* launch(PROJECT), "admitted");
       assert.strictEqual(yield* launch(OTHER_PROJECT), "refused");
     }),
