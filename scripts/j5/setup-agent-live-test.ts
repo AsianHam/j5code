@@ -31,8 +31,8 @@
  *
  * It signals only the process group it started, and only after confirming
  * that the group's leader is still the process it spawned (same pid and start
- * time) running from this worktree. It never finds a process by name. Linux
- * only: it reads `/proc`.
+ * time) running from this worktree. It never finds a process by name. It runs
+ * on Linux, where it reads `/proc`, and on macOS, where it asks `ps` and `lsof`.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -337,6 +337,20 @@ export function startRefusal(input: {
   return undefined;
 }
 
+/** macOS has no /proc, so there the probes below ask `ps` and `lsof`. */
+// oxlint-disable-next-line t3code/no-global-process-runtime -- a standalone CLI with no Effect runtime.
+const IS_MACOS = NodeOS.platform() === "darwin";
+
+/** A probe's stdout, or undefined when it fails, as `ps` and `lsof` do when nothing matches. */
+function probeOutput(command: string, args: ReadonlyArray<string>): string | undefined {
+  const result = NodeChildProcess.spawnSync(command, [...args], {
+    encoding: "utf8",
+    // lstart's format follows the locale.
+    env: { ...process.env, LC_ALL: "C" },
+  });
+  return result.status === 0 ? result.stdout : undefined;
+}
+
 /** The fields of /proc/<pid>/stat after "pid (comm) ", or undefined when the process is gone. */
 function statFieldsOf(pid: number): ReadonlyArray<string> | undefined {
   try {
@@ -350,19 +364,40 @@ function statFieldsOf(pid: number): ReadonlyArray<string> | undefined {
 
 /** The process group of `pid`, or undefined when it is gone. */
 function processGroupOf(pid: number): number | undefined {
-  const group = statFieldsOf(pid)?.[2];
-  return group === undefined ? undefined : Number(group);
+  const group = IS_MACOS
+    ? probeOutput("ps", ["-o", "pgid=", "-p", String(pid)])?.trim()
+    : statFieldsOf(pid)?.[2];
+  return group === undefined || group === "" ? undefined : Number(group);
 }
 
 /**
- * When `pid` started, in clock ticks since boot. Together with the pid it
- * names one process for good: a recycled pid has a later start time.
+ * When `pid` started: clock ticks since boot on Linux, the start time to the
+ * second on macOS. Together with the pid it names one process for good: a
+ * recycled pid has a later start time.
  */
 function startTimeOf(pid: number): string | undefined {
-  return statFieldsOf(pid)?.[19];
+  if (!IS_MACOS) return statFieldsOf(pid)?.[19];
+  return probeOutput("ps", ["-o", "lstart=", "-p", String(pid)])?.trim() || undefined;
+}
+
+/** Pids in `group`, from `ps -A -o pid=,pgid=` output. */
+export function groupMembersFromPs(output: string, group: number): ReadonlyArray<number> {
+  return output
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/).map(Number))
+    .filter(([pid, pgid]) => pgid === group && Number.isInteger(pid))
+    .map(([pid]) => pid!);
 }
 
 function membersOfGroup(group: number): ReadonlyArray<number> {
+  if (IS_MACOS) {
+    // `ps -A` always lists something, so a failure must throw: read as an empty
+    // group, it would let stop and rebuild drop a server that is still running.
+    const output = NodeChildProcess.execFileSync("ps", ["-A", "-o", "pid=,pgid="], {
+      encoding: "utf8",
+    });
+    return groupMembersFromPs(output, group);
+  }
   return NodeFS.readdirSync("/proc")
     .filter((entry) => /^\d+$/.test(entry))
     .map(Number)
@@ -370,11 +405,36 @@ function membersOfGroup(group: number): ReadonlyArray<number> {
 }
 
 function listenerOn(port: number): number | undefined {
+  if (IS_MACOS) {
+    const pid = probeOutput("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"])?.split("\n")[0];
+    return pid ? Number(pid) : undefined;
+  }
   const output = NodeChildProcess.execFileSync("ss", ["-H", "-ltnp", `sport = :${port}`], {
     encoding: "utf8",
   });
   const pid = /pid=(\d+)/.exec(output)?.[1];
   return pid === undefined ? undefined : Number(pid);
+}
+
+/** The path in `lsof -Fn` output, whose name field is the line that starts with "n". */
+export function pathFromLsofFields(output: string): string | undefined {
+  return output
+    .split("\n")
+    .find((line) => line.startsWith("n"))
+    ?.slice(1);
+}
+
+function cwdOf(pid: number): string | undefined {
+  if (IS_MACOS) {
+    return pathFromLsofFields(
+      probeOutput("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]) ?? "",
+    );
+  }
+  try {
+    return NodeFS.readlinkSync(`/proc/${pid}/cwd`);
+  } catch {
+    return undefined;
+  }
 }
 
 /** What `start` writes when it spawns the server, and all `stop` trusts. */
@@ -460,13 +520,7 @@ function currentServerState(paths: ServerPaths): ServerState {
     listenerOn,
     processGroupOf,
     startTimeOf,
-    cwdOf: (pid) => {
-      try {
-        return NodeFS.readlinkSync(`/proc/${pid}/cwd`);
-      } catch {
-        return undefined;
-      }
-    },
+    cwdOf,
   });
 }
 
@@ -2238,8 +2292,8 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const parsed = args[0] === "guest" ? parseGuest(args.slice(1)) : parseCommand(args);
   // oxlint-disable-next-line t3code/no-global-process-runtime -- a standalone CLI with no Effect runtime.
-  if (NodeOS.platform() !== "linux") {
-    throw new LiveTestRefusal("This script reads /proc and runs only on Linux.");
+  if (NodeOS.platform() !== "linux" && !IS_MACOS) {
+    throw new LiveTestRefusal("This script runs only on Linux and macOS.");
   }
   const checkout = NodePath.resolve(import.meta.dirname, "../..");
   if (!NodeFS.existsSync(NodePath.join(checkout, "node_modules"))) {

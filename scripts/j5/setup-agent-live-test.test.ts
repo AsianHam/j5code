@@ -9,6 +9,8 @@ import {
   classifyServer,
   formatGuest,
   formatInstructions,
+  groupMembersFromPs,
+  pathFromLsofFields,
   guestRefusal,
   parseGuest,
   LiveTestRefusal,
@@ -471,6 +473,19 @@ describe("classifyServer", () => {
         "unverified",
       );
     }
+  });
+});
+
+describe("macOS process probes", () => {
+  it("finds a group's members in ps output, whose columns are padded", () => {
+    const ps = "    1     1\n  812   812\n  840   812\n 8120  8120\n";
+    assert.deepStrictEqual(groupMembersFromPs(ps, 812), [812, 840]);
+    assert.deepStrictEqual(groupMembersFromPs("", 812), []);
+  });
+
+  it("reads the working directory from lsof's name field, spaces included", () => {
+    assert.equal(pathFromLsofFields("p840\nfcwd\nn/Users/b/j5 code/wt\n"), "/Users/b/j5 code/wt");
+    assert.equal(pathFromLsofFields(""), undefined);
   });
 });
 
