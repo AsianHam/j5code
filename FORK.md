@@ -771,7 +771,7 @@ explicitly marked.
 | `apps/web/src/composer-logic.ts`                                      | A       | 45, 49                                             |
 | `apps/server/src/auth/RpcAuthorization.ts`                            | A       | 42, 44, 45, 64                                     |
 | `apps/web/src/components/AppSidebarLayout.tsx`                        | N       | 75                                                 |
-| `apps/web/src/components/ChatView.tsx`                                | A       | 19, 24, 45, 49, 69                                 |
+| `apps/web/src/components/ChatView.tsx`                                | A       | 19, 24, 45, 49, 69, 80                             |
 | `apps/web/src/connection/runtime.ts`                                  | N       | 70                                                 |
 | `apps/web/src/environments/primary/auth.ts`                           | N       | 70                                                 |
 | `apps/web/src/components/CommandPalette.logic.test.ts`                | R       | 34                                                 |
