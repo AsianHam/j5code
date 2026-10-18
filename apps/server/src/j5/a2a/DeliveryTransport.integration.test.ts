@@ -1983,6 +1983,13 @@ it.effect(
           inputs[0]!.message.text,
         );
         assert.equal(inputs[0]?.message.createdBy, "user");
+        // The reply's record is keyed by the id the delivered message carries.
+        assert.lengthOf(
+          yield* sql`
+            SELECT 1 FROM j5_a2a_message_author WHERE message_id = ${inputs[0]!.message.messageId}
+          `,
+          1,
+        );
         assert.deepStrictEqual(yield* delivery.drain, []);
         assert.equal(yield* worker.drain(), 0);
         assert.deepStrictEqual(yield* send.send(ask), accepted);

@@ -36,7 +36,6 @@ import type * as SqlError from "effect/sql/SqlError";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import type { LedgerMessageId, ParticipantId } from "../a2a/contracts.ts";
 import { deliveryMessageId } from "../a2a/DeliveryTransport.ts";
-import { closedHumanEnvelopePrefix } from "../a2a/EnvelopeFormatter.ts";
 import { Access } from "./Access.ts";
 import { authorLabel, beginsWithSlash, personNameInLine } from "./authorLabel.ts";
 import {
@@ -870,17 +869,14 @@ const make = Effect.gen(function* () {
         const author = yield* authorOn(personId, reply.threadId);
         if (author === null) return;
         const carried = yield* announce(reply.threadId, null);
-        const prefix = closedHumanEnvelopePrefix({
-          senderId: personId,
-          senderLabel: authorLabel(author),
-          note: carried.note,
-        });
+        // A client strips the note alone: the reply's own header and closing sentence are its
+        // envelope, which the client draws as an inbox reply.
         yield* recordAuthor(
           reply.threadId,
           deliveryMessageId(reply.messageId),
           author,
           carried,
-          prefix,
+          carried.note === null ? "" : `${carried.note}\n`,
         );
       }).pipe(
         Effect.mapError((cause) =>

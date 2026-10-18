@@ -133,15 +133,6 @@ export const formatClosedHumanEnvelope = (input: {
   return input.note == null ? envelope : `${input.note}\n${envelope}`;
 };
 
-/** Exactly the platform's text such a reply begins with, before the person's words. */
-export const closedHumanEnvelopePrefix = (
-  input: Omit<Parameters<typeof formatClosedHumanEnvelope>[0], "message">,
-) => {
-  const words = "\u0000";
-  const envelope = formatClosedHumanEnvelope({ ...input, message: words });
-  return envelope.slice(0, envelope.indexOf(words));
-};
-
 /** A3 supplies notice derivation; A2 owns this channel's stable rendering shape. */
 export const formatSilenceNoticeEnvelope = (input: {
   readonly noticeType: string;

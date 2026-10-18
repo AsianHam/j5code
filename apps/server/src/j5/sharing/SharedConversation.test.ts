@@ -174,7 +174,10 @@ it.effect(
       const text = yield* say(owner, message(threadId, "Keep the migration step."));
       assert.isTrue(hasNote(text));
       assert.include(text, "Who can write: Jackson (owner), Priya (collaborator).");
-      assert.include(text, "carry no header of their own were written by Jackson (owner).");
+      assert.include(
+        text,
+        "was typed before this thread was shared, when only Jackson (owner) could write here.",
+      );
       assert.include(text, "an Owner's word settles it");
       assert.isTrue(
         afterNote(text).startsWith("[Message from Jackson (owner)]\n\nKeep the migration"),
@@ -312,7 +315,7 @@ it.effect("a thread started in a project already shared is shared from its first
     const text = admitted.initialMessage!.text;
     assert.include(text, "Who can write: Jackson (owner), Priya (collaborator).");
     // A new thread has no messages from before.
-    assert.notInclude(text, "from before it was shared");
+    assert.include(text, "One with none came from a scheduled task.\n");
     assert.isTrue(afterNote(text).startsWith("[Message from Jackson (owner)]\n\nStart."));
     // In another project no one else writes to, a launch goes on as sent.
     const elsewhere = {
@@ -655,10 +658,8 @@ it.effect(
       yield* access.rename({ personId: priya, displayName: "Priya K" });
       const [reply] = (yield* authors(threadId, owner)).authors;
       assert.strictEqual(reply!.name, "Priya");
-      assert.isTrue(hasNote(reply!.storedPrefix));
-      assert.isTrue(
-        reply!.storedPrefix.endsWith(`\n[Message from Priya (collaborator) (${priya})]\n\n`),
-        reply!.storedPrefix,
-      );
+      // A client strips the note alone and draws the reply's envelope as an inbox reply.
+      assert.isTrue(hasNote(reply!.note ?? ""));
+      assert.strictEqual(reply!.storedPrefix, `${reply!.note}\n`);
     }).pipe(Effect.provide(conversationLayer)),
 );
