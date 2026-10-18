@@ -84,3 +84,34 @@ export function isSettledPrompt(toolData: unknown): toolData is {
     item.completedAt !== undefined
   );
 }
+
+/**
+ * One answer to the agent's question as the person gave it. In a shared conversation the server
+ * writes its mark, named exactly in `storedPrefix`, at the start of a typed answer, or as the
+ * first of the options someone chose. Any other value, and any value that does not carry the
+ * mark, is returned as it is.
+ */
+export function answerWithoutPrefix(answer: unknown, storedPrefix: string): unknown {
+  if (storedPrefix === "") return answer;
+  if (typeof answer === "string") {
+    return answer.startsWith(storedPrefix) ? answer.slice(storedPrefix.length) : answer;
+  }
+  if (Array.isArray(answer)) {
+    const [first, ...rest] = answer as ReadonlyArray<unknown>;
+    return typeof first === "string" && first.trim() === storedPrefix.trim() ? rest : answer;
+  }
+  return answer;
+}
+
+/** Every answer of a question prompt, each as the person gave it; see `answerWithoutPrefix`. */
+export function answersWithoutPrefix<Answers extends Readonly<Record<string, unknown>>>(
+  answers: Answers,
+  storedPrefix: string,
+): Answers {
+  return Object.fromEntries(
+    Object.entries(answers).map(([question, answer]) => [
+      question,
+      answerWithoutPrefix(answer, storedPrefix),
+    ]),
+  ) as Answers;
+}

@@ -1,7 +1,12 @@
 import type { MessageAuthor } from "@t3tools/contracts/j5";
 import { describe, expect, it } from "vite-plus/test";
 
-import { readAnswersFor, sharedMessageView, typedText } from "./sharedTimeline.logic";
+import {
+  answersWithoutPrefix,
+  readAnswersFor,
+  sharedMessageView,
+  typedText,
+} from "./sharedTimeline.logic";
 
 const author = (overrides: Partial<MessageAuthor> = {}): MessageAuthor => ({
   messageId: "message-1",
@@ -82,5 +87,27 @@ describe("whether a read answers for a message", () => {
     expect(readAnswersFor({ readAt: 2_000, firstSeenAt: 1_000 })).toBe(true);
     expect(readAnswersFor({ readAt: 500, firstSeenAt: 1_000 })).toBe(false);
     expect(readAnswersFor({ readAt: null, firstSeenAt: 1_000 })).toBe(false);
+  });
+});
+
+describe("an answer to the agent's question", () => {
+  const prefix = "[Answer from Priya (collaborator)] ";
+
+  it("is shown as given, without the mark the server names", () => {
+    expect(
+      answersWithoutPrefix(
+        { typed: `${prefix}Keep the step.`, chosen: [prefix.trim(), "Option B"], untouched: 3 },
+        prefix,
+      ),
+    ).toEqual({ typed: "Keep the step.", chosen: ["Option B"], untouched: 3 });
+  });
+
+  it("is left as it is when the server names no mark, or the answer does not carry it", () => {
+    expect(answersWithoutPrefix({ typed: "Keep the step." }, "")).toEqual({
+      typed: "Keep the step.",
+    });
+    expect(answersWithoutPrefix({ chosen: ["Option B"] }, prefix)).toEqual({
+      chosen: ["Option B"],
+    });
   });
 });
