@@ -18,12 +18,15 @@ import {
   type SessionIdentity,
   type SessionReach,
   isWide,
+  reachPersonId,
 } from "./PersonAccess.ts";
+import { SharedConversation } from "./SharedConversation.ts";
 
 /**
  * What a person's client may send as a command or a thread launch (People and access AC13, AC14),
  * checked before upstream's handler runs. `ws.ts` wraps both requests with this one call (FORK.md
- * case 78). Shared conversations add the author's line to a message here as well.
+ * case 78). Once a command is admitted, a shared conversation takes it in: a person's message gains
+ * its author's line (`SharedConversation`).
  *
  * For everyone who is not an Owner, archiving and deleting a thread is refused, for now: upstream
  * keeps unarchiving in Settings, which is for Owners. For a person whose scope is narrower than
@@ -155,9 +158,10 @@ export interface CommandAdmission {
 export const makeCommandAdmission = (
   crewSeatArchiveGuard: CrewSeatArchiveGuard,
   session: SessionIdentity,
-): Effect.Effect<CommandAdmission, never, PersonAccess> =>
+): Effect.Effect<CommandAdmission, never, PersonAccess | SharedConversation> =>
   Effect.gen(function* () {
     const access = yield* PersonAccess;
+    const conversation = yield* SharedConversation;
     const reach = yield* access.sessionReach(session).pipe(
       Effect.catch((cause) =>
         Effect.logError("J5 could not read whose a socket is; holding its commands to nothing", {
@@ -196,7 +200,7 @@ export const makeCommandAdmission = (
         if (!levelReaches(held, level)) return yield* refused(NOT_SHARED);
       }).pipe(Effect.catchTags({ PersonAccessStorageError: refuseUnreadable }));
 
-    const admit: CommandAdmission["admit"] = Effect.fn("j5.sharing.commandAdmission.admit")(
+    const checked: CommandAdmission["admit"] = Effect.fn("j5.sharing.commandAdmission.checked")(
       function* (command) {
         if (OWNER_ONLY_COMMANDS.has(command.type)) {
           const owner =
@@ -227,6 +231,13 @@ export const makeCommandAdmission = (
       },
     );
 
+    const person = reachPersonId(reach);
+    const admit: CommandAdmission["admit"] = (command) =>
+      checked(command).pipe(
+        Effect.flatMap((admitted) => conversation.admit(person, admitted)),
+        Effect.withSpan("j5.sharing.commandAdmission.admit"),
+      );
+
     const admitLaunch: CommandAdmission["admitLaunch"] = Effect.fn(
       "j5.sharing.commandAdmission.admitLaunch",
     )(function* (input) {
@@ -236,7 +247,7 @@ export const makeCommandAdmission = (
           ? { kind: "thread", threadId: input.threadId }
           : { kind: "project", projectId: input.projectId };
       yield* requireLevel(scope, "collaborator");
-      return input;
+      return yield* conversation.admitLaunch(person, input);
     });
 
     return { admit, admitLaunch };

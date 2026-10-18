@@ -48,6 +48,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { ThreadLifecycleService } from "../../orchestration-v2/ThreadLifecycleService.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
+import { quietAccessLayer } from "../sharing/test-support/conversationHarness.ts";
 import { ThreadLaunchService } from "../../orchestration-v2/ThreadLaunchService.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/OrchestrationCommandReceipts.ts";
 import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
@@ -102,6 +103,7 @@ const measureNestedRuntimeBuilds = (nested: "http" | "mcp") =>
       );
       const threadManagement = Layer.mock(ThreadManagementService)({
         streamStoredEventsFrom: () => Stream.never,
+        streamDomainEvents: Stream.never,
       });
       const runtime = makeJ5A2ARuntimeLayer({ ledger: countedLedger });
       const httpConsumer = Layer.effectDiscard(A2ALedger.pipe(Effect.asVoid));
@@ -112,6 +114,7 @@ const measureNestedRuntimeBuilds = (nested: "http" | "mcp") =>
           nested === "mcp" ? mcpConsumer.pipe(Layer.provide(Layer.fresh(runtime))) : mcpConsumer,
         ).pipe(
           Layer.provide(runtime),
+          Layer.provide(quietAccessLayer),
           Layer.provide(threadManagement),
           Layer.provide(emptyEventStore),
           Layer.provide(Layer.mock(ProviderRegistry)({})),
@@ -164,6 +167,7 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
       );
       const countedThreadManagement = Layer.mock(ThreadManagementService)({
         streamStoredEventsFrom: () => Stream.never,
+        streamDomainEvents: Stream.never,
       }).pipe(Layer.tap(() => Effect.sync(() => (threadManagementBuilds += 1))));
       const ledgerConsumer = Layer.effectDiscard(A2ALedger.pipe(Effect.asVoid));
       const secondThreadConsumer = Layer.effectDiscard(ThreadManagementService.pipe(Effect.asVoid));
@@ -227,6 +231,7 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
             readChangesConsumer,
           ).pipe(
             Layer.provideMerge(runtime),
+            Layer.provide(quietAccessLayer),
             Layer.provide(countedThreadManagement),
             Layer.provide(emptyEventStore),
             Layer.provide(Layer.mock(DeviceService)({})),

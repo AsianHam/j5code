@@ -42,6 +42,7 @@ import { LegacyPeople } from "./sharing/LegacyPeople.ts";
 import { Links } from "./sharing/Links.ts";
 import { People } from "./sharing/People.ts";
 import { PersonAccess, type SessionIdentity } from "./sharing/PersonAccess.ts";
+import { SharedConversation } from "./sharing/SharedConversation.ts";
 import { makeSharingRpcHandlers } from "./sharing/sharingRpc.ts";
 import { makeSkillCatalogRpcHandlers } from "./skills/skillCatalogRpc.ts";
 import { makeSkillLinkRpcHandlers } from "./skills/skillLinkRpc.ts";
@@ -75,7 +76,8 @@ type J5WsRpcServices =
   | LegacyPeople
   | People
   | Links
-  | Access;
+  | Access
+  | SharedConversation;
 
 /**
  * The server-lifetime J5 services the handlers call. `ws.ts` reads them once, where its route is
@@ -95,6 +97,7 @@ export const j5WsRpcServices = Effect.context<J5WsRpcServices>().pipe(
       People,
       Links,
       Access,
+      SharedConversation,
     ),
   ),
 );
@@ -142,7 +145,11 @@ export const layerJ5WsRpc = (
           session,
         })),
         ...makePeopleRpcHandlers({ people: yield* People, links: yield* Links, session }),
-        ...makeSharedConversationRpcHandlers(),
+        ...makeSharedConversationRpcHandlers({
+          conversation: yield* SharedConversation,
+          people: yield* PersonAccess,
+          session,
+        }),
         ...makeSharingRpcHandlers({
           access: yield* PersonAccess,
           people: yield* LegacyPeople,

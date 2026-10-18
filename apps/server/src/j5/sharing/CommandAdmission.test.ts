@@ -8,14 +8,8 @@ import { LEVEL_PERMISSIONS } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 
 import { makeCommandAdmission } from "./CommandAdmission.ts";
-import {
-  OTHER_PROJECT,
-  PROJECT,
-  accessLayer,
-  device,
-  person,
-  thread,
-} from "./test-support/accessHarness.ts";
+import { OTHER_PROJECT, PROJECT, device, person, thread } from "./test-support/accessHarness.ts";
+import { conversationLayer } from "./test-support/conversationHarness.ts";
 
 const command = (fields: Record<string, unknown>) =>
   ({ commandId: CommandId.make("command:test"), ...fields }) as unknown as OrchestrationV2Command;
@@ -40,7 +34,7 @@ const deviceOf = Effect.fn("test.deviceOf")(function* (
   return (yield* device(created.personId, LEVEL_PERMISSIONS.collaborator)).identity;
 });
 
-it.layer(accessLayer)("CommandAdmission", (it) => {
+it.layer(conversationLayer)("CommandAdmission", (it) => {
   it.effect("lets only an Owner archive or delete a thread, for now", () =>
     Effect.gen(function* () {
       const threadId = yield* thread("thread:archive");
@@ -72,11 +66,27 @@ it.layer(accessLayer)("CommandAdmission", (it) => {
         { scope: { kind: "thread", threadId: mine }, level: "collaborator" },
       ]);
       assert.strictEqual(
-        yield* admitted(onThread, command({ type: "message.dispatch", threadId: mine })),
+        yield* admitted(
+          onThread,
+          command({
+            type: "message.dispatch",
+            threadId: mine,
+            messageId: "message:mine",
+            text: "Hi",
+          }),
+        ),
         "admitted",
       );
       assert.match(
-        yield* admitted(onThread, command({ type: "message.dispatch", threadId: sibling })),
+        yield* admitted(
+          onThread,
+          command({
+            type: "message.dispatch",
+            threadId: sibling,
+            messageId: "message:sibling",
+            text: "Hi",
+          }),
+        ),
         /^refused/,
       );
       // At thread scope a Collaborator starts, forks and merges back nothing (AC14).

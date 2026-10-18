@@ -1,22 +1,38 @@
 import { AuthOrchestrationReadScope } from "@t3tools/contracts";
-import { J5ActionError, J5_SHARED_CONVERSATION_WS_METHODS } from "@t3tools/contracts/j5";
+import {
+  J5_SHARED_CONVERSATION_WS_METHODS,
+  type ThreadAuthorsRequest,
+} from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
-import * as Stream from "effect/Stream";
 
-/** Anyone who can read a thread reads who wrote in it. */
+import { failAsJ5ActionError } from "../rpcActionError.ts";
+import { type PersonAccessShape, type SessionIdentity, reachPersonId } from "./PersonAccess.ts";
+import type { SharedConversationShape } from "./SharedConversation.ts";
+
+/** Anyone who can read a thread reads who wrote in it (the gate checks the thread). */
 export const SHARED_CONVERSATION_RPC_SCOPES = {
   [J5_SHARED_CONVERSATION_WS_METHODS.listThreadAuthors]: AuthOrchestrationReadScope,
   [J5_SHARED_CONVERSATION_WS_METHODS.subscribeThreadAuthorsChanges]: AuthOrchestrationReadScope,
 } as const;
 
-// The wire is fixed so the web client can be built against it; the handler is the shared
-// conversation's, built next.
-const notYet = Effect.fail(
-  new J5ActionError({ code: "NotBuiltYet", message: "This is not available on this server yet." }),
-);
+const failed = failAsJ5ActionError({
+  refusals: [],
+  failed: "Reading who wrote in this thread failed.",
+});
 
-export const makeSharedConversationRpcHandlers = () => ({
-  [J5_SHARED_CONVERSATION_WS_METHODS.listThreadAuthors]: () => notYet,
-  [J5_SHARED_CONVERSATION_WS_METHODS.subscribeThreadAuthorsChanges]: () =>
-    Stream.fromEffect(notYet),
+export const makeSharedConversationRpcHandlers = (input: {
+  readonly conversation: SharedConversationShape;
+  readonly people: PersonAccessShape;
+  readonly session: SessionIdentity;
+}) => ({
+  [J5_SHARED_CONVERSATION_WS_METHODS.listThreadAuthors]: (request: ThreadAuthorsRequest) =>
+    input.people.sessionReach(input.session).pipe(
+      Effect.flatMap((reach) =>
+        input.conversation.threadAuthors(reachPersonId(reach), request.threadId),
+      ),
+      Effect.catch(failed),
+    ),
+  [J5_SHARED_CONVERSATION_WS_METHODS.subscribeThreadAuthorsChanges]: (
+    request: ThreadAuthorsRequest,
+  ) => input.conversation.authorsChanges(request.threadId),
 });

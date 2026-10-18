@@ -48,7 +48,7 @@ const sessionStore = Layer.mergeAll(SessionStore.layer, PairingGrantStore.layer)
 
 /** `PersonAccess`, `PairingIntents`, `Access` and `SessionStore` over one database. */
 // The first owner, recorded as the server records them when it starts.
-const recordsLayer = PairingIntents.peopleLayer.pipe(
+export const recordsLayer = PairingIntents.peopleLayer.pipe(
   Layer.provideMerge(humanPersonRegistryLayer),
   Layer.provideMerge(sessionStore),
   Layer.provideMerge(SqlitePersistence.layerMemory),

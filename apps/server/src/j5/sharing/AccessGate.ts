@@ -43,6 +43,7 @@ import {
   renewOutdatedDevicesAtStartup,
   StaleMcpApprovalError,
 } from "./Access.ts";
+import { accessWriteHookLayer as sharedThreadsWriteHook } from "./SharedThreads.ts";
 import { issueGuestProjectIconUrl, projectIdOfGuestIconPath } from "./GuestProjectIcons.ts";
 import {
   PAIRED_AS_SOMEONE_ELSE,
@@ -642,7 +643,7 @@ export const gateEnvironmentAuth = <A, E, R>(
     Layer.provideMerge(linksLayer),
     Layer.provideMerge(renewOutdatedDevicesAtStartup),
     Layer.provideMerge(layerGatedEnvironmentAuth),
-    Layer.provideMerge(accessLayer),
+    Layer.provideMerge(accessLayer.pipe(Layer.provide(sharedThreadsWriteHook))),
     Layer.provideMerge(upstream),
   );
 
@@ -662,7 +663,7 @@ export const cliEnvironmentAuth = <E, R>(
   >,
 ) =>
   layerGatedEnvironmentAuth.pipe(
-    Layer.provideMerge(accessLayer),
+    Layer.provideMerge(accessLayer.pipe(Layer.provide(sharedThreadsWriteHook))),
     Layer.provideMerge(peopleRecordsLayer),
     Layer.provideMerge(runtime),
   );

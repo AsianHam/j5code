@@ -41,6 +41,8 @@ import Migration0037 from "./migrations/037_PersonNames.ts";
 import Migration0038 from "./migrations/038_OpenLinkJoins.ts";
 import Migration0039 from "./migrations/039_PeopleAndLevels.ts";
 import Migration0040 from "./migrations/040_Links.ts";
+import Migration0041 from "./migrations/041_SharedConversation.ts";
+import Migration0042 from "./migrations/042_EveryoneHereAsks.ts";
 
 export const J5_A2A_MIGRATIONS_TABLE = "j5_a2a_migrations";
 
@@ -92,6 +94,8 @@ export const migrationEntries = [
   [38, "OpenLinkJoins", Migration0038],
   [39, "PeopleAndLevels", Migration0039],
   [40, "Links", Migration0040],
+  [41, "SharedConversation", Migration0041],
+  [42, "EveryoneHereAsks", Migration0042],
 ] as const;
 
 const makeMigrationLoader = (throughId?: number) =>

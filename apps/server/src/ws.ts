@@ -3232,6 +3232,8 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(Layer.succeed(AgentHandoffRefreshes, agentHandoffRefreshes)),
               Layer.provide(Layer.succeed(PlaybookStore, playbooks)),
+              // J5: the server's J5 services, for command admission (FORK.md case 78).
+              Layer.provide(Layer.succeedContext(j5RpcServices)),
               Layer.provide(OtlpEndpointCheck.layer),
               Layer.provide(
                 Layer.succeed(
