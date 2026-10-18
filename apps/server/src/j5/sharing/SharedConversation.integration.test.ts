@@ -26,8 +26,8 @@ import { quietAccessLayer } from "./test-support/conversationHarness.ts";
  * provider running: a run that starts stays active, so what is sent after it queues. The other
  * tests stand in for upstream and write its rows by hand; this one fails if upstream reshapes
  * what J5 reads from it by SQL: a run's `status` and the `userMessageId` and `startedAt` in its
- * payload, a message's `run_id` and `role`, and the event log's `command_id`, `aggregate_kind`,
- * `stream_id`, `event_type` and the `id` in its payload.
+ * payload, a message's `run_id` and `role`, the event log's `command_id`, `aggregate_kind`,
+ * `stream_id`, `event_type` and the `id` in its payload, and a command's receipt by its id.
  */
 
 const threadId = ThreadId.make("thread:shared-live");
@@ -136,6 +136,14 @@ it.effect(
           (event) => event.event_type === "message.updated" && event.id === before.messageId,
         ),
         JSON.stringify(logged),
+      );
+
+      // A command upstream has taken has a receipt by its id: a replayed answer is told by it.
+      assert.lengthOf(
+        yield* sql`
+          SELECT 1 FROM orchestration_command_receipts WHERE command_id = ${before.commandId}
+        `,
+        1,
       );
 
       const priya = yield* people.createPerson({ displayName: "Priya" });

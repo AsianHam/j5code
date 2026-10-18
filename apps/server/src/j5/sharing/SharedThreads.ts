@@ -65,9 +65,10 @@ export interface SharedThreadsShape {
     launchingIn?: ProjectId | null,
   ) => Effect.Effect<boolean, PersonAccessStorageError>;
   /**
-   * Records as shared every thread a person can now write to, when they are not the first owner.
-   * Run inside each change of access, so a writer added and removed before anyone wrote still
-   * leaves the thread shared.
+   * Records as shared every thread a person can write to, when they are not the first owner:
+   * each such thread has two writers. Run inside each change of access, before and after it, so a
+   * writer added and removed before anyone wrote still leaves the threads they could write to
+   * shared, a thread created while they could included.
    */
   readonly recordGainedWriter: (
     personId: ParticipantId,
@@ -232,11 +233,20 @@ export const layer: Layer.Layer<SharedThreads, never, SqlClient.SqlClient> = Lay
   make,
 ).pipe(Layer.provide(personAccessLayer));
 
-/** Runs inside every change of access: a thread that gains a second writer is recorded shared. */
+/**
+ * Runs inside every change of access, before and after it is written: every thread the person
+ * can write to then is recorded shared.
+ */
 export const accessWriteHookLayer: Layer.Layer<AccessWriteHook, never, SqlClient.SqlClient> =
   Layer.effect(
     AccessWriteHook,
     Effect.map(SharedThreads, (shared) =>
-      AccessWriteHook.of({ afterChange: shared.recordGainedWriter }),
+      // Before a change too: a thread created while the person could write, then had no
+      // message before they lost it, was still shared, and is recorded while their old scope
+      // is known (AC6).
+      AccessWriteHook.of({
+        beforeChange: shared.recordGainedWriter,
+        afterChange: shared.recordGainedWriter,
+      }),
     ),
   ).pipe(Layer.provide(layer));

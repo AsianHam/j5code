@@ -79,18 +79,24 @@ export const authorLine = (author: Author, editedBy: Author | null = null) =>
  */
 export const answerLine = (author: Author) => `[Answer from ${authorLabel(author)}]`;
 
-/** A question's answers with their author on each: on the text, or first among chosen options. */
-const answersFrom = (answers: Readonly<Record<string, unknown>>, author: Author) =>
-  Object.fromEntries(
+/**
+ * A question's answers with their author on each: at the start of the text, or of the first
+ * chosen option's text. The mark goes on the option's text rather than in an option of its own,
+ * so an answer still holds only the options the person chose.
+ */
+const answersFrom = (answers: Readonly<Record<string, unknown>>, author: Author) => {
+  const mark = (text: string) => `${answerLine(author)} ${text}`;
+  return Object.fromEntries(
     Object.entries(answers).map(([question, answer]) => [
       question,
       typeof answer === "string"
-        ? `${answerLine(author)} ${answer}`
-        : Array.isArray(answer)
-          ? [answerLine(author), ...answer]
+        ? mark(answer)
+        : Array.isArray(answer) && typeof answer[0] === "string"
+          ? [mark(answer[0]), ...answer.slice(1)]
           : answer,
     ]),
   );
+};
 
 /** The platform's text a stored message begins with: the note it carries, then the author's line. */
 const prefixOf = (note: string | null, line: string) =>
@@ -148,20 +154,16 @@ interface CarrierRun {
 }
 
 /**
- * Whether what a message carried never reached the agent, or no longer counts as having: upstream
- * never took the message in; its run ended without ever starting (withdrawn or cancelled while
- * queued, failed while its workspace was prepared, or cut short by a crash); or its run was
- * rolled back, which takes the agent's conversation back to before it.
+ * Whether what a message carried has reached the agent: its run has started, so the provider was
+ * handed it, and has not been rolled back, which takes the agent's conversation back to before
+ * it. A message whose run is queued, preparing or starting has told the agent nothing yet, and
+ * may never; nor has one with no run, of which there is no evidence either way. Until one is
+ * known to have run, every message carries the note again.
  */
-const ENDED_UNFINISHED: ReadonlySet<string> = new Set([
-  "cancelled",
-  "failed",
-  "interrupted",
-] satisfies ReadonlyArray<OrchestrationV2Run["status"]>);
-const lost = (run: CarrierRun) =>
-  run.carried === null ||
-  run.status === ("rolled_back" satisfies OrchestrationV2Run["status"]) ||
-  (run.status !== null && ENDED_UNFINISHED.has(run.status) && run.started_at === null);
+const reachedAgent = (run: CarrierRun) =>
+  run.carried !== null &&
+  run.started_at !== null &&
+  run.status !== ("rolled_back" satisfies OrchestrationV2Run["status"]);
 
 const QUEUED = "queued" satisfies OrchestrationV2Run["status"];
 
@@ -280,9 +282,9 @@ const make = Effect.gen(function* () {
   /**
    * Who the agent was last told can write to a thread: what the newest message known to have
    * reached it with a note said. `null` for an agent that has been told nothing that still
-   * stands. A note on a message still waiting in the queue has told the agent nothing yet, and
-   * may never, since the message can be withdrawn. So until one is known to have run, every
-   * message carries the note (AC4).
+   * stands. A note on a message whose run has not started has told the agent nothing yet, and
+   * may never, since the message can be withdrawn or its run fail first. So until one is known to
+   * have run, every message carries the note (AC4).
    *
    * Read from upstream's own records by SQL: a message's `run_id`, a run's `status` and the
    * `startedAt` in its payload (`SharedConversation.integration.test.ts` fails if upstream
@@ -302,7 +304,7 @@ const make = Effect.gen(function* () {
       WHERE author.thread_id = ${threadId} AND author.told_json IS NOT NULL
       ORDER BY author.rowid DESC
     `;
-    const reached = rows.find((row) => !lost(row) && row.status !== QUEUED);
+    const reached = rows.find(reachedAgent);
     return reached === undefined ? null : yield* decodeTold(reached.told_json);
   });
 
@@ -347,8 +349,23 @@ const make = Effect.gen(function* () {
     carried: { readonly note: string | null; readonly told: string | null },
     storedPrefix: string,
   ) {
+    // Upstream keys a message by its id alone and writes a send that names one it holds over it.
+    // So a message id is its sender's own: one recorded for someone else, or one upstream holds
+    // that is no one's here, is refused; a retry of their own send finds their record and goes on.
+    const recorded = yield* sql<{ readonly person_id: string }>`
+      SELECT person_id FROM j5_a2a_message_author WHERE message_id = ${messageId}
+    `;
+    const held =
+      recorded.length > 0
+        ? []
+        : yield* sql<{ readonly found: number }>`
+            SELECT 1 AS found FROM orchestration_v2_projection_messages
+            WHERE message_id = ${messageId}
+          `;
+    if (recorded.some((row) => row.person_id !== author.personId) || held.length > 0) {
+      return yield* refused("This message was already sent.");
+    }
     const createdAt = DateTime.formatIso(yield* DateTime.now);
-    // The first record of a message stands: a later send cannot take a message over.
     yield* sql`
       INSERT INTO j5_a2a_message_author (
         thread_id, message_id, person_id, display_name, level, note, told_json, stored_prefix,
@@ -400,43 +417,103 @@ const make = Effect.gen(function* () {
     `.pipe(Effect.map((rows) => rows[0] ?? null));
 
   /**
+   * A message upstream holds that no person here is recorded for: one from before the thread was
+   * shared, an agent's delivery, a scheduled task's or the platform's. One a person typed before
+   * the thread was shared is the first owner's, the only person who could write to it then
+   * (AC3); anything else was typed by no one here.
+   */
+  const unrecordedAuthor = Effect.fn("j5.sharing.sharedConversation.unrecordedAuthor")(function* (
+    messageId: string,
+  ) {
+    const rows = yield* sql<{
+      readonly created_by: string | null;
+      readonly creation_source: string | null;
+      readonly scheduled_task_id: string | null;
+      readonly sender_thread_id: string | null;
+    }>`
+      SELECT json_extract(payload_json, '$.createdBy') AS created_by,
+        json_extract(payload_json, '$.creationSource') AS creation_source,
+        json_extract(payload_json, '$.scheduledTaskId') AS scheduled_task_id,
+        json_extract(payload_json, '$.senderThreadId') AS sender_thread_id
+      FROM orchestration_v2_projection_messages WHERE message_id = ${messageId}
+    `;
+    const row = rows[0];
+    // An inbox reply is the person's too, but comes as a delivery ("mcp") and carries its header.
+    const typedByOwner =
+      row !== undefined &&
+      row.created_by === "user" &&
+      row.creation_source !== "mcp" &&
+      row.scheduled_task_id === null &&
+      row.sender_thread_id === null;
+    if (!typedByOwner) return null;
+    const owner = yield* people.firstOwner;
+    return { personId: owner.personId, displayName: owner.displayName, level: "owner" } as Author;
+  });
+
+  /**
    * A queued message edited (AC15): it stays under its author, with "edited by" when someone else
    * edited it, and keeps the note it carries. A client that sends the stored text back has the
    * platform's text taken off it before it is written again. Edited into a command, it goes on as
-   * typed and carries nothing; edited out of one, it is stamped as a new message would be.
+   * typed and carries nothing; edited out of one, it is stamped as a new message would be. A
+   * message no person is recorded for is stamped too, so an edit never reaches the agent with no
+   * line: under the first owner when they typed it before the thread was shared, else as the
+   * editor's own words.
    */
   const stampEdit = Effect.fn("j5.sharing.sharedConversation.stampEdit")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.edit" }>,
     editor: Author,
   ) {
     const messageId = yield* queuedMessageId(command.threadId, command.runId);
-    const original = messageId === null ? null : yield* messageAuthor(command.threadId, messageId);
-    // A queued message no person is recorded for (one from before the thread was shared, or an
-    // agent's or the platform's) is edited as upstream has it.
-    if (messageId === null || original === null) return command;
+    // Not a queued run of this thread: upstream refuses the edit.
+    if (messageId === null) return command;
+    const recorded = yield* messageAuthor(command.threadId, messageId);
+    const original =
+      recorded !== null
+        ? {
+            author: {
+              personId: recorded.person_id as ParticipantId,
+              displayName: recorded.display_name,
+              level: recorded.level,
+            } satisfies Author,
+            storedPrefix: recorded.stored_prefix,
+            note: recorded.note,
+            told: recorded.told_json,
+          }
+        : {
+            author: (yield* unrecordedAuthor(messageId)) ?? editor,
+            storedPrefix: "",
+            note: null,
+            told: null,
+          };
     const typed =
-      original.stored_prefix.length > 0 && command.text.startsWith(original.stored_prefix)
-        ? command.text.slice(original.stored_prefix.length)
+      original.storedPrefix.length > 0 && command.text.startsWith(original.storedPrefix)
+        ? command.text.slice(original.storedPrefix.length)
         : command.text;
-    const author: Author = {
-      personId: original.person_id as ParticipantId,
-      displayName: original.display_name,
-      level: original.level,
-    };
+    const author = original.author;
     const editedBy = editor.personId === author.personId ? null : editor;
     const carried = beginsWithSlash(typed)
       ? { note: null, told: null }
-      : original.told_json !== null
-        ? { note: original.note, told: original.told_json }
+      : original.told !== null
+        ? { note: original.note, told: original.told }
         : yield* announce(command.threadId, null);
     const prefix = beginsWithSlash(typed)
       ? ""
       : prefixOf(carried.note, authorLine(author, editedBy));
+    const createdAt = DateTime.formatIso(yield* DateTime.now);
     yield* sql`
-      UPDATE j5_a2a_message_author
-      SET stored_prefix = ${prefix}, note = ${carried.note}, told_json = ${carried.told},
-        edited_by = ${editedBy === null ? null : editorName(editedBy)}
-      WHERE thread_id = ${command.threadId} AND message_id = ${messageId}
+      INSERT INTO j5_a2a_message_author (
+        thread_id, message_id, person_id, display_name, level, edited_by, note, told_json,
+        stored_prefix, created_at
+      ) VALUES (
+        ${command.threadId}, ${messageId}, ${author.personId}, ${author.displayName},
+        ${author.level}, ${editedBy === null ? null : editorName(editedBy)}, ${carried.note},
+        ${carried.told}, ${prefix}, ${createdAt}
+      )
+      ON CONFLICT (thread_id, message_id) DO UPDATE SET
+        stored_prefix = excluded.stored_prefix,
+        note = excluded.note,
+        told_json = excluded.told_json,
+        edited_by = excluded.edited_by
     `;
     yield* touch(command.threadId);
     return { ...command, text: `${prefix}${typed}` };
@@ -445,9 +522,9 @@ const make = Effect.gen(function* () {
   /**
    * Writes down who is answering a prompt (AC11), on a shared thread. It is a claim, kept for each
    * command that answers: who answered is read as the claim whose command upstream's log shows
-   * settled the prompt (`settledItsPrompt`), so an answer upstream refuses, one that loses to an
-   * earlier answer, and a replayed command id all name no one. The first claim for a command
-   * stands. A failure to record is logged and does not stop the answer.
+   * settled the prompt (`settledItsPrompt`), so an answer upstream refuses and one that loses to
+   * an earlier answer name no one; a command id upstream already took makes no claim. The first
+   * claim for a command stands. A failure to record is logged and does not stop the answer.
    */
   const recordAnswer = (
     personId: ParticipantId,
@@ -457,6 +534,15 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       if (!(yield* shared.isShared(answer.threadId))) return;
+      // A command upstream already took settled nothing now: its prompt, if it settled one, was
+      // settled before this, by whoever sent it first. Only a claim made before its command is
+      // taken can name who settles a prompt. Upstream's receipt says it took one
+      // (`SharedConversation.integration.test.ts` pins the table).
+      const taken = yield* sql<{ readonly found: number }>`
+        SELECT 1 AS found FROM orchestration_command_receipts
+        WHERE command_id = ${answer.commandId}
+      `;
+      if (taken.length > 0) return;
       const author = yield* authorOn(personId, answer.threadId);
       if (author === null) return;
       const answeredAt = DateTime.formatIso(yield* DateTime.now);
@@ -485,6 +571,11 @@ const make = Effect.gen(function* () {
     command: OrchestrationV2Command,
   ) {
     switch (command.type) {
+      case "thread.create": {
+        // A thread started under a scope already shared is shared from its start (AC6).
+        yield* shared.isShared(command.threadId, command.projectId);
+        return command;
+      }
       case "message.dispatch": {
         if (!(yield* shared.isShared(command.threadId))) return command;
         const author = yield* authorOn(personId, command.threadId);
@@ -517,10 +608,13 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const isRefusal = Schema.is(EnvironmentAuthorizationError);
   const failClosed = (cause: unknown) =>
-    Effect.logError("J5 shared conversation could not take in a command; refusing it", {
-      cause,
-    }).pipe(Effect.andThen(Effect.fail(notAdmitted)));
+    isRefusal(cause)
+      ? Effect.fail(cause)
+      : Effect.logError("J5 shared conversation could not take in a command; refusing it", {
+          cause,
+        }).pipe(Effect.andThen(Effect.fail(notAdmitted)));
 
   const admit: SharedConversationShape["admit"] = (personId, command) =>
     Effect.gen(function* () {
@@ -547,14 +641,20 @@ const make = Effect.gen(function* () {
   const admitLaunch: SharedConversationShape["admitLaunch"] = (personId, input) =>
     Effect.gen(function* () {
       const first = input.initialMessage;
-      if (first === undefined) return input;
-      if (carriesPlatformRecord(first.context)) {
+      if (first !== undefined && carriesPlatformRecord(first.context)) {
         return yield* refused("A message cannot carry a record of the platform's own.");
       }
-      if (personId === null) return input;
       // A launch into a thread that exists writes to it; otherwise its project's writers write.
       const launchingIn =
         input.reuseExistingThread === true && input.threadId !== undefined ? null : input.projectId;
+      if (first === undefined || personId === null) {
+        // A thread started under a scope already shared is shared from its start (AC6), with or
+        // without a first message.
+        if (input.threadId !== undefined) {
+          yield* shared.isShared(input.threadId, launchingIn).pipe(Effect.catch(failClosed));
+        }
+        return input;
+      }
       if (input.threadId === undefined) {
         // No thread is named, so the message cannot be recorded under one; on a project more
         // than one person writes to, that is a launch J5 cannot take in.

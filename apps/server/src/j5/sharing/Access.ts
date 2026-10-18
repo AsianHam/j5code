@@ -164,7 +164,7 @@ export class Access extends Context.Service<Access, AccessShape>()("t3/j5/sharin
 
 /**
  * Runs inside the transaction of every change `Access` makes to a person, after the change is
- * written and before it commits: a level set or removed, a scope left, a device claimed, a person
+ * written and before it commits (and, through `beforeChange`, before it is written): a level set or removed, a scope left, a device claimed, a person
  * removed or renamed. What it records commits with the change or not at all. Shared
  * conversations record here that a thread gained a second writer, which a notice told after the
  * commit could miss when the writer was added and removed before it was read. Optional: without
@@ -174,6 +174,13 @@ export class AccessWriteHook extends Context.Service<
   AccessWriteHook,
   {
     readonly afterChange: (
+      personId: ParticipantId,
+    ) => Effect.Effect<void, PersonAccessStorageError>;
+    /**
+     * The same, before a change that can take something away is written, while what the person
+     * held is still known: a level set or removed, a scope left, a person removed.
+     */
+    readonly beforeChange?: (
       personId: ParticipantId,
     ) => Effect.Effect<void, PersonAccessStorageError>;
   }
@@ -219,6 +226,11 @@ const make = Effect.gen(function* () {
     Option.match(writeHook, {
       onNone: () => Effect.void,
       onSome: (hook) => hook.afterChange(personId),
+    });
+  const beforeChange = (personId: ParticipantId) =>
+    Option.match(writeHook, {
+      onNone: () => Effect.void,
+      onSome: (hook) => hook.beforeChange?.(personId) ?? Effect.void,
     });
   const changes = yield* Effect.acquireRelease(PubSub.sliding<AccessChange>(256), (pubsub) =>
     PubSub.shutdown(pubsub),
@@ -303,6 +315,7 @@ const make = Effect.gen(function* () {
     committed(
       Effect.gen(function* () {
         const before = snapshotOf(yield* people.listLevels(personId));
+        yield* beforeChange(personId);
         const result = yield* change;
         yield* afterChange(personId);
         const after = snapshotOf(yield* people.listLevels(personId));
@@ -371,6 +384,7 @@ const make = Effect.gen(function* () {
                 new PersonAccessStorageError({ operation: "revoke a person's links", cause }),
             ),
           );
+          yield* beforeChange(personId);
           const ended = yield* people.removePerson(personId);
           for (const sessionId of ended) {
             yield* sessions

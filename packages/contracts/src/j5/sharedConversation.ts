@@ -56,9 +56,9 @@ export const PromptAnswer = Schema.Struct({
   you: Schema.Boolean,
   /**
    * Exactly the platform's text put at the start of each answer to a question, with the space
-   * after it: `[Answer from Priya (collaborator)] `. An answer of chosen options has it, without
-   * that trailing space, as its first option. `""` when the answer carries none, such as an
-   * approval's. A client strips it and reads nothing of its format.
+   * after it: `[Answer from Priya (collaborator)] `. A typed answer begins with it, and so does
+   * the first option of an answer of chosen options. `""` when the answer carries none, such as
+   * an approval's. A client strips it and reads nothing of its format.
    */
   storedPrefix: Schema.String,
 });
