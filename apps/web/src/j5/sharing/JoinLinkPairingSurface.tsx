@@ -45,6 +45,15 @@ const post = (path: string, body: unknown, signal?: AbortSignal) =>
     credentials: "include",
   });
 
+const serverMessage = (body: unknown) =>
+  typeof body === "object" &&
+  body !== null &&
+  "message" in body &&
+  typeof body.message === "string" &&
+  body.message.trim() !== ""
+    ? body.message
+    : null;
+
 const messageOf = (error: unknown) =>
   error instanceof Error && error.message.trim() !== "" ? error.message : "Pairing failed.";
 
@@ -169,10 +178,14 @@ function JoinSurface({
           return;
         }
         if (refusal === "invalid_request" && view.kind !== "name") setAskName(true);
+        // A request the server could not take says why in its own words.
+        const said = serverMessage(body);
         setError(
-          refusal === null
-            ? "The server could not let you in. Try again."
-            : refusalWords(refusal, description),
+          refusal === "invalid_request" && said !== null
+            ? said
+            : refusal === null
+              ? (said ?? "The server could not let you in. Try again.")
+              : refusalWords(refusal, description),
         );
         return;
       }
