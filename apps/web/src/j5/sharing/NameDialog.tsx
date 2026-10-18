@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { isPersonName } from "@t3tools/contracts/j5";
+import { ArrowRightIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -175,6 +176,7 @@ export function NameDialog({
           <DialogFooter variant="bare">
             <Button type="submit" disabled={busy || (naming && name.trim() === "")}>
               {busy ? "Saving…" : "Continue"}
+              {busy ? null : <ArrowRightIcon className="size-3.5" />}
             </Button>
           </DialogFooter>
         </form>

@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { CopyIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
 import { selectQrEndpointOption } from "../../components/settings/ConnectionsSettings.logic";
@@ -144,6 +145,7 @@ export function ShareLinkPanel({
             <TooltipPopup side="top">{url}</TooltipPopup>
           </Tooltip>
           <Button size="xs" variant="outline" onClick={() => copyToClipboard(url, undefined)}>
+            <CopyIcon />
             {isCopied ? "Copied" : "Copy"}
           </Button>
         </div>

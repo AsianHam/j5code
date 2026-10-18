@@ -1,9 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { UserPlusIcon } from "lucide-react";
 import { useMemo } from "react";
 
+import { ThreadDetailsControl } from "../../components/chat/ThreadDetailsControl";
 import { ThreadDetailsSection } from "../../components/chat/ThreadDetailsSection";
-import { Button } from "../../components/ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useEnvironmentQuery } from "../../state/query";
 import { PersonAvatar } from "./PersonAvatar";
@@ -92,13 +94,23 @@ export function ThreadPeopleSection({
       title="People"
       actions={
         canManage ? (
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => openSharingDialog({ kind: "share", environmentId, scope })}
-          >
-            Share…
-          </Button>
+          // Upstream's details sections head with an icon action and its tooltip (Automations).
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <ThreadDetailsControl
+                  size="icon-xs"
+                  variant="ghost"
+                  part="icon"
+                  aria-label="Share thread"
+                  onClick={() => openSharingDialog({ kind: "share", environmentId, scope })}
+                >
+                  <UserPlusIcon className="size-3.5" />
+                </ThreadDetailsControl>
+              }
+            />
+            <TooltipPopup>Share thread</TooltipPopup>
+          </Tooltip>
         ) : null
       }
     >

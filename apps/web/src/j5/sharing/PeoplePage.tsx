@@ -9,7 +9,15 @@ import type {
   PersonDevice,
   PersonLevel,
 } from "@t3tools/contracts/j5";
-import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, LogOutIcon, XIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  EllipsisIcon,
+  LogOutIcon,
+  PenLineIcon,
+  UserPlusIcon,
+  XIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ConnectionStatusDot } from "../../components/ConnectionStatusDot";
@@ -52,6 +60,7 @@ import {
   summaryParts,
   threadsLabel,
 } from "./people.logic";
+import { IconAction } from "./IconAction";
 import { AccessRowLine, LinkLine, WritingWarning } from "./ShareDialog";
 import { useAccessRows } from "./scopeAccess";
 import { openSharingDialog } from "./sharingDialogs";
@@ -220,6 +229,7 @@ function OwnedServerPeople({
             disabled={!canManage}
             onClick={() => openSharingDialog({ kind: "share", environmentId, scope: null })}
           >
+            <UserPlusIcon className="size-3" />
             Share…
           </Button>
         }
@@ -585,14 +595,12 @@ function HeldLevelLine({
                 ))}
               </SelectPopup>
             </Select>
-            <Button
-              size="icon-xs"
-              variant="ghost-muted"
-              aria-label={`Take ${title} away from ${person.name ?? "this person"}`}
+            <IconAction
+              label={`Take ${title} away from ${person.name ?? "this person"}`}
               onClick={() => void remove()}
             >
               <XIcon className="size-3.5" />
-            </Button>
+            </IconAction>
           </span>
         ) : (
           <span className="text-muted-foreground">{levelLabel(held.level)}</span>
@@ -602,7 +610,7 @@ function HeldLevelLine({
         {person.you && !person.firstOwner ? (
           <Button
             size="xs"
-            variant="ghost-muted"
+            variant="ghost-destructive"
             onClick={() => openSharingDialog({ kind: "leave", environmentId, scope: held.scope })}
           >
             <LogOutIcon className="size-3" />
@@ -713,9 +721,9 @@ function OwnRow({
           </div>
           <Summary environmentId={environmentId} levels={levels} devices={null} />
         </div>
-        <Button
-          size="xs"
-          variant="outline"
+        <IconAction
+          label="Rename yourself"
+          variant="ghost"
           onClick={() =>
             openSharingDialog({
               kind: "rename",
@@ -724,8 +732,8 @@ function OwnRow({
             })
           }
         >
-          Rename…
-        </Button>
+          <PenLineIcon className="size-3.5" />
+        </IconAction>
       </div>
       {levels.length > 0 && !firstOwner ? (
         <div className="mt-3 ml-9.5 flex flex-col">
@@ -760,7 +768,7 @@ function OwnLevelLine({
       <span className="text-muted-foreground">{levelLabel(held.level)}</span>
       <Button
         size="xs"
-        variant="ghost-muted"
+        variant="ghost-destructive"
         onClick={() => openSharingDialog({ kind: "leave", environmentId, scope: held.scope })}
       >
         <LogOutIcon className="size-3" />

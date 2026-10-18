@@ -5,6 +5,7 @@ import {
   isPersonName,
   type LinkDescription,
 } from "@t3tools/contracts/j5";
+import { ArrowRightIcon } from "lucide-react";
 import { type ComponentProps, useEffect, useState } from "react";
 
 import {
@@ -306,6 +307,7 @@ function JoinSurface({
           type="submit"
         >
           {busy ? "Joining…" : view.kind === "as-yourself" ? "Continue" : "Join"}
+          {busy ? null : <ArrowRightIcon className="size-3.5" />}
         </Button>
       </form>
     </StandalonePage>

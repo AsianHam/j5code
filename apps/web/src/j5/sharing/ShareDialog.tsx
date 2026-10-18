@@ -2,9 +2,11 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { PeopleEntry, PeopleLink, PersonLevel, PersonScope } from "@t3tools/contracts/j5";
 import { isPersonName, levelReaches } from "@t3tools/contracts/j5";
+import { Check, Copy } from "lucide";
 import { Link2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { MorphIcon } from "../../components/MorphIcon";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import {
@@ -38,6 +40,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { IconAction } from "./IconAction";
 import { LinkLifetimeRow } from "./LinkLifetimeRow";
 import { PersonAvatar } from "./PersonAvatar";
 import {
@@ -316,15 +319,9 @@ export function AccessRowLine({
                 label={`${name}'s level on this ${scope.kind}`}
                 onChange={choose}
               />
-              <Button
-                size="icon-xs"
-                variant="ghost-muted"
-                disabled={busy}
-                aria-label={`Remove ${name}`}
-                onClick={() => void remove()}
-              >
+              <IconAction label={`Remove ${name}`} disabled={busy} onClick={() => void remove()}>
                 <XIcon className="size-3.5" />
-              </Button>
+              </IconAction>
             </>
           ) : null}
         </span>
@@ -454,21 +451,24 @@ export function LinkLine({
         {linkMeta(link, nowMs)}
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-1">
-        <Button
-          size="xs"
-          variant="ghost"
+        <IconAction
+          label="Copy link"
+          tooltip={isCopied ? "Copied" : "Copy link"}
           disabled={address === null}
           onClick={() => (address === null ? undefined : copyToClipboard(address, undefined))}
         >
-          {isCopied ? "Copied" : "Copy"}
-        </Button>
+          <MorphIcon
+            className={isCopied ? "size-3.5 text-success" : "size-3.5"}
+            icon={isCopied ? Check : Copy}
+          />
+        </IconAction>
         <Button
           size="xs"
-          variant="ghost"
+          variant="destructive-outline"
           disabled={!canManage || busy}
           onClick={() => void revoke()}
         >
-          Revoke
+          {busy ? "Revoking…" : "Revoke"}
         </Button>
       </span>
     </div>
