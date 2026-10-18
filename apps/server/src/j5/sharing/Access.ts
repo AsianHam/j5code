@@ -337,9 +337,10 @@ const make = Effect.gen(function* () {
     }),
 
     removePerson: Effect.fn("j5.sharing.access.removePerson")(function* (personId) {
-      const owner = snapshotOf(yield* people.listLevels(personId)).owner;
       yield* committed(
         Effect.gen(function* () {
+          // Read inside the transaction, so a promotion just before cannot be missed.
+          const owner = snapshotOf(yield* people.listLevels(personId)).owner;
           // The pairing links still waiting to pair a device as them are revoked upstream, so
           // none of them can pair a device the server would then not know (AC49).
           const waiting = yield* sql<{ readonly pairing_link_id: string }>`
