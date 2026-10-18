@@ -34,7 +34,11 @@ export function renderSharedConversationNote(props: {
  * The line above another person's message in a shared conversation: their initials and name, and
  * who edited it while it was queued. The level the agent is told is not drawn (AC17).
  */
-export function SharedMessageAuthorLine({ author }: { readonly author: MessageAuthor }) {
+export function SharedMessageAuthorLine({
+  author,
+}: {
+  readonly author: MessageAuthor & { readonly viaInbox?: boolean };
+}) {
   const name = author.name ?? "Someone without a name";
   return (
     <p
@@ -43,6 +47,7 @@ export function SharedMessageAuthorLine({ author }: { readonly author: MessageAu
     >
       <PersonAvatar name={author.name} size="xs" />
       <span className="font-medium text-foreground">{name}</span>
+      {author.viaInbox === true ? <span>· via Inbox</span> : null}
       {author.editedBy === null ? null : <span>· edited by {author.editedBy}</span>}
     </p>
   );

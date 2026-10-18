@@ -15,6 +15,7 @@ import {
   sharedMessageView,
   typedText,
 } from "./sharedTimeline.logic";
+import { inboxReplyWords } from "../a2a/inboxReply";
 import { useScopePeople } from "./scopeAccess";
 
 interface MessageEntry {
@@ -36,6 +37,7 @@ interface MessageEntry {
 
 // Keyed by the message object the timeline holds, so nothing is kept for a thread off screen.
 const notes = new WeakSet<object>();
+const inboxReplies = new WeakSet<object>();
 
 /** Whether the timeline's message is the notice J5 put before a message that carried a note. */
 export const isSharedNote = (message: object) => notes.has(message);
@@ -48,10 +50,12 @@ export const isSharedNote = (message: object) => notes.has(message);
 export function useSharedMessageAuthor(
   thread: ScopedThreadRef | null,
   message: { readonly id: string },
-): MessageAuthor | undefined {
+): (MessageAuthor & { readonly viaInbox: boolean }) | undefined {
   const record = useThreadAuthorsValue(thread?.environmentId ?? null, thread?.threadId ?? null);
   const author = authorIndex(record).authors.get(message.id);
-  return author === undefined || author.you ? undefined : author;
+  return author === undefined || author.you
+    ? undefined
+    : { ...author, viaInbox: inboxReplies.has(message) };
 }
 
 /** Who answered one of the agent's prompts in a shared conversation (AC11). */
@@ -180,7 +184,11 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
         pending.push(message.id);
         return view.typed === null ? [] : [{ ...entry, message: { ...message, text: view.typed } }];
       }
-      const typed = { ...entry, message: { ...message, text: view.typed } };
+      // An inbox reply is the person's words with the platform's closing sentence after them.
+      const replyWords = inboxReplyWords(view.typed);
+      const typedMessage = { ...message, text: replyWords ?? view.typed };
+      if (replyWords !== null) inboxReplies.add(typedMessage);
+      const typed = { ...entry, message: typedMessage };
       if (view.note === null) return [typed];
       // The note the message carried for the agent, as a notice of its own just before it.
       const note = { ...message, id: `${message.id}:shared-note`, text: view.note };

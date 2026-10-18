@@ -1,4 +1,7 @@
 import { renderSharedConversationNote } from "../sharing/SharedConversationCards";
+import { CLOSED_DELIVERY_INSTRUCTION } from "./inboxReply";
+
+export { inboxReplyWords } from "./inboxReply";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../../components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
 import type { ChatMessage } from "~/types";
@@ -38,8 +41,6 @@ const PLAIN_DELIVERY_INSTRUCTIONS = new Set([
       `No reply is required. Use ${tool} without exchange_id only if a new message is needed.`,
   ),
 ]);
-const CLOSED_DELIVERY_INSTRUCTION =
-  "The platform closed this exchange when this reply was sent. No further reply is required.";
 const REPLY_DELIVERY_INSTRUCTION_SUFFIX =
   '", message="...") to close the exchange. Follow-ups from the asker carrying this id join the same exchange.';
 const HUMAN_DELIVERY_MARKER =
