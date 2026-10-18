@@ -1050,7 +1050,16 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     ) =>
       Effect.gen(function* () {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const args = [fakeServer, "serve", "--port", "0", "--base-dir", `${home}/.t3`, ...flags];
+        // J5 (FORK.md case 15): the default home a remote server uses is ~/.j5code.
+        const args = [
+          fakeServer,
+          "serve",
+          "--port",
+          "0",
+          "--base-dir",
+          `${home}/.j5code`,
+          ...flags,
+        ];
         const server = yield* spawner.spawn(
           options?.unreaped
             ? ChildProcess.make("sh", ["-c", 'node "$@" & exec sleep 600', "sh", ...args])
@@ -1196,7 +1205,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         assert.include((yield* runScript(home, ["-c", `ps -o stat= -p ${zombie}`])).stdout, "Z");
         yield* fs.writeFileString(`${stateDir}/pid`, `${zombie}\n`);
         yield* fs.writeFileString(
-          `${home}/.t3/userdata/server-runtime.json`,
+          `${home}/.j5code/userdata/server-runtime.json`,
           JSON.stringify({
             version: 1,
             pid: zombie,

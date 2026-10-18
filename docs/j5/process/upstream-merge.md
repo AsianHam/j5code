@@ -10,7 +10,7 @@ How J5 advances to a new upstream T3 Code. FORK.md holds the rules this depends 
 ## Shape
 
 - **One PR.** The advance and every fork adaptation it forces land together, however large.
-- **Advance onto a release tag,** not a branch tip. Upstream's `main` holds V2 now, and `j5/main` descends from it, so an ordinary `git merge` of the tag is expected.
+- **Advance onto a release tag,** not a branch tip. Upstream's `main` holds V2 now, and `j5/main` descends from it, so an ordinary `git merge` of the tag is expected. When J5 needs an upstream commit no release has yet, advance onto a nightly tag that upstream CI passed instead, and record why in the FORK.md pin log.
 - **Freeze.** Record the fork head, the previous pin and the upstream SHA, and don't move the target mid-merge.
 - **If the previous pin is not an ancestor of the candidate,** git's own merge base is wrong. Use the merge-tree fallback in FORK.md ("Advancing").
 
