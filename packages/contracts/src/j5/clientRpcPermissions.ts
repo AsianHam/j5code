@@ -1,4 +1,8 @@
-import { AuthAccessWriteScope, AuthOrchestrationOperateScope } from "../auth.ts";
+import {
+  AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
+} from "../auth.ts";
 import { J5_CLIENT_ACTION_WS_METHODS } from "../j5.ts";
 import { J5_AGENT_PERSONA_WS_METHODS } from "./agentPersona.ts";
 import { J5_ARTIFACT_WS_METHODS } from "./artifacts.ts";
@@ -26,8 +30,8 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaLibraryFolders]: AuthOrchestrationOperateScope,
   [J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaEnabled]: AuthOrchestrationOperateScope,
 
-  [J5_SKILL_CATALOG_WS_METHODS.applySkillCatalogGroups]: AuthOrchestrationOperateScope,
-  [J5_SKILL_CATALOG_WS_METHODS.updateSkillCatalog]: AuthOrchestrationOperateScope,
+  [J5_SKILL_CATALOG_WS_METHODS.applySkillCatalogGroups]: AuthProvidersManageScope,
+  [J5_SKILL_CATALOG_WS_METHODS.updateSkillCatalog]: AuthProvidersManageScope,
   [J5_SKILL_LINK_WS_METHODS.create]: AuthOrchestrationOperateScope,
   [J5_SKILL_LINK_WS_METHODS.remove]: AuthOrchestrationOperateScope,
   [J5_SKILL_LINK_WS_METHODS.unlink]: AuthOrchestrationOperateScope,

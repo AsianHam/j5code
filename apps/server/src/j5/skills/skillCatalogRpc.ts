@@ -1,4 +1,5 @@
 import {
+  AuthProvidersManageScope,
   AuthOrchestrationOperateScope,
   J5_SKILL_CATALOG_WS_METHODS,
   SkillCatalogError,
@@ -24,8 +25,10 @@ const METHODS = J5_SKILL_CATALOG_WS_METHODS;
 /** Spread into `RPC_REQUIRED_SCOPES`; the upstream `satisfies` check still covers every tag. */
 export const SKILL_CATALOG_RPC_SCOPES = {
   [METHODS.getSkillCatalogStatus]: AuthOrchestrationOperateScope,
-  [METHODS.applySkillCatalogGroups]: AuthOrchestrationOperateScope,
-  [METHODS.updateSkillCatalog]: AuthOrchestrationOperateScope,
+  // Installing from a catalog is an Owner's (People and access AC20): only an Owner's level
+  // gives Manage providers.
+  [METHODS.applySkillCatalogGroups]: AuthProvidersManageScope,
+  [METHODS.updateSkillCatalog]: AuthProvidersManageScope,
 } as const;
 
 type Input<K extends keyof typeof J5SkillCatalogRpcSchemas> =

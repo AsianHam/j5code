@@ -12,6 +12,7 @@ import {
   type ServerLifecycleStreamEvent,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderSkill,
   type ScheduledTaskListResult,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -91,11 +92,34 @@ const reduceModel = (model: ServerProviderModel): ServerProviderModel => ({
  * A provider as a Viewer's client is told of it: which one it is, what it is called and the models
  * it offers. Upstream's composer shows its "enable a provider" setup state when the list is empty,
  * and with these it shows a thread's model and, for a Viewer, its own read-only state.
- * Nothing of the provider's sign-in, version, health, paths, usage, skills or commands is sent:
+ * Nothing of the provider's sign-in, version, health, paths, usage or commands is sent, and its
+ * skills only as `reduceSkill` tells them:
  * each is left out or given its emptiest valid value. Built field by field, so a field upstream
  * adds later is left out until it is listed here.
  */
-const reduceProvider = (provider: ServerProvider): ServerProvider => ({
+/**
+ * A skill as a Viewer is told of it: its name and what it is for, and none of its files (People
+ * and access AC20, AC23). Built field by field, so a field upstream adds is left out.
+ */
+const reduceSkill = (skill: ServerProviderSkill): ServerProviderSkill => ({
+  name: skill.name,
+  ...(skill.description === undefined ? {} : { description: skill.description }),
+  path: PLACEHOLDER_PATH,
+  ...(skill.scope === undefined ? {} : { scope: skill.scope }),
+  enabled: skill.enabled,
+  ...(skill.displayName === undefined ? {} : { displayName: skill.displayName }),
+  ...(skill.shortDescription === undefined ? {} : { shortDescription: skill.shortDescription }),
+  ...(skill.userInvocationOnly === undefined
+    ? {}
+    : { userInvocationOnly: skill.userInvocationOnly }),
+  ...(skill.userInvocable === undefined ? {} : { userInvocable: skill.userInvocable }),
+});
+
+/** Which of a provider's skills a Viewer is told of: all at server scope, a project's own at its. */
+export type SkillsShown = (skill: ServerProviderSkill) => boolean;
+const NO_SKILLS: SkillsShown = () => false;
+
+const reduceProvider = (provider: ServerProvider, skillsShown: SkillsShown): ServerProvider => ({
   instanceId: provider.instanceId,
   driver: provider.driver,
   ...(provider.displayName === undefined ? {} : { displayName: provider.displayName }),
@@ -107,25 +131,30 @@ const reduceProvider = (provider: ServerProvider): ServerProvider => ({
   checkedAt: PLACEHOLDER_CHECKED_AT,
   models: provider.models.map(reduceModel),
   slashCommands: [],
-  skills: [],
+  skills: provider.skills.filter(skillsShown).map(reduceSkill),
 });
 
 /** The providers a Viewer is told of: every one a thread could be running on, reduced. */
-const reduceProviders = (providers: ServerConfig["providers"]) =>
-  providers.filter((provider) => provider.enabled).map(reduceProvider);
+const reduceProviders = (providers: ServerConfig["providers"], skillsShown: SkillsShown) =>
+  providers
+    .filter((provider) => provider.enabled)
+    .map((provider) => reduceProvider(provider, skillsShown));
 
 /**
  * The configuration a Viewer's client is given. Built field by field, so a field upstream adds
  * later is left out until it is listed here.
  */
-export const reduceServerConfig = (config: ServerConfig): ServerConfig => ({
+export const reduceServerConfig = (
+  config: ServerConfig,
+  skillsShown: SkillsShown = NO_SKILLS,
+): ServerConfig => ({
   environment: reduceEnvironment(config.environment),
   auth: config.auth,
   cwd: PLACEHOLDER_PATH,
   keybindingsConfigPath: PLACEHOLDER_PATH,
   keybindings: [],
   issues: [],
-  providers: reduceProviders(config.providers),
+  providers: reduceProviders(config.providers, skillsShown),
   availableEditors: [],
   observability: {
     logsDirectoryPath: PLACEHOLDER_PATH,
@@ -316,7 +345,11 @@ const shellFailure = (cause: unknown) =>
         cause,
       });
 
-const narrowedView = (access: PersonAccess["Service"], reach: SessionReach): ConnectionView => {
+const narrowedView = (
+  access: PersonAccess["Service"],
+  reach: SessionReach,
+  skillsShown: SkillsShown,
+): ConnectionView => {
   // The configuration names the host's folders, network addresses, provider accounts and
   // settings. A Viewer is shown none of them (AC24); a Collaborator, who can open a terminal on
   // the host, is given upstream's.
@@ -349,7 +382,7 @@ const narrowedView = (access: PersonAccess["Service"], reach: SessionReach): Con
   return {
     scheduledTasks: (list) => list.pipe(Effect.flatMap(reachableTasks)),
     scheduledTasksStream: (stream) => stream.pipe(Stream.mapEffect(reachableTasks)),
-    config: writes ? identity : reduceServerConfig,
+    config: writes ? identity : (config) => reduceServerConfig(config, skillsShown),
     // Every later provider, settings, keybinding, theme and usage update is dropped rather than
     // reduced: a Viewer's client keeps the providers and models it was told of when it connected.
     configStream: writes
@@ -357,7 +390,10 @@ const narrowedView = (access: PersonAccess["Service"], reach: SessionReach): Con
       : (stream) =>
           stream.pipe(
             Stream.filter((event) => event.type === "snapshot"),
-            Stream.map((event) => ({ ...event, config: reduceServerConfig(event.config) })),
+            Stream.map((event) => ({
+              ...event,
+              config: reduceServerConfig(event.config, skillsShown),
+            })),
           ),
     // A client waits for the welcome before it draws anything. The other events report a server
     // update or a migration, which a narrowed connection neither starts nor is told about.
@@ -423,5 +459,20 @@ export const connectionView = (
         }).pipe(Effect.as({ kind: "unknown" } as SessionReach)),
       ),
     );
-    return isWide(reach) ? MEMBER_VIEW : narrowedView(access, reach);
+    if (isWide(reach)) return MEMBER_VIEW;
+    // A Viewer at server scope is told every provider's skills; one at a project, the skills in
+    // that project's own folders; anyone else, none.
+    const roots =
+      reach.kind !== "person"
+        ? []
+        : reach.levels.some((held) => held.scope.kind === "server")
+          ? null
+          : yield* access
+              .projectRoots(reach.person.personId)
+              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+    const skillsShown: SkillsShown =
+      roots === null
+        ? () => true
+        : (skill) => roots.some((root) => skill.path.startsWith(`${root.replace(/\/+$/u, "")}/`));
+    return narrowedView(access, reach, skillsShown);
   });

@@ -223,6 +223,10 @@ export interface PersonAccessShape {
     personId: ParticipantId,
     projectId: ProjectId,
   ) => Effect.Effect<PersonLevel | null, PersonAccessStorageError>;
+  /** The folders of the projects a person holds a level on as a whole. */
+  readonly projectRoots: (
+    personId: ParticipantId,
+  ) => Effect.Effect<ReadonlyArray<string>, PersonAccessStorageError>;
   /** The project a thread lives in; `null` for a thread the server does not hold. */
   readonly threadProject: (
     threadId: ThreadId,
@@ -620,6 +624,19 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         },
         Effect.mapError(storage("read a person's level on a project")),
       ),
+
+      projectRoots: (personId) =>
+        sql<{ readonly workspace_root: string }>`
+          SELECT project.workspace_root
+          FROM j5_a2a_person_level AS held
+          JOIN projection_projects AS project
+            ON project.project_id = held.scope_id AND project.deleted_at IS NULL
+          WHERE held.person_id = ${personId} AND held.scope_kind = 'project'
+        `.pipe(
+          Effect.map((rows) => rows.map((row) => row.workspace_root)),
+          Effect.mapError(storage("read the folders of a person's projects")),
+          Effect.withSpan("j5.sharing.personAccess.projectRoots"),
+        ),
 
       threadProject: (threadId) =>
         sql<{ readonly project_id: string }>`

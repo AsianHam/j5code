@@ -1072,3 +1072,38 @@ live(
     );
   }).pipe(Effect.scoped),
 );
+
+live(
+  "tells a Viewer the skills of the projects they reach by name, and none of their files",
+  Effect.gen(function* () {
+    const access = yield* PersonAccess.PersonAccess;
+    const shared = yield* project("project:skilled");
+    const personId = yield* guest({ kind: "project", projectId: shared });
+    const withSkills = {
+      ...fullConfig,
+      providers: fullConfig.providers.map((provider) => ({
+        ...provider,
+        skills: [
+          {
+            name: "project-skill",
+            description: "Reviews migrations",
+            path: `${HOST_PATH}/project:skilled/.claude/skills/review/SKILL.md`,
+            enabled: true,
+          },
+          { name: "host-skill", path: `${HOST_PATH}/skills/host-skill/SKILL.md`, enabled: true },
+        ],
+      })),
+    } as typeof fullConfig;
+    const names = (config: typeof fullConfig) =>
+      config.providers.flatMap((provider) => provider.skills.map((skill) => skill.name));
+
+    const projectView = (yield* GuestView.connectionView(GUEST)).config(withSkills);
+    assert.deepStrictEqual(names(projectView), ["project-skill"]);
+    assert.notInclude(JSON.stringify(projectView), HOST_PATH);
+
+    yield* access.setLevel({ personId, scope: { kind: "server" }, level: "viewer" });
+    const serverView = (yield* GuestView.connectionView(GUEST)).config(withSkills);
+    assert.deepStrictEqual(names(serverView), ["project-skill", "host-skill"]);
+    assert.notInclude(JSON.stringify(serverView), HOST_PATH);
+  }).pipe(Effect.scoped),
+);
