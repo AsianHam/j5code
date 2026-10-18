@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -12,11 +13,37 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { useThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
+
+/**
+ * Reads a thread's atoms again when the thread comes to be listed. A draft keeps the id its thread
+ * will have, and a person narrower than the server is refused a thread the server does not have
+ * yet; the refusal would otherwise stay with that id after the thread exists.
+ */
+export function useRereadWhenListed(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+  read: Atom.Atom<unknown> | null,
+  changes: Atom.Atom<unknown> | null,
+) {
+  const listed =
+    useThreadShell(
+      environmentId === null || threadId === null ? null : scopeThreadRef(environmentId, threadId),
+    ) !== null;
+  const wasListed = useRef(listed);
+  useEffect(() => {
+    if (listed && !wasListed.current) {
+      if (read !== null) appAtomRegistry.refresh(read);
+      if (changes !== null) appAtomRegistry.refresh(changes);
+    }
+    wasListed.current = listed;
+  }, [listed, read, changes]);
+}
 
 const threadAuthors = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "environment-data:j5-shared-conversation:authors",
@@ -50,9 +77,10 @@ export function useThreadAuthors(
     [environmentId, threadId],
   );
   const query = target === null ? null : threadAuthors(target);
+  const changes = target === null ? null : threadAuthorsChanges(target);
   const authors = useEnvironmentQuery(query);
-  const revision = useEnvironmentQuery(target === null ? null : threadAuthorsChanges(target)).data
-    ?.revision;
+  const revision = useEnvironmentQuery(changes).data?.revision;
+  useRereadWhenListed(environmentId, threadId, query, changes);
   useEffect(() => {
     if (query !== null && revision !== undefined && revision > 0) appAtomRegistry.refresh(query);
   }, [query, revision]);

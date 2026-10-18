@@ -8,6 +8,7 @@ import { useProject, useThreadShell, useThreadShells } from "../../state/entitie
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { type AccessRow, accessRowsForServer, accessRowsFromScope } from "./people.logic";
+import { useRereadWhenListed } from "./sharedConversation";
 import { peopleQuery, sharingManage } from "./sharingManage";
 
 /**
@@ -71,10 +72,15 @@ export function useScopePeople(
     [environmentId, key],
   );
   const query = target === null ? null : sharingManage.scopePeople(target);
+  const changes = target === null ? null : sharingManage.scopePeopleChanges(target);
   const people = useEnvironmentQuery(query);
-  const revision = useEnvironmentQuery(
-    target === null ? null : sharingManage.scopePeopleChanges(target),
-  ).data?.revision;
+  const revision = useEnvironmentQuery(changes).data?.revision;
+  useRereadWhenListed(
+    environmentId,
+    scope?.kind === "thread" ? scope.threadId : null,
+    query,
+    changes,
+  );
   useEffect(() => {
     if (query !== null && revision !== undefined && revision > 0) appAtomRegistry.refresh(query);
   }, [query, revision]);
