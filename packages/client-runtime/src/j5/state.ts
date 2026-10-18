@@ -28,7 +28,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "../state/runtime.ts";
-import { sharingConnectionIsKnownGuest } from "./sharing.ts";
+import { connectionIsKnownNarrow } from "./sharing.ts";
 
 const defectText = (defect: unknown) => (defect instanceof Error ? defect.message : String(defect));
 
@@ -69,24 +69,34 @@ const createJ5ActionCommand = <R, E, TTag extends EnvironmentUnaryRpcTag>(
 type J5ReadTag = Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>;
 
 /**
- * The J5 reads a guest's client still sends: the ones the server answers for a guest holding the
- * grant (`GUEST_RPC_RULES` in the server's `j5/sharing/GuestGate.ts`). A project's artifacts are
- * readable by a guest of that project (Shared server AC9). A read the server starts to allow a
- * guest is added here, or the guest's client never asks.
+ * The J5 reads a client still sends for a person who reaches less than the whole server: the
+ * ones the server answers for the scope the person holds (the allow-list in the server's
+ * `j5/sharing/AccessGate.ts`, and the inbox and Crew reads, which answer for the threads the
+ * person can write to). A read the server starts to allow such a person is added here, or their
+ * client never asks.
  */
-const READS_A_GUEST_SENDS: ReadonlySet<string> = new Set([J5_ARTIFACT_WS_METHODS.listArtifacts]);
+const READS_A_NARROW_PERSON_SENDS: ReadonlySet<string> = new Set([
+  J5_ARTIFACT_WS_METHODS.listArtifacts,
+  J5_PLAYBOOK_WS_METHODS.readLibrary,
+  J5_PLAYBOOK_WS_METHODS.listThreadRuns,
+  J5_CLIENT_READ_WS_METHODS.readParticipantIdentities,
+  J5_CLIENT_READ_WS_METHODS.listHumanInbox,
+  J5_CLIENT_READ_WS_METHODS.readOpenInboxCount,
+  J5_CLIENT_READ_WS_METHODS.listCrewProposals,
+  J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests,
+]);
 
 /**
- * One J5 read over the environment's socket. No J5 read is a guarded method. A guest is shown
- * nothing of the server's inbox, Fleet page, Crews or Playbooks (Shared server AC24) and the
- * server refuses each of these reads, so once the connection is known to be a guest's only the
- * reads in `READS_A_GUEST_SENDS` go out. The check does not wait for that answer, so a member's
- * reads are not delayed.
+ * One J5 read over the environment's socket. No J5 read is a guarded method. Someone who reaches
+ * less than the whole server is shown none of its own pages, the Fleet page among them (People
+ * and access AC23), and the server refuses each of those reads, so once the connection is known
+ * to be such a person's only the reads in `READS_A_NARROW_PERSON_SENDS` go out. The check does
+ * not wait for that answer, so no one's reads are delayed.
  */
 const j5Read = <TTag extends J5ReadTag>(tag: TTag, input: EnvironmentRpcInput<TTag>) =>
   Effect.gen(function* () {
     const supervisor = yield* EnvironmentSupervisor;
-    if (!READS_A_GUEST_SENDS.has(tag) && (yield* sharingConnectionIsKnownGuest)) {
+    if (!READS_A_NARROW_PERSON_SENDS.has(tag) && (yield* connectionIsKnownNarrow)) {
       return yield* new EnvironmentRpcUnavailableError({
         environmentId: supervisor.target.environmentId,
         message: "This is not shared with you on this server.",

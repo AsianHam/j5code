@@ -1,7 +1,8 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
+import type { PersonScope } from "@t3tools/contracts/j5";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -13,75 +14,66 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../components/ui/dialog";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { useEnvironment } from "../../state/environments";
 import { useProject, useThreadShell } from "../../state/entities";
-import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { grantsToLeave, leaveChoiceFor, leaveWording } from "./leave.logic";
-import { ownGrantsQuery, refusalMessage, sharingManage } from "./sharingManage";
+import { leaveWording } from "./people.logic";
+import { refreshSharing, refusalMessage, sharingManage } from "./sharingManage";
 
 /**
- * A guest leaves what a thread was shared with them through (Shared server AC25). Coming back
- * takes a new grant from a member, and the confirmation says so.
+ * A person gives up a level they hold, at a thread, a project or the server (People and access
+ * AC48). What it covered goes from their view, and coming back takes an Owner; the confirmation
+ * says so.
  */
 export function LeaveDialog({
   environmentId,
-  threadId,
+  scope,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
+  readonly scope: PersonScope;
   readonly onClose: () => void;
 }) {
   const navigate = useNavigate();
-  const thread = useThreadShell(scopeThreadRef(environmentId, threadId));
-  const project = useProject(
-    thread === null ? null : scopeProjectRef(environmentId, thread.projectId),
+  const server = useEnvironment(environmentId);
+  const thread = useThreadShell(
+    scope.kind === "thread" ? scopeThreadRef(environmentId, scope.threadId) : null,
   );
-  const grants = useEnvironmentQuery(ownGrantsQuery(environmentId));
-  useEffect(() => appAtomRegistry.refresh(ownGrantsQuery(environmentId)), [environmentId]);
-  const leaveGrant = useAtomCommand(sharingManage.leaveGrant, { reportFailure: false });
+  const project = useProject(
+    scope.kind === "project" ? scopeProjectRef(environmentId, scope.projectId) : null,
+  );
+  const title =
+    scope.kind === "thread"
+      ? (thread?.title ?? "this thread")
+      : scope.kind === "project"
+        ? (project?.title ?? "this project")
+        : (server?.label ?? "this server");
+  const leave = useAtomCommand(sharingManage.leave, { reportFailure: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const wording = leaveWording(scope, title);
 
-  const choice =
-    grants.data === null
-      ? null
-      : leaveChoiceFor(grants.data.grants, { threadId, projectId: thread?.projectId ?? null });
-  const wording =
-    choice === null
-      ? null
-      : leaveWording(choice, {
-          thread: thread?.title ?? "this thread",
-          project: project?.title ?? null,
-        });
-
-  const leave = async () => {
-    if (choice === null || choice.kind === "through-another-thread") return;
+  const confirm = async () => {
     setBusy(true);
     setError(null);
-    for (const target of grantsToLeave(choice)) {
-      const left = await leaveGrant({ environmentId, input: { target } });
-      if (left._tag === "Failure") {
-        setBusy(false);
-        setError(`You could not leave. ${refusalMessage(left)}`);
-        return;
-      }
-    }
+    const result = await leave({ environmentId, input: { scope } });
     setBusy(false);
+    if (result._tag === "Failure") {
+      setError(`You could not leave. ${refusalMessage(result)}`);
+      return;
+    }
+    refreshSharing(environmentId);
     onClose();
-    // What was left is gone from this client; the landing shows what is still shared.
-    void navigate({ to: "/", replace: true });
+    // What was left may be the thread on screen; the first screen shows what is still shared.
+    if (scope.kind !== "server") void navigate({ to: "/", replace: true });
   };
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{wording?.title ?? "Leave this thread?"}</DialogTitle>
-          <DialogDescription>
-            {wording?.description ?? grants.error ?? "Reading what was shared with you…"}
-          </DialogDescription>
+          <DialogTitle>{wording.title}</DialogTitle>
+          <DialogDescription>{wording.description}</DialogDescription>
         </DialogHeader>
         {error === null ? null : (
           <DialogPanel>
@@ -89,22 +81,12 @@ export function LeaveDialog({
           </DialogPanel>
         )}
         <DialogFooter variant="bare">
-          {choice?.kind === "through-another-thread" ? (
-            <Button onClick={onClose}>Done</Button>
-          ) : (
-            <>
-              <Button variant="outline" disabled={busy} onClick={onClose}>
-                Cancel
-              </Button>
-              <Button disabled={busy || choice === null} onClick={() => void leave()}>
-                {busy
-                  ? "Leaving…"
-                  : choice?.kind === "thread-and-project"
-                    ? "Leave project"
-                    : "Leave"}
-              </Button>
-            </>
-          )}
+          <Button variant="outline" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="destructive" disabled={busy} onClick={() => void confirm()}>
+            {busy ? "Leaving…" : "Leave"}
+          </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

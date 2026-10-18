@@ -17,11 +17,11 @@ import { Input } from "../../components/ui/input";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { NAME_NOT_USABLE } from "./shareLink.logic";
 import { refreshSharing, refusalMessage, sharingManage } from "./sharingManage";
-import { showReturnedPerson } from "./returnedPeople";
 
 /**
- * A member changes what a guest is called. The name is what the agent and other people see, so a
- * name a guest gave themselves stops being marked as such once a member has typed one.
+ * A person renames themselves, or an Owner renames anyone (People and access AC46). The name is
+ * what the agents and other people see; the agents of every shared conversation the person can
+ * write to are told the old and the new.
  */
 export function RenameDialog({
   environmentId,
@@ -29,12 +29,19 @@ export function RenameDialog({
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly person: { readonly personId: string; readonly name: string };
+  readonly person: {
+    readonly personId: string | null;
+    readonly name: string | null;
+    readonly you: boolean;
+  };
   readonly onClose: () => void;
 }) {
-  const canManage = useAtomValue(sharingManage.renamePerson.permissionAtom(environmentId));
-  const rename = useAtomCommand(sharingManage.renamePerson, { reportFailure: false });
-  const [name, setName] = useState(person.name);
+  const canRenameAnyone = useAtomValue(sharingManage.renamePerson.permissionAtom(environmentId));
+  const canRenameSelf = useAtomValue(sharingManage.renameSelf.permissionAtom(environmentId));
+  const renamePerson = useAtomCommand(sharingManage.renamePerson, { reportFailure: false });
+  const renameSelf = useAtomCommand(sharingManage.renameSelf, { reportFailure: false });
+  const canRename = person.you ? canRenameSelf : canRenameAnyone && person.personId !== null;
+  const [name, setName] = useState(person.name ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,16 +53,18 @@ export function RenameDialog({
     }
     setBusy(true);
     setError(null);
-    const result = await rename({
-      environmentId,
-      input: { personId: person.personId, displayName },
-    });
+    const result =
+      person.you || person.personId === null
+        ? await renameSelf({ environmentId, input: { name: displayName } })
+        : await renamePerson({
+            environmentId,
+            input: { personId: person.personId, name: displayName },
+          });
     setBusy(false);
     if (result._tag === "Failure") {
       setError(refusalMessage(result));
       return;
     }
-    showReturnedPerson(environmentId, result.value);
     refreshSharing(environmentId);
     onClose();
   };
@@ -72,8 +81,14 @@ export function RenameDialog({
           }}
         >
           <DialogHeader>
-            <DialogTitle>Rename {person.name}</DialogTitle>
-            <DialogDescription>What the agent and other people call them.</DialogDescription>
+            <DialogTitle>
+              {person.you ? "Change your name" : `Rename ${person.name ?? "this person"}`}
+            </DialogTitle>
+            <DialogDescription>
+              {person.you
+                ? "What people and agents on this server call you. Your earlier messages keep the name you had."
+                : "What people and agents on this server call them. Their earlier messages keep the name they had."}
+            </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <Input
@@ -92,7 +107,7 @@ export function RenameDialog({
             </Button>
             <Button
               type="submit"
-              disabled={busy || !canManage || name.trim() === "" || name.trim() === person.name}
+              disabled={busy || !canRename || name.trim() === "" || name.trim() === person.name}
             >
               {busy ? "Renaming…" : "Rename"}
             </Button>

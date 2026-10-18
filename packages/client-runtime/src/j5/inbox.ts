@@ -14,6 +14,13 @@ export type PresentedHumanInboxItem = ScopedHumanInboxItem & {
 
 const urgencyOrder = { blocking: 0, soon: 1, fyi: 2 } as const;
 
+/** The inbox's order: urgency first, then age, oldest first within an urgency (Inbox AC6). */
+export const compareInboxItems = (left: ScopedHumanInboxItem, right: ScopedHumanInboxItem) =>
+  urgencyOrder[left.urgency] - urgencyOrder[right.urgency] ||
+  left.openedAt.localeCompare(right.openedAt) ||
+  left.environmentId.localeCompare(right.environmentId) ||
+  left.exchangeId.localeCompare(right.exchangeId);
+
 export function mergeHumanInboxSources(input: J5ReadSources<HumanInboxResponse>) {
   const items: Array<PresentedHumanInboxItem> = input.sources.flatMap((source) =>
     (source.data?.items ?? []).map((item) => ({
@@ -24,13 +31,7 @@ export function mergeHumanInboxSources(input: J5ReadSources<HumanInboxResponse>)
       sourceReady: source.status === "ready",
     })),
   );
-  items.sort(
-    (left, right) =>
-      urgencyOrder[left.urgency] - urgencyOrder[right.urgency] ||
-      left.openedAt.localeCompare(right.openedAt) ||
-      left.environmentId.localeCompare(right.environmentId) ||
-      left.exchangeId.localeCompare(right.exchangeId),
-  );
+  items.sort(compareInboxItems);
   return items;
 }
 
@@ -56,7 +57,7 @@ export function j5SourceNotice(source: J5ReadSource<unknown>): string | null {
       return `${source.environmentLabel}: offline${source.data === null ? "" : " — showing saved results"}.`;
     case "unsupported":
       return source.guest === true
-        ? "Nothing from a server you are a guest on appears here."
+        ? `${source.environmentLabel}: not shared with you.`
         : `${source.environmentLabel}: this server does not provide this J5 feature.`;
     case "error":
       return `${source.environmentLabel}: ${source.error ?? "could not refresh"}${source.data === null ? "" : " — showing saved results."}`;

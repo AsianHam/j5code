@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
-import { useGuestEnvironmentIds } from "../sharing/guestAccess";
+import { useOwnedEnvironmentIds } from "../sharing/access";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
@@ -68,7 +68,7 @@ const playbookWorkspaceInputsAtom = Atom.withEquality(
 export function PlaybookLibrarySettings() {
   const { environments } = useEnvironments();
   const workspaceInputs = useAtomValue(playbookWorkspaceInputsAtom);
-  const guestEnvironmentIds = useGuestEnvironmentIds();
+  const ownedEnvironmentIds = useOwnedEnvironmentIds();
   // The settings scope sentence narrows the workspaces and, when it names no
   // environment, the representative environment's workspace comes first.
   const settings = useOptionalSettingsScope();
@@ -78,12 +78,12 @@ export function PlaybookLibrarySettings() {
     () =>
       playbookWorkspaces(workspaceInputs.projects, workspaceInputs.threads).filter(
         (entry) =>
-          // A guest is not offered a server's Playbooks (Shared server AC24).
-          !guestEnvironmentIds.has(entry.environmentId) &&
+          // Settings manages the servers the person owns (People and access AC27).
+          ownedEnvironmentIds.has(entry.environmentId) &&
           (settingsScope === undefined ||
             isProjectInSettingsScope(settingsScope, entry.environmentId, entry.projectId)),
       ),
-    [guestEnvironmentIds, settingsScope, workspaceInputs],
+    [ownedEnvironmentIds, settingsScope, workspaceInputs],
   );
   const [workspaceKey, setWorkspaceKey] = useState("");
   const workspace =

@@ -1,15 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type {
-  SharingGrantLevel,
-  SharingGrantTarget,
-  SharingLink,
-  SharingPerson,
-} from "@t3tools/contracts/j5";
-import { isPersonName } from "@t3tools/contracts/j5";
+import type { PeopleEntry, PeopleLink, PersonLevel, PersonScope } from "@t3tools/contracts/j5";
+import { isPersonName, levelReaches } from "@t3tools/contracts/j5";
+import { Link2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import {
   Autocomplete,
@@ -29,267 +25,583 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../components/ui/dialog";
-import { Input } from "../../components/ui/input";
-import { Radio, RadioGroup } from "../../components/ui/radio-group";
-import { useProject, useThreadShell } from "../../state/entities";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
+import { toastManager } from "../../components/ui/toast";
+import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { LinkLifetimeRow } from "./LinkLifetimeRow";
+import { PersonAvatar } from "./PersonAvatar";
+import {
+  accessRowView,
+  type AccessRow,
+  historyNote,
+  levelLabel,
+  levelsAt,
+  linkMeta,
+  placeLinks,
+  peopleMatching,
+  personNamed,
+  raisesToWriting,
+  sameScope,
+  widerLabel,
+  writingWarning,
+} from "./people.logic";
+import { useAccessRows, useScopeTitle } from "./scopeAccess";
 import {
   DEFAULT_LINK_LIFETIME,
-  guestsMatchingName,
-  levelLabel,
-  NAME_NOT_USABLE,
-  namedLinkMeta,
+  lifetimeLeft,
   type LinkLifetime,
+  NAME_NOT_USABLE,
 } from "./shareLink.logic";
-import { ShareLinkPanel } from "./ShareLinkPanel";
-import { TargetPicker } from "./TargetPicker";
+import { ShareLinkPanel, useLinkAddress } from "./ShareLinkPanel";
 import {
+  linksQuery,
   peopleQuery,
   refreshSharing,
   refusalMessage,
-  rememberLinkSecret,
   sharingManage,
 } from "./sharingManage";
+import { WhatPicker } from "./WhatPicker";
+
+type AddMode = "person" | "anyone";
 
 /**
- * Whether a guest can be given Collaborate yet. Nothing lets a guest send to an agent today, so
- * the level is listed and cannot be chosen; the fields and the warning that go with it are built
- * and appear once it can.
- */
-const COLLABORATE_IS_OFFERED = false;
-
-const LEVELS: ReadonlyArray<{
-  readonly level: SharingGrantLevel;
-  readonly description: string;
-}> = [
-  {
-    level: "view",
-    // The design's line also promised the right panel's diffs and the in-app browser, which a
-    // guest is not served today; this says what a View guest can read now.
-    description:
-      "Read the conversation and the changes each turn made. Cannot send anything to the agent.",
-  },
-  {
-    level: "collaborate",
-    description: "Also message the agent, answer its prompts and drive the in-app browser.",
-  },
-];
-
-/** The thread's or project's title, as the person sharing it knows it. */
-export function useTargetTitle(
-  environmentId: EnvironmentId,
-  target: SharingGrantTarget | null,
-): string | null {
-  const thread = useThreadShell(
-    target?.kind === "thread" ? scopeThreadRef(environmentId, target.threadId) : null,
-  );
-  const project = useProject(
-    target?.kind === "project" ? scopeProjectRef(environmentId, target.projectId) : null,
-  );
-  return target?.kind === "thread" ? (thread?.title ?? null) : (project?.title ?? null);
-}
-
-/**
- * Sharing a thread or a project with one person (Shared server AC18 to AC22). A new person gets
- * a link, shown as the dialog's last step; someone already on the server gets the access and no
- * link. What sharing gives away is said before the member confirms.
+ * The one Share dialog, the same for a thread, a project and the whole server (People and access
+ * AC34 to AC41): who already reaches the thing, with their levels and where each is held; the
+ * links in force; and a form that makes a link, or gives someone already on the server more with
+ * no link (AC35). Only an Owner's device opens it with controls; the server checks every change.
  */
 export function ShareDialog({
   environmentId,
-  target: givenTarget,
-  person: givenPerson,
+  scope: givenScope,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
-  /** `null` when the dialog was opened from the People page: it asks what to share. */
-  readonly target: SharingGrantTarget | null;
-  /** Someone already on the server who is being given more access. */
-  readonly person?: { readonly personId: string; readonly name: string } | undefined;
+  /** `null` when opened from the People page: the dialog asks, the server or a project. */
+  readonly scope: PersonScope | null;
   readonly onClose: () => void;
 }) {
-  const [pickedTarget, setPickedTarget] = useState<SharingGrantTarget | null>(null);
-  const target = givenTarget ?? pickedTarget;
-  const targetTitle = useTargetTitle(environmentId, target);
-  const canManage = useAtomValue(sharingManage.putGrant.permissionAtom(environmentId));
+  const [pickedScope, setPickedScope] = useState<PersonScope | null>(null);
+  const scope = givenScope ?? pickedScope;
+  const titles = useScopeTitle(environmentId, scope);
+  const canManage = useAtomValue(sharingManage.createLink.permissionAtom(environmentId));
+  const access = useAccessRows(environmentId, scope);
   const people = useEnvironmentQuery(canManage ? peopleQuery(environmentId) : null);
-  // People join and leave without this client doing anything, so each opening reads them again.
+  const links = useEnvironmentQuery(canManage ? linksQuery(environmentId) : null);
+  // People join and links are used without this client doing anything; each opening reads again.
   useEffect(() => refreshSharing(environmentId), [environmentId]);
-  const createGuest = useAtomCommand(sharingManage.createGuest, { reportFailure: false });
-  const putGrant = useAtomCommand(sharingManage.putGrant, { reportFailure: false });
-  const createLink = useAtomCommand(sharingManage.createLink, { reportFailure: false });
+  const nowMs = Date.parse(useNowMinute());
+  const [made, setMade] = useState<PeopleLink | null>(null);
 
-  const [name, setName] = useState(givenPerson?.name ?? "");
-  // Someone already on the server, picked from the names that match what was typed.
-  const [pickedPerson, setPickedPerson] = useState<SharingPerson | null>(null);
-  const existing = givenPerson ?? pickedPerson;
-  // A person this dialog made whose grant or link then failed: a second try reuses them.
-  const [made, setMade] = useState<SharingPerson | null>(null);
-  const [level, setLevel] = useState<SharingGrantLevel>("view");
-  const [note, setNote] = useState("");
-  const [lifetime, setLifetime] = useState<LinkLifetime>(DEFAULT_LINK_LIFETIME);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [link, setLink] = useState<SharingLink | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const placed =
+    scope === null
+      ? null
+      : placeLinks({
+          links: links.data?.links ?? [],
+          scope,
+          listed: new Set(
+            (access.rows ?? []).flatMap((row) => (row.personId === null ? [] : [row.personId])),
+          ),
+          nowMs,
+        });
+  const linkUnder = (personId: string | null) =>
+    personId === null ? [] : (placed?.underPerson.get(personId) ?? []);
+  const trailingLinks = placed?.after ?? [];
 
-  const typedName = name.trim();
-  const matches = guestsMatchingName(people.data?.people ?? [], name);
-  const noun = target === null ? "thread or project" : target.kind;
-
-  const makeLink = async (personId: string) => {
-    const created = await createLink({ environmentId, input: { personId, lifetime } });
-    if (created._tag === "Failure") {
-      setError(`The link could not be made. ${refusalMessage(created)}`);
-      return;
-    }
-    rememberLinkSecret(created.value.linkId, created.value.credential);
-    setNowMs(Date.now());
-    setLink(created.value);
-  };
-
-  const share = async () => {
-    if (target === null) return;
-    setBusy(true);
-    setError(null);
-    try {
-      let person: { readonly personId: string } | null = existing ?? made;
-      if (person === null) {
-        // The contract refuses such a name before the server sees it, with no words for a person.
-        if (!isPersonName(typedName)) {
-          setError(NAME_NOT_USABLE);
-          return;
-        }
-        const guest = await createGuest({ environmentId, input: { displayName: typedName } });
-        if (guest._tag === "Failure") {
-          setError(refusalMessage(guest));
-          return;
-        }
-        person = guest.value;
-        setMade(guest.value);
-      }
-      const granted = await putGrant({
-        environmentId,
-        input: {
-          personId: person.personId,
-          target,
-          level,
-          ...(level === "collaborate" && note.trim() !== "" ? { note: note.trim() } : {}),
-        },
-      });
-      if (granted._tag === "Failure") {
-        setError(`The ${noun} could not be shared. ${refusalMessage(granted)}`);
-        return;
-      }
-      if (existing !== null) {
-        onClose();
-        return;
-      }
-      await makeLink(person.personId);
-    } finally {
-      refreshSharing(environmentId);
-      setBusy(false);
-    }
-  };
-
-  const anotherDeviceLink = async () => {
-    if (link === null) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await makeLink(link.personId);
-    } finally {
-      refreshSharing(environmentId);
-      setBusy(false);
-    }
-  };
-
-  if (link !== null) {
+  if (made !== null && scope !== null) {
     return (
-      <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
-        <DialogPopup className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Link for {typedName}</DialogTitle>
-            <DialogDescription>
-              Send this to {typedName} over a channel you trust. Whoever opens it becomes{" "}
-              {typedName} on this server, on that one device.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel>
-            <ShareLinkPanel
-              key={link.linkId}
-              environmentId={environmentId}
-              secret={link.credential}
-              kind="named"
-              whoCannotOpen={typedName}
-              meta={namedLinkMeta({
-                expiresAtMs: link.expiresAt.epochMilliseconds,
-                nowMs,
-                level,
-                targetTitle,
-              })}
-            />
-            {error !== null ? <p className="text-xs text-destructive">{error}</p> : null}
-          </DialogPanel>
-          <DialogFooter variant="bare">
-            <Button variant="outline" disabled={busy} onClick={() => void anotherDeviceLink()}>
-              {busy ? "Making link…" : "New device link"}
-            </Button>
-            <Button onClick={onClose}>Done</Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
+      <MadeLink
+        environmentId={environmentId}
+        link={made}
+        scopeTitle={titles.title ?? "it"}
+        nowMs={nowMs}
+        onBack={() => setMade(null)}
+        onClose={onClose}
+      />
     );
   }
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogPopup className="max-w-md">
+      <DialogPopup className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{givenTarget === null ? "Share" : `Share ${givenTarget.kind}`}</DialogTitle>
+          <DialogTitle>
+            <span className="flex items-center gap-2">
+              {titles.project === null ? null : <ProjectFavicon project={titles.project} />}
+              <span className="min-w-0 truncate">
+                {titles.title === null ? "Share" : `Share ${titles.title}`}
+              </span>
+            </span>
+          </DialogTitle>
+          {titles.detail === null ? null : <DialogDescription>{titles.detail}</DialogDescription>}
         </DialogHeader>
         <DialogPanel>
-          {givenTarget === null ? (
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-foreground">Thread or project</p>
-              <TargetPicker
-                environmentId={environmentId}
-                onPick={setPickedTarget}
-                disabled={busy || made !== null}
-              />
-            </div>
+          {givenScope === null ? (
+            <WhatPicker
+              environmentId={environmentId}
+              value={pickedScope}
+              onChange={setPickedScope}
+            />
           ) : null}
+          {scope === null ? null : (
+            <>
+              <div className="overflow-hidden rounded-lg border border-border">
+                <p className="bg-muted/40 px-2.5 pt-1.5 pb-0.5 text-2xs font-medium text-muted-foreground">
+                  Who has it
+                </p>
+                {access.rows === null ? (
+                  <p className="px-2.5 py-2 text-xs text-muted-foreground">
+                    {access.error ?? "Reading who reaches it…"}
+                  </p>
+                ) : (
+                  access.rows.map((row, index) => (
+                    <AccessRowLine
+                      // Someone who is not an Owner is told no ids.
+                      key={row.personId ?? index}
+                      environmentId={environmentId}
+                      scope={scope}
+                      row={row}
+                      canManage={canManage}
+                      unusedLinks={linkUnder(row.personId)}
+                      nowMs={nowMs}
+                    />
+                  ))
+                )}
+                {trailingLinks.map((link) => (
+                  <LinkLine
+                    key={link.linkId}
+                    environmentId={environmentId}
+                    link={link}
+                    canManage={canManage}
+                    nowMs={nowMs}
+                    indent={false}
+                    // A link for one person who is not on the server yet names who it is for.
+                    label={link.use === "one" ? `${link.personName ?? "One person"} · ` : null}
+                  />
+                ))}
+              </div>
+              {canManage ? (
+                <AddForm
+                  environmentId={environmentId}
+                  scope={scope}
+                  people={people.data?.people ?? []}
+                  reachOf={(personId) =>
+                    access.rows?.find((row) => row.personId === personId)?.level ?? null
+                  }
+                  onMade={setMade}
+                  onShared={() => refreshSharing(environmentId)}
+                />
+              ) : null}
+              <Alert>
+                <AlertDescription>{historyNote(scope)}</AlertDescription>
+              </Alert>
+            </>
+          )}
+        </DialogPanel>
+        <DialogFooter variant="bare">
+          <Button variant="outline" onClick={onClose}>
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+/**
+ * One person who reaches the thing. A level held here gets a control and a remove; one held
+ * through a wider scope is shown with that scope and changed there (AC36). The first owner has
+ * neither (AC51).
+ */
+export function AccessRowLine({
+  environmentId,
+  scope,
+  row,
+  canManage,
+  unusedLinks,
+  nowMs,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly scope: PersonScope;
+  readonly row: AccessRow;
+  readonly canManage: boolean;
+  readonly unusedLinks: ReadonlyArray<PeopleLink>;
+  readonly nowMs: number;
+}) {
+  const setLevel = useAtomCommand(sharingManage.setLevel, { reportFailure: false });
+  const removeLevel = useAtomCommand(sharingManage.removeLevel, { reportFailure: false });
+  const [pending, setPending] = useState<PersonLevel | null>(null);
+  const [busy, setBusy] = useState(false);
+  const name = row.name ?? "Someone without a name yet";
+  const controls = canManage && row.personId !== null && row.here !== null && !row.firstOwner;
+  const view = accessRowView(row);
+
+  const apply = async (level: PersonLevel) => {
+    if (row.personId === null) return;
+    setBusy(true);
+    const result = await setLevel({
+      environmentId,
+      input: { personId: row.personId, scope, level },
+    });
+    setBusy(false);
+    setPending(null);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: "Could not change the level",
+        description: refusalMessage(result),
+      });
+    }
+    refreshSharing(environmentId);
+  };
+  const choose = (level: PersonLevel) => {
+    if (level === row.here) return;
+    // Writing is said before it is given (AC35).
+    if (raisesToWriting(row.here, level)) setPending(level);
+    else void apply(level);
+  };
+  const remove = async () => {
+    if (row.personId === null) return;
+    setBusy(true);
+    const result = await removeLevel({ environmentId, input: { personId: row.personId, scope } });
+    setBusy(false);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: `Could not remove ${name}`,
+        description: refusalMessage(result),
+      });
+    }
+    refreshSharing(environmentId);
+  };
+
+  return (
+    <div className="border-t border-border first-of-type:border-t-0">
+      <div className="flex min-h-9 items-center gap-2 px-2.5 text-sm">
+        <PersonAvatar name={row.name} size="sm" />
+        <span className="min-w-0 truncate">{name}</span>
+        {row.you ? <span className="shrink-0 text-xs text-muted-foreground">· you</span> : null}
+        {row.firstOwner ? (
+          <Badge variant="outline" size="sm">
+            first owner
+          </Badge>
+        ) : null}
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          {/* The level the person reaches the thing with, and the wider scope that gives it. */}
+          {!controls || view.hereIsOutranked ? (
+            <span className="text-xs text-muted-foreground">{view.effective}</span>
+          ) : null}
+          {controls && row.here !== null ? (
+            <>
+              {view.hereIsOutranked ? (
+                <span className="text-xs text-muted-foreground">· here</span>
+              ) : null}
+              <LevelSelect
+                levels={levelsAt(scope)}
+                value={pending ?? row.here}
+                disabled={busy}
+                label={`${name}'s level on this ${scope.kind}`}
+                onChange={choose}
+              />
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                disabled={busy}
+                aria-label={`Remove ${name}`}
+                onClick={() => void remove()}
+              >
+                <XIcon className="size-3.5" />
+              </Button>
+            </>
+          ) : null}
+        </span>
+      </div>
+      {pending !== null ? (
+        <div className="flex flex-col gap-2 px-2.5 pb-2.5">
+          <WritingWarning name={row.name} />
+          <div className="flex justify-end gap-2">
+            <Button size="xs" variant="outline" disabled={busy} onClick={() => setPending(null)}>
+              Cancel
+            </Button>
+            <Button size="xs" disabled={busy} onClick={() => void apply(pending)}>
+              Make {levelLabel(pending)}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {unusedLinks.map((link) => (
+        <LinkLine
+          key={link.linkId}
+          environmentId={environmentId}
+          link={link}
+          canManage={canManage}
+          nowMs={nowMs}
+          indent
+        />
+      ))}
+    </div>
+  );
+}
+
+function LevelSelect({
+  levels,
+  value,
+  disabled,
+  label,
+  onChange,
+}: {
+  readonly levels: ReadonlyArray<PersonLevel>;
+  readonly value: PersonLevel;
+  readonly disabled: boolean;
+  readonly label: string;
+  readonly onChange: (level: PersonLevel) => void;
+}) {
+  return (
+    <Select
+      value={value}
+      disabled={disabled}
+      onValueChange={(next) => onChange(next as PersonLevel)}
+    >
+      <SelectTrigger size="xs" aria-label={label}>
+        <SelectValue>{levelLabel(value)}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        {levels.map((level) => (
+          <SelectItem hideIndicator key={level} value={level}>
+            {levelLabel(level)}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+}
+
+/** The statement of AC37, before anyone is given writing. */
+export function WritingWarning({ name }: { readonly name: string | null }) {
+  const { lead, rest } = writingWarning(name);
+  return (
+    <Alert variant="warning">
+      <AlertDescription>
+        <p>
+          <strong className="font-semibold">{lead}</strong> {rest}
+        </p>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/** A link in force, with Copy and Revoke until it expires, is revoked or is used (AC41). */
+export function LinkLine({
+  environmentId,
+  link,
+  canManage,
+  nowMs,
+  indent,
+  label,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly link: PeopleLink;
+  readonly canManage: boolean;
+  readonly nowMs: number;
+  readonly indent: boolean;
+  /** What the line says before the link's own details; the People page names what it opens. */
+  readonly label?: React.ReactNode;
+}) {
+  const addressFor = useLinkAddress(environmentId);
+  const revokeLink = useAtomCommand(sharingManage.revokeLink, { reportFailure: false });
+  const [busy, setBusy] = useState(false);
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "link",
+    onCopy: () => toastManager.add({ type: "success", title: "Link copied" }),
+    onError: (error) =>
+      toastManager.add({ type: "error", title: "Could not copy", description: error.message }),
+  });
+  if (lifetimeLeft(link.expiresAt.epochMilliseconds, nowMs) === null) return null;
+  const address = addressFor(link.token);
+  const revoke = async () => {
+    setBusy(true);
+    const result = await revokeLink({ environmentId, input: { linkId: link.linkId } });
+    setBusy(false);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: "Could not revoke the link",
+        description: refusalMessage(result),
+      });
+    }
+    refreshSharing(environmentId);
+  };
+  return (
+    <div
+      className={`flex min-h-8 items-center gap-2 border-t border-border px-2.5 text-xs text-muted-foreground ${indent ? "pl-9" : ""}`}
+    >
+      <Link2Icon className="size-3.5 shrink-0" />
+      <span className="min-w-0 truncate">
+        {label}
+        {linkMeta(link, nowMs)}
+      </span>
+      <span className="ml-auto flex shrink-0 items-center gap-1">
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={address === null}
+          onClick={() => (address === null ? undefined : copyToClipboard(address, undefined))}
+        >
+          {isCopied ? "Copied" : "Copy"}
+        </Button>
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={!canManage || busy}
+          onClick={() => void revoke()}
+        >
+          Revoke
+        </Button>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Bringing someone in (AC31, AC35, AC40). "Add a person" makes a link for one. For someone
+ * already on the server it gives them the level here with no link when that is more than they
+ * reach it with, and otherwise makes a link that pairs one more device as them. "Anyone with the
+ * link" makes a link for many, at Viewer.
+ */
+function AddForm({
+  environmentId,
+  scope,
+  people,
+  reachOf,
+  onMade,
+  onShared,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly scope: PersonScope;
+  readonly people: ReadonlyArray<PeopleEntry>;
+  /** The level someone already reaches the thing with, from anywhere; `null` for none. */
+  readonly reachOf: (personId: string) => PersonLevel | null;
+  readonly onMade: (link: PeopleLink) => void;
+  readonly onShared: () => void;
+}) {
+  const createLink = useAtomCommand(sharingManage.createLink, { reportFailure: false });
+  const setLevel = useAtomCommand(sharingManage.setLevel, { reportFailure: false });
+  const [mode, setMode] = useState<AddMode>("person");
+  const [name, setName] = useState("");
+  const [level, setLevelChoice] = useState<PersonLevel>("viewer");
+  const [lifetime, setLifetime] = useState<LinkLifetime>(DEFAULT_LINK_LIFETIME);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const existing = mode === "person" ? personNamed(people, name) : null;
+  const matches = existing === null ? peopleMatching(people, name) : [];
+  const typed = name.trim();
+  const heldHere = existing?.levels.find((held) => sameScope(held.scope, scope))?.level ?? null;
+  // Someone who already reaches the thing at this level gains nothing; the link adds a device.
+  const addsDevice = existing !== null && levelReaches(reachOf(existing.personId), level);
+  const raises = existing !== null && !addsDevice;
+  const warn =
+    mode === "person" && !addsDevice && raisesToWriting(existing === null ? null : heldHere, level);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (existing !== null && raises) {
+        const result = await setLevel({
+          environmentId,
+          input: { personId: existing.personId, scope, level },
+        });
+        if (result._tag === "Failure") {
+          setError(refusalMessage(result));
+          return;
+        }
+        setName("");
+        onShared();
+        return;
+      }
+      if (mode === "person" && typed !== "" && !isPersonName(typed)) {
+        setError(NAME_NOT_USABLE);
+        return;
+      }
+      const result = await createLink({
+        environmentId,
+        input:
+          existing !== null
+            ? { kind: "device", personId: existing.personId, lifetime }
+            : mode === "anyone"
+              ? { kind: "invite", scope, level: "viewer", use: "many", name: null, lifetime }
+              : {
+                  kind: "invite",
+                  scope,
+                  level,
+                  use: "one",
+                  name: typed === "" ? null : typed,
+                  lifetime,
+                },
+      });
+      if (result._tag === "Failure") {
+        setError(`The link could not be made. ${refusalMessage(result)}`);
+        return;
+      }
+      onShared();
+      onMade(result.value);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border p-3">
+      <ToggleGroup
+        aria-label="Who the link is for"
+        value={[mode]}
+        onValueChange={(next) => {
+          const value = next[0];
+          if (value === "person" || value === "anyone") setMode(value);
+          setError(null);
+        }}
+      >
+        <Toggle value="person">Add a person</Toggle>
+        <Toggle value="anyone">Anyone with the link</Toggle>
+      </ToggleGroup>
+      {mode === "person" ? (
+        <>
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-foreground">Name</span>
             <Autocomplete
               items={matches}
-              itemToStringValue={(person: SharingPerson) => person.displayName ?? ""}
+              itemToStringValue={(person: PeopleEntry) => person.name ?? ""}
               mode="none"
               value={name}
-              onValueChange={(value, details) => {
+              onValueChange={(value) => {
                 setName(value);
                 setError(null);
-                setPickedPerson(
-                  details.reason === "item-press"
-                    ? (matches.find((person) => person.displayName === value) ?? null)
-                    : null,
-                );
               }}
             >
               <AutocompleteInput
-                autoFocus={givenTarget !== null}
-                placeholder="What the agent and other people call them"
-                disabled={busy || made !== null || givenPerson !== undefined}
+                placeholder="Their name on this server"
+                disabled={busy}
                 maxLength={80}
               />
-              {matches.length > 0 && existing === null ? (
+              {matches.length > 0 ? (
                 <AutocompletePopup>
                   <AutocompleteList>
                     {matches.map((person) => (
                       <AutocompleteItem key={person.personId} value={person}>
-                        <span className="min-w-0 truncate">{person.displayName}</span>
-                        <span className="text-xs text-muted-foreground">Already a guest here</span>
+                        <span className="min-w-0 truncate">{person.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          Already on this server
+                        </span>
                       </AutocompleteItem>
                     ))}
                   </AutocompleteList>
@@ -297,115 +609,114 @@ export function ShareDialog({
               ) : null}
             </Autocomplete>
           </label>
-          <section>
-            <h3 className="mb-1.5 text-xs font-medium text-foreground">What they can do</h3>
-            <div className="rounded-lg border border-input bg-muted/25 px-3 py-2.5">
-              <RadioGroup
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-medium text-foreground">Level</p>
+            <div className="w-36 shrink-0">
+              <LevelSelect
+                levels={levelsAt(scope)}
                 value={level}
                 disabled={busy}
-                onValueChange={(value) => setLevel(value as SharingGrantLevel)}
-              >
-                {LEVELS.map((option) => {
-                  const unavailable = option.level === "collaborate" && !COLLABORATE_IS_OFFERED;
-                  return (
-                    <label
-                      key={option.level}
-                      className={
-                        unavailable
-                          ? "flex items-start gap-3 opacity-64"
-                          : "flex cursor-pointer items-start gap-3"
-                      }
-                    >
-                      <Radio className="mt-0.5" value={option.level} disabled={unavailable} />
-                      <span className="min-w-0">
-                        <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                          {levelLabel(option.level)}
-                          {unavailable ? (
-                            <Badge variant="outline" size="sm">
-                              coming soon
-                            </Badge>
-                          ) : null}
-                        </span>
-                        <span className="block text-xs leading-snug text-muted-foreground">
-                          {option.description}
-                        </span>
-                      </span>
-                    </label>
-                  );
-                })}
-              </RadioGroup>
-            </div>
-          </section>
-          {level === "collaborate" ? (
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-medium text-foreground">
-                What they are here for{" "}
-                <span className="font-normal text-muted-foreground">(optional)</span>
-              </span>
-              <Input
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="e.g. reviewing the migration plan with me"
-                disabled={busy}
-                maxLength={280}
+                label="Level"
+                onChange={setLevelChoice}
               />
-              <span className="mt-1.5 block text-xs text-muted-foreground">
-                The agent is told this. It can shape how the agent responds to your guest.
-              </span>
-            </label>
-          ) : null}
-          {level === "collaborate" ? (
-            <Alert variant="warning">
-              <AlertDescription>
-                <p>
-                  <strong className="font-semibold">
-                    You are inviting {typedName === "" ? "them" : typedName} to talk to and control
-                    an AI agent on your device.
-                  </strong>{" "}
-                  Make sure you trust them. Anything the agent can do,{" "}
-                  {typedName === "" ? "they" : typedName} can ask it to do.
-                </p>
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          <Alert>
-            <AlertDescription>
-              {target?.kind === "project"
-                ? "Sharing a project shares every thread in it and its artifacts, including any agents they spawned."
-                : "Sharing a thread shares the agent's whole history, including any agents it spawned."}
-            </AlertDescription>
-          </Alert>
-          {existing === null ? (
+            </div>
+          </div>
+          {raises ? (
+            <p className="text-xs text-muted-foreground">
+              {existing.name} is already on this server, so no link is needed.
+            </p>
+          ) : (
             <LinkLifetimeRow
               value={lifetime}
               onChange={setLifetime}
-              helper="It works once, on one device."
+              helper={
+                addsDevice
+                  ? `${existing.name} already reaches this. The link pairs one more device as them.`
+                  : "One use, one device."
+              }
               disabled={busy}
             />
+          )}
+          {warn ? <WritingWarning name={existing?.name ?? (typed === "" ? null : typed)} /> : null}
+        </>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-medium text-foreground">Level</p>
+            <p className="text-xs text-muted-foreground">Viewer</p>
+          </div>
+          <LinkLifetimeRow
+            value={lifetime}
+            onChange={setLifetime}
+            helper="Anyone who opens it joins; nobody new after that."
+            disabled={busy}
+          />
+        </>
+      )}
+      {error === null ? null : <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex justify-end">
+        <Button size="sm" disabled={busy} onClick={() => void submit()}>
+          {raises ? (busy ? "Sharing…" : "Share") : busy ? "Making link…" : "Make link"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** The link just made, with its route, address and code to send (design §1, "After Make link"). */
+function MadeLink({
+  environmentId,
+  link,
+  scopeTitle,
+  nowMs,
+  onBack,
+  onClose,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly link: PeopleLink;
+  readonly scopeTitle: string;
+  readonly nowMs: number;
+  readonly onBack: () => void;
+  readonly onClose: () => void;
+}) {
+  const left = lifetimeLeft(link.expiresAt.epochMilliseconds, nowMs) ?? "moments";
+  const level = link.level === null ? null : levelLabel(link.level);
+  const person = link.personName;
+  const title =
+    link.use === "many"
+      ? "Link for anyone"
+      : person === null
+        ? "Link for one person"
+        : `Link for ${person}`;
+  const description =
+    link.use === "many"
+      ? `Anyone who opens it joins as a Viewer of ${scopeTitle} until it expires in ${left}.`
+      : link.kind === "device"
+        ? `Open it on the device to add. It pairs one more device as ${person ?? "them"}, and expires in ${left}.`
+        : `Send it to ${person ?? "them"}. Opening it pairs one device as them. ${level ?? "Access"} on ${scopeTitle}, expires in ${left}.`;
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          {link.use === "one" && link.level !== null && raisesToWriting(null, link.level) ? (
+            <WritingWarning name={person} />
           ) : null}
-          {error !== null ? <p className="text-xs text-destructive">{error}</p> : null}
-          {!canManage ? (
-            <p className="text-xs text-muted-foreground">
-              This connection cannot manage access on this server.
-            </p>
-          ) : null}
+          <ShareLinkPanel
+            environmentId={environmentId}
+            token={link.token}
+            whoCannotOpen={link.use === "many" ? "People" : (person ?? "They")}
+            meta={null}
+          />
         </DialogPanel>
         <DialogFooter variant="bare">
-          <Button variant="outline" disabled={busy} onClick={onClose}>
-            Cancel
+          <Button variant="outline" onClick={onBack}>
+            Back
           </Button>
-          <Button
-            disabled={busy || !canManage || typedName === "" || target === null}
-            onClick={() => void share()}
-          >
-            {existing !== null
-              ? busy
-                ? "Sharing…"
-                : "Share"
-              : busy
-                ? "Making link…"
-                : "Make link"}
-          </Button>
+          <Button onClick={onClose}>Done</Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

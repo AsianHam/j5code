@@ -402,11 +402,12 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths and n
   - case 69: `server.ts`, `ws.ts`, the chat views, the thread action menu, and the registrations of J5's sharing request;
   - case 70: pairing;
   - case 71: the share entries in menus and the command palette;
-  - case 72: the People page, from which a project or the server is shared;
+  - case 72: the People page, from which a project or the server is shared, and Settings for someone who is not an Owner;
   - case 73: the thread header, the details panel, and a narrow scope's client;
-  - the command and launch requests in a shared conversation, given a case of their own when they land.
+  - the command and launch requests in a shared conversation, given a case of their own when they land;
+  - case 80: the timeline of a shared conversation.
 
-  Renewing a session adds a call in web's sign-in gate and in mobile's connection setup. Leaving non-Owner servers out of Settings adds one filter where Settings resolves its servers, and Settings search is filtered by the same list.
+  Renewing a session adds a call in web's sign-in gate and in mobile's connection setup. Leaving non-Owner servers out of Settings adds one filter in each of the two places Settings resolves its servers; Settings' navigation and search keep to the same list of pages, and a page off the list sends the person to one on it.
 
 - **A lowered level reaches an open socket at once,** because upstream closes a session's sockets when it is revoked, replaced or expires.
 - **A change of level makes the person's devices reconnect once.**
@@ -430,7 +431,7 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths and n
 - **2026-10-12 and 2026-10-13:** per-thread levels in the client, the pairing seam, and the shared conversation's edits ([#532](https://github.com/Jacksondr5/j5code/issues/532), [#533](https://github.com/Jacksondr5/j5code/issues/533), [#535](https://github.com/Jacksondr5/j5code/issues/535), [#541](https://github.com/Jacksondr5/j5code/issues/541)).
 - **2026-10-16 and 2026-10-17:** the model of persons, scopes and levels; links as J5's own token; and sessions renewed on a change of level ([people and access session](../worklog/2026-10-16-people-and-access-session.md)).
 
-Recorded in `FORK.md` cases 69 to 73, and in the case the shared conversation's requests get when they land.
+Recorded in `FORK.md` cases 69 to 73 and 80, and in the case the shared conversation's requests get when they land.
 
 #### D36. `j5 pair` names the person a device is for
 

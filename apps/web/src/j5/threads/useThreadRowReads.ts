@@ -8,13 +8,14 @@ import { useEffect, useMemo } from "react";
 import { environmentCatalog } from "../../connection/catalog";
 import { environmentSession } from "../../state/session";
 import { requestCrewMemberships } from "../crew/CrewMembershipsClient";
-import { j5Sharing } from "../sharing/guestAccess";
+import { j5Sharing } from "../state";
 import { requestSpawnedChildren } from "./SpawnedChildrenClient";
 
 /**
- * Each catalogued environment's prepared connection, or null while it is not connected. A guest's
- * connection is left null too once it is known to be one: the server refuses a guest these reads
- * (Shared server AC24). Nothing waits for that answer, so a member's rows are read at once.
+ * Each catalogued environment's prepared connection, or null while it is not connected. The
+ * connection of someone who reaches less than the whole server is left null too once that is
+ * known: these reads are the server's own (People and access AC23), and the server refuses them.
+ * Nothing waits for that answer, so everyone else's rows are read at once.
  */
 export const threadReadConnectionsAtom = Atom.make((get) => {
   const connections = new Map<EnvironmentId, PreparedConnection | null>();
