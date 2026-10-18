@@ -1,11 +1,13 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import type { PeopleEntry, PeopleLink, ScopePerson } from "@t3tools/contracts/j5";
+import { LEVEL_PERMISSIONS } from "@t3tools/contracts/j5";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   accessRowsFromScope,
   accessRowView,
+  deviceCeiling,
   placeLinks,
   linkMeta,
   personNamed,
@@ -232,5 +234,18 @@ describe("where the Share dialog lists each link", () => {
     });
     expect(placed.underPerson.get("p1")?.map((one) => one.linkId)).toEqual(["device"]);
     expect(placed.after.map((one) => one.linkId)).toEqual(["invite"]);
+  });
+});
+
+describe("a device's ceiling, as its People row badges it", () => {
+  const device = (ceiling: ReadonlyArray<string> | null) => ({ ceiling });
+
+  it("names what a device paired with fewer permissions keeps", () => {
+    expect(deviceCeiling(device(LEVEL_PERMISSIONS.viewer))).toEqual(["View environment"]);
+  });
+
+  it("is none for a device paired with every permission, which holds nothing back", () => {
+    expect(deviceCeiling(device(LEVEL_PERMISSIONS.owner))).toBeNull();
+    expect(deviceCeiling(device(null))).toBeNull();
   });
 });

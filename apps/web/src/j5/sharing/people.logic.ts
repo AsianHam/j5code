@@ -8,7 +8,7 @@ import type {
   ScopePerson,
   ScopeReach,
 } from "@t3tools/contracts/j5";
-import { levelReaches } from "@t3tools/contracts/j5";
+import { LEVEL_PERMISSIONS, levelReaches } from "@t3tools/contracts/j5";
 import { AUTH_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 
 import { lifetimeLeft } from "./shareLink.logic";
@@ -233,12 +233,16 @@ export function deviceLabel(device: PersonDevice): string {
 
 /**
  * The permissions a device was paired with in Connections or by `--scope`, by upstream's own
- * labels; `null` for a device paired with none. A device keeps only these, whatever its person's
- * level (AC18), so one frozen narrow can be found here and paired again.
+ * labels; `null` for a device paired with none, or with every permission, which holds nothing
+ * back. A device keeps only these, whatever its person's level (AC18), so one frozen narrow can be
+ * found here and paired again.
  */
-export function deviceCeiling(device: PersonDevice): ReadonlyArray<string> | null {
-  if (device.ceiling === null) return null;
-  return device.ceiling.map(
+export function deviceCeiling(device: Pick<PersonDevice, "ceiling">): ReadonlyArray<string> | null {
+  const { ceiling } = device;
+  if (ceiling === null || LEVEL_PERMISSIONS.owner.every((scope) => ceiling.includes(scope))) {
+    return null;
+  }
+  return ceiling.map(
     (scope) => AUTH_SCOPE_OPTIONS.find((option) => option.scope === scope)?.title ?? scope,
   );
 }
