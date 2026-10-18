@@ -31,6 +31,7 @@ export const ACCESS_RPC_SCOPES = {
   [J5_ACCESS_WS_METHODS.claimDevice]: AuthOrchestrationReadScope,
   [J5_ACCESS_WS_METHODS.setFirstOwnerName]: AuthOrchestrationReadScope,
   [J5_ACCESS_WS_METHODS.leave]: AuthOrchestrationReadScope,
+  [J5_ACCESS_WS_METHODS.markRetiredLinksSeen]: AuthOrchestrationReadScope,
 } as const;
 
 /** How long after the move to levels an Owner is told that old links stopped working. */
@@ -67,15 +68,25 @@ export const makeAccessRpcHandlers = (options: {
     const sql = yield* SqlClient.SqlClient;
     const { people, access, session } = options;
 
-    const retiredLinks = Effect.gen(function* () {
-      const rows = yield* sql<{ readonly count: number; readonly created_at: string }>`
-        SELECT count, created_at FROM j5_a2a_sharing_notice WHERE kind = 'links_retired'
+    // Shown to each Owner until they have seen it, for as long as one of the old links could
+    // still have been sent around.
+    const retiredLinks = (personId: string) =>
+      Effect.gen(function* () {
+        const rows = yield* sql<{ readonly count: number; readonly created_at: string }>`
+        SELECT notice.count, notice.created_at FROM j5_a2a_sharing_notice AS notice
+        WHERE notice.kind = 'links_retired' AND NOT EXISTS (
+          SELECT 1 FROM j5_a2a_sharing_notice_seen AS seen
+          WHERE seen.kind = notice.kind AND seen.person_id = ${personId}
+        )
       `;
-      const row = rows[0];
-      if (row === undefined) return null;
-      const until = DateTime.addDuration(DateTime.makeUnsafe(row.created_at), RETIRED_LINKS_NOTICE);
-      return DateTime.isLessThan(yield* DateTime.now, until) ? row.count : null;
-    });
+        const row = rows[0];
+        if (row === undefined) return null;
+        const until = DateTime.addDuration(
+          DateTime.makeUnsafe(row.created_at),
+          RETIRED_LINKS_NOTICE,
+        );
+        return DateTime.isLessThan(yield* DateTime.now, until) ? row.count : null;
+      });
 
     const connectionAccess = Effect.gen(function* () {
       const reach = yield* people.sessionReach(session);
@@ -89,7 +100,7 @@ export const makeAccessRpcHandlers = (options: {
         levels: reach.levels,
         wide: isWide(reach),
         owner,
-        retiredLinks: owner ? yield* retiredLinks : null,
+        retiredLinks: owner ? yield* retiredLinks(reach.person.personId) : null,
       } satisfies ConnectionAccess;
     });
 
@@ -162,5 +173,17 @@ export const makeAccessRpcHandlers = (options: {
 
       [J5_ACCESS_WS_METHODS.leave]: (input: LeaveScopeRequest) =>
         access.leave(session, input.scope).pipe(Effect.as({}), Effect.catch(refused)),
+
+      [J5_ACCESS_WS_METHODS.markRetiredLinksSeen]: () =>
+        Effect.gen(function* () {
+          const reach = yield* people.sessionReach(session);
+          if (reach.kind !== "person") return {};
+          const seenAt = DateTime.formatIso(yield* DateTime.now);
+          yield* sql`
+            INSERT OR IGNORE INTO j5_a2a_sharing_notice_seen (kind, person_id, seen_at)
+            VALUES ('links_retired', ${reach.person.personId}, ${seenAt})
+          `;
+          return {};
+        }).pipe(Effect.catch(refused)),
     };
   });

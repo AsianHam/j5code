@@ -23,6 +23,8 @@ export const J5_ACCESS_WS_METHODS = {
   setFirstOwnerName: "j5.access.setFirstOwnerName",
   /** A person leaves a scope they hold (AC48). */
   leave: "j5.access.leave",
+  /** An Owner has seen that links made before levels stopped working; `retiredLinks` goes. */
+  markRetiredLinksSeen: "j5.access.markRetiredLinksSeen",
 } as const;
 
 /** Where a device whose session J5 ended for renewal gets a new one, proving itself with the old. */
@@ -44,7 +46,7 @@ export const ConnectionAccess = Schema.Union([
     owner: Schema.Boolean,
     /**
      * For an Owner, how many unused links stopped working when the server moved to levels,
-     * while that is recent enough to say; `null` otherwise.
+     * until they mark it seen or it is no longer recent enough to say; `null` otherwise.
      */
     retiredLinks: Schema.NullOr(Schema.Number),
   }),
@@ -128,6 +130,11 @@ export const J5AccessRpcGroup = RpcGroup.make(
   }),
   Rpc.make(J5_ACCESS_WS_METHODS.leave, {
     payload: LeaveScopeRequest,
+    success: Done,
+    error: AccessError,
+  }),
+  Rpc.make(J5_ACCESS_WS_METHODS.markRetiredLinksSeen, {
+    payload: Schema.Struct({}),
     success: Done,
     error: AccessError,
   }),

@@ -68,11 +68,12 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_SHARING_WS_METHODS.revokeOpenLink]: AuthAccessWriteScope,
 
   // A connection's own place on the server: saying whose its device is, naming the first owner,
-  // leaving a scope, renaming oneself. Every device holds what they need; the server checks each
-  // against the session itself.
+  // leaving a scope, renaming oneself, an Owner marking a notice seen. Every device holds what
+  // they need; the server checks each against the session itself.
   [J5_ACCESS_WS_METHODS.claimDevice]: AuthOrchestrationReadScope,
   [J5_ACCESS_WS_METHODS.setFirstOwnerName]: AuthOrchestrationReadScope,
   [J5_ACCESS_WS_METHODS.leave]: AuthOrchestrationReadScope,
+  [J5_ACCESS_WS_METHODS.markRetiredLinksSeen]: AuthOrchestrationReadScope,
   [J5_PEOPLE_WS_METHODS.renameSelf]: AuthOrchestrationReadScope,
 
   [J5_PEOPLE_WS_METHODS.setLevel]: AuthAccessWriteScope,

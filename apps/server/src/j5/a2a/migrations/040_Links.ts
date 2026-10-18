@@ -10,6 +10,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 // name an invite offers is only offered: the person is made when the link is used.
 //
 // Who joined with a link is kept beside it, a person once per link.
+//
+// What an Owner has seen of the notice that links made before levels stopped working (039) is
+// kept per person, so it is shown once to each Owner.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -50,6 +53,16 @@ export default Effect.gen(function* () {
       person_id TEXT NOT NULL,
       joined_at TEXT NOT NULL,
       PRIMARY KEY (link_id, person_id)
+    )
+  `;
+
+  yield* sql`
+    CREATE TABLE j5_a2a_sharing_notice_seen (
+      kind TEXT NOT NULL CHECK (kind IN ('links_retired')),
+      person_id TEXT NOT NULL,
+      seen_at TEXT NOT NULL,
+      PRIMARY KEY (kind, person_id),
+      FOREIGN KEY (person_id) REFERENCES j5_a2a_human_person(person_id) ON DELETE CASCADE
     )
   `;
 });
