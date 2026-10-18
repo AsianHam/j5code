@@ -383,6 +383,16 @@ it.layer(testLayer)("access gate", (it) => {
         }),
         "ran",
       );
+      // A task addressed by the command that made it is the same task.
+      yield* task("scheduled-task:command-other", other);
+      assert.match(
+        yield* call(session, WS_METHODS.scheduledTasksUpsert, {
+          commandId: "command-other",
+          projectId: PROJECT,
+          threadId: mine,
+        }),
+        /^refused/,
+      );
     }),
   );
 

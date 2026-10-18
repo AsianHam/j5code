@@ -731,7 +731,12 @@ export const layerRpcAuthorization = (
                     ? access.projectLevel(personId, ProjectId.make(home.projectId))
                     : access.threadLevel(personId, ThreadId.make(home.threadId))
                   ).pipe(Effect.map((held) => levelReaches(held, "collaborator")));
-                const taskId = stringField("id")(payload);
+                // The task an upsert addresses: its `id`, or the one upstream's service makes of a
+                // `commandId` for an idempotent create (`ScheduledTaskService.upsert`).
+                const commandId = stringField("commandId")(payload);
+                const taskId =
+                  stringField("id")(payload) ??
+                  (commandId === undefined ? undefined : `scheduled-task:${commandId}`);
                 const projectId = payloadProjectId(payload);
                 const threadId = field(payload, "threadId");
                 return Effect.gen(function* () {
