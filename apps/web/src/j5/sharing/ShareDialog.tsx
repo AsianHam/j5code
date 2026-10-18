@@ -286,15 +286,19 @@ export function AccessRowLine({
 
   return (
     <div className="border-t border-border first-of-type:border-t-0">
-      <div className="flex min-h-9 items-center gap-2 px-2.5 text-sm">
-        <PersonAvatar name={row.name} size="sm" />
-        <span className="min-w-0 truncate">{name}</span>
-        {row.you ? <span className="shrink-0 text-xs text-muted-foreground">· you</span> : null}
-        {row.firstOwner ? (
-          <Badge variant="outline" size="sm">
-            first owner
-          </Badge>
-        ) : null}
+      {/* In a narrow place, such as the thread's details panel, the level wraps under the name
+          rather than squeezing it. */}
+      <div className="flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 px-2.5 py-1 text-sm">
+        <span className="flex min-w-0 max-w-full items-center gap-2">
+          <PersonAvatar name={row.name} size="sm" />
+          <span className="min-w-0 truncate">{name}</span>
+          {row.you ? <span className="shrink-0 text-xs text-muted-foreground">· you</span> : null}
+          {row.firstOwner ? (
+            <Badge variant="outline" size="sm">
+              first owner
+            </Badge>
+          ) : null}
+        </span>
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           {/* The level the person reaches the thing with, and the wider scope that gives it. */}
           {!controls || view.hereIsOutranked ? (
