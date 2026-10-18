@@ -111,8 +111,9 @@ export const ScopePerson = Schema.Struct({
   /** Told to an Owner, who acts on the person by it; `null` for anyone else. */
   personId: Schema.NullOr(Schema.String),
   name: Schema.NullOr(Schema.String),
-  /** The highest of `via`. */
+  /** The highest level they hold over the scope. */
   level: PersonLevel,
+  /** Where each of those levels is held, told to an Owner; empty for anyone else. */
   via: Schema.Array(ScopeReach),
   firstOwner: Schema.Boolean,
   you: Schema.Boolean,

@@ -85,6 +85,12 @@ it.layer(peopleLayer)("People", (it) => {
         threadId: builder,
       });
       assert.isTrue(asContractor.people.every((entry) => entry.personId === null));
+      // Nor where anyone's level is held: the thread above theirs was never shared with them.
+      assert.isTrue(asContractor.people.every((entry) => entry.via.length === 0));
+      assert.strictEqual(
+        asContractor.people.find((entry) => entry.name === "Teammate")?.level,
+        "collaborator",
+      );
       assert.isTrue(asContractor.people.find((entry) => entry.name === "Contractor")?.you ?? false);
       assert.strictEqual(
         yield* failure(

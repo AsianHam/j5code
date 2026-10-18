@@ -103,7 +103,7 @@ export interface PeopleShape {
   ) => Effect.Effect<ReadonlyArray<PeopleEntry>, StorageError>;
   /**
    * Who reaches a thread or project, for a connection that reaches it itself (AC26). Only an
-   * Owner is told each person's id, by which they act on them.
+   * Owner is told each person's id, by which they act on them, and where each level is held.
    */
   readonly scopePeople: (
     asker: SessionIdentity,
@@ -217,18 +217,22 @@ export const layer: Layer.Layer<
         return {
           people: yield* Effect.forEach(everyone, (entry) =>
             Effect.gen(function* () {
-              const via = yield* Effect.forEach(
-                entry.via.toSorted((left, right) => NEARNESS[left.via] - NEARNESS[right.via]),
-                (held): Effect.Effect<ScopeReach, PeopleStorageError> =>
-                  title(held.scope).pipe(
-                    Effect.map((scopeTitle) => ({
-                      via: held.via,
-                      level: held.level,
-                      scope: held.scope,
-                      scopeTitle,
-                    })),
-                  ),
-              );
+              // Where a level is held is told only to an Owner: someone narrower would learn of a
+              // thread or project above theirs that was never shared with them (AC26).
+              const via = !owner
+                ? []
+                : yield* Effect.forEach(
+                    entry.via.toSorted((left, right) => NEARNESS[left.via] - NEARNESS[right.via]),
+                    (held): Effect.Effect<ScopeReach, PeopleStorageError> =>
+                      title(held.scope).pipe(
+                        Effect.map((scopeTitle) => ({
+                          via: held.via,
+                          level: held.level,
+                          scope: held.scope,
+                          scopeTitle,
+                        })),
+                      ),
+                  );
               return {
                 personId: owner ? entry.person.personId : null,
                 name: entry.person.displayName,
