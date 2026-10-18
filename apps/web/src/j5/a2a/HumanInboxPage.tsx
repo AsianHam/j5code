@@ -64,7 +64,7 @@ import {
 import { useLogicalProjects } from "../logicalProjects";
 import { createVisibleRefreshHook } from "../useVisibleRefresh";
 import { notifyHumanInboxChanged } from "./humanInboxRefresh";
-import { answeredByLine, nextKeptItems } from "./inboxKept.logic";
+import { answeredByLine, closedLine, nextKeptItems } from "./inboxKept.logic";
 import { useConnectionAccess } from "../sharing/access";
 
 interface HumanInboxAnswerAttempt {
@@ -273,7 +273,12 @@ function OpenInboxItem({
    * The item closed while the person had typed into it, and stays with their words (AC17): who
    * answered, or that it is no longer open. `undefined` for an open item.
    */
-  readonly closed?: { readonly answeredBy: string | null | undefined } | undefined;
+  readonly closed?:
+    | {
+        readonly answered: { readonly answeredBy: string | null | undefined } | null;
+        readonly answeredReadSinceClose: boolean;
+      }
+    | undefined;
   readonly answer: (item: HumanInboxItem) => void;
   readonly senderLabels: SenderLabels;
   readonly projectNameOf: ProjectNameOf;
@@ -290,8 +295,7 @@ function OpenInboxItem({
   );
   const canAnswer = item.sourceReady && mayAnswer;
   const ownName = useOwnName(item.environmentId);
-  const closedLine =
-    closed === undefined ? null : (answeredByLine(closed.answeredBy, ownName) ?? "No longer open");
+  const closedText = closed === undefined ? null : closedLine({ ...closed, ownName });
   return (
     <li className="border-b border-border/70 last:border-b-0">
       <details className="group/details">
@@ -354,9 +358,9 @@ function OpenInboxItem({
                 item={item}
                 onOpen={onOpenThread}
               />
-              {closedLine !== null ? (
+              {closedText !== null ? (
                 <p className="text-sm text-muted-foreground" data-j5-inbox="closed">
-                  {closedLine}
+                  {closedText}
                 </p>
               ) : (
                 <Button
@@ -478,30 +482,45 @@ export function HumanInboxPage() {
   );
   const [answers, setAnswers] = useState<HumanInboxAnswers>({});
   const [pendingExchangeId, setPendingExchangeId] = useState<string | null>(null);
-  // An item that closed while the person was answering it stays in place with their words.
-  const [kept, setKept] = useState<ReadonlyMap<string, HumanInboxItem>>(new Map());
-  const previousItems = useRef<ReadonlyArray<HumanInboxItem>>([]);
-  useEffect(() => {
-    setKept((current) =>
-      nextKeptItems({
-        previous: previousItems.current,
-        current: items,
-        kept: current,
-        answers,
-        submitting: pendingExchangeId,
-        keyOf: scopedInboxItemKey,
-      }),
+  // An item that closed while the person was answering it stays in place with their words. It is
+  // kept in the render it closes in, so its open row is never unmounted and drawn again closed;
+  // `closedWith` is the answered list as it was then, to tell a later read of it.
+  const [retention, setRetention] = useState(() => ({
+    items,
+    answers,
+    kept: new Map() as ReadonlyMap<string, HumanInboxItem>,
+    closedWith: new Map() as ReadonlyMap<string, typeof answeredSources>,
+  }));
+  let { kept, closedWith } = retention;
+  if (retention.items !== items || retention.answers !== answers) {
+    kept = nextKeptItems({
+      previous: retention.items,
+      current: items,
+      kept: retention.kept,
+      answers,
+      keyOf: scopedInboxItemKey,
+    });
+    closedWith = new Map(
+      [...kept.keys()].map((key) => [key, retention.closedWith.get(key) ?? answeredSources]),
     );
-    previousItems.current = items;
-  }, [answers, items, pendingExchangeId]);
-  const shownItems = useMemo(
-    () => (kept.size === 0 ? items : [...items, ...kept.values()].toSorted(compareInboxItems)),
-    [items, kept],
-  );
-  const answeredByKey = useMemo(
-    () => new Map(answeredItems.map((item) => [scopedInboxItemKey(item), item.answeredBy])),
-    [answeredItems],
-  );
+    setRetention({ items, answers, kept, closedWith });
+  }
+  const shownItems =
+    kept.size === 0 ? items : [...items, ...kept.values()].toSorted(compareInboxItems);
+  const answeredByKey = new Map(answeredItems.map((item) => [scopedInboxItemKey(item), item]));
+  const closedOf = (item: HumanInboxItem) => {
+    const key = scopedInboxItemKey(item);
+    if (!kept.has(key)) return undefined;
+    const answered = answeredByKey.get(key);
+    const source = answeredSources.sources.find(
+      (candidate) => candidate.environmentId === item.environmentId,
+    );
+    return {
+      answered: answered === undefined ? null : { answeredBy: answered.answeredBy },
+      answeredReadSinceClose:
+        closedWith.get(key) !== answeredSources && source?.status === "ready" && !source.refreshing,
+    };
+  };
   const [error, setError] = useState<string | null>(null);
   const answerAttempts = useRef(new Map<string, HumanInboxAnswerAttempt>());
   useInboxRefresh();
@@ -772,11 +791,7 @@ export function HumanInboxPage() {
               <ol className="divide-y divide-border/70">
                 {shownItems.map((item) => (
                   <OpenInboxItem
-                    closed={
-                      kept.has(scopedInboxItemKey(item))
-                        ? { answeredBy: answeredByKey.get(scopedInboxItemKey(item)) }
-                        : undefined
-                    }
+                    closed={closedOf(item)}
                     answer={answer}
                     answerText={answers[scopedInboxItemKey(item)] ?? ""}
                     item={item}

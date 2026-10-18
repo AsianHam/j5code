@@ -1,15 +1,15 @@
 /**
  * Inbox items someone had typed an answer into when they closed (Inbox AC17): they stay in place,
  * with the words, until the person clears them or leaves the page. `previous` and `current` are
- * the open items before and after a read, `answers` what is typed into each, and `submitting` the
- * item whose answer this client is sending, which closes because of that and is not kept.
+ * the open items before and after a read, and `answers` what is typed into each. An answer this
+ * client is sending keeps its words until the server confirms it, which clears them: if someone
+ * else's answer won, the words stay, with who answered.
  */
 export function nextKeptItems<Item>(input: {
   readonly previous: ReadonlyArray<Item>;
   readonly current: ReadonlyArray<Item>;
   readonly kept: ReadonlyMap<string, Item>;
   readonly answers: Readonly<Record<string, string>>;
-  readonly submitting: string | null;
   readonly keyOf: (item: Item) => string;
 }): ReadonlyMap<string, Item> {
   const open = new Set(input.current.map(input.keyOf));
@@ -20,7 +20,7 @@ export function nextKeptItems<Item>(input: {
   }
   for (const item of input.previous) {
     const key = input.keyOf(item);
-    if (!open.has(key) && typed(key) && key !== input.submitting) next.set(key, item);
+    if (!open.has(key) && typed(key)) next.set(key, item);
   }
   return next.size === input.kept.size && [...next.keys()].every((key) => input.kept.has(key))
     ? input.kept
@@ -37,4 +37,21 @@ export function answeredByLine(
 ): string | null {
   if (answeredBy === null || answeredBy === undefined) return null;
   return ownName !== null && answeredBy === ownName ? "You answered" : `${answeredBy} answered`;
+}
+
+/**
+ * What a kept item says in place of its Answer button: who answered, once the answered asks list
+ * it; that the agent withdrew it, once a read of them since it closed does not; and, until then,
+ * only that it is no longer open.
+ */
+export function closedLine(input: {
+  /** The ask as the answered list holds it, or `null` when that list does not hold it. */
+  readonly answered: { readonly answeredBy: string | null | undefined } | null;
+  readonly answeredReadSinceClose: boolean;
+  readonly ownName: string | null;
+}): string {
+  if (input.answered !== null) {
+    return answeredByLine(input.answered.answeredBy, input.ownName) ?? "Answered";
+  }
+  return input.answeredReadSinceClose ? "The agent withdrew this" : "No longer open";
 }
