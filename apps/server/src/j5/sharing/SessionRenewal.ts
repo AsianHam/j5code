@@ -121,7 +121,7 @@ export const makeSessionRenewal = (services: {
   const renewToken = Effect.fn("j5.sharing.sessionRenewal.renewToken")(function* (token: string) {
     const revoked = yield* store.verify(token).pipe(
       Effect.as("live" as const),
-      Effect.catchTag("SessionTokenRevokedError", (error) => Effect.succeed(error.sessionId)),
+      Effect.catchTags({ SessionTokenRevokedError: (error) => Effect.succeed(error.sessionId) }),
       Effect.orElseSucceed(() => null),
     );
     if (revoked === "live") return "live" as const;
@@ -216,9 +216,10 @@ export const sessionRenewalRouteLayer = Layer.unwrap(
               }),
             ).pipe(Effect.map((cookies) => HttpServerResponse.mergeCookies(response, cookies)));
           }),
-          Effect.catchTag("NotRenewableError", (error) =>
-            Effect.succeed(refusal(401, "not_renewable", error.message)),
-          ),
+          Effect.catchTags({
+            NotRenewableError: (error) =>
+              Effect.succeed(refusal(401, "not_renewable", error.message)),
+          }),
           Effect.catch((cause) =>
             Effect.logError("J5 could not renew a device's session", { cause }).pipe(
               Effect.as(refusal(500, "renewal_failed", "The session could not be renewed.")),

@@ -184,13 +184,13 @@ export const makeCommandAdmission = (
         if (reach.kind !== "person") return yield* refused(NOT_SHARED);
         const held = yield* levelAt(reach.person.personId, scope);
         if (!levelReaches(held, level)) return yield* refused(NOT_SHARED);
-      }).pipe(Effect.catchTag("PersonAccessStorageError", refuseUnreadable));
+      }).pipe(Effect.catchTags({ PersonAccessStorageError: refuseUnreadable }));
 
     const admit: CommandAdmission["admit"] = Effect.fn("j5.sharing.commandAdmission.admit")(
       function* (session, command) {
         const reach = yield* access
           .sessionReach(session)
-          .pipe(Effect.catchTag("PersonAccessStorageError", refuseUnreadable));
+          .pipe(Effect.catchTags({ PersonAccessStorageError: refuseUnreadable }));
         if (OWNER_ONLY_COMMANDS.has(command.type)) {
           const owner =
             reach.kind === "service" ||

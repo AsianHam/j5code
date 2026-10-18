@@ -11,7 +11,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -26,12 +25,10 @@ import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
-import { runMigrations } from "../../persistence/Migrations.ts";
 import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
 import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
-import { runJ5A2AMigrations } from "../a2a/Migrations.ts";
 import * as AccessGate from "./AccessGate.ts";
 import { accessLayer } from "./test-support/accessHarness.ts";
 import {
@@ -40,7 +37,6 @@ import {
   guestProjectIconRouteLayer,
 } from "./GuestProjectIcons.ts";
 import * as PersonAccess from "./PersonAccess.ts";
-import { SHARING_DESCRIBE_PATH } from "@t3tools/contracts/j5";
 
 /**
  * A guest and a project's favicon, through the real gate, upstream's real favicon resolution and
@@ -64,13 +60,6 @@ const upstreamAuth = Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
   authenticateWebSocketUpgrade: (_request: HttpServerRequest.HttpServerRequest) =>
     Effect.succeed(GUEST),
 } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]);
-
-const database = Layer.effectDiscard(
-  Effect.gen(function* () {
-    yield* runMigrations();
-    yield* runJ5A2AMigrations();
-  }),
-).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "j5-guest-project-icons-",

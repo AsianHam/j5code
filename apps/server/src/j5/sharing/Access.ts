@@ -15,6 +15,7 @@ import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 
 import * as SessionStore from "../../auth/SessionStore.ts";
 import type { ParticipantId } from "../a2a/contracts.ts";
@@ -173,14 +174,15 @@ const make = Effect.gen(function* () {
   );
   const tell = (change: AccessChange) => PubSub.publish(changes, change);
   // One transaction for a change and the renewals it requires; a failure to commit is storage's.
+  const isSqlError = Schema.is(SqlError.SqlError);
   const committed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     sql
       .withTransaction(effect)
       .pipe(
-        Effect.catchTag("SqlError", (cause) =>
-          Effect.fail(
-            new PersonAccessStorageError({ operation: "commit a change of access", cause }),
-          ),
+        Effect.mapError((cause) =>
+          isSqlError(cause)
+            ? new PersonAccessStorageError({ operation: "commit a change of access", cause })
+            : (cause as Exclude<E, SqlError.SqlError>),
         ),
       );
 

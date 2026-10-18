@@ -11,7 +11,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { J5_CLIENT_READ_WS_METHODS } from "@t3tools/contracts/j5";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -23,9 +22,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
 import * as ServerConfig from "../../config.ts";
-import { runMigrations } from "../../persistence/Migrations.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
-import { runJ5A2AMigrations } from "../a2a/Migrations.ts";
 import { artifactHttpRouteLayer } from "../artifacts/ArtifactHttp.ts";
 import * as ArtifactWorkspace from "../artifacts/ArtifactWorkspace.ts";
 import * as AccessGate from "./AccessGate.ts";
@@ -66,13 +63,6 @@ const upstreamAuth = Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
   authenticateWebSocketUpgrade: (request: HttpServerRequest.HttpServerRequest) =>
     Effect.succeed(SESSIONS[request.headers["x-test-session"] as Who]),
 } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]);
-
-const database = Layer.effectDiscard(
-  Effect.gen(function* () {
-    yield* runMigrations();
-    yield* runJ5A2AMigrations();
-  }),
-).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 const testLayer = Layer.mergeAll(
   AccessGate.layerGatedEnvironmentAuth.pipe(
