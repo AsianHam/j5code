@@ -2052,9 +2052,11 @@ const layerWsRpc = (
             ),
           ),
         [WS_METHODS.scheduledTasksList]: (_input) =>
-          scheduledTasks.list().pipe(Effect.map(withVisibleWebhookUrls)),
+          scheduledTasks.list().pipe(Effect.map(withVisibleWebhookUrls), j5View.scheduledTasks),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
-          scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
+          scheduledTasks
+            .subscribeList()
+            .pipe(Stream.map(withVisibleWebhookUrls), j5View.scheduledTasksStream),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(

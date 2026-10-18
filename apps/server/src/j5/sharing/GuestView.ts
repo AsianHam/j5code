@@ -12,6 +12,7 @@ import {
   type ServerLifecycleStreamEvent,
   type ServerProvider,
   type ServerProviderModel,
+  type ScheduledTaskListResult,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -166,8 +167,15 @@ type ShellSubscribeInput = {
   readonly requestCompletionMarker?: boolean;
 };
 
-/** How one connection is answered where a guest's answer differs from a member's. */
+/** How one connection is answered where a narrowed connection's answer differs from upstream's. */
 export interface ConnectionView {
+  /** The scheduled tasks a connection is listed: those bound to a thread or a project it reaches. */
+  readonly scheduledTasks: <E, R>(
+    list: Effect.Effect<ScheduledTaskListResult, E, R>,
+  ) => Effect.Effect<ScheduledTaskListResult, E, R>;
+  readonly scheduledTasksStream: <E, R>(
+    stream: Stream.Stream<ScheduledTaskListResult, E, R>,
+  ) => Stream.Stream<ScheduledTaskListResult, E, R>;
   readonly config: (config: ServerConfig) => ServerConfig;
   readonly configStream: <E, R>(
     stream: Stream.Stream<ServerConfigStreamEvent, E, R>,
@@ -185,6 +193,8 @@ export interface ConnectionView {
 }
 
 const MEMBER_VIEW: ConnectionView = {
+  scheduledTasks: identity,
+  scheduledTasksStream: identity,
   config: identity,
   configStream: identity,
   lifecycleStream: identity,
@@ -313,7 +323,31 @@ const narrowedView = (access: PersonAccess["Service"], reach: SessionReach): Con
     reach.kind === "person" &&
     reach.levels.some((held) => levelReaches(held.level, "collaborator"));
   const filter = makeShellFilter(access, reach, !writes);
+  const personId = reachPersonId(reach);
+  /**
+   * A task bound to a thread is at home there; any other is its project's (AC21, AC22). A
+   * Viewer is not given a task's webhook address, which would let them start it. A task that
+   * cannot be checked is left out.
+   */
+  const reachableTasks = (result: ScheduledTaskListResult) =>
+    Effect.filter(result.tasks, (task) =>
+      personId === null
+        ? Effect.succeed(false)
+        : (task.threadId === null
+            ? access.projectLevel(personId, task.projectId)
+            : access.threadLevel(personId, task.threadId)
+          ).pipe(
+            Effect.map((level) => level !== null),
+            Effect.orElseSucceed(() => false),
+          ),
+    ).pipe(
+      Effect.map((tasks) => ({
+        tasks: writes ? tasks : tasks.map(({ webhook: _webhook, ...task }) => task),
+      })),
+    );
   return {
+    scheduledTasks: (list) => list.pipe(Effect.flatMap(reachableTasks)),
+    scheduledTasksStream: (stream) => stream.pipe(Stream.mapEffect(reachableTasks)),
     config: writes ? identity : reduceServerConfig,
     // Every later provider, settings, keybinding, theme and usage update is dropped rather than
     // reduced: a Viewer's client keeps the providers and models it was told of when it connected.
@@ -381,14 +415,12 @@ export const connectionView = (
 ): Effect.Effect<ConnectionView, never, PersonAccess> =>
   Effect.gen(function* () {
     const access = yield* PersonAccess;
-    const reach = yield* access
-      .sessionReach(session)
-      .pipe(
-        Effect.catch((cause) =>
-          Effect.logError("J5 could not read whose a socket is; narrowing its view", {
-            cause,
-          }).pipe(Effect.as({ kind: "unknown" } as SessionReach)),
-        ),
-      );
+    const reach = yield* access.sessionReach(session).pipe(
+      Effect.catch((cause) =>
+        Effect.logError("J5 could not read whose a socket is; narrowing its view", {
+          cause,
+        }).pipe(Effect.as({ kind: "unknown" } as SessionReach)),
+      ),
+    );
     return isWide(reach) ? MEMBER_VIEW : narrowedView(access, reach);
   });

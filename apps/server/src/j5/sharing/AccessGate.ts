@@ -175,9 +175,9 @@ const narrowedForAll: AccessRpcRule = { kind: "narrowed", unknownToo: true };
  *
  * Left out on purpose, so refused to a narrowed connection: everything that lists or changes the
  * server as a whole (adding, cloning or importing projects, archived threads, searching every
- * thread, usage, diagnostics, pull request lists, peers, the relay); scheduled tasks, whose
- * reads are not yet cut down to a scope; the inbox and the Crew reads, until they read the person
- * from the session; and Persona, skill and Playbook writes.
+ * thread, usage, diagnostics, pull request lists, peers, the relay); changing a scheduled task;
+ * the inbox and the Crew reads, until they read the person from the session; and Persona, skill
+ * and Playbook writes.
  */
 export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   // A connection cannot start without these; each answers in a reduced form (`GuestView`).
@@ -210,6 +210,9 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [WS_METHODS.worktreeSetupCancel]: onThread("collaborator"),
   [WS_METHODS.assetsPersistChatAttachments]: onThread("collaborator"),
   [WS_METHODS.secretsAnswerRequest]: onThread("collaborator"),
+  // The scheduled tasks bound to a thread or project the person reaches, read only (`GuestView`).
+  [WS_METHODS.scheduledTasksList]: narrowed,
+  [WS_METHODS.scheduledTasksSubscribe]: narrowed,
   [WS_METHODS.providerUploadFeedback]: onThread("collaborator"),
   [WS_METHODS.mcpAppsToolInfo]: onThread("viewer"),
   [WS_METHODS.mcpAppsReadResource]: onThread("viewer"),

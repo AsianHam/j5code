@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { AuthSessionId } from "@t3tools/contracts";
+import { AuthSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -104,6 +104,35 @@ it.layer(accessLayer)("PersonAccess", (it) => {
       const sams = reaching.find((entry) => entry.person.personId === sam.personId);
       assert.deepStrictEqual(sams?.via, [{ via: "ancestor", level: "collaborator" }]);
       assert.isTrue(reaching.some((entry) => entry.person.personId === maria.personId));
+    }),
+  );
+
+  it.effect("finds a page a tool published by the turn item that names it", () =>
+    Effect.gen(function* () {
+      const people = yield* PersonAccess.PersonAccess;
+      const sql = yield* SqlClient.SqlClient;
+      const published = yield* thread("thread:published");
+      yield* thread("thread:unpublished");
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          'item:render', ${published}, 1, 'tool_call', 'completed', '2026-10-18T00:00:00.000Z',
+          '{"toolName":"html_render","output":{"attachmentId":"attachment-page-0001"}}'
+        )
+      `;
+      const reader = yield* person("Page reader", [
+        { scope: { kind: "thread", threadId: published }, level: "viewer" },
+      ]);
+      const outsider = yield* person("Page outsider", [
+        {
+          scope: { kind: "thread", threadId: ThreadId.make("thread:unpublished") },
+          level: "viewer",
+        },
+      ]);
+      const page = { kind: "attachment" as const, attachmentId: "attachment-page-0001" };
+      assert.strictEqual(yield* people.messageAssetLevel(reader.personId, page), "viewer");
+      assert.strictEqual(yield* people.messageAssetLevel(outsider.personId, page), null);
     }),
   );
 

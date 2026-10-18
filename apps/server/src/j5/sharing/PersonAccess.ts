@@ -558,12 +558,18 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
 
     // The threads whose messages carry the attachment. The text search narrows the rows before
     // each one's attachment list is read; only a narrowed request for an attachment runs it.
+    // A page a tool published is an attachment named in its turn item's output, not a message's;
+    // its id is random, so a turn item that holds the id is the one that made it (AC21).
     const attachmentThreads = (attachmentId: string) => sql<{ readonly thread_id: string }>`
       SELECT DISTINCT message.thread_id
       FROM orchestration_v2_projection_messages AS message,
         json_each(message.payload_json, '$.attachments') AS attachment
       WHERE instr(message.payload_json, ${attachmentId}) > 0
         AND json_extract(attachment.value, '$.id') = ${attachmentId}
+      UNION
+      SELECT DISTINCT item.thread_id
+      FROM orchestration_v2_projection_turn_items AS item
+      WHERE instr(item.payload_json, ${attachmentId}) > 0
     `;
 
     const turnItemThreads = (threadId: ThreadId, itemId: string) => sql<{

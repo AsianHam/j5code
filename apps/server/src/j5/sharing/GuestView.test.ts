@@ -9,6 +9,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ShellStreamItem,
   ProjectId,
+  type ScheduledTaskListResult,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerConfig,
@@ -1010,5 +1011,64 @@ live(
     // The feed fails rather than guessing: the thread the guest does hold is not sent either.
     assert.isTrue(Exit.isFailure(exit));
     assert.deepStrictEqual(sent, []);
+  }).pipe(Effect.scoped),
+);
+
+live(
+  "a narrowed Collaborator is given upstream's configuration, and a Viewer a reduced one",
+  Effect.gen(function* () {
+    const access = yield* PersonAccess.PersonAccess;
+    const shared = yield* project("project:collaborated");
+    const personId = yield* guest({ kind: "project", projectId: shared });
+    const viewing = (yield* GuestView.connectionView(GUEST)).config(fullConfig);
+    assert.notStrictEqual(viewing, fullConfig);
+    assert.notInclude(JSON.stringify(viewing), HOST_PATH);
+
+    yield* access.setLevel({
+      personId,
+      scope: { kind: "project", projectId: shared },
+      level: "collaborator",
+    });
+    // A Collaborator can open a terminal on the host; the folders are theirs to see.
+    assert.strictEqual((yield* GuestView.connectionView(GUEST)).config(fullConfig), fullConfig);
+  }).pipe(Effect.scoped),
+);
+
+live(
+  "lists a narrowed person only the scheduled tasks bound to what they reach",
+  Effect.gen(function* () {
+    const shared = yield* project("project:scheduled");
+    const elsewhere = yield* project("project:not-shared");
+    yield* write("thread.created", { id: "thread:scheduled", projectId: shared });
+    yield* write("thread.created", { id: "thread:not-shared", projectId: elsewhere });
+    yield* guest({ kind: "thread", threadId: ThreadId.make("thread:scheduled") });
+    const task = (id: string, projectId: ProjectId, threadId: string | null) =>
+      ({
+        id,
+        projectId,
+        threadId: threadId === null ? null : ThreadId.make(threadId),
+        webhook: { url: "https://host/hook/secret-token" },
+      }) as unknown as ScheduledTaskListResult["tasks"][number];
+    const list: ScheduledTaskListResult = {
+      tasks: [
+        task("task:on-thread", shared, "thread:scheduled"),
+        task("task:on-project", shared, null),
+        task("task:elsewhere", elsewhere, "thread:not-shared"),
+      ],
+    };
+    const view = yield* GuestView.connectionView(GUEST);
+    const listed = yield* view.scheduledTasks(Effect.succeed(list));
+    // The thread's own task, and not its project's other tasks: those are the project's (AC22).
+    assert.deepStrictEqual(
+      listed.tasks.map((entry) => entry.id),
+      ["task:on-thread"],
+    );
+    // A Viewer is not given the address that would start it.
+    assert.isUndefined(listed.tasks[0]?.webhook);
+    const owner = yield* GuestView.connectionView(MEMBER);
+    assert.strictEqual(
+      (yield* owner.scheduledTasks(Effect.succeed(list))).tasks.length,
+      list.tasks.length,
+    );
   }).pipe(Effect.scoped),
 );
