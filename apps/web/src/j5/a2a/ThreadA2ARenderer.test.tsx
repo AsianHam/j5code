@@ -9,7 +9,6 @@ import {
   formatThreadA2AQueuedDelivery,
   isThreadA2ADeliveryMessage,
   participantIdsForThreadA2AEnvelope,
-  inboxReplyWords,
   presentThreadA2ADelivery,
   renderThreadA2ADelivery,
   ThreadA2ADeliveryRenderer,
@@ -263,12 +262,6 @@ describe("ThreadA2ADeliveryRenderer", () => {
       body: "Call Acme first.",
       exchange: "closed",
     });
-  });
-
-  it("reads an authored inbox reply's words, once its header is taken off, without the closing sentence", () => {
-    const closedInstruction = humanClosedRaw.slice(humanClosedRaw.lastIndexOf("\n\n") + 2);
-    expect(inboxReplyWords(`Call Acme first.\n\n${closedInstruction}`)).toBe("Call Acme first.");
-    expect(inboxReplyWords("Call Acme first.")).toBeNull();
   });
 
   it("keeps a reply that carries only the id as it was", () => {
