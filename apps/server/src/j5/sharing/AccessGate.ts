@@ -60,10 +60,11 @@ import {
  * project or a thread at either level, a Viewer at server scope, and a device the server cannot
  * place yet. Both halves refuse by default: a route or a request that is not named here is
  * refused to a narrowed connection, so nothing upstream adds later is open to one until it is
- * listed. What it costs a connection held to upstream's own checks alone: nothing for the first
- * owner's and service sessions, which are told apart by subject; for any other, two reads by key
- * (its binding, and its person's levels) on each HTTP request, and the same once when a socket
- * opens, for its authorization and its command admission each.
+ * listed. What it costs a connection held to upstream's own checks alone: nothing for a service
+ * session, told apart by subject; for a person's device, a few reads by key (whose the device is,
+ * and their levels; for the first owner, their id and record first) on each HTTP request, and the
+ * same once at each place a socket opens through: its authorization, its view, its command
+ * admission and its access requests.
  *
  * The level a rule asks for is checked against the level the person holds at the scope the
  * request names. A Collaborator may also use files, terminals, git, previews and devices keyed

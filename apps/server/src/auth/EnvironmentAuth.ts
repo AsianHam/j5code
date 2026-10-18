@@ -689,6 +689,10 @@ function firstHeaderValue(value: string | undefined): string | undefined {
   return first && first.length > 0 ? first : undefined;
 }
 
+// J5: named so J5's session renewal refuses what this refuses (FORK.md case 70).
+export const FOREIGN_ORIGIN_DIAGNOSTIC =
+  "Browser sessions are only accepted from the app's own origin.";
+
 /**
  * Browsers send `Origin` on WebSocket upgrades, cross-origin requests, and
  * non-GET requests, so an absent header means a same-origin read or a
@@ -697,10 +701,6 @@ function firstHeaderValue(value: string | undefined): string | undefined {
  * `Host`), come from this server's own host (directly or behind a proxy that
  * reports `X-Forwarded-Host`), or come from one of the trusted app origins.
  */
-// J5: named so J5's session renewal refuses what this refuses (FORK.md case 70).
-export const FOREIGN_ORIGIN_DIAGNOSTIC =
-  "Browser sessions are only accepted from the app's own origin.";
-
 function isBrowserOriginAllowed(
   request: HttpServerRequest.HttpServerRequest,
   trustedOrigins: ReadonlySet<string>,
