@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
@@ -400,13 +401,19 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
               NetService.layer,
             ),
           ),
+          Effect.provideService(HostProcess.HomeDirectory, home),
         );
 
         assert.equal(resolved.baseDir, path.join(home, ".j5code"));
         assert.equal(resolved.stateDir, path.join(home, ".j5code", "userdata"));
         assert.equal(yield* fs.exists(path.join(home, ".j5code")), true);
         assert.equal(yield* fs.exists(path.join(home, ".t3")), false);
-        assert.equal(yield* resolveBaseDir(undefined), path.join(home, ".j5code"));
+        assert.equal(
+          yield* resolveBaseDir(undefined).pipe(
+            Effect.provideService(HostProcess.HomeDirectory, home),
+          ),
+          path.join(home, ".j5code"),
+        );
       } finally {
         if (originalHome === undefined) {
           delete process.env.HOME;
@@ -462,6 +469,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
               NetService.layer,
             ),
           ),
+          Effect.provideService(HostProcess.HomeDirectory, home),
         );
 
         assert.equal(resolved.baseDir, path.join(home, ".j5code"));

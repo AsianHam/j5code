@@ -28,9 +28,9 @@ the server process is currently running, and the exact paths for state, logs, an
 the database.
 
 Its triage CLI version (called "Installed version" in older context files) is only
-the version of the \`t3\` that ran \`t3 triage\`. It is often not the build the bug
-happened on: \`npx t3 triage\` runs whatever \`t3\` npm resolves, while the user may
-run the desktop app, the background service, or a nightly. The server process line
+the version of the \`j5\` that ran \`j5 triage\`. It is often not the build the bug
+happened on: the user may run the desktop app, the background service, or a nightly.
+The server process line
 gives the local server's version when the server recorded one.
 
 ## 3. Check for a newer playbook
