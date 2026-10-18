@@ -11,6 +11,7 @@ import {
   formatInstructions,
   guestRefusal,
   parseGuest,
+  refusedAsUnknownPerson,
   LiveTestRefusal,
   addRemoteUrl,
   baseEnvironment,
@@ -861,7 +862,7 @@ describe("formatInstructions", () => {
     ]);
   });
 
-  it("has no owner line for a home built without one, and no guest command for a fresh home", () => {
+  it("has no owner line for a home built without one or a fresh one", () => {
     // A home an older generator built, as a base checkout's can be.
     assert.deepEqual(
       ownerLines(formatInstructions({ paths, manifest: built, facts, pairingUrl: undefined })),
@@ -874,34 +875,67 @@ describe("formatInstructions", () => {
       pairingUrl: undefined,
     });
     assert.deepEqual(ownerLines(fresh), []);
-    assert.notInclude(fresh, "guest");
+    assert.include(fresh, "guest --unknown");
   });
 });
 
 describe("parseGuest", () => {
-  it("defaults to a Viewer on the test project", () => {
-    assert.deepEqual(parseGuest(["Priya"]), { name: "Priya", level: "viewer" });
+  it("leaves the level and scope to the server's person unless a flag asks", () => {
+    assert.deepEqual(parseGuest(["Priya"]), { kind: "person", name: "Priya" });
   });
 
-  it("takes a thread or a project, and a level", () => {
+  it("takes a scope and a level", () => {
     assert.deepEqual(parseGuest(["Sam (QA)", "--thread", "t-1", "--level", "collaborator"]), {
+      kind: "person",
       name: "Sam (QA)",
       level: "collaborator",
-      target: { kind: "thread", id: "t-1" },
+      scope: { kind: "thread", id: "t-1" },
     });
     assert.deepEqual(parseGuest(["--project", "p-1", "Priya"]), {
+      kind: "person",
       name: "Priya",
-      level: "viewer",
-      target: { kind: "project", id: "p-1" },
+      scope: { kind: "project", id: "p-1" },
+    });
+    assert.deepEqual(parseGuest(["Backup", "--server", "--level", "owner"]), {
+      kind: "person",
+      name: "Backup",
+      level: "owner",
+      scope: { kind: "server" },
     });
   });
 
-  it("refuses no name, two names, both targets, an unknown level and an unknown flag", () => {
+  it("takes a device the server does not know, with nothing else", () => {
+    assert.deepEqual(parseGuest(["--unknown"]), { kind: "unknown" });
+    for (const args of [
+      ["--unknown", "Priya"],
+      ["--unknown", "--server"],
+      ["--unknown", "--level", "viewer"],
+    ]) {
+      assert.throws(() => parseGuest(args), LiveTestRefusal, /Usage: .* guest "<name>"/);
+    }
+  });
+
+  it("gives Owner only at the server, in the server's words", () => {
+    for (const args of [
+      ["Backup", "--level", "owner"],
+      ["Backup", "--project", "p-1", "--level", "owner"],
+      ["Backup", "--thread", "t-1", "--level", "owner"],
+    ]) {
+      assert.throws(
+        () => parseGuest(args),
+        LiveTestRefusal,
+        /^Owner is held at server scope only\.$/,
+      );
+    }
+  });
+
+  it("refuses no name, two names, two scopes, an unknown level and an unknown flag", () => {
     for (const args of [
       [],
       ["  "],
       ["Priya", "Sam"],
       ["Priya", "--thread", "t-1", "--project", "p-1"],
+      ["Priya", "--server", "--thread", "t-1"],
       ["Priya", "--level", "admin"],
       // The old level names are gone with grants.
       ["Priya", "--level", "view"],
@@ -918,6 +952,21 @@ describe("parseGuest", () => {
   });
 });
 
+describe("refusedAsUnknownPerson", () => {
+  it("tells the CLI's refusal of a name no one has by its tag, and no other", () => {
+    assert.isTrue(
+      refusedAsUnknownPerson(
+        "[05:26:07.635] ERROR (#1): PairingPersonUnknownError: No one on this server is called Priya.\n    at refuse (file:///cliPairing.ts:96:52)",
+      ),
+    );
+    assert.isFalse(
+      refusedAsUnknownPerson(
+        "[05:26:07.635] ERROR (#1): PairingPersonError: Priya is already on this server.\n    at refuse",
+      ),
+    );
+  });
+});
+
 describe("guestRefusal", () => {
   const startCommand = "node script";
   const ask = (built: LiveTestMode | undefined, serving = true) =>
@@ -929,9 +978,13 @@ describe("guestRefusal", () => {
     }
   });
 
-  it("refuses a fresh home and a server for the developer, running or not", () => {
-    assert.include(ask("fresh"), "--fresh");
+  it("refuses a server for the developer, running or not", () => {
+    assert.include(ask("for-dev"), "--for-dev");
     assert.include(ask("for-dev", false), "--for-dev");
+  });
+
+  it("lets a fresh home take one: whether its owner has a name yet is the server's to say", () => {
+    assert.isUndefined(ask("fresh"));
   });
 
   it("refuses when no server is running, and says how to start one", () => {
@@ -942,30 +995,62 @@ describe("guestRefusal", () => {
 });
 
 describe("formatGuest", () => {
-  const added = {
-    name: "Priya",
-    level: "viewer",
-    target: { kind: "project", id: "p-1" },
-    pairingUrl: "http://localhost:5000/pair#token=T",
-  } as const;
+  const pairingUrl = "http://localhost:5000/pair#token=T";
 
-  it("states who was added, the level, the URL and how to open it, and nothing else", () => {
+  it("says a new person was added, at what level where, and how to open the link", () => {
     assert.equal(
-      formatGuest({ ...added, peer: false }),
-      `Added a person to the live-test server:
+      formatGuest({
+        peer: false,
+        outcome: {
+          kind: "new",
+          name: "Priya",
+          level: "viewer",
+          scope: { kind: "project", id: "p-1" },
+        },
+        pairingUrl,
+      }),
+      `Added a new person to the live-test server:
 
   Name          Priya
   Level         viewer on project p-1
   Pairing URL   http://localhost:5000/pair#token=T
 
-Open the pairing URL in a new incognito tab, one tab per person.
+Open it in a new tab.
 `,
+    );
+    assert.include(
+      formatGuest({
+        peer: false,
+        outcome: { kind: "new", name: "Backup", level: "owner", scope: { kind: "server" } },
+        pairingUrl,
+      }),
+      "owner on the server",
     );
   });
 
+  it("tells a further device of someone already here from a new person", () => {
+    const output = formatGuest({
+      peer: false,
+      outcome: { kind: "device", name: "Priya" },
+      pairingUrl,
+    });
+    assert.include(output, "Made a link for a new device of someone already on");
+    assert.notInclude(output, "Added a new person");
+  });
+
+  it("says a device the server does not know names itself on first open", () => {
+    const output = formatGuest({ peer: false, outcome: { kind: "unknown" }, pairingUrl });
+    assert.include(output, "does not know");
+    assert.include(output, "asked who it belongs to");
+  });
+
   it("in a peer build says the person went to Local, and that Remote is not reached", () => {
-    const output = formatGuest({ ...added, peer: true });
-    assert.include(output, "Added a person to the live-test server Local:");
+    const output = formatGuest({
+      peer: true,
+      outcome: { kind: "device", name: "Priya" },
+      pairingUrl,
+    });
+    assert.include(output, "the live-test server Local:");
     assert.include(output, "People are added to Local only; this command does not reach Remote.");
   });
 });

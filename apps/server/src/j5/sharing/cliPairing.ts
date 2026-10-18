@@ -97,6 +97,19 @@ export class PairingPersonError extends Schema.TaggedError<PairingPersonError>()
   }
 }
 
+/**
+ * A name that matches no one, given without the level a new person needs. Its own tag, so the
+ * live-test rig's `guest` can tell it apart from every other refusal and add the person instead.
+ */
+export class PairingPersonUnknownError extends Schema.TaggedError<PairingPersonUnknownError>()(
+  "PairingPersonUnknownError",
+  { personName: Schema.String },
+) {
+  override get message(): string {
+    return `No one on this server is called ${this.personName}. To add them, give --level (viewer, collaborator or owner), with --project or --thread for a scope narrower than the server.`;
+  }
+}
+
 const LEVEL_NAMES: Record<PersonLevel, string> = {
   viewer: "Viewer",
   collaborator: "Collaborator",
@@ -213,9 +226,7 @@ export const pairingLinkForPerson = Effect.fn("j5.sharing.cliPairing.pairingLink
     }
 
     if (Option.isNone(flags.level)) {
-      return yield* refuse(
-        `No one on this server is called ${name}. To add them, give --level (viewer, collaborator or owner), with --project or --thread for a scope narrower than the server.`,
-      );
+      return yield* new PairingPersonUnknownError({ personName: name });
     }
     if (Option.isSome(flags.project) && Option.isSome(flags.thread)) {
       return yield* refuse("Give --project or --thread, not both.");

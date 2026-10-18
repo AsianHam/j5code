@@ -162,7 +162,12 @@ it.layer(accessLayer)("j5 pair --person", (it) => {
     Effect.gen(function* () {
       const people = yield* PersonAccess.PersonAccess;
       const intents = yield* PairingIntents;
-      assert.include(yield* refusal(pair({ person: "Newcomer" })), "--level");
+      // The live-test rig's `guest` tells this refusal by its tag.
+      const unknown = yield* pair({ person: "Newcomer" }).pipe(Effect.flip);
+      assert.strictEqual(unknown._tag, "PairingPersonUnknownError");
+      // The rig reads the tag from the CLI's log line, which prints the error's name.
+      assert.strictEqual(unknown.name, "PairingPersonUnknownError");
+      assert.include(unknown.message, "--level");
       const review = yield* thread("thread:review");
       assert.strictEqual(
         (yield* pair({ person: "Owner here", level: "owner", thread: review }).pipe(Effect.flip))
