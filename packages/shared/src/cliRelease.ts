@@ -1,5 +1,5 @@
 // J5 (FORK.md release-archive case): archives come from J5's own GitHub releases.
-const CLI_RELEASE_REPOSITORY = "Jacksondr5/j5code";
+export const CLI_RELEASE_REPOSITORY = "Jacksondr5/j5code";
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 

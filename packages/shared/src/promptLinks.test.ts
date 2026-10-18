@@ -98,7 +98,7 @@ describe("link round trips", () => {
       provider: "claudeAgent",
       model: "opus",
     });
-    const path = promptLinkAppPath(link);
+    const path = promptLinkAppPath(link, new URL(link).origin);
     expect(path).toBe(new URL(link).pathname + new URL(link).search);
     const parsed = parseNewThreadLink(new URL(link).search);
     expect(parsed.ok && parsed.value.kind === "new" && parsed.value.prompt.text).toBe(
@@ -107,20 +107,24 @@ describe("link round trips", () => {
   });
 
   it("maps app scheme and hosted links to in-app paths, and nothing else", () => {
-    expect(promptLinkAppPath("t3code://new?prompt=hi")).toBe("/new?prompt=hi");
-    expect(promptLinkAppPath("t3code-dev://threads/env-1/thread-1")).toBe("/env-1/thread-1");
-    expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1?prompt=go")).toBe(
+    expect(promptLinkAppPath("j5code://new?prompt=hi")).toBe("/new?prompt=hi");
+    expect(promptLinkAppPath("j5code-dev://threads/env-1/thread-1")).toBe("/env-1/thread-1");
+    const hosted = "https://hosted.example";
+    expect(promptLinkAppPath(`${hosted}/env-1/thread-1?prompt=go`, hosted)).toBe(
       "/env-1/thread-1?prompt=go",
     );
-    expect(promptLinkAppPath("https://app.t3.codes/settings/general")).toBeNull();
+    expect(promptLinkAppPath(`${hosted}/settings/general`, hosted)).toBeNull();
     expect(promptLinkAppPath("https://evil.test/new?prompt=hi")).toBeNull();
-    expect(promptLinkAppPath("t3code://app/index.html")).toBeNull();
+    expect(promptLinkAppPath("j5code://app/index.html")).toBeNull();
+    // J5 has no hosted app: T3 Code's scheme and hosted links stay T3 Code's.
+    expect(promptLinkAppPath("t3code://new?prompt=hi")).toBeNull();
+    expect(promptLinkAppPath("https://app.t3.codes/new?prompt=hi")).toBeNull();
   });
 
   it("hands an in-app path to the installed app", () => {
-    expect(promptLinkDeepLink("/new?prompt=hi")).toBe("t3code://new?prompt=hi");
+    expect(promptLinkDeepLink("/new?prompt=hi")).toBe("j5code://new?prompt=hi");
     expect(promptLinkDeepLink("/env-1/thread-1?prompt=hi")).toBe(
-      "t3code://threads/env-1/thread-1?prompt=hi",
+      "j5code://threads/env-1/thread-1?prompt=hi",
     );
   });
 });

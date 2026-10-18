@@ -20,7 +20,12 @@ const stores = [
   },
 ];
 
+// J5 (FORK.md case 61): there is no J5 mobile app in the stores, and these links are T3 Code's,
+// so the row stays hidden.
+const J5_HAS_STORE_MOBILE_APP = false;
+
 export function MobileAppSettingsRow() {
+  if (!J5_HAS_STORE_MOBILE_APP) return null;
   return (
     <SettingsRow
       {...searchableSetting("mobile-app")}

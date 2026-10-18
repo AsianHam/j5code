@@ -4,7 +4,7 @@
  * looked up with this instead of J5's own `package.json` version. Set it at every upstream advance.
  *
  * Upstream's `package.json` holds its last release, and `main` is already the next one: its
- * nightlies are stamped with the next patch version. A pin on `main` takes that next version, and
- * a pin on a release tag takes the tag's.
+ * nightlies are stamped with the next patch version. A pin on `main` or a nightly tag takes that
+ * next version, and a pin on a release tag takes the tag's.
  */
-export const J5_UPSTREAM_T3_CODE_VERSION = "0.0.46";
+export const J5_UPSTREAM_T3_CODE_VERSION = "0.1.1";

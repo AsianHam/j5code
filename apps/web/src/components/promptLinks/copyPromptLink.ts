@@ -8,16 +8,19 @@ import {
   buildNewThreadLink,
   parsePromptLinkRepository,
   PROMPT_LINK_MAX_PROMPT_LENGTH,
+  promptLinkDeepLink,
   type PromptLinkRepository,
 } from "@t3tools/shared/promptLinks";
 
 import { type ComposerThreadTarget, useComposerDraftStore } from "~/composerDraftStore";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { configuredHostedAppUrl } from "~/hostedPairing";
 
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
-/** A shareable link to a prompt on the hosted app, or null when the prompt cannot fit in one. */
+/**
+ * A shareable link to a prompt, or null when the prompt cannot fit in one. J5: a `j5code://` link
+ * that opens J5's apps; J5 has no hosted app to point at.
+ */
 export function promptLinkFor(
   prompt: string,
   context?: {
@@ -28,7 +31,7 @@ export function promptLinkFor(
 ): string | null {
   const trimmed = prompt.trim();
   if (trimmed.length === 0 || trimmed.length > PROMPT_LINK_MAX_PROMPT_LENGTH) return null;
-  return buildNewThreadLink({ prompt: trimmed, ...context, origin: configuredHostedAppUrl() });
+  return promptLinkDeepLink(buildNewThreadLink({ prompt: trimmed, ...context }));
 }
 
 export function promptLinkRepositoryOf(

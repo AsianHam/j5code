@@ -4,7 +4,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
-import reviewed from "../../apps/server/src/j5/persistence/reviewed-v2-reconcile.v1.json" with { type: "json" };
+import reviewedNightly3238 from "../../apps/server/src/j5/persistence/reviewed-v0.1.1-nightly.20261017.3238.v1.json" with { type: "json" };
+import reviewedV2Reconcile from "../../apps/server/src/j5/persistence/reviewed-v2-reconcile.v1.json" with { type: "json" };
 
 export interface MigrationRecord {
   readonly id: number;
@@ -91,8 +92,13 @@ const sameManifest = (
     );
   });
 
+/** Reviewed transitions, oldest first. Each is a record of one advance, never regenerated. */
+const reviewedBridges = [reviewedV2Reconcile, reviewedNightly3238];
+/** The newest review names which helper files each audited migration reaches. */
+const reviewed = reviewedBridges.at(-1)!;
+
 /** Reviewed upstream targets. A candidate must contain one of these exact commits. */
-export const reviewedTargetRefs = [reviewed.targetRef];
+export const reviewedTargetRefs = reviewedBridges.map((bridge) => bridge.targetRef);
 
 /** Allows only the recorded old manifest and exact reviewed upstream target. */
 export function matchesReviewedBridge(
@@ -100,14 +106,13 @@ export function matchesReviewedBridge(
   after: ReadonlyArray<MigrationRecord>,
   targetSha: string,
 ): boolean {
-  // Pin → UP: upstream inserts 054, so V2 moves 54 → 55 and the index cleanup 55 → 56, which
-  // upstream's own reconcileV2PreviewMigration applies to a pin database. Every hash changed with
-  // the `effect/sql` import rename, and 050's backfill dependencies drifted, which is safe only
-  // because a recorded 050 never reruns.
-  return (
-    targetSha === reviewed.targetRef &&
-    sameManifest(before, reviewed.sourceMigrations) &&
-    sameManifest(after, reviewed.targetMigrations)
+  // Each bridge's note says why its changes are safe; 050's helper drift is safe only because a
+  // recorded 050 never reruns.
+  return reviewedBridges.some(
+    (bridge) =>
+      targetSha === bridge.targetRef &&
+      sameManifest(before, bridge.sourceMigrations) &&
+      sameManifest(after, bridge.targetMigrations),
   );
 }
 

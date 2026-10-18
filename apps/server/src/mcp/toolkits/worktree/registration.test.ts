@@ -320,6 +320,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "preview_type",
         "preview_upload",
         "preview_wait_for",
+        "read_pull_request_guide",
         "request_secret",
         "run_scheduled_task_now",
         "schedule_task",
@@ -349,6 +350,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "t3_thread_search",
         "t3_thread_transfers",
         "t3_thread_update",
+        "t3_workflow_stop",
         "t3_worktree_handoff",
         "t3_worktree_list",
         "t3_worktree_status",
@@ -358,6 +360,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "unwatch_pull_request",
         "update_scheduled_task",
         "watch_pull_request",
+        "write_pull_request_guides",
       ]);
 
       const restricted = yield* McpSessionRegistry.issueActiveMcpCredential({
