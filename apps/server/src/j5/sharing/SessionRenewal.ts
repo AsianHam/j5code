@@ -70,6 +70,68 @@ const clientOf = (record: {
   ...(record.browser === null ? {} : { browser: record.browser }),
 });
 
+/**
+ * Renews the session a token proves, when J5 ended it for renewal: verifies the token, then reads
+ * and consumes the mark, reads the level and issues the new session in one transaction.
+ */
+export const makeSessionRenewal = (services: {
+  readonly sessions: SessionStore.SessionStore["Service"];
+  readonly repository: AuthSessionRepository["Service"];
+  readonly people: PersonAccess["Service"];
+  readonly sql: SqlClient.SqlClient;
+}) => {
+  const { sessions: store, repository, people, sql } = services;
+
+  const renew = Effect.fn("j5.sharing.sessionRenewal.renew")(function* (sessionId: AuthSessionId) {
+    const record = yield* repository.getById({ sessionId });
+    if (Option.isNone(record)) return yield* new NotRenewableError({});
+    const old = record.value;
+    if (old.method === "dpop-access-token") return yield* new NotRenewableError({});
+    const remaining = DateTime.distance(yield* DateTime.now, old.expiresAt);
+    if (Duration.toMillis(remaining) <= 0) return yield* new NotRenewableError({});
+    const consumed = yield* sql<{
+      readonly person_id: string;
+      readonly ceiling_scopes: string | null;
+    }>`
+      DELETE FROM j5_a2a_person_session
+      WHERE session_id = ${sessionId} AND renew_pending_since IS NOT NULL
+      RETURNING person_id, ceiling_scopes
+    `;
+    const binding = consumed[0];
+    if (binding === undefined) return yield* new NotRenewableError({});
+    const personId = ParticipantId.make(binding.person_id);
+    const ceiling =
+      binding.ceiling_scopes === null
+        ? null
+        : Option.getOrElse(decodeCeiling(binding.ceiling_scopes), () => []);
+    const levels = yield* people.listLevels(personId);
+    const scopes = devicePermissions(highestLevel(levels.map((held) => held.level)), ceiling);
+    const issued = yield* store.issue({
+      ttl: remaining,
+      subject: old.subject,
+      method: old.method,
+      scopes,
+      client: clientOf(old.client),
+    });
+    yield* people.bindSession({ sessionId: issued.sessionId, personId, ceiling });
+    return issued;
+  });
+
+  /** `live` for a token whose session was never ended; the new session for one J5 marked. */
+  const renewToken = Effect.fn("j5.sharing.sessionRenewal.renewToken")(function* (token: string) {
+    const revoked = yield* store.verify(token).pipe(
+      Effect.as("live" as const),
+      Effect.catchTag("SessionTokenRevokedError", (error) => Effect.succeed(error.sessionId)),
+      Effect.orElseSucceed(() => null),
+    );
+    if (revoked === "live") return "live" as const;
+    if (revoked === null) return yield* new NotRenewableError({});
+    return yield* sql.withTransaction(renew(revoked));
+  });
+
+  return { renewToken };
+};
+
 export const sessionRenewalRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const auth = yield* Effect.serviceOption(EnvironmentAuth.EnvironmentAuth);
@@ -84,45 +146,12 @@ export const sessionRenewalRouteLayer = Layer.unwrap(
     ) {
       return Layer.empty;
     }
-    const sql = yield* SqlClient.SqlClient;
     const store = sessions.value;
-
-    /** Issues the new session for a revoked one, if J5 marked it; all of it commits or none. */
-    const renew = Effect.fn("j5.sharing.sessionRenewal.renew")(function* (
-      sessionId: AuthSessionId,
-    ) {
-      const record = yield* repository.value.getById({ sessionId });
-      if (Option.isNone(record)) return yield* new NotRenewableError({});
-      const old = record.value;
-      if (old.method === "dpop-access-token") return yield* new NotRenewableError({});
-      const remaining = DateTime.distance(yield* DateTime.now, old.expiresAt);
-      if (Duration.toMillis(remaining) <= 0) return yield* new NotRenewableError({});
-      const consumed = yield* sql<{
-        readonly person_id: string;
-        readonly ceiling_scopes: string | null;
-      }>`
-        DELETE FROM j5_a2a_person_session
-        WHERE session_id = ${sessionId} AND renew_pending_since IS NOT NULL
-        RETURNING person_id, ceiling_scopes
-      `;
-      const binding = consumed[0];
-      if (binding === undefined) return yield* new NotRenewableError({});
-      const personId = ParticipantId.make(binding.person_id);
-      const ceiling =
-        binding.ceiling_scopes === null
-          ? null
-          : Option.getOrElse(decodeCeiling(binding.ceiling_scopes), () => []);
-      const levels = yield* people.value.listLevels(personId);
-      const scopes = devicePermissions(highestLevel(levels.map((held) => held.level)), ceiling);
-      const issued = yield* store.issue({
-        ttl: remaining,
-        subject: old.subject,
-        method: old.method,
-        scopes,
-        client: clientOf(old.client),
-      });
-      yield* people.value.bindSession({ sessionId: issued.sessionId, personId, ceiling });
-      return issued;
+    const renewal = makeSessionRenewal({
+      sessions: store,
+      repository: repository.value,
+      people: people.value,
+      sql: yield* SqlClient.SqlClient,
     });
 
     const route = HttpRouter.add(
@@ -159,16 +188,16 @@ export const sessionRenewalRouteLayer = Layer.unwrap(
         if (credential === undefined) {
           return refusal(401, "not_renewable", new NotRenewableError({}).message);
         }
-        const revoked = yield* store.verify(credential.token).pipe(
-          Effect.as(null),
-          Effect.catchTag("SessionTokenRevokedError", (error) => Effect.succeed(error.sessionId)),
-          Effect.orElseSucceed(() => null),
-        );
-        if (revoked === null) {
-          return refusal(401, "not_renewable", new NotRenewableError({}).message);
-        }
-        return yield* sql.withTransaction(renew(revoked)).pipe(
+        return yield* renewal.renewToken(credential.token).pipe(
           Effect.flatMap((issued) => {
+            if (issued === "live") {
+              return Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { renewed: false },
+                  { headers: CREDENTIAL_RESPONSE_HEADERS },
+                ),
+              );
+            }
             const body = {
               renewed: true,
               expiresAt: DateTime.formatIso(issued.expiresAt),
