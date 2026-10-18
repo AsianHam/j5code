@@ -70,6 +70,7 @@ it.effect("moves people, grants, devices and links onto levels", () =>
     yield* session("session:peer", "peer:environment-1");
     yield* session("session:agent", "mcp-client");
     yield* session("session:bot", "cli-issued-session");
+    yield* session("session:machine", "machine:ci-runner");
     yield* session("session:guest", "j5:guest");
     yield* sql`
       INSERT INTO j5_a2a_person_session (session_id, person_id, bound_at)

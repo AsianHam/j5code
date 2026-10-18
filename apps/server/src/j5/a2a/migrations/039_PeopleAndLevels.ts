@@ -12,8 +12,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 //
 // Every live session upstream holds that no guest was paired with belongs to the first owner
 // (AC7). Its permissions as they stand become its ceiling, which a new session for it never
-// exceeds (AC18). The sessions of agents, peer servers and the CLI are no one's device, and stay
-// unbound. Upstream's auth tables are read and not changed, except that the guest links nobody
+// exceeds (AC18). The sessions of agents, peer servers, `j5 a2a` machine senders and the CLI are
+// no one's device, and stay unbound. Upstream's auth tables are read and not changed, except that the guest links nobody
 // used are revoked there: they are retired, and would otherwise look live in Connections.
 //
 // Unused links of either old kind stop working, and their count is kept for a notice Owners see.
@@ -87,6 +87,7 @@ export default Effect.gen(function* () {
       WHERE session.revoked_at IS NULL
         AND session.expires_at > ${now}
         AND session.subject NOT LIKE 'peer:%'
+        AND session.subject NOT LIKE 'machine:%'
         AND session.subject NOT IN ('mcp-client', 'cli-issued-session', 'j5:guest')
         AND NOT EXISTS (
           SELECT 1 FROM j5_a2a_person_session AS bound
