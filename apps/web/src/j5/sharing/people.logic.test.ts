@@ -8,6 +8,7 @@ import {
   accessRowsFromScope,
   accessRowView,
   deviceCeiling,
+  peopleServerState,
   placeLinks,
   rosterProjectIds,
   linkMeta,
@@ -283,5 +284,24 @@ describe("the projects whose people a non-Owner is shown", () => {
     expect(
       rosterProjectIds([{ scope: { kind: "thread", threadId: THREAD }, level: "viewer" }], listed),
     ).toEqual([]);
+  });
+});
+
+describe("whether People has a server to show", () => {
+  it("is starting while a client with its own server lists none, as while a renewal reloads it", () => {
+    expect(peopleServerState({ catalogReady: true, listed: 0, hasOwnServer: true })).toBe(
+      "starting",
+    );
+    expect(peopleServerState({ catalogReady: false, listed: 0, hasOwnServer: false })).toBe(
+      "starting",
+    );
+  });
+
+  it("is none only for a client with no server of its own once the list is read", () => {
+    expect(peopleServerState({ catalogReady: true, listed: 0, hasOwnServer: false })).toBe("none");
+  });
+
+  it("is ready once a server is listed", () => {
+    expect(peopleServerState({ catalogReady: false, listed: 1, hasOwnServer: true })).toBe("ready");
   });
 });

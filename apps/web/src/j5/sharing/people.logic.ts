@@ -338,3 +338,18 @@ export function rosterProjectIds(
   );
   return listedProjectIds.filter((projectId) => held.has(projectId));
 }
+
+/**
+ * Whether People has a server to show, or why not. A client lists no server for a moment while
+ * it starts, and again while a renewed session reloads it, so an empty list means "starting"
+ * unless the client has no server of its own at all (the desktop app with its local server off)
+ * and the list has been read.
+ */
+export function peopleServerState(input: {
+  readonly catalogReady: boolean;
+  readonly listed: number;
+  readonly hasOwnServer: boolean;
+}): "ready" | "starting" | "none" {
+  if (input.listed > 0) return "ready";
+  return input.catalogReady && !input.hasOwnServer ? "none" : "starting";
+}

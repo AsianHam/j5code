@@ -37,6 +37,7 @@ import {
 import { toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { requestConfirmDialog } from "../../confirmDialog";
+import { readPrimaryEnvironmentTarget } from "../../environments/primary/target";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useProject, useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
@@ -54,6 +55,7 @@ import {
   linkInForce,
   raisesToWriting,
   removeLevelWarning,
+  peopleServerState,
   removePersonWarning,
   rosterProjectIds,
   type SummaryPart,
@@ -100,8 +102,9 @@ function useChange(environmentId: EnvironmentId) {
  * and leave what they hold. A picker chooses among the servers.
  */
 export function PeoplePage() {
-  const { environments } = useEnvironments();
+  const { environments, isReady } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const [hasOwnServer] = useState(() => readPrimaryEnvironmentTarget() !== null);
   const [chosen, setChosen] = useState<EnvironmentId | null>(null);
   const environmentId =
     chosen ??
@@ -109,10 +112,15 @@ export function PeoplePage() {
       ? primaryEnvironmentId
       : (environments[0]?.environmentId ?? null));
   if (environmentId === null) {
+    const none =
+      peopleServerState({ catalogReady: isReady, listed: environments.length, hasOwnServer }) ===
+      "none";
     return (
       <SettingsPageContainer width="wide">
         <SettingsSection title="People">
-          <p className={ROW_NOTE_CLASSNAME}>Connect to a server to see who is on it.</p>
+          <p className={ROW_NOTE_CLASSNAME}>
+            {none ? "Connect to a server to see who is on it." : "Reading who is on this server…"}
+          </p>
         </SettingsSection>
       </SettingsPageContainer>
     );
