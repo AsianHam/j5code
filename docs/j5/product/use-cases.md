@@ -29,7 +29,7 @@ This use case is the standing test from the fleet vision: **"does this work for 
 
 A chapter of the monitoring story that brings enough differentiating requirements to stand on its own: a level-2 support team shares its agents, so when one person goes off shift the next picks them up immediately — **no context transfer**. It also puts **two humans in front of the same agent**: today developers relay agent output to each other over Slack/Teams; putting both people in the same conversation removes the relay entirely.
 
-What it demands beyond monitoring: everything in [Shared server](features/shared-server.md) — the multi-person invariant, person-scoped surfaces, one-person-or-everyone delivery, and eventually duty-based addressing ("the on-call"). It is the reason multi-person constraints bind _today_ even though the capability ships later.
+What it demands beyond monitoring: everything in [Shared server](features/shared-server.md) — the multi-person invariant, person-scoped surfaces, and asks to one person or to everyone who can answer. It is the reason multi-person constraints bind _today_ even though the capability ships later.
 
 ## History
 

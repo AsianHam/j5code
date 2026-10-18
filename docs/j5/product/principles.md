@@ -163,4 +163,4 @@ Each principle states its rule, what it stands on (beliefs and lenses above), it
 
 ## Scoped principles
 
-Principles with narrower jurisdiction live with their stories, not here. Currently one: **authority never replicates — messages cross, read-models merge**, which governs all distributed-state design and lives in [the cross-device position paper](./cross-device.md).
+Principles with narrower jurisdiction live with their stories, not here. Currently two sets: **authority never replicates — messages cross, read-models merge**, which governs all distributed-state design and lives in [the cross-device position paper](./cross-device.md); and the four principles of [people and access](./features/people-and-access.md#principles) (**sharing is trust, not containment**, **inviting is easy, and access changes in place**, and, while that feature is new, **UX, then simplicity, then security, then edge cases** and **turn it off or open it up**), which govern who reaches what on a server and how.

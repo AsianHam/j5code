@@ -32,7 +32,7 @@ The Definition section stays at the level of concepts: what the thing is and how
 Every feature definition has the same sections, in this order:
 
 1. **Problem** — one paragraph linking the problem or goal in `problems.md` it serves.
-2. **Definition** — what it is, and what it is not.
+2. **Definition** — what it is, and what it is not. It may end with a **Later** list: what is deliberately set aside for a later version, one line each, linking the GitHub issue that tracks it. The list is the one place in a definition's body that links an issue; an item leaves it when the definition takes the item in. A decision that holds only until then is marked in the body with "for now", so that it is not read as the end state.
 3. **Acceptance criteria** — one numbered list, grouped under short sub-headings that follow the order of the Definition (for example _Sending_, _Delivery_, _Silence_); the numbering runs through the groups without restarting, so a criterion's number stays unique within the feature. Each criterion is one testable sentence about observable behavior. These are the only numbered items in the docs, and the only things that get referenced by number (see IDs below).
 4. **Scenarios** — concrete situations written as user stories or worked examples, each naming the criteria it exercises.
 5. **History** — one line per amendment: date, what changed, and a link to the record.

@@ -25,7 +25,9 @@ A person answers in one of two ways. **Reply in place**: the answer, exactly as 
 
 A replied item recedes to a collapsed **Replied** shelf. An ask whose sender is archived leaves the inbox immediately — the archive dialog was the loud moment, and a confirmed archive means the person wants it gone.
 
-A server puts asks only in the inboxes of its members. A person who is a guest on a server still has their inbox, with the asks from servers of their own; the server they are a guest on adds nothing to it, and its agents reach them in the conversation they share ([shared conversations](shared-conversations.md)).
+A server puts asks only in the inboxes of people who can write to the asking agent's thread ([people and access](people-and-access.md)). A Viewer, who cannot answer, has no inbox from that server.
+
+**Several people.** Where more than one person can write to an agent's thread, the agent can ask one of them, or **everyone here**: everyone who can write to its thread when the ask is read. An ask to everyone appears in each of their inboxes, marked as for everyone, and is counted on each of their bells. The first reply closes it for all of them, as any reply closes an ask, and for the others it moves to the Replied shelf showing who answered. A reply that arrives after that is refused and changes nothing. A person who had started typing an answer keeps the item in place, with their words, and sees who answered. In a thread only one person can write to, there is no "everyone here": the agent asks that person ([shared conversations](shared-conversations.md)).
 
 The inbox is reached from a bell in the rail that carries the count of open items and opens a full page.
 
@@ -58,15 +60,19 @@ The inbox is **not** a backlog (a non-blocking note an agent wants to keep is a 
 12. The inbox is not filtered by any project selection in the sidebar; each item names its project, and its environment when more than one is connected; an answer reaches the environment the ask came from.
 13. The bell with its count is present in the rail on every page and opens the inbox page.
 
-### Guests
+### Several people
 
-14. A server adds no item to the inbox of a person who is a guest on it, and its agents are not offered that guest as someone who can be asked.
+14. A server adds an ask only to the inbox of a person who can write to the asking agent's thread, and its agents are offered as someone to ask only the people who can write to their thread.
+15. In a thread more than one person can write to, an agent's address book offers "everyone here", and an ask to it reaches the inbox of everyone who can write to that thread when the ask is read, marked as for everyone.
+16. The first reply to an ask to everyone closes it for all of them, and for the others it moves to the Replied shelf naming who answered; a later reply is refused and changes nothing.
+17. An open item a person has typed an answer into stays in place when it closes, with their text and a line saying who answered or that the agent withdrew it, until they clear the text or leave the page.
 
 ## Scenarios
 
 - **Two questions, one agent.** An agent in Billing Migration asks the user "merge now or after the audit?" (urgency _soon_) and, separately, "may I delete the old branch?" Two items appear, the _soon_ one first. The agent later follows up on the first by name; the follow-up text appears beneath it. The user answers each in place; each agent-side Exchange closes with the exact text; both items move to the Replied shelf. (AC3, AC5, AC6, AC8, AC10)
 - **Answering in the thread.** The user opens an asker's thread from its item, discusses the question there, and the agent, satisfied, withdraws its ask; the item leaves the inbox. (AC9)
 - **Across projects.** With the sidebar showing only Website Redesign, an ask from an agent in Support Rotation still appears, wearing "Support Rotation". (AC1, AC12)
+- **Everyone here.** On L2 Support Rotation's server, an agent asks everyone here which customer to call back first. The ask is in the inbox of each engineer on shift. One answers; for the others it moves to Replied naming them, and another engineer, halfway through typing, sees the item stay with their words and who answered. (AC15, AC16, AC17)
 - **An archived asker.** An agent with an open ask to the user is archived after the dialog's warning; its item is gone from the inbox the moment the archive completes. (AC11)
 
 ## History
@@ -79,3 +85,4 @@ The inbox is **not** a backlog (a non-blocking note an agent wants to keep is a 
 - 2026-09-08 — rewritten into the definition shape. Former identifiers: IB1 → Answering, AC8–AC9; IB2 → AC13; IB3–IB4 → AC5–AC6; IB5 → AC10; IB6 → AC11; IB7 → AC12. The "clear-own-ask has no build ticket" note is gone: the verb shipped. The deferred items that lived here (a platform-alerts lane, the asker's current state on items, smaller inbox forms) are backlog candidates, not part of this definition.
 - 2026-10-07 — Squadrons retired: an item names the project its sender works in (Jackson, 2026-10-05; [#412](https://github.com/Jacksondr5/j5code/issues/412)).
 - 2026-10-10 — a server adds nothing to a guest's inbox (AC14); an ask in a shared conversation is defined by [shared conversations](shared-conversations.md) (Jackson; [record](../../worklog/2026-10-09-multi-player-session.md)).
+- 2026-10-17 — several people (Jackson; [record](../../worklog/2026-10-16-people-and-access-session.md)): asks go to the people who can write to the asking agent's thread, and Viewers have none (AC14 rewritten from the guest rule); an agent can ask everyone here, the first reply closing it for all (AC15, AC16); an item being answered stays in place when it closes (AC17).
