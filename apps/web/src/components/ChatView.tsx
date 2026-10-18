@@ -49,7 +49,7 @@ import {
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./chat/composerFocusRedirect";
 import { CrewRosterGate } from "../j5/crew/CrewRosterGate";
-import { useCanOperateThread } from "../j5/sharing/guestAccess";
+import { useCanOperateThread } from "../j5/sharing/access";
 import { expandPlaybookPrompt } from "@t3tools/client-runtime/j5/playbooks";
 import { PlaybookBoard } from "../j5/playbooks/PlaybookBoard";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";

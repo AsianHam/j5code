@@ -22,7 +22,7 @@ import { j5Environment } from "../state";
 import { useVisibleRefresh } from "../useVisibleRefresh";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { fleetCrewAnchorId } from "../fleet/fleet.logic";
-import { useGuestEnvironmentIds } from "../sharing/guestAccess";
+import { useNarrowEnvironmentIds } from "../sharing/access";
 
 /** The Fleet page's Crews, so a Crew-linked run can name its Crew and jump to its group. */
 interface PlaybookRunCrewLinks {
@@ -165,8 +165,8 @@ function EnvironmentRuns({
   showEnvironmentLabel: boolean;
 } & PlaybookRunCrewLinks) {
   const [offset, setOffset] = useState(0);
-  // A guest is shown none of a server's Playbooks (Shared server AC24), so none is read.
-  const guest = useGuestEnvironmentIds().has(environment.environmentId);
+  // Every run on the server is the server's to list: someone who reaches less is not asked it.
+  const guest = useNarrowEnvironmentIds().has(environment.environmentId);
   const unsupported = guest || j5LedgerSupported(environment.serverConfig) === false;
   const query = useEnvironmentQuery(
     unsupported

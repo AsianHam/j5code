@@ -21,7 +21,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
-import { useIsGuest } from "../../j5/sharing/guestAccess";
+import { useCanOperateThread } from "../../j5/sharing/access";
 import { ThreadPeopleSection } from "../../j5/sharing/ThreadPeople";
 
 const GitActionsControl = memo(BaseGitActionsControl);
@@ -66,8 +66,8 @@ export interface ThreadDetailsPanelProps extends Pick<
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
-  // J5 (case 73): upstream's Automations section asks for what a guest is not given.
-  const isGuest = useIsGuest(props.environmentId);
+  // J5 (case 73): a Viewer of the thread is shown none of upstream's Automations section.
+  const readOnly = !useCanOperateThread(props.environmentId, props.threadId);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
     props.activeProjectScripts ? props.gitCwd : null,
@@ -175,7 +175,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             </ThreadDetailsSection>
           ) : null}
 
-          {density === "full" && !props.draftId && !isGuest ? (
+          {density === "full" && !props.draftId && !readOnly ? (
             <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
           ) : null}
 

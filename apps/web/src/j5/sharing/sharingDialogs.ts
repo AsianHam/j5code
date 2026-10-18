@@ -1,5 +1,5 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { SharingGrantTarget } from "@t3tools/contracts/j5";
+import type { EnvironmentId } from "@t3tools/contracts";
+import type { PersonScope } from "@t3tools/contracts/j5";
 
 /**
  * Which of sharing's dialogs is open. They are opened from places that render nothing of their
@@ -9,39 +9,27 @@ import type { SharingGrantTarget } from "@t3tools/contracts/j5";
  */
 export type SharingDialogRequest =
   | {
+      /** The one Share dialog (People and access AC34 to AC41). */
       readonly kind: "share";
       readonly environmentId: EnvironmentId;
-      /** `null` when opened from a place that names no thread or project: the dialog asks. */
-      readonly target: SharingGrantTarget | null;
-      /** Someone already on the server who is being given more; no link is made for them. */
-      readonly person?: { readonly personId: string; readonly name: string };
+      /** `null` when opened from the People page: the dialog asks, the server or a project. */
+      readonly scope: PersonScope | null;
     }
   | {
-      /** The person the server belongs to sets or changes the name they are known by on it. */
-      readonly kind: "owner-name";
-      readonly environmentId: EnvironmentId;
-    }
-  | {
-      readonly kind: "join-link";
-      readonly environmentId: EnvironmentId;
-      /** `null` when opened from the People page: the dialog asks which thread. */
-      readonly threadId: ThreadId | null;
-    }
-  | {
-      readonly kind: "rename";
-      readonly environmentId: EnvironmentId;
-      readonly person: { readonly personId: string; readonly name: string };
-    }
-  | {
-      /** A guest gives up what a thread was shared with them through. */
+      /** A person gives up a level they hold (AC48). */
       readonly kind: "leave";
       readonly environmentId: EnvironmentId;
-      readonly threadId: ThreadId;
+      readonly scope: PersonScope;
     }
   | {
-      readonly kind: "device-link";
+      /** A person renames themselves, or an Owner renames anyone (AC46). */
+      readonly kind: "rename";
       readonly environmentId: EnvironmentId;
-      readonly person: { readonly personId: string; readonly name: string };
+      readonly person: {
+        readonly personId: string | null;
+        readonly name: string | null;
+        readonly you: boolean;
+      };
     };
 
 interface SharingDialogState {

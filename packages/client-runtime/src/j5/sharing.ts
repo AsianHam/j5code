@@ -1,9 +1,10 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
-  J5_SHARING_WS_METHODS,
-  type SharingConnectionAccess,
-  type SharingConnectionKind,
-  type SharingThreadLevel,
+  type ConnectionAccess,
+  J5_ACCESS_WS_METHODS,
+  type PersonLevel,
+  highestLevel,
+  levelReaches,
 } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -20,145 +21,203 @@ import {
 } from "../state/runtime.ts";
 
 /**
- * What a shared server lets this connection do with a thread
- * (docs/j5/product/features/shared-server.md, AC12 and AC13). A member's connection is held to
- * nothing here. A guest's may write to a thread only where its level is Collaborate, so one
- * guest can read one thread and write to another on the same server. While the server has not
- * yet said which kind the connection is (`null`), nothing is withheld.
+ * What one connection is on its server (docs/j5/product/features/people-and-access.md), and the
+ * level that decides what it may do with each thread. Every answer here only shapes what a client
+ * shows: the server checks each request against the level at the scope it names, and a device
+ * holds only its level's upstream permissions.
+ *
+ * `null` means the server has not answered, or cannot (one from before people). Nothing is
+ * withheld then, so a composer does not flicker to read-only while the answer is on its way, and
+ * upstream's own permissions decide.
  */
+export type KnownConnectionAccess = ConnectionAccess | null;
+
+/** The level the person holds at server scope, if any. */
+export const serverLevelOf = (access: KnownConnectionAccess): PersonLevel | null =>
+  access?.kind === "person"
+    ? highestLevel(
+        access.levels.flatMap((held) => (held.scope.kind === "server" ? [held.level] : [])),
+      )
+    : null;
+
+/**
+ * Whether the connection reaches the whole server: a person with a level at server scope, or a
+ * session that is no person's. Someone who does not is shown only what their levels cover, and
+ * none of the server's own pages (People and access AC23, AC25).
+ */
+export const reachesServer = (access: KnownConnectionAccess): boolean =>
+  access === null || access.kind === "service" || serverLevelOf(access) !== null;
+
+/** Whether the connection's person owns the server. A server that cannot say is treated as upstream's. */
+export const isOwnerAccess = (access: KnownConnectionAccess): boolean =>
+  access === null || access.kind === "service" || (access.kind === "person" && access.owner);
+
+/**
+ * The level a connection holds over one thread. A person who writes to the whole server holds
+ * their server level everywhere, so only someone else's level is asked of the server, which works
+ * out what covers the thread: the thread itself, a thread above it, its project or the server.
+ */
+export const threadLevelFor = (
+  access: KnownConnectionAccess,
+  streamed: PersonLevel | null,
+): PersonLevel | null => {
+  if (access === null) return null;
+  if (access.kind === "service") return "owner";
+  if (access.kind === "unknown") return null;
+  return access.wide ? serverLevelOf(access) : streamed;
+};
+
+/** Whether the level a connection holds over a thread lets it write there; see `KnownConnectionAccess`. */
 export const sharingAllowsOperate = (input: {
-  readonly connection: SharingConnectionKind | null;
-  readonly level: SharingThreadLevel | null;
-}): boolean => input.connection !== "guest" || input.level === "collaborate";
+  readonly access: KnownConnectionAccess;
+  readonly level: PersonLevel | null;
+}): boolean => input.access === null || levelReaches(input.level, "collaborator");
 
-// One answer per connection: a session's kind is fixed when it is paired and never changes.
-interface ConnectionKindAnswer {
-  /** `null` until the server has answered. */
-  kind: SharingConnectionKind | null;
-  readonly ask: Effect.Effect<SharingConnectionAccess>;
+const asksThreadLevel = (access: KnownConnectionAccess) =>
+  access?.kind === "person" && !access.wide;
+
+// The connection's latest answer, kept per socket so a request can be held back on what it says
+// without waiting for it. A level that changes without a new session, such as a scope added,
+// updates it each time the query below is read again.
+interface ConnectionAccessAnswer {
+  access: KnownConnectionAccess;
+  readonly ask: Effect.Effect<KnownConnectionAccess>;
 }
-const connectionKinds = new WeakMap<RpcSession, ConnectionKindAnswer>();
+const answers = new WeakMap<RpcSession, ConnectionAccessAnswer>();
 
-const connectionKindAnswer = Effect.gen(function* () {
+const askConnectionAccess = (answer: { access: KnownConnectionAccess }) =>
+  request(J5_ACCESS_WS_METHODS.getConnectionAccess, {}).pipe(
+    Effect.tap((access) =>
+      Effect.sync(() => {
+        answer.access = access;
+      }),
+    ),
+  );
+
+const connectionAccessAnswer = Effect.gen(function* () {
   const supervisor = yield* EnvironmentSupervisor;
   const session = yield* SubscriptionRef.get(supervisor.session);
   if (Option.isNone(session)) return null;
-  const known = connectionKinds.get(session.value);
+  const known = answers.get(session.value);
   if (known !== undefined) return known;
-  const answer: ConnectionKindAnswer = {
-    kind: null,
+  const answer: ConnectionAccessAnswer = {
+    access: null,
     ask: yield* Effect.cached(
-      request(J5_SHARING_WS_METHODS.getConnectionAccess, {}).pipe(
-        // A server that cannot answer, such as one from before sharing, has no guests. It says
-        // nothing of an owner's name either, so no one is asked for one.
-        Effect.catchCause(() => Effect.succeed<SharingConnectionAccess>({ kind: "member" })),
-        Effect.tap((access) =>
-          Effect.sync(() => {
-            answer.kind = access.kind;
-          }),
-        ),
+      Effect.suspend(() => askConnectionAccess(answer)).pipe(
+        // A server that cannot answer is held to nothing here; upstream's permissions decide.
+        Effect.catchCause(() => Effect.succeed(null)),
         Effect.provideService(EnvironmentSupervisor, supervisor),
       ),
     ),
   };
-  connectionKinds.set(session.value, answer);
+  answers.set(session.value, answer);
   return answer;
 });
 
-/** What the server says of the environment's connection, asked once per connection. */
-export const sharingConnectionAccess = Effect.gen(function* () {
-  const answer = yield* connectionKindAnswer;
-  return answer === null ? ({ kind: "member" } as SharingConnectionAccess) : yield* answer.ask;
+/**
+ * What the server says of the environment's connection, asked again each time: a scope can be
+ * added without the connection changing. The answer is kept for `connectionIsKnownNarrow`.
+ */
+const readConnectionAccess = Effect.gen(function* () {
+  const answer = yield* connectionAccessAnswer;
+  if (answer === null) return null;
+  return yield* askConnectionAccess(answer);
 });
 
-/** Whether the environment's connection is a member's or a guest's, from the same one answer. */
-export const sharingConnectionKind = Effect.map(sharingConnectionAccess, (access) => access.kind);
-
 /**
- * Whether the connection is already known to be a guest's. It never waits for the server: a
- * member's requests are not held behind the question, which is asked in the background the first
- * time. Until the answer arrives a guest's connection reads as not known, so its first requests
- * go out and are refused by the server.
+ * Whether the connection is already known to reach less than the whole server. It never waits:
+ * the question is asked in the background the first time, and until it is answered the
+ * connection's first requests go out and the server refuses what is not its to read.
  */
-export const sharingConnectionIsKnownGuest = Effect.gen(function* () {
-  const answer = yield* connectionKindAnswer;
+export const connectionIsKnownNarrow = Effect.gen(function* () {
+  const answer = yield* connectionAccessAnswer;
   if (answer === null) return false;
-  if (answer.kind === null) yield* Effect.forkDetach(answer.ask);
-  return answer.kind === "guest";
+  if (answer.access === null) yield* Effect.forkDetach(answer.ask);
+  return !reachesServer(answer.access);
 });
 
 const threadKey = (environmentId: EnvironmentId, threadId: ThreadId | null) =>
   JSON.stringify([environmentId, threadId]);
 
-/** Environment-scoped atoms for what a shared server grants this connection; web and mobile each build one. */
+/**
+ * Environment-scoped atoms for what this connection is on each server; web and mobile each build
+ * one. `rereadOn` is the server's signal that people or levels changed, so a scope added while
+ * the connection stays open is shown; without it the answer is read once per connection.
+ */
 export function createSharingEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  options: {
+    readonly rereadOn?: (target: {
+      readonly environmentId: EnvironmentId;
+    }) => Atom.Atom<unknown> | undefined;
+  } = {},
 ) {
-  const connectionAccess = createEnvironmentQueryAtomFamily(runtime, {
-    label: "j5:sharing:connection",
-    staleTimeMs: Number.MAX_SAFE_INTEGER,
-    execute: (_input: Record<string, never>) => sharingConnectionAccess,
+  const connectionAccessQuery = createEnvironmentQueryAtomFamily(runtime, {
+    label: "j5:access:connection",
+    staleTimeMs: options.rereadOn === undefined ? Number.MAX_SAFE_INTEGER : 0,
+    execute: (_input: Record<string, never>) => readConnectionAccess,
+    ...(options.rereadOn === undefined ? {} : { refreshTrigger: options.rereadOn }),
   });
-  // Only a guest's client opens this; the server sends the level again when a grant changes it.
-  const threadAccess = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-    label: "j5:sharing:thread",
-    tag: J5_SHARING_WS_METHODS.subscribeThreadAccess,
+  // Opened only for a person who does not write to the whole server; the server sends the level
+  // again whenever it changes.
+  const threadLevelStream = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "j5:access:thread-level",
+    tag: J5_ACCESS_WS_METHODS.subscribeThreadLevel,
   });
 
   /** `null` until the server has answered for this connection. */
-  const connectionKind = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make(
-      (get): SharingConnectionKind | null =>
-        Option.getOrNull(AsyncResult.value(get(connectionAccess({ environmentId, input: {} }))))
-          ?.kind ?? null,
-    ).pipe(Atom.withLabel(`j5:sharing:connection-kind:${environmentId}`)),
+  const connectionAccess = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): KnownConnectionAccess =>
+      Option.getOrNull(AsyncResult.value(get(connectionAccessQuery({ environmentId, input: {} })))),
+    ).pipe(Atom.withLabel(`j5:access:connection-value:${environmentId}`)),
   );
 
-  /**
-   * The name of the person the server belongs to, as a member's connection was told it when it
-   * connected: a name, `null` when none is set, and `undefined` while the server has not
-   * answered, for a guest's connection, and for a server that does not say.
-   */
-  const ownerName = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get): string | null | undefined => {
-      const access = Option.getOrNull(
-        AsyncResult.value(get(connectionAccess({ environmentId, input: {} }))),
-      );
-      return access?.kind === "member" ? access.ownerName : undefined;
-    }).pipe(Atom.withLabel(`j5:sharing:owner-name:${environmentId}`)),
-  );
-
-  const threadOperable = Atom.family((key: string) => {
+  const threadLevel = Atom.family((key: string) => {
     const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId | null];
-    return Atom.make((get) => {
-      const connection = get(connectionKind(environmentId));
-      if (connection !== "guest") return sharingAllowsOperate({ connection, level: null });
-      // A view with no thread on the server, such as a draft, is nothing a guest was granted.
-      const level =
-        threadId === null
-          ? "none"
+    return Atom.make((get): PersonLevel | null => {
+      const access = get(connectionAccess(environmentId));
+      // A view with no thread on the server, such as a draft, is covered by nothing narrower.
+      const streamed =
+        threadId === null || !asksThreadLevel(access)
+          ? null
           : (Option.getOrNull(
-              AsyncResult.value(get(threadAccess({ environmentId, input: { threadId } }))),
+              AsyncResult.value(get(threadLevelStream({ environmentId, input: { threadId } }))),
             )?.level ?? null);
-      return sharingAllowsOperate({ connection, level });
-    }).pipe(Atom.withLabel(`j5:sharing:thread-operable:${key}`));
+      return threadLevelFor(access, streamed);
+    }).pipe(Atom.withLabel(`j5:access:thread-level:${key}`));
   });
 
-  /** Whether the connection is known to be a guest's; false until the server has said so. */
+  const threadOperable = Atom.family((key: string) => {
+    const [environmentId] = JSON.parse(key) as [EnvironmentId, ThreadId | null];
+    return Atom.make((get) =>
+      sharingAllowsOperate({
+        access: get(connectionAccess(environmentId)),
+        level: get(threadLevel(key)),
+      }),
+    ).pipe(Atom.withLabel(`j5:access:thread-operable:${key}`));
+  });
+
+  /**
+   * Whether the connection is known to reach less than the whole server; false until the server
+   * has said. Mobile's screens still call such a person a guest.
+   */
   const isGuest = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get) => get(connectionKind(environmentId)) === "guest").pipe(
-      Atom.withLabel(`j5:sharing:is-guest:${environmentId}`),
+    Atom.make((get) => !reachesServer(get(connectionAccess(environmentId)))).pipe(
+      Atom.withLabel(`j5:access:narrow:${environmentId}`),
     ),
   );
 
   return {
-    connectionKind,
-    ownerName,
+    connectionAccessQuery,
+    connectionAccess,
     isGuest,
+    /** Reads the connection's access again, after this client changed it (claim, leave, rename). */
+    refreshConnectionAccess: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
+      registry.refresh(connectionAccessQuery({ environmentId, input: {} })),
     /**
      * The same answer for code that is not rendering, such as a menu built when it is opened.
-     * `permitted` is upstream's own server-wide answer, returned as it is for a connection that is
-     * not a guest's. It reads what the thread's view already holds, and asks nothing.
+     * `permitted` is upstream's own server-wide answer. It reads what the thread's view already
+     * holds, and asks nothing.
      */
     readCanOperateThread: (
       registry: AtomRegistry.AtomRegistry,
@@ -170,7 +229,10 @@ export function createSharingEnvironmentAtoms<R, E>(
     ): boolean =>
       input.permitted &&
       registry.get(threadOperable(threadKey(input.environmentId, input.threadId))),
-    /** Whether sharing lets this connection write to the thread; upstream's permission is separate. */
+    /** The level the connection holds over a thread; `null` for none or not yet known. */
+    threadLevel: (environmentId: EnvironmentId, threadId: ThreadId | null) =>
+      threadLevel(threadKey(environmentId, threadId)),
+    /** Whether the connection's level lets it write to the thread; upstream's permission is separate. */
     threadOperable: (environmentId: EnvironmentId, threadId: ThreadId | null) =>
       threadOperable(threadKey(environmentId, threadId)),
   };
