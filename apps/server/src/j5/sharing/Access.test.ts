@@ -318,3 +318,25 @@ it.effect("runs the write hook inside a change, so a failing hook undoes the cha
     ),
   ),
 );
+
+const hooked: Array<string> = [];
+
+it.effect("runs the write hook for a claimed device, a rename and a removal", () =>
+  Effect.gen(function* () {
+    const access = yield* Access;
+    const kiosk = yield* device(null, LEVEL_PERMISSIONS.collaborator, { subject: "cloud-connect" });
+    const created = yield* access.claimDevice(
+      { ...kiosk.identity, scopes: kiosk.scopes },
+      { kind: "new", displayName: "Hooked kiosk" },
+    );
+    yield* access.rename({ personId: created, displayName: "Hooked kiosk two" });
+    yield* access.removePerson(created);
+    assert.deepStrictEqual(hooked, [created, created, created]);
+  }).pipe(
+    Effect.provide(
+      accessLayerWithHook({
+        afterChange: (personId) => Effect.sync(() => void hooked.push(personId)),
+      }),
+    ),
+  ),
+);

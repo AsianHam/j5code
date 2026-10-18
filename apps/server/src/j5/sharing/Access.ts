@@ -165,8 +165,9 @@ export interface AccessShape {
 export class Access extends Context.Service<Access, AccessShape>()("t3/j5/sharing/Access") {}
 
 /**
- * Runs inside the transaction of every change to what a person holds, after the change is written
- * and before it commits, so what it records commits with the change or not at all. Shared
+ * Runs inside the transaction of every change `Access` makes to a person, after the change is
+ * written and before it commits: a level set or removed, a scope left, a device claimed, a person
+ * removed or renamed. What it records commits with the change or not at all. Shared
  * conversations record here that a thread gained a second writer, which a notice told after the
  * commit could miss when the writer was added and removed before it was read. Optional: without
  * it, a change does nothing more.
@@ -367,6 +368,7 @@ const make = Effect.gen(function* () {
               .revoke(sessionId)
               .pipe(Effect.mapError((cause) => new AccessRenewalError({ sessionId, cause })));
           }
+          yield* afterChange(personId);
           if (owner) yield* endMcpClients;
         }),
       );
@@ -374,7 +376,7 @@ const make = Effect.gen(function* () {
     }),
 
     rename: Effect.fn("j5.sharing.access.rename")(function* (input) {
-      yield* people.setName(input);
+      yield* committed(people.setName(input).pipe(Effect.andThen(afterChange(input.personId))));
       yield* tell({ personId: input.personId, kind: "name" });
     }),
 
@@ -399,6 +401,7 @@ const make = Effect.gen(function* () {
             personId,
             ceiling: session.scopes,
           });
+          yield* afterChange(personId);
           yield* revokeForRenewal(session.sessionId);
           return personId;
         }),
