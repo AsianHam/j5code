@@ -879,19 +879,19 @@ describe("formatInstructions", () => {
 });
 
 describe("parseGuest", () => {
-  it("defaults to a view grant on the test project", () => {
-    assert.deepEqual(parseGuest(["Priya"]), { name: "Priya", level: "view" });
+  it("defaults to a Viewer on the test project", () => {
+    assert.deepEqual(parseGuest(["Priya"]), { name: "Priya", level: "viewer" });
   });
 
   it("takes a thread or a project, and a level", () => {
-    assert.deepEqual(parseGuest(["Sam (QA)", "--thread", "t-1", "--level", "collaborate"]), {
+    assert.deepEqual(parseGuest(["Sam (QA)", "--thread", "t-1", "--level", "collaborator"]), {
       name: "Sam (QA)",
-      level: "collaborate",
+      level: "collaborator",
       target: { kind: "thread", id: "t-1" },
     });
     assert.deepEqual(parseGuest(["--project", "p-1", "Priya"]), {
       name: "Priya",
-      level: "view",
+      level: "viewer",
       target: { kind: "project", id: "p-1" },
     });
   });
@@ -903,6 +903,8 @@ describe("parseGuest", () => {
       ["Priya", "Sam"],
       ["Priya", "--thread", "t-1", "--project", "p-1"],
       ["Priya", "--level", "admin"],
+      // The old level names are gone with grants.
+      ["Priya", "--level", "view"],
       ["Priya", "--fresh"],
       // Guests go to Local in every mode.
       ["Priya", "--remote"],
@@ -941,31 +943,29 @@ describe("guestRefusal", () => {
 
 describe("formatGuest", () => {
   const added = {
-    personId: "human:1",
-    displayName: "Priya",
-    level: "view",
+    name: "Priya",
+    level: "viewer",
     target: { kind: "project", id: "p-1" },
-    pairingUrl: "http://localhost:5000/pair#token=T&j5share=1",
+    pairingUrl: "http://localhost:5000/pair#token=T",
   } as const;
 
   it("states who was added, the level, the URL and how to open it, and nothing else", () => {
     assert.equal(
       formatGuest({ ...added, peer: false }),
-      `Added a guest to the live-test server:
+      `Added a person to the live-test server:
 
   Name          Priya
-  Person id     human:1
-  Granted       view on project p-1
-  Pairing URL   http://localhost:5000/pair#token=T&j5share=1
+  Level         viewer on project p-1
+  Pairing URL   http://localhost:5000/pair#token=T
 
 Open the pairing URL in a new incognito tab, one tab per person.
 `,
     );
   });
 
-  it("in a peer build says the guest went to Local, and that Remote is not reached", () => {
+  it("in a peer build says the person went to Local, and that Remote is not reached", () => {
     const output = formatGuest({ ...added, peer: true });
-    assert.include(output, "Added a guest to the live-test server Local:");
-    assert.include(output, "Guests are added to Local only; this command does not reach Remote.");
+    assert.include(output, "Added a person to the live-test server Local:");
+    assert.include(output, "People are added to Local only; this command does not reach Remote.");
   });
 });

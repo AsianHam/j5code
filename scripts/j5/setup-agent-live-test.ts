@@ -57,7 +57,7 @@ const START_BUDGET_MS = 100_000;
 const STOP_TIMEOUT_MS = 20_000;
 /** How long `status` waits for both servers' peer lists together. Each read takes about four seconds on a busy host. */
 const PEER_LIST_TIMEOUT_MS = 20_000;
-/** How long `guest` waits for the server to pair the script and answer its three requests. */
+/** How long `guest` waits for `pair` to add the person and make their link. */
 const GUEST_TIMEOUT_MS = 30_000;
 /** `scripts/hold.sh` in the test repository waits for this file in the repository root. */
 const HOLD_RELEASE_FILE = ".hold-release";
@@ -495,7 +495,8 @@ export function formatInstructions(input: {
   };
 }): string {
   const { paths, manifest, facts, remote } = input;
-  const pairCommand = `node ${pairArguments(paths).join(" ")}`;
+  const owner = "ownerName" in manifest ? manifest.ownerName : undefined;
+  const pairCommand = pairCommandLine(paths, owner ?? "<the name the owner gave>");
   const ownerLine = (ownerName: string | undefined) =>
     ownerName === undefined ? "" : `\n  Owner         ${ownerName}`;
   return `J5 Code live-test server${remote === undefined ? "" : "s"}: RUNNING
@@ -526,7 +527,12 @@ ${
 }
 `
 }
-The pairing URL works once. \`status\` prints a fresh one, and so does:
+${
+  owner === undefined
+    ? `The pairing URL is the server's startup link. It works once, and pairs the
+owner, who gives their name on it. After that, pair another device with:`
+    : "The pairing URL works once. `status` prints a fresh one, and so does:"
+}
   ${pairCommand}
 
 ${
@@ -568,7 +574,7 @@ Commands:
     manifest.mode === "fresh" || manifest.mode === "for-dev"
       ? ""
       : `\n  ${selfCommand(paths, 'guest "<name>"')}   add a second person, with their pairing URL
-                                      (flags: --thread <id> or --project <id>, --level view|collaborate)`
+                                      (flags: --thread <id> or --project <id>, --level viewer|collaborator)`
   }
   ${selfCommand(paths, "rebuild")}   stop, delete ${paths.root}, build and start again
                                       (flags: none for the test project, --fresh for an empty home,
@@ -605,21 +611,34 @@ export const PAIRING_SCOPES = [
   "relay:write",
 ] as const;
 
-/** The `pair` invocation for this home, as arguments to node. */
-const pairArguments = (paths: ServerPaths): ReadonlyArray<string> => [
+/**
+ * The `pair` invocation for this home, as arguments to node. A link names the
+ * person it pairs a device for (register D36): the owner the home was built
+ * with, or a person `guest` adds.
+ */
+const pairArguments = (paths: ServerPaths, person: string): ReadonlyArray<string> => [
   NodePath.join(paths.worktree, "apps/server/src/bin.ts"),
   "pair",
   "--base-dir",
   paths.home,
+  "--person",
+  person,
   ...PAIRING_SCOPES.flatMap((scope) => ["--scope", scope]),
 ];
 
+/** `pairArguments` as a command a person can paste. */
+const pairCommandLine = (paths: ServerPaths, person: string) =>
+  `node ${pairArguments(paths, person)
+    .map((argument) => (/^[\w./:=-]+$/.test(argument) ? argument : JSON.stringify(argument)))
+    .join(" ")}`;
+
 /**
- * A fresh pairing URL from the running server. The one in the log is the
- * startup URL, which works once and is usually spent by the time anyone asks again.
+ * A fresh pairing URL for the home's owner from the running server. The one in
+ * the log is the startup URL, which works once and is usually spent by the time
+ * anyone asks again.
  */
-function mintPairingUrl(paths: ServerPaths): string | undefined {
-  const pair = NodeChildProcess.spawnSync(process.execPath, [...pairArguments(paths)], {
+function mintPairingUrl(paths: ServerPaths, owner: string): string | undefined {
+  const pair = NodeChildProcess.spawnSync(process.execPath, [...pairArguments(paths, owner)], {
     cwd: paths.worktree,
     env: liveTestEnvironment(process.env, paths.worktree),
     encoding: "utf8",
@@ -653,23 +672,29 @@ function printRunning(
   /** Set by a start that has just peered them, which need not ask the servers again. */
   justPeered = false,
 ): void {
+  const manifest = readManifest(paths);
+  const owner = "ownerName" in manifest ? manifest.ownerName : undefined;
+  const remoteOwner =
+    remoteFacts === undefined ? undefined : readDefaultManifest(paths.remote.root).ownerName;
   console.log(
     formatInstructions({
       paths,
-      manifest: readManifest(paths),
+      manifest,
       facts,
-      pairingUrl: mintPairingUrl(paths),
+      // An owner with no name yet pairs with the startup URL, and gives their name there (AC6).
+      pairingUrl: owner === undefined ? facts.pairingUrl : mintPairingUrl(paths, owner),
       ...(remoteFacts === undefined
         ? {}
         : {
             remote: {
               facts: remoteFacts,
-              ownerName: readDefaultManifest(paths.remote.root).ownerName,
+              ownerName: remoteOwner,
               peered: justPeered || arePeered(paths, facts.serverPort, remoteFacts.serverPort),
               addToBrowserUrl: addRemoteUrl({
                 localWebPort: facts.webPort,
                 remoteServerPort: remoteFacts.serverPort,
-                remotePairingUrl: mintPairingUrl(paths.remote),
+                remotePairingUrl:
+                  remoteOwner === undefined ? undefined : mintPairingUrl(paths.remote, remoteOwner),
               }),
             },
           }),
@@ -2015,10 +2040,10 @@ export interface GuestRequest {
   readonly name: string;
   /** Absent means the test project of the server it is added to. */
   readonly target?: { readonly kind: "project" | "thread"; readonly id: string };
-  readonly level: "view" | "collaborate";
+  readonly level: "viewer" | "collaborator";
 }
 
-const GUEST_USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts guest "<name>" [--thread <id> | --project <id>] [--level view|collaborate]`;
+const GUEST_USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts guest "<name>" [--thread <id> | --project <id>] [--level viewer|collaborator]`;
 const GUEST_NOT_ON_BASE =
   "`guest` adds a person to the head server only. The base server belongs to the base checkout's own script, which this command does not reach.";
 
@@ -2033,7 +2058,7 @@ export function parseGuest(args: ReadonlyArray<string>): GuestRequest {
         options: {
           thread: { type: "string" },
           project: { type: "string" },
-          level: { type: "string", default: "view" },
+          level: { type: "string", default: "viewer" },
         },
       });
     } catch {
@@ -2047,7 +2072,7 @@ export function parseGuest(args: ReadonlyArray<string>): GuestRequest {
     name === undefined ||
     name.trim() === "" ||
     (thread !== undefined && project !== undefined) ||
-    (level !== "view" && level !== "collaborate")
+    (level !== "viewer" && level !== "collaborator")
   ) {
     throw new LiveTestRefusal(GUEST_USAGE);
   }
@@ -2084,31 +2109,30 @@ export function guestRefusal(input: {
     : `No live-test server is running here to add a guest to. Start it with: ${input.startCommand}`;
 }
 
-/** What `guest` prints: who was added, what they were granted, and the URL that pairs a browser as them. */
+/** What `guest` prints: who was added, at what level where, and the URL that pairs a browser as them. */
 export function formatGuest(input: {
   /** Whether the build has a Remote server too. */
   readonly peer: boolean;
-  readonly personId: string;
-  readonly displayName: string;
+  readonly name: string;
   readonly level: string;
   readonly target: { readonly kind: "project" | "thread"; readonly id: string };
   readonly pairingUrl: string;
 }): string {
-  return `Added a guest to the live-test server${input.peer ? " Local" : ""}:
+  return `Added a person to the live-test server${input.peer ? " Local" : ""}:
 
-  Name          ${input.displayName}
-  Person id     ${input.personId}
-  Granted       ${input.level} on ${input.target.kind} ${input.target.id}
+  Name          ${input.name}
+  Level         ${input.level} on ${input.target.kind} ${input.target.id}
   Pairing URL   ${input.pairingUrl}
-${input.peer ? "\nGuests are added to Local only; this command does not reach Remote.\n" : ""}
+${input.peer ? "\nPeople are added to Local only; this command does not reach Remote.\n" : ""}
 Open the pairing URL in a new incognito tab, one tab per person.
 `;
 }
 
 /**
- * Adds a guest to the running server as its owner, through the same requests
- * the People page makes. In a peer build that server is Local: a browser not
- * paired with Local is not served the app, so a guest of Remote could not open it.
+ * Adds a person to the running server with \`j5 pair --person\`, which creates
+ * them at the level and scope given and makes the link that pairs their first
+ * device. In a peer build that server is Local: a browser not paired with Local
+ * is not served the app, so a person on Remote could not open it.
  */
 function guest(paths: LiveTestPaths, request: GuestRequest): void {
   const built = builtMode(paths);
@@ -2121,36 +2145,18 @@ function guest(paths: LiveTestPaths, request: GuestRequest): void {
     startCommand: selfCommand(paths, modeFlags(built ?? "default", builtBaseRef(paths))),
   });
   if (refusal !== undefined) throw new LiveTestRefusal(refusal);
-  // The refusal above covers this; it is here to tell the compiler so.
-  if (state.kind !== "running") return;
-  const grantOn = request.target ?? {
+  const target = request.target ?? {
     kind: "project" as const,
     id: readDefaultManifest(paths.root).project.id,
   };
-  // The owner's requests are WebSocket only, so the script pairs as a client of its own.
-  const token = mintPairingUrl(paths)?.split("#token=")[1];
-  if (token === undefined) {
-    throw new LiveTestRefusal(
-      `No pairing token could be minted for the server. Try: node ${pairArguments(paths).join(" ")}`,
-    );
-  }
   const added = NodeChildProcess.spawnSync(
     process.execPath,
     [
-      NodePath.join(paths.worktree, "apps/server/src/j5/test-support/liveTestOwnerClient.ts"),
-      "--origin",
-      `http://127.0.0.1:${state.facts.serverPort}`,
-      // The address a browser opens; the client builds the link there, as the Share dialog would.
-      "--web-origin",
-      `http://localhost:${state.facts.webPort}`,
-      "--token",
-      token,
-      "--name",
-      request.name,
-      `--${grantOn.kind}`,
-      grantOn.id,
+      ...pairArguments(paths, request.name),
       "--level",
       request.level,
+      `--${target.kind}`,
+      target.id,
     ],
     {
       cwd: paths.worktree,
@@ -2159,9 +2165,10 @@ function guest(paths: LiveTestPaths, request: GuestRequest): void {
       timeout: GUEST_TIMEOUT_MS,
     },
   );
-  if (added.status !== 0) {
+  const pairingUrl = /Pairing URL: (\S+)/.exec(added.stdout ?? "")?.[1];
+  if (added.status !== 0 || pairingUrl === undefined) {
     throw new LiveTestRefusal(
-      `The server did not add the guest:\n${
+      `The server did not add the person:\n${
         (added.stderr ?? "")
           .split("\n")
           .filter((line) => !/ExperimentalWarning|--trace-warnings/.test(line))
@@ -2170,18 +2177,12 @@ function guest(paths: LiveTestPaths, request: GuestRequest): void {
       }`,
     );
   }
-  const { personId, displayName, pairingUrl } = JSON.parse(added.stdout) as {
-    readonly personId: string;
-    readonly displayName: string;
-    readonly pairingUrl: string;
-  };
   console.log(
     formatGuest({
       peer: isPeerMode(built ?? "default"),
-      personId,
-      displayName,
+      name: request.name,
       level: request.level,
-      target: grantOn,
+      target,
       pairingUrl,
     }),
   );
