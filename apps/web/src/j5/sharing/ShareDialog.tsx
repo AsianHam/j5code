@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { PeopleEntry, PeopleLink, PersonLevel, PersonScope } from "@t3tools/contracts/j5";
-import { isPersonName } from "@t3tools/contracts/j5";
+import { isPersonName, levelReaches } from "@t3tools/contracts/j5";
 import { Link2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -191,6 +191,9 @@ export function ShareDialog({
                   environmentId={environmentId}
                   scope={scope}
                   people={people.data?.people ?? []}
+                  reachOf={(personId) =>
+                    access.rows?.find((row) => row.personId === personId)?.level ?? null
+                  }
                   onMade={setMade}
                   onShared={() => refreshSharing(environmentId)}
                 />
@@ -466,20 +469,24 @@ export function LinkLine({
 }
 
 /**
- * Bringing someone in (AC31, AC35, AC40). "Add a person" makes a link for one, or, for someone
- * already on the server, gives them the level here with no link. "Anyone with the link" makes a
- * link for many, at Viewer.
+ * Bringing someone in (AC31, AC35, AC40). "Add a person" makes a link for one. For someone
+ * already on the server it gives them the level here with no link when that is more than they
+ * reach it with, and otherwise makes a link that pairs one more device as them. "Anyone with the
+ * link" makes a link for many, at Viewer.
  */
 function AddForm({
   environmentId,
   scope,
   people,
+  reachOf,
   onMade,
   onShared,
 }: {
   readonly environmentId: EnvironmentId;
   readonly scope: PersonScope;
   readonly people: ReadonlyArray<PeopleEntry>;
+  /** The level someone already reaches the thing with, from anywhere; `null` for none. */
+  readonly reachOf: (personId: string) => PersonLevel | null;
   readonly onMade: (link: PeopleLink) => void;
   readonly onShared: () => void;
 }) {
@@ -496,13 +503,17 @@ function AddForm({
   const matches = existing === null ? peopleMatching(people, name) : [];
   const typed = name.trim();
   const heldHere = existing?.levels.find((held) => sameScope(held.scope, scope))?.level ?? null;
-  const warn = mode === "person" && raisesToWriting(existing === null ? null : heldHere, level);
+  // Someone who already reaches the thing at this level gains nothing; the link adds a device.
+  const addsDevice = existing !== null && levelReaches(reachOf(existing.personId), level);
+  const raises = existing !== null && !addsDevice;
+  const warn =
+    mode === "person" && !addsDevice && raisesToWriting(existing === null ? null : heldHere, level);
 
   const submit = async () => {
     setBusy(true);
     setError(null);
     try {
-      if (existing !== null) {
+      if (existing !== null && raises) {
         const result = await setLevel({
           environmentId,
           input: { personId: existing.personId, scope, level },
@@ -522,16 +533,18 @@ function AddForm({
       const result = await createLink({
         environmentId,
         input:
-          mode === "anyone"
-            ? { kind: "invite", scope, level: "viewer", use: "many", name: null, lifetime }
-            : {
-                kind: "invite",
-                scope,
-                level,
-                use: "one",
-                name: typed === "" ? null : typed,
-                lifetime,
-              },
+          existing !== null
+            ? { kind: "device", personId: existing.personId, lifetime }
+            : mode === "anyone"
+              ? { kind: "invite", scope, level: "viewer", use: "many", name: null, lifetime }
+              : {
+                  kind: "invite",
+                  scope,
+                  level,
+                  use: "one",
+                  name: typed === "" ? null : typed,
+                  lifetime,
+                },
       });
       if (result._tag === "Failure") {
         setError(`The link could not be made. ${refusalMessage(result)}`);
@@ -605,17 +618,21 @@ function AddForm({
               />
             </div>
           </div>
-          {existing === null ? (
-            <LinkLifetimeRow
-              value={lifetime}
-              onChange={setLifetime}
-              helper="One use, one device."
-              disabled={busy}
-            />
-          ) : (
+          {raises ? (
             <p className="text-xs text-muted-foreground">
               {existing.name} is already on this server, so no link is needed.
             </p>
+          ) : (
+            <LinkLifetimeRow
+              value={lifetime}
+              onChange={setLifetime}
+              helper={
+                addsDevice
+                  ? `${existing.name} already reaches this. The link pairs one more device as them.`
+                  : "One use, one device."
+              }
+              disabled={busy}
+            />
           )}
           {warn ? <WritingWarning name={existing?.name ?? (typed === "" ? null : typed)} /> : null}
         </>
@@ -635,12 +652,8 @@ function AddForm({
       )}
       {error === null ? null : <p className="text-xs text-destructive">{error}</p>}
       <div className="flex justify-end">
-        <Button
-          size="sm"
-          disabled={busy || (existing !== null && heldHere === level)}
-          onClick={() => void submit()}
-        >
-          {existing !== null ? (busy ? "Sharing…" : "Share") : busy ? "Making link…" : "Make link"}
+        <Button size="sm" disabled={busy} onClick={() => void submit()}>
+          {raises ? (busy ? "Sharing…" : "Share") : busy ? "Making link…" : "Make link"}
         </Button>
       </div>
     </div>
@@ -675,7 +688,9 @@ function MadeLink({
   const description =
     link.use === "many"
       ? `Anyone who opens it joins as a Viewer of ${scopeTitle} until it expires in ${left}.`
-      : `Send it to ${person ?? "them"}. Opening it pairs one device as them. ${level ?? "Access"} on ${scopeTitle}, expires in ${left}.`;
+      : link.kind === "device"
+        ? `Open it on the device to add. It pairs one more device as ${person ?? "them"}, and expires in ${left}.`
+        : `Send it to ${person ?? "them"}. Opening it pairs one device as them. ${level ?? "Access"} on ${scopeTitle}, expires in ${left}.`;
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogPopup className="max-w-md">
