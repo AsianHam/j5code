@@ -87,19 +87,20 @@ export function isSettledPrompt(toolData: unknown): toolData is {
 
 /**
  * One answer to the agent's question as the person gave it. In a shared conversation the server
- * writes its mark, named exactly in `storedPrefix`, at the start of a typed answer, or as the
- * first of the options someone chose. Any other value, and any value that does not carry the
- * mark, is returned as it is.
+ * writes its mark, named exactly in `storedPrefix`, at the start of a typed answer, or at the
+ * start of the first of the options someone chose. Any other value, and any value that does not
+ * begin with the mark, is returned as it is.
  */
 export function answerWithoutPrefix(answer: unknown, storedPrefix: string): unknown {
   if (storedPrefix === "") return answer;
-  if (typeof answer === "string") {
-    return answer.startsWith(storedPrefix) ? answer.slice(storedPrefix.length) : answer;
-  }
+  const strip = (text: string) =>
+    text.startsWith(storedPrefix) ? text.slice(storedPrefix.length) : text;
+  if (typeof answer === "string") return strip(answer);
   if (Array.isArray(answer)) {
     const [first, ...rest] = answer as ReadonlyArray<unknown>;
-    // The mark stands alone as the first option, without its trailing space.
-    return first === storedPrefix.trimEnd() ? rest : answer;
+    return typeof first === "string" && first.startsWith(storedPrefix)
+      ? [strip(first), ...rest]
+      : answer;
   }
   return answer;
 }

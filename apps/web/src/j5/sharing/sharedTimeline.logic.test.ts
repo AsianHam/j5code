@@ -96,10 +96,14 @@ describe("an answer to the agent's question", () => {
   it("is shown as given, without the mark the server names", () => {
     expect(
       answersWithoutPrefix(
-        { typed: `${prefix}Keep the step.`, chosen: [prefix.trim(), "Option B"], untouched: 3 },
+        {
+          typed: `${prefix}Keep the step.`,
+          chosen: [`${prefix}Option B`, "Option C"],
+          untouched: 3,
+        },
         prefix,
       ),
-    ).toEqual({ typed: "Keep the step.", chosen: ["Option B"], untouched: 3 });
+    ).toEqual({ typed: "Keep the step.", chosen: ["Option B", "Option C"], untouched: 3 });
   });
 
   it("is left as it is when the server names no mark, or the answer does not carry it", () => {
