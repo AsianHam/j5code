@@ -80,10 +80,16 @@ const send = Effect.fn("test.send")(function* (
   const admitted = yield* (yield* SharedConversation).admit(personId, command);
   if (admitted.type === "message.dispatch") {
     yield* taken(admitted.threadId, admitted.messageId, run);
-    return admitted.text;
   }
   return admitted;
 });
+
+/** A person's message as the agent will read it. */
+const say = (
+  personId: ParticipantId,
+  command: ReturnType<typeof message>,
+  run: "completed" | "queued" | null = "completed",
+) => send(personId, command, run).pipe(Effect.map((admitted) => (admitted as typeof command).text));
 
 const taken = Effect.fn("test.taken")(function* (
   threadId: ThreadId,
@@ -151,7 +157,7 @@ it.effect(
       yield* taken(threadId, "message:earlier", "completed");
       const priya = yield* personWith("Priya", onThread(threadId));
 
-      const text = yield* send(owner, message(threadId, "Keep the migration step."));
+      const text = yield* say(owner, message(threadId, "Keep the migration step."));
       assert.isTrue(hasNote(text));
       assert.include(text, "Who can write: Jackson (owner), Priya (collaborator).");
       assert.include(text, "carry no such line: Jackson (owner) wrote them.");
@@ -161,7 +167,7 @@ it.effect(
       );
 
       // The note has reached the agent, so Priya's message carries her line alone.
-      const hers = yield* send(priya, message(threadId, "Drop it."));
+      const hers = yield* say(priya, message(threadId, "Drop it."));
       assert.strictEqual(hers, "[Message from Priya (collaborator)]\n\nDrop it.");
 
       const read = yield* authors(threadId, priya);
@@ -194,16 +200,16 @@ it.effect(
       yield* personWith("Priya", onThread(threadId));
 
       const first = message(threadId, "One.");
-      assert.isTrue(hasNote(yield* send(owner, first, "queued")));
+      assert.isTrue(hasNote(yield* say(owner, first, "queued")));
       // Still queued: the agent has not read it, so the next carries the note too.
       const second = message(threadId, "Two.");
-      assert.isTrue(hasNote(yield* send(owner, second, "queued")));
+      assert.isTrue(hasNote(yield* say(owner, second, "queued")));
       yield* setRun(first.messageId, "completed");
-      assert.isFalse(hasNote(yield* send(owner, message(threadId, "Three."))));
+      assert.isFalse(hasNote(yield* say(owner, message(threadId, "Three."))));
       // Rolled back past both carriers: the agent was never told.
       yield* setRun(first.messageId, "rolled_back");
       yield* setRun(second.messageId, "cancelled");
-      assert.isTrue(hasNote(yield* send(owner, message(threadId, "Four."))));
+      assert.isTrue(hasNote(yield* say(owner, message(threadId, "Four."))));
     }).pipe(Effect.provide(conversationLayer)),
 );
 
@@ -215,11 +221,11 @@ it.effect(
       const access = yield* Access;
       const threadId = yield* thread("thread:changes");
       const priya = yield* personWith("Priya", onThread(threadId));
-      yield* send(owner, message(threadId, "Hello."));
+      yield* say(owner, message(threadId, "Hello."));
 
       const sam = yield* personWith("Sam", onThread(threadId));
       yield* access.rename({ personId: priya, displayName: "Priya K" });
-      const told = yield* send(owner, message(threadId, "Again."));
+      const told = yield* say(owner, message(threadId, "Again."));
       assert.include(told, "Sam (collaborator) can now write to this thread.");
       assert.include(told, "Renamed: Priya (collaborator) is now Priya K (collaborator).");
       assert.include(
@@ -228,10 +234,10 @@ it.effect(
       );
 
       yield* access.removeLevel({ personId: sam, scope: { kind: "thread", threadId } });
-      const after = yield* send(owner, message(threadId, "Once more."));
+      const after = yield* say(owner, message(threadId, "Once more."));
       assert.include(after, "Sam (collaborator) can no longer write to this thread.");
       // Nothing changed since: no note.
-      assert.isFalse(hasNote(yield* send(owner, message(threadId, "Quiet."))));
+      assert.isFalse(hasNote(yield* say(owner, message(threadId, "Quiet."))));
     }).pipe(Effect.provide(conversationLayer)),
 );
 
@@ -241,7 +247,7 @@ it.effect("a command goes as typed from anyone, and is still shown as theirs (AC
     const threadId = yield* thread("thread:slash");
     const priya = yield* personWith("Priya", onThread(threadId));
     const command = message(threadId, "  /compact");
-    assert.strictEqual(yield* send(priya, command), "  /compact");
+    assert.strictEqual(yield* say(priya, command), "  /compact");
     const read = yield* authors(threadId, priya);
     assert.deepStrictEqual(
       read.authors.map((entry) => [entry.name, entry.storedPrefix, entry.note]),
@@ -257,7 +263,7 @@ it.effect("a thread stays shared after its second writer is gone, even unwritten
     const threadId = yield* thread("thread:once");
     const priya = yield* personWith("Priya", onThread(threadId));
     yield* access.removePerson(priya);
-    const text = yield* send(owner, message(threadId, "Still there?"));
+    const text = yield* say(owner, message(threadId, "Still there?"));
     assert.include(text, "Who can write: Jackson (owner).");
     assert.isTrue(afterNote(text).startsWith("[Message from Jackson (owner)]"));
   }).pipe(Effect.provide(conversationLayer)),
@@ -301,9 +307,9 @@ it.effect("an edit by someone else keeps the author's line and says who edited i
     const owner = yield* jackson;
     const threadId = yield* thread("thread:edit");
     const priya = yield* personWith("Priya", onThread(threadId));
-    yield* send(owner, message(threadId, "Hello."));
+    yield* say(owner, message(threadId, "Hello."));
     const hers = message(threadId, "Fix the tpyo.");
-    const stored = yield* send(priya, hers, "queued");
+    const stored = yield* say(priya, hers, "queued");
     const edit = (text: string) =>
       ({
         type: "queued-run.edit",
@@ -387,7 +393,7 @@ it.effect("a person who can no longer write has their queued messages there with
     const threadId = yield* thread("thread:withdraw");
     const priya = yield* personWith("Priya", onThread(threadId));
     const hers = message(threadId, "Later, please.");
-    yield* send(priya, hers, "queued");
+    yield* say(priya, hers, "queued");
     // Lowered to Viewer; the withdrawal follows the change.
     yield* access.setLevel({
       personId: priya,
@@ -420,7 +426,7 @@ it.effect("who wrote a thread moves its revision when a message is recorded", ()
       Effect.forkScoped,
     );
     yield* Deferred.await(subscribed);
-    yield* send(owner, message(threadId, "Moved."));
+    yield* say(owner, message(threadId, "Moved."));
     assert.deepStrictEqual(
       [...(yield* Fiber.join(revisions))].map((change) => change.revision),
       [0, 1],

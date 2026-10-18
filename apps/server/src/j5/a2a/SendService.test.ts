@@ -15,6 +15,7 @@ import { A2ASendService, layer as sendLayer } from "./SendService.ts";
 import {
   AgentParticipant,
   CommCommandId,
+  EVERYONE_HERE_PERSON_ID,
   ExchangeId,
   LedgerProjectId,
   ParticipantId,
@@ -55,9 +56,15 @@ const registerPerson = Effect.fn("test.j5.a2a.registerPerson")(function* () {
     INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
     VALUES (${person.id}, 1, ${timestamp})
   `;
+  // The first owner writes to every thread, so every agent may ask them.
+  yield* sql`
+    INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+    VALUES (${person.id}, 'server', '', 'owner', ${timestamp}, ${timestamp})
+  `;
 });
 
 const setupSameProject = Effect.fn("test.j5.a2a.setupSameProject")(function* () {
+  yield* runMigrations();
   yield* runJ5A2AMigrations();
   const ledgerService = yield* A2ALedger;
   const projectId = LedgerProjectId.make("project:exchange");
@@ -235,6 +242,7 @@ it.effect("refuses a second reply when an accepted reply exists on an open excha
 );
 
 const setupTwoProjects = Effect.fn("test.j5.a2a.setupTwoProjects")(function* () {
+  yield* runMigrations();
   yield* runJ5A2AMigrations();
   const ledgerService = yield* A2ALedger;
   const askerProjectId = LedgerProjectId.make("project:exchange:asker");
@@ -1039,6 +1047,13 @@ it.effect("lists member agents and registry-derived person capabilities", () =>
         },
         {
           id: secondPersonId,
+          canReceiveMessage: false,
+          canOpenExchange: true,
+          acceptsUrgency: true,
+        },
+        // Two people can write to the sender's thread, so it may ask everyone here.
+        {
+          id: EVERYONE_HERE_PERSON_ID,
           canReceiveMessage: false,
           canOpenExchange: true,
           acceptsUrgency: true,

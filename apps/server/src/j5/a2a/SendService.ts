@@ -1,5 +1,5 @@
 import type { StoredCommEvent } from "./contracts.ts";
-import type { ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { A2A_MESSAGE_TEXT_MAX_CHARS } from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -15,6 +15,7 @@ import {
   CommCommandId,
   type CommEvent,
   CorrelationId,
+  EVERYONE_HERE_PERSON_ID,
   LedgerProjectId,
   ExchangeId,
   isHumanParticipantId,
@@ -38,11 +39,9 @@ import {
   selfContainedLayer as threadRegistrationLayer,
   ThreadRegistration,
 } from "./ThreadRegistration.ts";
-import {
-  isRegisteredHumanPerson,
-  listRegisteredHumanPersonIds,
-  listRegisteredHumanPersonNames,
-} from "./HumanPersonRegistry.ts";
+import { isHumanPerson } from "./HumanPersonRegistry.ts";
+import type { PersonAccessStorageError } from "../sharing/PersonAccess.ts";
+import { SharedThreads, layer as sharedThreadsLayer } from "../sharing/SharedThreads.ts";
 import { A2ALedgerTransactionWriter, A2ALedger, type A2ALedgerError } from "./LedgerService.ts";
 import { recordOutsideAgentName } from "./outsideAgentNames.ts";
 import { PeerDirectory, type PeerDirectoryError } from "./PeerDirectory.ts";
@@ -322,6 +321,7 @@ export class A2AOutsideAgentLocalOnlyError extends Schema.TaggedError<A2AOutside
 }
 
 export type A2ASendError =
+  | PersonAccessStorageError
   | A2ALedgerError
   | Schema.SchemaError
   | SqlError
@@ -517,6 +517,8 @@ export interface A2ASendServiceShape {
   readonly listParticipantsWithoutCaller: (input: {
     readonly includeArchived?: boolean;
     readonly peopleProjectId?: LedgerProjectId;
+    /** The caller's thread, whose writers are the people it may ask (Inbox AC14). */
+    readonly peopleThreadId?: ThreadId;
   }) => Effect.Effect<ReadonlyArray<ParticipantDirectoryRow>, A2ASendError>;
 }
 
@@ -533,7 +535,7 @@ type A2ASendServiceLayerDependencies =
 const rawLayer: Layer.Layer<
   A2ASendService,
   never,
-  A2ASendServiceLayerDependencies | ThreadRegistration
+  A2ASendServiceLayerDependencies | ThreadRegistration | SharedThreads
 > = Layer.effect(
   A2ASendService,
   Effect.gen(function* () {
@@ -542,6 +544,7 @@ const rawLayer: Layer.Layer<
     const sql = yield* SqlClient.SqlClient;
     const registration = yield* ThreadRegistration;
     const peers = yield* PeerDirectory;
+    const shared = yield* SharedThreads;
 
     const membershipRows = Effect.fn("j5.a2a.send.membershipRows")(function* () {
       return yield* sql<MembershipRow>`
@@ -776,7 +779,7 @@ const rawLayer: Layer.Layer<
         return yield* new A2AOutsideAgentCannotReceiveError({ participantId: id });
       }
       if (isHumanParticipantId(id)) {
-        if (!(yield* isRegisteredHumanPerson(sql, id))) {
+        if (id !== EVERYONE_HERE_PERSON_ID && !(yield* isHumanPerson(sql, id))) {
           return yield* new A2AParticipantNotFoundError({ participantId: id });
         }
         return {
@@ -825,30 +828,49 @@ const rawLayer: Layer.Layer<
       };
     });
 
+    /**
+     * The people an agent may ask: those who can write to its thread, or to its project when it
+     * has no thread (Inbox AC14). In a shared conversation it may also ask everyone here
+     * (Inbox AC15).
+     */
+    const askablePeople = Effect.fn("j5.a2a.send.askablePeople")(function* (
+      projectId: LedgerProjectId,
+      threadId: ThreadId | undefined,
+    ) {
+      const writers =
+        threadId === undefined
+          ? yield* shared.projectWriters(ProjectId.make(projectId))
+          : yield* shared.writers(threadId);
+      const person = (participantId: ParticipantId, displayName: string | null) =>
+        ({
+          projectId,
+          participantId,
+          participant: { kind: "human", id: participantId },
+          archived: false,
+          canReceiveMessage: false,
+          canOpenExchange: true,
+          acceptsUrgency: true,
+          ...(displayName === null ? {} : { displayName }),
+        }) satisfies ParticipantDirectoryRow;
+      return [
+        ...writers.map((writer) => person(writer.personId, writer.displayName)),
+        ...(threadId !== undefined && (yield* shared.isShared(threadId))
+          ? [person(EVERYONE_HERE_PERSON_ID, "everyone here")]
+          : []),
+      ];
+    });
+
     const listParticipantsWithoutCaller: A2ASendServiceShape["listParticipantsWithoutCaller"] = ({
       includeArchived = false,
       peopleProjectId,
+      peopleThreadId,
     }) =>
       Effect.gen(function* () {
         const rows = yield* membershipRows();
-        const names =
-          peopleProjectId === undefined ? new Map() : yield* listRegisteredHumanPersonNames(sql);
         const people =
           peopleProjectId === undefined
             ? []
-            : (yield* listRegisteredHumanPersonIds(sql)).map((personId) => {
-                const displayName: string | undefined = names.get(personId);
-                return {
-                  projectId: peopleProjectId,
-                  participantId: personId,
-                  participant: { kind: "human", id: personId },
-                  archived: false,
-                  canReceiveMessage: false,
-                  canOpenExchange: true,
-                  acceptsUrgency: true,
-                  ...(displayName === undefined ? {} : { displayName }),
-                } satisfies ParticipantDirectoryRow;
-              });
+            : yield* askablePeople(peopleProjectId, peopleThreadId);
         const membershipCounts = new Map<string, number>();
         for (const row of rows) {
           membershipCounts.set(
@@ -905,7 +927,11 @@ const rawLayer: Layer.Layer<
     ) =>
       senderMembership(senderThreadId).pipe(
         Effect.flatMap((sender) =>
-          listParticipantsWithoutCaller({ includeArchived, peopleProjectId: sender.projectId }),
+          listParticipantsWithoutCaller({
+            includeArchived,
+            peopleProjectId: sender.projectId,
+            peopleThreadId: senderThreadId,
+          }),
         ),
       );
 
@@ -962,6 +988,23 @@ const rawLayer: Layer.Layer<
 
       const receiver = yield* participantMembership(input.to, sender.projectId, remote);
       const receiverId = receiver.participantId;
+      // An agent asks only someone who can write to its thread, or everyone here (Inbox AC14).
+      if (
+        receiver.kind === "human" &&
+        input.exchangeId === undefined &&
+        receiverId !== EVERYONE_HERE_PERSON_ID
+      ) {
+        const senderThread = yield* sql<{ readonly thread_id: string | null }>`
+          SELECT thread_id FROM j5_a2a_membership
+          WHERE project_id = ${sender.projectId} AND participant_id = ${sender.participantId}
+        `;
+        const threadId = senderThread[0]?.thread_id ?? null;
+        const writes = yield* shared.writesTo(receiverId, {
+          threadId: threadId === null ? null : ThreadId.make(threadId),
+          projectId: sender.projectId,
+        });
+        if (!writes) return yield* new A2AParticipantNotFoundError({ participantId: receiverId });
+      }
       if (
         receiver.kind === "human" &&
         input.expectReply !== true &&
@@ -1459,4 +1502,4 @@ const rawLayer: Layer.Layer<
 );
 
 export const layer: Layer.Layer<A2ASendService, never, A2ASendServiceLayerDependencies> =
-  rawLayer.pipe(Layer.provide(threadRegistrationLayer));
+  rawLayer.pipe(Layer.provide(threadRegistrationLayer), Layer.provide(sharedThreadsLayer));

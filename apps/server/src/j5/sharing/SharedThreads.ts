@@ -34,8 +34,8 @@ export interface ThreadWriter {
 
 export interface SharedThreadsShape {
   /**
-   * Everyone who can write to a thread now, Owners first, each group in the order they joined
-   * the server. A thread a launch is about to create is not recorded yet; `launchingIn` names its
+   * Everyone who can write to a thread now: the first owner, the other Owners, then the
+   * Collaborators, each group by name. A thread a launch is about to create is not recorded yet; `launchingIn` names its
    * project, whose writers are its writers.
    */
   readonly writers: (
@@ -51,6 +51,14 @@ export interface SharedThreadsShape {
     personId: ParticipantId,
     threadId: ThreadId,
   ) => Effect.Effect<WriterLevel | null, PersonAccessStorageError>;
+  /**
+   * Whether a person can write to an agent's thread: whom it may ask, and whose inbox its asks
+   * reach (Inbox AC14). An agent with no thread, a machine sender, is its project's.
+   */
+  readonly writesTo: (
+    personId: ParticipantId,
+    agent: { readonly threadId: ThreadId | null; readonly projectId: string },
+  ) => Effect.Effect<boolean, PersonAccessStorageError>;
   /** Whether a thread is a shared conversation, recording it when it has just become one. */
   readonly isShared: (
     threadId: ThreadId,
@@ -82,18 +90,23 @@ const make = Effect.gen(function* () {
   const storage = (operation: string) => (cause: unknown) =>
     new PersonAccessStorageError({ operation, cause });
 
-  const writersOf = (people: ReadonlyArray<ScopePerson>) => {
-    const listed = people.flatMap((entry): ReadonlyArray<ThreadWriter> => {
-      const level = asWriterLevel(entry.level);
-      return level === null
-        ? []
-        : [{ personId: entry.person.personId, displayName: entry.person.displayName, level }];
-    });
-    return [
-      ...listed.filter((writer) => writer.level === "owner"),
-      ...listed.filter((writer) => writer.level === "collaborator"),
-    ];
-  };
+  // Owners first, the first owner ahead of them; then each group by name.
+  const rank = (entry: ScopePerson) =>
+    entry.level === "owner" ? (entry.person.firstOwner ? 0 : 1) : 2;
+  const writersOf = (people: ReadonlyArray<ScopePerson>) =>
+    people
+      .filter((entry) => asWriterLevel(entry.level) !== null)
+      .toSorted(
+        (left, right) =>
+          rank(left) - rank(right) ||
+          (left.person.displayName ?? "").localeCompare(right.person.displayName ?? "") ||
+          left.person.personId.localeCompare(right.person.personId),
+      )
+      .map((entry): ThreadWriter => ({
+        personId: entry.person.personId,
+        displayName: entry.person.displayName,
+        level: entry.level as WriterLevel,
+      }));
 
   const projectWriters: SharedThreadsShape["projectWriters"] = (projectId) =>
     access.scopePeople({ kind: "project", projectId }).pipe(Effect.map(writersOf));
@@ -152,6 +165,12 @@ const make = Effect.gen(function* () {
 
     writerLevel: (personId, threadId) =>
       access.threadLevel(personId, threadId).pipe(Effect.map(asWriterLevel)),
+
+    writesTo: (personId, agent) =>
+      (agent.threadId === null
+        ? access.projectLevel(personId, agent.projectId as ProjectId)
+        : access.threadLevel(personId, agent.threadId)
+      ).pipe(Effect.map((level) => asWriterLevel(level) !== null)),
 
     isShared: Effect.fn("j5.sharing.sharedThreads.isShared")(function* (
       threadId,

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - synchronous hashing for deterministic ids and digests.
 import { makeCrewFailureAlert } from "./crewFailureAlert.ts";
+import { layer as sharedThreadsLayer } from "../sharing/SharedThreads.ts";
 import {
   MessageId,
   type OrchestrationV2Run,
@@ -468,5 +469,5 @@ const makeLayer = (daemon: boolean) =>
     }),
   );
 
-export const manualLayer = makeLayer(false);
-export const layer = makeLayer(true);
+export const manualLayer = makeLayer(false).pipe(Layer.provide(sharedThreadsLayer));
+export const layer = makeLayer(true).pipe(Layer.provide(sharedThreadsLayer));

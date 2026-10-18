@@ -5,10 +5,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { AgentCrewInstance } from "./AgentCrewInstanceService.ts";
 import { A2ADeliveryWorker } from "./DeliveryWorker.ts";
 import { getLocalOperatorHumanPersonId } from "./HumanPersonRegistry.ts";
+import { SharedThreads } from "../sharing/SharedThreads.ts";
 import { A2ALedgerTransactionWriter } from "./LedgerService.ts";
 import {
   CommCommandId,
   CorrelationId,
+  EVERYONE_HERE_PERSON_ID,
   ExchangeId,
   LedgerMessageId,
   type CommEvent,
@@ -36,6 +38,9 @@ const alertExchangePrefix = (crewInstanceId: string) =>
 
 /**
  * A platform-authored ask in the Captain's inbox conversation. Replies return to the Captain.
+ * Where more than one person can write to the Captain's thread it is asked of everyone here, so
+ * each of them sees it and the first answer settles it (Crews AC23); elsewhere, of the first
+ * owner.
  * One open alert per Crew: failures in the same Crew fold into it without losing its text, and
  * the Captain's own asks are never touched. A receipt per failed run prevents replay from
  * appending twice or reopening an alert the person already answered. This internal producer
@@ -45,10 +50,11 @@ export const makeCrewFailureAlert = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const writer = yield* A2ALedgerTransactionWriter;
   const worker = yield* A2ADeliveryWorker;
+  const shared = yield* SharedThreads;
   return Effect.fn("j5.a2a.crewFailureAlert")(function* (input: {
     readonly instance: Pick<
       AgentCrewInstance,
-      "id" | "projectId" | "captainParticipantId" | "displayName"
+      "id" | "projectId" | "captainParticipantId" | "captainThreadId" | "displayName"
     >;
     readonly seatName: string;
     readonly runId: string;
@@ -56,13 +62,16 @@ export const makeCrewFailureAlert = Effect.gen(function* () {
   }) {
     if (!needsHumanForCrewFailure(input.failure)) return;
     const commandId = CommCommandId.make(`j5-crew-human-alert:${input.runId}`);
+    const toEveryone = yield* shared.isShared(input.instance.captainThreadId);
     const outcome = yield* writer.withPermit(
       sql.withTransaction(
         Effect.gen(function* () {
           const replay =
             yield* sql`SELECT 1 FROM j5_a2a_comm_command_receipt WHERE command_id = ${commandId}`;
           if (replay.length > 0) return null;
-          const personId = yield* getLocalOperatorHumanPersonId(sql);
+          const personId = toEveryone
+            ? EVERYONE_HERE_PERSON_ID
+            : yield* getLocalOperatorHumanPersonId(sql);
           const { projectId, captainParticipantId } = input.instance;
           const prefix = alertExchangePrefix(input.instance.id);
           const existing = (yield* sql<{ readonly exchange_id: string }>`

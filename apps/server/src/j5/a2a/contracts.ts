@@ -65,6 +65,12 @@ export const isHumanParticipantId = (id: ParticipantId): boolean =>
 export const isDurableHumanParticipantId = (id: ParticipantId): boolean =>
   isHumanParticipantId(id) && id !== "human:global";
 
+/**
+ * The receiver of an agent's ask to everyone here (Inbox AC15): everyone who can write to the
+ * asking agent's thread when the ask is read. No person has this id.
+ */
+export const EVERYONE_HERE_PERSON_ID = ParticipantId.make("human:everyone-here");
+
 export const MACHINE_PARTICIPANT_ID_PREFIX = "machine:";
 export const isMachineParticipantId = (id: ParticipantId): boolean =>
   id.startsWith(MACHINE_PARTICIPANT_ID_PREFIX) && id.length > MACHINE_PARTICIPANT_ID_PREFIX.length;
@@ -511,6 +517,10 @@ export const HumanInboxItem = Schema.Struct({
   openedAt: Schema.String,
   status: Schema.Literals(["open", "answered"]),
   terminalAt: Schema.NullOr(Schema.String),
+  /** Asked of everyone who can write to the asking agent's thread (Inbox AC15). */
+  forEveryone: Schema.optionalKey(Schema.Boolean),
+  /** Who answered an ask to everyone that is closed, by the name they had then (Inbox AC16). */
+  answeredBy: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type HumanInboxItem = typeof HumanInboxItem.Type;
 
