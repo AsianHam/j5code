@@ -4,6 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 
+import { useEnvironmentsForPermissionNotice } from "../j5/sharing/upstreamNotices";
 import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
 import { useEnvironments } from "../state/environments";
 import { environmentSession } from "../state/session";
@@ -67,7 +68,7 @@ function EnvironmentPermissionNotice({
 }
 
 export function PermissionUpdateNotice() {
-  const { environments } = useEnvironments();
+  const environments = useEnvironmentsForPermissionNotice(useEnvironments().environments);
   return environments.map(({ environmentId, label }) => (
     <EnvironmentPermissionNotice key={environmentId} environmentId={environmentId} label={label} />
   ));

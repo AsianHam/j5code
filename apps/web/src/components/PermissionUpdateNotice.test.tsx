@@ -27,6 +27,9 @@ vi.mock("../hooks/useLocalStorage", () => ({
   setLocalStorageItem: (...args: unknown[]) => state.save(...args),
 }));
 vi.mock("./ui/toast", () => ({ toastManager: { add: state.add, close: state.close } }));
+vi.mock("../j5/sharing/upstreamNotices", () => ({
+  useEnvironmentsForPermissionNotice: (all: unknown) => all,
+}));
 import { PermissionUpdateNotice } from "./PermissionUpdateNotice";
 
 let renderer: ReactTestRenderer;
