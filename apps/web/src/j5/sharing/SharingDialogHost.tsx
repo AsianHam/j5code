@@ -7,6 +7,7 @@ import { environmentCatalog } from "../../connection/catalog";
 import { j5Sharing } from "./guestAccess";
 import { DeviceLinkDialog } from "./DeviceLinkDialog";
 import { GuestRevokedThreadRedirect } from "./GuestRevokedThreadRedirect";
+import { SessionRenewalWatcher } from "./SessionRenewalWatcher";
 import { RenameDialog } from "./RenameDialog";
 import { LeaveDialog } from "./LeaveDialog";
 import { JoinLinkDialog } from "./JoinLinkDialog";
@@ -30,6 +31,7 @@ export function SharingDialogHost() {
   return (
     <>
       <GuestRevokedThreadRedirect />
+      <SessionRenewalWatcher />
       <SharingDialogs />
     </>
   );

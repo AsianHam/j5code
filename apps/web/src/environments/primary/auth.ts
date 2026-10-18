@@ -21,6 +21,7 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { renewPrimarySession } from "../../j5/sharing/sessionRenewal";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -324,6 +325,8 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
 
   const bootstrapCredential = urlCredential ?? getDesktopBootstrapCredential();
   if (!bootstrapCredential) {
+    // J5: a session J5 ended for a change of level renews with its own cookie (FORK.md case 70).
+    if (await renewPrimarySession()) return { status: "authenticated" };
     return {
       status: "requires-auth",
       auth: currentSession.auth,
