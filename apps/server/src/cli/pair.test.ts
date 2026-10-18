@@ -398,8 +398,6 @@ describe("auth scope options", () => {
             "--base-dir",
             baseDir,
             "--json",
-            // J5: a pairing link names its person (register D36).
-            ...(group === "pairing" ? ["--person", "Jackson", "--level", "owner"] : []),
             "--scope",
             "orchestration:read",
             "--scope",

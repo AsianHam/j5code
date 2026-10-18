@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as PairingGrantStore from "../../auth/PairingGrantStore.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import { pairingLinkForPerson } from "./cliPairing.ts";
 import { PairingIntents } from "./PairingIntents.ts";
 import * as PersonAccess from "./PersonAccess.ts";
@@ -28,6 +29,7 @@ const flags = (
 const pair = (
   given: Parameters<typeof flags>[0],
   scopes: ReadonlyArray<(typeof AuthStandardClientScopes)[number]> = AuthStandardClientScopes,
+  withoutPerson: "refuse" | "ask" = "refuse",
 ) =>
   Effect.gen(function* () {
     const grants = yield* PairingGrantStore.PairingGrantStore;
@@ -35,6 +37,7 @@ const pair = (
       flags: flags(given),
       scopes,
       mint: (minted) => grants.issueOneTimeToken({ scopes: [...minted] }),
+      withoutPerson,
     });
   });
 
@@ -52,6 +55,37 @@ it.layer(accessLayer)("j5 pair --person", (it) => {
       assert.include(message, "--person");
       assert.include(message, "Priya (Collaborator on the server)");
     }),
+  );
+
+  it.effect(
+    "lets auth pairing create make upstream's link for a device the server will ask about",
+    () =>
+      Effect.gen(function* () {
+        const intents = yield* PairingIntents;
+        const people = yield* PersonAccess.PersonAccess;
+        const sessions = yield* SessionStore.SessionStore;
+        const made = yield* pair({}, AuthStandardClientScopes, "ask");
+        assert.include(made.said, "asked who they are");
+        assert.isNull(yield* intents.intentOf(made.link.credential));
+
+        // It pairs a device the server cannot place, which says whose it is before anything else.
+        const issued = yield* intents.issueSession({
+          grant: { subject: "one-time-token", scopes: AuthStandardClientScopes },
+          credential: made.link.credential,
+          issue: sessions.issue({ scopes: AuthStandardClientScopes }),
+        });
+        const reach = yield* people.sessionReach({
+          sessionId: issued.sessionId,
+          subject: "one-time-token",
+        });
+        assert.strictEqual(reach.kind, "unknown");
+
+        // A level or scope without a person is still refused: there is no one to give it to.
+        assert.include(
+          yield* refusal(pair({ level: "viewer" }, AuthStandardClientScopes, "ask")),
+          "--person",
+        );
+      }),
   );
 
   it.effect("makes the link for someone already here, at their level, and says so", () =>

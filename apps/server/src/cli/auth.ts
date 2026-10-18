@@ -103,6 +103,8 @@ const pairingCreateCommand = Command.make("create", {
           const { link: issued, said } = yield* j5PairingLinkForPerson({
             flags,
             scopes: flags.scopes,
+            // Upstream's desktop app runs this bare over SSH, knowing no one's name there.
+            withoutPerson: "ask",
             mint: (scopes) =>
               environmentAuth.createPairingLink({
                 scopes,

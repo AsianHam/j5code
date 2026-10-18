@@ -36,6 +36,11 @@ import {
  * at their levels; one that matches no one creates that person at the level and scope given.
  * Upstream's `--scope` keeps its meaning: it narrows the device's permissions within the level,
  * and becomes the device's ceiling.
+ *
+ * `j5 pair` refuses without `--person`. `j5 auth pairing create` without it makes upstream's own
+ * link, for a device the server will ask about: upstream's desktop app runs that bare command on
+ * a host it reaches over SSH, and knows no one's name there. Such a device reaches nothing until
+ * it says whose it is (AC5), so it never silently belongs to someone the server assumed.
  */
 
 export const personPairingFlags = {
@@ -88,6 +93,8 @@ export const pairingLinkForPerson = Effect.fn("j5.sharing.cliPairing.pairingLink
     /** The permissions `--scope` asked for; upstream's default when it was not given. */
     readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
     readonly mint: (scopes: ReadonlyArray<AuthEnvironmentScope>) => Effect.Effect<L, E, R>;
+    /** What a link without `--person` is: refused, or one for a device the server will ask about. */
+    readonly withoutPerson: "refuse" | "ask";
   }) {
     const sql = yield* SqlClient.SqlClient;
     const people = yield* PersonAccess;
@@ -118,6 +125,19 @@ export const pairingLinkForPerson = Effect.fn("j5.sharing.cliPairing.pairingLink
 
     const everyone = yield* people.listPeople;
     const { flags } = input;
+    if (
+      Option.isNone(flags.person) &&
+      input.withoutPerson === "ask" &&
+      Option.isNone(flags.level) &&
+      Option.isNone(flags.project) &&
+      Option.isNone(flags.thread)
+    ) {
+      // Upstream's link as upstream makes it, with no record of a person.
+      return {
+        link: yield* input.mint(input.scopes),
+        said: "Made a link for a device the server does not know yet: whoever pairs it is asked who they are before they can use anything.",
+      };
+    }
     if (Option.isNone(flags.person)) {
       const named = yield* Effect.forEach(
         everyone.filter((record) => record.person.displayName !== null),

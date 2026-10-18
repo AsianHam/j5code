@@ -491,6 +491,7 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
     return yield* j5PairingLinkForPerson({
       flags: input.person,
       scopes: input.scopes,
+      withoutPerson: "refuse",
       mint: (scopes) =>
         environmentAuth.createPairingLink({
           scopes,
