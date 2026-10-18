@@ -36,6 +36,8 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ProjectEnrichmentService from "../../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import { subscribeOrchestrationV2Shell } from "../../ws.ts";
+import type { PersonScope } from "@t3tools/contracts/j5";
+
 import * as GuestView from "./GuestView.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 
@@ -50,10 +52,12 @@ const session = (id: string, subject: string): EnvironmentAuth.AuthenticatedSess
   method: "browser-session-cookie",
   scopes: [AuthOrchestrationReadScope],
 });
-const MEMBER = session("session:member", "one-time-token");
-const GUEST = session("session:guest", PersonAccess.GUEST_SESSION_SUBJECT);
-/** Carries the guest mark, and no person was ever recorded for it. */
-const STRAY = session("session:stray", PersonAccess.GUEST_SESSION_SUBJECT);
+/** The first owner's own device: the link the server printed when it started. */
+const MEMBER = session("session:member", "administrative-bootstrap");
+/** A Viewer's device, once `guest` has recorded whose it is. */
+const GUEST = session("session:guest", "one-time-token");
+/** A device no one has claimed: no person was ever recorded for it. */
+const STRAY = session("session:stray", "cloud-connect");
 const SESSIONS: Record<string, EnvironmentAuth.AuthenticatedSession> = {
   member: MEMBER,
   guest: GUEST,
@@ -228,15 +232,17 @@ const write = Effect.fn("test.write")(function* (
   return stored.at(-1)!.sequence;
 });
 
-/** A guest for `GUEST`'s session, holding the grants given. */
-const guest = Effect.fn("test.guest")(function* (
-  ...targets: ReadonlyArray<PersonAccess.GrantTarget>
-) {
+/** A Viewer for `GUEST`'s session, at the scopes given. */
+const guest = Effect.fn("test.guest")(function* (...targets: ReadonlyArray<PersonScope>) {
   const access = yield* PersonAccess.PersonAccess;
-  const person = yield* access.createGuest({ displayName: "Contractor" });
-  yield* access.bindSession({ sessionId: GUEST.sessionId, personId: person.personId });
-  for (const target of targets) {
-    yield* access.putGrant({ personId: person.personId, target, level: "view" });
+  const person = yield* access.createPerson({ displayName: "Contractor" });
+  yield* access.bindSession({
+    sessionId: GUEST.sessionId,
+    personId: person.personId,
+    ceiling: null,
+  });
+  for (const scope of targets) {
+    yield* access.setLevel({ personId: person.personId, scope, level: "viewer" });
   }
   return person.personId;
 });
@@ -787,10 +793,10 @@ live(
     });
 
     // Granted after connecting (AC10): the thread arrives, with its project.
-    yield* access.putGrant({
+    yield* access.setLevel({
       personId,
-      target: { kind: "thread", threadId: second },
-      level: "view",
+      scope: { kind: "thread", threadId: second },
+      level: "viewer",
     });
     const afterGrant = yield* until(feed, isSnapshot);
     assert.deepStrictEqual(listed(afterGrant), {
@@ -800,7 +806,7 @@ live(
     assertNothingOfTheHost(afterGrant);
 
     // Removed (AC11): it leaves, and so does the project it alone made visible.
-    yield* access.removeGrant({ personId, target: { kind: "thread", threadId: first } });
+    yield* access.removeLevel({ personId, scope: { kind: "thread", threadId: first } });
     assert.deepStrictEqual(listed(yield* until(feed, isSnapshot)), {
       threads: [second],
       projects: [other],
@@ -818,11 +824,11 @@ live(
     ]);
 
     // Another guest's grants changing does not disturb this one's feed.
-    const stranger = yield* access.createGuest({ displayName: "Someone else" });
-    yield* access.putGrant({
+    const stranger = yield* access.createPerson({ displayName: "Someone else" });
+    yield* access.setLevel({
       personId: stranger.personId,
-      target: { kind: "thread", threadId: first },
-      level: "view",
+      scope: { kind: "thread", threadId: first },
+      level: "viewer",
     });
     const again = yield* write("thread.metadata-updated", {
       id: second,
@@ -986,7 +992,7 @@ live(
     const access = yield* PersonAccess.PersonAccess;
     const unreadable = PersonAccess.PersonAccess.of({
       ...access,
-      threadAccess: () =>
+      threadLevel: () =>
         Effect.fail(
           new PersonAccess.PersonAccessStorageError({
             operation: "read a person's access to a thread",

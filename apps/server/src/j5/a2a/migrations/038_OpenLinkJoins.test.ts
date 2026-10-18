@@ -17,7 +17,7 @@ it.effect("records each person who joined by an open link as one join of that li
     yield* person("human:named", null, "2026-10-01T00:00:00.000Z");
     yield* person("human:joined", "link-a", "2026-10-02T00:00:00.000Z");
 
-    yield* runJ5A2AMigrations();
+    yield* runJ5A2AMigrations({ toMigrationInclusive: 38 });
 
     assert.deepStrictEqual(
       yield* sql`SELECT link_id, person_id, joined_at FROM j5_a2a_open_link_join`,

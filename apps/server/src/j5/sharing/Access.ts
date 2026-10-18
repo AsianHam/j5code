@@ -329,7 +329,9 @@ const make = Effect.gen(function* () {
     renewOutdatedDevices: Effect.gen(function* () {
       const everyone = yield* people.listPeople;
       let renewed = 0;
-      for (const record of everyone) {
+      // The first owner's devices are left as they are: their level never changes, their
+      // permissions are their ceiling, and a phone among them could not renew.
+      for (const record of everyone.filter((entry) => !entry.person.firstOwner)) {
         const highest = highestOf(record.levels);
         yield* committed(
           Effect.gen(function* () {
@@ -354,3 +356,21 @@ export const layer: Layer.Layer<
   never,
   SqlClient.SqlClient | PersonAccess | SessionStore.SessionStore
 > = Layer.effect(Access, make);
+
+/**
+ * Renews at startup every device whose permissions are not what its level gives: a guest's device
+ * from before levels, or any device after an upstream advance reshaped the mapping. A failure is
+ * logged and the server starts; those devices keep what they held until their person's level
+ * next changes.
+ */
+export const renewOutdatedDevicesAtStartup = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const access = yield* Access;
+    const renewed = yield* access.renewOutdatedDevices;
+    if (renewed > 0) yield* Effect.logInfo("J5 renewed devices into their level", { renewed });
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.logError("J5 could not renew devices into their level at startup", { cause }),
+    ),
+  ),
+);

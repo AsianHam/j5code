@@ -1006,6 +1006,10 @@ it.effect("lists member agents and registry-derived person capabilities", () =>
       INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
       VALUES (${secondPersonId}, 0, ${timestamp})
     `;
+    yield* sql`
+        INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+        VALUES (${secondPersonId}, 'server', '', 'collaborator', ${timestamp}, ${timestamp})
+      `;
     const rows = yield* (yield* A2ASendService).listParticipants(sender.threadId);
     assert.deepStrictEqual(
       rows.map((row) => ({

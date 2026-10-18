@@ -26,14 +26,19 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import type * as SqlClient from "effect/sql/SqlClient";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
-import { layer as accessLayer } from "./Access.ts";
+import { layer as accessLayer, renewOutdatedDevicesAtStartup } from "./Access.ts";
 import { issueGuestProjectIconUrl, projectIdOfGuestIconPath } from "./GuestProjectIcons.ts";
-import { PAIRED_AS_SOMEONE_ELSE, PairingIntents } from "./PairingIntents.ts";
+import {
+  PAIRED_AS_SOMEONE_ELSE,
+  PairingIntents,
+  peopleLayer as peopleRecordsLayer,
+} from "./PairingIntents.ts";
 import { layer as peopleLayer } from "./People.ts";
 import {
   type MessageAsset,
@@ -554,9 +559,23 @@ export const gateEnvironmentAuth = <A, E, R>(
   >,
 ) =>
   peopleLayer.pipe(
+    Layer.provideMerge(renewOutdatedDevicesAtStartup),
     Layer.provideMerge(accessLayer),
     Layer.provideMerge(layerGatedEnvironmentAuth),
     Layer.provideMerge(upstream),
+  );
+
+/**
+ * Upstream's auth for the `j5` CLI, which builds its own rather than asking the running server:
+ * ending a session from the CLI cuts it loose from its person too, so it can never renew, and the
+ * CLI can record whose device a pairing link it makes is for.
+ */
+export const cliEnvironmentAuth = <E, R>(
+  runtime: Layer.Layer<EnvironmentAuth.EnvironmentAuth | SqlClient.SqlClient, E, R>,
+) =>
+  layerGatedEnvironmentAuth.pipe(
+    Layer.provideMerge(peopleRecordsLayer),
+    Layer.provideMerge(runtime),
   );
 
 const notSharedError = () =>

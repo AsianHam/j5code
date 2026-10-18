@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - the id of a first owner recorded here.
-import * as NodeCrypto from "node:crypto";
-
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -53,22 +50,19 @@ export default Effect.gen(function* () {
     ON j5_a2a_person_level(scope_kind, scope_id)
   `;
 
-  // The first owner. A server that has run since migration 006 has one already.
+  // The first owner. Every server that has run since migration 006 recorded one at startup; one
+  // that never ran gets theirs, with its level, when it first starts (`HumanPersonRegistry`).
   const operators = yield* sql<{ readonly person_id: string }>`
     SELECT person_id FROM j5_a2a_human_person WHERE is_local_operator = 1
   `;
-  const firstOwner = operators[0]?.person_id ?? `human:${NodeCrypto.randomUUID()}`;
-  if (operators.length === 0) {
+  const firstOwner = operators[0]?.person_id;
+  if (firstOwner !== undefined) {
     yield* sql`
-      INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
-      VALUES (${firstOwner}, 1, ${now})
+      INSERT INTO j5_a2a_person_level
+        (person_id, scope_kind, scope_id, level, created_at, updated_at)
+      VALUES (${firstOwner}, 'server', '', 'owner', ${now}, ${now})
     `;
   }
-  yield* sql`
-    INSERT INTO j5_a2a_person_level
-      (person_id, scope_kind, scope_id, level, created_at, updated_at)
-    VALUES (${firstOwner}, 'server', '', 'owner', ${now}, ${now})
-  `;
 
   yield* sql`
     INSERT INTO j5_a2a_person_level
@@ -85,7 +79,7 @@ export default Effect.gen(function* () {
   // the session so that the device can renew it.
   yield* sql`ALTER TABLE j5_a2a_person_session ADD COLUMN ceiling_scopes TEXT`;
   yield* sql`ALTER TABLE j5_a2a_person_session ADD COLUMN renew_pending_since TEXT`;
-  if (hasSessions) {
+  if (hasSessions && firstOwner !== undefined) {
     yield* sql`
       INSERT INTO j5_a2a_person_session (session_id, person_id, bound_at, ceiling_scopes)
       SELECT session.session_id, ${firstOwner}, ${now}, session.scopes

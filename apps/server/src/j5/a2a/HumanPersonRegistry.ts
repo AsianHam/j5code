@@ -22,9 +22,10 @@ export class A2ALocalOperatorNotFoundError extends Schema.TaggedError<A2ALocalOp
   }
 }
 
-// Who writes to every thread: the people who hold Collaborator or Owner at server scope.
+// Who writes to every thread: the first owner, and the people who hold Collaborator or Owner at
+// server scope.
 const WIDE_WRITER = `
-  EXISTS (
+  j5_a2a_human_person.is_local_operator = 1 OR EXISTS (
     SELECT 1 FROM j5_a2a_person_level AS held
     WHERE held.person_id = j5_a2a_human_person.person_id
       AND held.scope_kind = 'server'
@@ -42,7 +43,7 @@ export const listRegisteredHumanPersonIds = Effect.fn(
   const rows = yield* sql<HumanPersonRow>`
     SELECT person_id
     FROM j5_a2a_human_person
-    WHERE ${sql.literal(WIDE_WRITER)}
+    WHERE (${sql.literal(WIDE_WRITER)})
     ORDER BY person_id
   `;
   return rows.map((row) => ParticipantId.make(row.person_id));
@@ -55,7 +56,7 @@ export const listRegisteredHumanPersonNames = Effect.fn(
   const rows = yield* sql<{ readonly person_id: string; readonly display_name: string }>`
     SELECT person_id, display_name
     FROM j5_a2a_human_person
-    WHERE ${sql.literal(WIDE_WRITER)} AND display_name IS NOT NULL
+    WHERE (${sql.literal(WIDE_WRITER)}) AND display_name IS NOT NULL
   `;
   return new Map(rows.map((row) => [row.person_id, row.display_name]));
 });
@@ -67,7 +68,7 @@ export const isRegisteredHumanPerson = Effect.fn(
   const rows = yield* sql<{ readonly count: number }>`
     SELECT COUNT(*) AS count
     FROM j5_a2a_human_person
-    WHERE person_id = ${personId} AND ${sql.literal(WIDE_WRITER)}
+    WHERE person_id = ${personId} AND (${sql.literal(WIDE_WRITER)})
   `;
   return (rows[0]?.count ?? 0) === 1;
 });

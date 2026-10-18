@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
+import { ensureLocalOperatorHumanPerson } from "../HumanPersonRegistry.ts";
 import { runJ5A2AMigrations } from "../Migrations.ts";
 
 const AT = "2026-10-01T00:00:00.000Z";
@@ -179,10 +180,12 @@ it.effect("moves people, grants, devices and links onto levels", () =>
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
-it.effect("makes a first owner on a server that never recorded one", () =>
+it.effect("leaves a server that never ran to record its first owner when it starts", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* runJ5A2AMigrations();
+    assert.lengthOf(yield* sql`SELECT 1 FROM j5_a2a_human_person`, 0);
+    yield* ensureLocalOperatorHumanPerson(sql);
     assert.deepStrictEqual(
       yield* sql`
         SELECT person.is_local_operator, held.scope_kind, held.level
