@@ -65,6 +65,8 @@ export type CrewNoticePresentation =
       readonly proposalId: string;
       readonly requestKind: "roster" | "addition";
       readonly decision: "approved" | "declined";
+      /** Who decided, as the server names them in a shared conversation; null anywhere else. */
+      readonly decidedBy: string | null;
       readonly crewName: string | null;
       readonly crewInstanceId: string | null;
       readonly crewVersion: number | null;
@@ -164,6 +166,7 @@ const parseGate = (text: string): CrewNoticePresentation | null => {
     proposalId,
     requestKind,
     decision,
+    decidedBy: field(block, "decided_by"),
     crewName: field(block, "crew_name"),
     crewInstanceId: field(block, "crew_instance_id"),
     crewVersion: version === null || !/^\d+$/.test(version) ? null : Number(version),
