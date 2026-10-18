@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { AuthAccessReadScope, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import type {
   HeldPersonLevel,
   PeopleEntry,
@@ -32,6 +32,7 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { useProject, useThreadShell } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useConnectionAccess } from "./access";
 import { PersonAvatar } from "./PersonAvatar";
@@ -137,6 +138,7 @@ function ServerPeople({
   readonly picker: React.ReactNode;
 }) {
   const access = useConnectionAccess(environmentId);
+  const canReadPeople = useEnvironmentScope(environmentId, AuthAccessReadScope);
   if (access === null) {
     return (
       <SettingsPageContainer width="wide">
@@ -159,7 +161,9 @@ function ServerPeople({
       </SettingsPageContainer>
     );
   }
-  return access.owner ? (
+  // An Owner whose device was paired without permission to see who has access gets their own
+  // row, from which they still rename themselves and leave (AC48).
+  return access.owner && canReadPeople ? (
     <OwnedServerPeople environmentId={environmentId} picker={picker} />
   ) : (
     <SettingsPageContainer width="wide">
@@ -589,6 +593,18 @@ function HeldLevelLine({
         ) : (
           <span className="text-muted-foreground">{levelLabel(held.level)}</span>
         )}
+        {/* A person leaves what they hold, whatever their device may manage; the first owner
+            leaves nothing (AC48, AC51). */}
+        {person.you && !person.firstOwner ? (
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            onClick={() => openSharingDialog({ kind: "leave", environmentId, scope: held.scope })}
+          >
+            <LogOutIcon className="size-3" />
+            Leave
+          </Button>
+        ) : null}
       </div>
       {pending !== null ? (
         <div className="flex flex-col gap-2">

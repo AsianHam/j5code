@@ -34,6 +34,27 @@ describe("the thread menu for an Owner", () => {
     ]);
   });
 
+  it("offers Leave on a thread the Owner holds a level on, whatever their device manages", () => {
+    expect(
+      labels(
+        sharingMenuItems(
+          upstream,
+          { owner: true, level: "owner", holdsThread: true },
+          { canShare: false },
+        ),
+      ),
+    ).toEqual([
+      "Rename thread",
+      "Mark unread",
+      "Copy",
+      "Share thread…",
+      "Project settings",
+      "Leave thread",
+      "Archive thread",
+      "Delete",
+    ]);
+  });
+
   it("greys Share on a device without Manage access, with no notice", () => {
     const share = sharingMenuItems(upstream, null, { canShare: false }).find(
       (item) => item.label === "Share thread…",
@@ -46,7 +67,7 @@ describe("the thread menu for someone who is not an Owner", () => {
   it("leaves out archiving, deleting and project settings for a Collaborator", () => {
     const items = sharingMenuItems(
       upstream,
-      { level: "collaborator", holdsThread: false },
+      { owner: false, level: "collaborator", holdsThread: false },
       { canShare: false },
     );
     expect(labels(items)).toEqual(["Rename thread", "Mark unread", "Copy", "Share thread…"]);
@@ -58,7 +79,7 @@ describe("the thread menu for someone who is not an Owner", () => {
       labels(
         sharingMenuItems(
           upstream,
-          { level: "collaborator", holdsThread: true },
+          { owner: false, level: "collaborator", holdsThread: true },
           { canShare: false },
         ),
       ),
@@ -68,7 +89,11 @@ describe("the thread menu for someone who is not an Owner", () => {
   it("gives a Viewer no Mark unread, since the read marker is everyone's", () => {
     expect(
       labels(
-        sharingMenuItems(upstream, { level: "viewer", holdsThread: true }, { canShare: false }),
+        sharingMenuItems(
+          upstream,
+          { owner: false, level: "viewer", holdsThread: true },
+          { canShare: false },
+        ),
       ),
     ).toEqual(["Rename thread", "Copy", "Share thread…", "Leave thread"]);
   });
@@ -76,7 +101,11 @@ describe("the thread menu for someone who is not an Owner", () => {
   it("offers no Leave to someone who reaches the thread only through a wider scope", () => {
     expect(
       labels(
-        sharingMenuItems(upstream, { level: "viewer", holdsThread: false }, { canShare: false }),
+        sharingMenuItems(
+          upstream,
+          { owner: false, level: "viewer", holdsThread: false },
+          { canShare: false },
+        ),
       ),
     ).not.toContain("Leave thread");
   });

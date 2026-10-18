@@ -13,11 +13,13 @@ const LEAVE_THREAD = "j5:leave-thread";
 export type SharingMenuActionId = typeof SHARE_THREAD | typeof LEAVE_THREAD;
 
 /**
- * What the thread's server says of someone who does not own it: their level over the thread,
- * and whether they hold a level on the thread itself, which is what they can leave. `null` for
- * an Owner, and while the server has not answered.
+ * What the thread's server says of the person: whether they own it, their level over the thread,
+ * and whether they hold a level on the thread itself, which is what they can leave, whatever
+ * their device may manage. The first owner leaves nothing. `null` while the server has not
+ * answered, or for a session that is no person's.
  */
 export interface SharingMenuAccess {
+  readonly owner: boolean;
   readonly level: PersonLevel | null;
   readonly holdsThread: boolean;
 }
@@ -68,7 +70,8 @@ export function sharingMenuItems<Id extends string>(
   };
   const removed = (item: ContextMenuItem<Id>) =>
     access !== null &&
-    (OWNERS_ONLY.has(item.id) || (access.level === "viewer" && NOT_A_VIEWERS.has(item.id)));
+    ((!access.owner && OWNERS_ONLY.has(item.id)) ||
+      (access.level === "viewer" && NOT_A_VIEWERS.has(item.id)));
   const kept = items.filter((item) => !removed(item));
   const copy = kept.findIndex((item) => item.id === "copy");
   const withShare: ReadonlyArray<ContextMenuItem<Id | SharingMenuActionId>> =
@@ -80,12 +83,12 @@ export function sharingMenuItems<Id extends string>(
     destructive: true,
     separatorBefore: true,
   };
-  // Where Archive stood: before whatever upstream listed after it, or at the end.
+  // Where Archive stands or stood: before it, or whatever upstream listed after it, or at the end.
   const archive = items.findIndex((item) => item.id === "archive");
   const after =
     archive === -1
       ? -1
-      : withShare.findIndex((item) => items.indexOf(item as ContextMenuItem<Id>) > archive);
+      : withShare.findIndex((item) => items.indexOf(item as ContextMenuItem<Id>) >= archive);
   const before = after === -1 ? withShare.length : after;
   return [...withShare.slice(0, before), leave, ...withShare.slice(before)];
 }

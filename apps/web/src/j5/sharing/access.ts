@@ -102,11 +102,13 @@ provideSharingThreadOperability((thread) =>
 
 provideSharingMenuAccess((thread) => {
   const access = appAtomRegistry.get(j5Sharing.connectionAccess(thread.environmentId));
-  if (access === null || isOwnerAccess(access)) return null;
+  if (access === null || access.kind === "service") return null;
   return {
+    owner: isOwnerAccess(access),
     level: appAtomRegistry.get(j5Sharing.threadLevel(thread.environmentId, thread.threadId)),
     holdsThread:
       access.kind === "person" &&
+      !access.firstOwner &&
       access.levels.some(
         (held) => held.scope.kind === "thread" && held.scope.threadId === thread.threadId,
       ),
