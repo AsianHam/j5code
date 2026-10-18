@@ -34,8 +34,6 @@ export class DesktopUserDataInitializationError extends Schema.TaggedError<Deskt
 }
 
 /**
- * Select Electron's profile independently of the server's J5 home.
- *
  * J5 (FORK.md case 25, merge decision #4): the profile stays `j5code` /
  * `j5code-dev`, or the older productName-derived `J5 Code` / `J5 Code (Dev)`
  * directory when an install already lives there. Upstream moved its production

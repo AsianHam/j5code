@@ -7,7 +7,7 @@
  * 4 recipient not found or ambiguous, 5 refused by policy, 6 server unreachable,
  * 1 anything else. Nothing here ever prompts: a missing input is a usage error.
  */
-import { AuthA2ASendScope, AuthAdministrativeScopes } from "@t3tools/contracts";
+import { AuthA2ASendScope, AuthStandardClientScopes } from "@t3tools/contracts";
 import {
   AddPeerResponse,
   IssuePeerCredentialResponse,
@@ -474,7 +474,7 @@ const withAdminToken = <A, E, R>(
     }
     return yield* withLocalEnvironmentAuth(flags, (environmentAuth) =>
       Effect.acquireUseRelease(
-        environmentAuth.issueSession({ scopes: AuthAdministrativeScopes, label }),
+        environmentAuth.issueSession({ scopes: AuthStandardClientScopes, label }),
         (issued) => use(issued.token),
         (issued) =>
           environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),

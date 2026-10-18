@@ -375,10 +375,21 @@ export const live: Layer.Layer<
     const outbox = yield* EffectOutboxV2;
     const peers = yield* PeerRegistryService;
     const httpClient = yield* HttpClient.HttpClient;
+    const settledEffect = Effect.fn(function* (effectId: string) {
+      yield* outbox.awaitSettled(effectId).pipe(Effect.timeout("30 seconds"));
+      const row = yield* outbox.get(effectId);
+      if (Option.isNone(row)) {
+        return yield* new A2ADeliveryTransportError({
+          operation: "await peer steering",
+          cause: `Steering effect ${effectId} does not exist.`,
+        });
+      }
+      return row.value;
+    });
     const awaitSteeringOutcome = Effect.fn(function* (effectId: string) {
       // Only bound the observer. The provider effect may still acknowledge later;
       // retries must inspect that same durable effect, never inject a new one.
-      const outcome = yield* outbox.awaitSettled(effectId).pipe(Effect.timeout("30 seconds"));
+      const outcome = yield* settledEffect(effectId);
       if (outcome.status !== "succeeded") {
         return yield* new A2ADeliveryTransportError({
           operation: "await peer steering",
@@ -426,7 +437,7 @@ export const live: Layer.Layer<
             (effect) => effect.request.type === "provider-turn.steer",
           );
           if (steer !== undefined) {
-            const outcome = yield* outbox.awaitSettled(steer.id).pipe(Effect.timeout("30 seconds"));
+            const outcome = yield* settledEffect(steer.id);
             return outcome.status === "succeeded" ? ("delivered" as const) : ("cancelled" as const);
           }
           const projection = yield* threads.getThreadProjection(participant.threadId);

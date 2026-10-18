@@ -65,7 +65,7 @@ function PlaybookRunCard({
         <h3 className="font-medium">
           {owner && environment.connection.phase === "connected" ? (
             <Link
-              className="outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-ring"
+              className="outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-ring"
               to="/$environmentId/$threadId"
               params={buildThreadRouteParams(
                 scopeThreadRef(environment.environmentId, run.ownerThreadId),
@@ -103,7 +103,7 @@ function PlaybookRunCard({
                 aria-valuenow={run.position}
                 aria-valuetext={`${display.position} · ${display.currentTitle}`}
                 tabIndex={0}
-                className="relative z-10 mt-2 h-2 overflow-hidden rounded-sm bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="relative z-10 mt-2 h-2 overflow-hidden rounded-sm bg-muted outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               />
             }
           >

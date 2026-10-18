@@ -1,9 +1,4 @@
-import {
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -24,12 +19,12 @@ export const repointCliLauncherToSelf = Effect.fn("j5.cli.repoint_launcher_to_se
   baseDir: string,
 ) {
   const path = yield* Path.Path;
-  const environment = yield* HostProcessEnvironment;
-  const executable = yield* HostProcessExecutablePath;
+  const environment = yield* HostProcess.Environment;
+  const executable = yield* HostProcess.ExecutablePath;
   const versionsDir = pinnedRuntimeVersionsDir(path, baseDir);
   if (
-    !(yield* HostProcessIsExecutable) ||
-    (yield* HostProcessPlatform) === "win32" ||
+    !(yield* HostProcess.IsExecutable) ||
+    (yield* HostProcess.Platform) === "win32" ||
     !launcherOwnsVersionsDir(path, versionsDir, executable)
   ) {
     return Option.none<string>();

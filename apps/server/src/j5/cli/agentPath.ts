@@ -1,9 +1,4 @@
-import {
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergePathEntries } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -30,18 +25,18 @@ export const exposeOwnCliToAgents = Effect.fn("j5.cli.expose_own_cli_to_agents")
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const environment = yield* HostProcessEnvironment;
-  const platform = yield* HostProcessPlatform;
+  const environment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
   if (platform === "win32") return;
 
   const directory = agentCliDirectory(path, baseDir);
   const command = path.join(directory, "j5");
-  if (yield* HostProcessIsExecutable) {
+  if (yield* HostProcess.IsExecutable) {
     // Link to a temporary name and rename it over, so `j5` never goes missing.
     const next = `${command}.next`;
     yield* fs.makeDirectory(directory, { recursive: true });
     yield* fs.remove(next, { force: true });
-    yield* fs.symlink(yield* HostProcessExecutablePath, next);
+    yield* fs.symlink(yield* HostProcess.ExecutablePath, next);
     yield* fs.rename(next, command);
   }
   if (!(yield* fs.exists(command))) return;
@@ -58,11 +53,11 @@ export const exposeOwnCliToAgents = Effect.fn("j5.cli.expose_own_cli_to_agents")
 export const withoutAgentCliOnPath = <A, E, R>(baseDir: string, lookup: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const environment = yield* HostProcessEnvironment;
-    const delimiter = (yield* HostProcessPlatform) === "win32" ? ";" : ":";
+    const environment = yield* HostProcess.Environment;
+    const delimiter = (yield* HostProcess.Platform) === "win32" ? ";" : ":";
     const directory = agentCliDirectory(path, baseDir);
     return yield* lookup.pipe(
-      Effect.provideService(HostProcessEnvironment, {
+      Effect.provideService(HostProcess.Environment, {
         ...environment,
         PATH: (environment["PATH"] ?? "")
           .split(delimiter)

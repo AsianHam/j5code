@@ -2,6 +2,7 @@ import {
   AgentCrewInstanceService,
   layer as crewInstanceLayer,
 } from "./AgentCrewInstanceService.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { PlacementCommandId } from "./placementContracts.ts";
 import { dispatchCommand as dispatchIntakeCommand } from "../../orchestration-v2/ThreadMessageIntake.ts";
 import { J5AdaptedThreadToolkit, J5AdaptedThreadHandlersLive } from "./mcp/threadTools.ts";
@@ -65,7 +66,7 @@ import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2InterruptInput,
-  ProviderAdapterV2Shape,
+  ProviderAdapterV2,
   ProviderAdapterV2SteerInput,
   ProviderAdapterV2TurnInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -234,7 +235,7 @@ interface DeliveryHarness {
   readonly activeTurns: Ref.Ref<ReadonlyMap<ThreadId, FakeActiveTurn>>;
 }
 
-const makeOrchestrationAdapter = (harness: DeliveryHarness): ProviderAdapterV2Shape => ({
+const makeOrchestrationAdapter = (harness: DeliveryHarness): ProviderAdapterV2["Service"] => ({
   instanceId: modelSelection.instanceId,
   driver,
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
@@ -389,6 +390,7 @@ const makeTestLayer = (
       }),
     ),
     Layer.provide(mcpSessionRegistryTestLayer),
+    Layer.provide(McpProviderSessions.layer),
     Layer.provide(checkpointStoreTestLayer),
     Layer.provide(serverConfigLayer),
     Layer.provideMerge(ServerSettingsService.layerTest(settings)),
@@ -1947,7 +1949,8 @@ it.effect(
         );
         yield* worker.drain();
         yield* Fiber.join(running);
-        assert.equal((yield* outbox.awaitSettled(start!.id)).status, "succeeded");
+        yield* outbox.awaitSettled(start!.id);
+        assert.equal(Option.getOrThrow(yield* outbox.get(start!.id)).status, "succeeded");
         const inputs = yield* Ref.get(harness.startedInputs);
         assert.lengthOf(inputs, 1);
         assert.equal(inputs[0]?.threadId, target.threadId);

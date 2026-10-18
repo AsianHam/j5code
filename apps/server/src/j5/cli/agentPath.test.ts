@@ -3,14 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import {
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessInvokedAs,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-  HostProcessWorkingDirectory,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { resolveLauncherPath } from "../../cli/update.ts";
 import { exposeOwnCliToAgents, withoutAgentCliOnPath } from "./agentPath.ts";
@@ -37,10 +30,10 @@ const startServer = (input: {
   readonly isExecutable: boolean;
 }) =>
   exposeOwnCliToAgents(input.baseDir).pipe(
-    Effect.provideService(HostProcessEnvironment, input.environment),
-    Effect.provideService(HostProcessExecutablePath, input.executable),
-    Effect.provideService(HostProcessIsExecutable, input.isExecutable),
-    Effect.provideService(HostProcessPlatform, "linux"),
+    Effect.provideService(HostProcess.Environment, input.environment),
+    Effect.provideService(HostProcess.ExecutablePath, input.executable),
+    Effect.provideService(HostProcess.IsExecutable, input.isExecutable),
+    Effect.provideService(HostProcess.Platform, "linux"),
   );
 
 it.layer(NodeServices.layer)("j5 for the server's agents", (it) => {
@@ -125,12 +118,12 @@ it.layer(NodeServices.layer)("j5 for the server's agents", (it) => {
 
       // Typed as `j5` in a J5 terminal, where the agents' directory is first.
       const found = yield* withoutAgentCliOnPath(baseDir, resolveLauncherPath).pipe(
-        Effect.provideService(HostProcessEnvironment, {
+        Effect.provideService(HostProcess.Environment, {
           PATH: `${path.dirname(agents)}:${path.dirname(installer)}`,
         }),
-        Effect.provideService(HostProcessInvokedAs, "j5"),
-        Effect.provideService(HostProcessWorkingDirectory, baseDir),
-        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcess.InvokedAs, "j5"),
+        Effect.provideService(HostProcess.WorkingDirectory, baseDir),
+        Effect.provideService(HostProcess.Platform, "linux"),
       );
 
       assert.equal(found, installer);

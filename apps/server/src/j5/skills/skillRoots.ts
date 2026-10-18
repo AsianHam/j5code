@@ -7,7 +7,7 @@ import {
   type ProviderInstanceConfigMap,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -25,14 +25,14 @@ export const resolveSkillRoot = Effect.fn("j5.skills.resolveLinkRoot")(function*
   cwd?: string,
 ) {
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (instance.driver !== "codex" && instance.driver !== "claudeAgent")
     return yield* failure("Linking is supported only for Codex and Claude.");
   if (scope === "project") {
     if (!cwd) return yield* failure("Select an existing project for project scope.");
     return path.join(cwd, instance.driver === "codex" ? ".agents" : ".claude", "skills");
   }
-  const environment = mergeProviderInstanceEnvironment(instance.environment);
+  const environment = yield* mergeProviderInstanceEnvironment(instance.environment);
   if (instance.driver === "codex") {
     yield* decodeCodexSettings(instance.config ?? {}).pipe(Effect.mapError(failure));
     // CODEX_HOME (including shadow homes) does not change the user .agents root.
@@ -77,7 +77,7 @@ export const affectedSkillProviderIds = Effect.fn("j5.skills.affectedProviders")
           if (instance.driver === "codex" || instance.driver === "claudeAgent") {
             candidates.add(yield* resolveSkillRoot(instance, projectCwd ? "project" : "user", cwd));
           } else if (instance.driver === "cursor") {
-            const env = mergeProviderInstanceEnvironment(instance.environment);
+            const env = yield* mergeProviderInstanceEnvironment(instance.environment);
             const base =
               projectCwd ?? (env.HOME?.trim() || env.USERPROFILE?.trim() || NodeOS.homedir());
             for (const directory of [".cursor", ".agents", ".codex", ".claude"])

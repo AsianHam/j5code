@@ -163,7 +163,7 @@ function SpawnedChildrenRows(
 }
 
 const childRowClassName =
-  "flex w-full min-w-0 flex-col gap-0.5 rounded-md px-1.5 py-1 text-left outline-hidden hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring";
+  "flex w-full min-w-0 flex-col gap-0.5 rounded-md px-1.5 py-1 text-left outline-hidden hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 function SpawnedChildGroupRows(
   props: SpawnedChildActions & {
@@ -185,7 +185,7 @@ function SpawnedChildGroupRows(
         <button
           type="button"
           aria-expanded={isOpen}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-xs text-muted-foreground outline-hidden hover:bg-sidebar-row-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-xs text-muted-foreground outline-hidden hover:bg-sidebar-row-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           onClick={(event) => {
             event.stopPropagation();
             props.onToggle();
@@ -212,7 +212,7 @@ function SpawnedChildGroupRows(
             type="button"
             aria-label={`Stop crew ${stoppable.crewName}`}
             disabled={stopping}
-            className="shrink-0 rounded border border-border/60 px-1.5 py-px text-3xs leading-4 text-muted-foreground outline-hidden hover:bg-sidebar-row-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="shrink-0 rounded border border-border/60 px-1.5 py-px text-3xs leading-4 text-muted-foreground outline-hidden hover:bg-sidebar-row-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-50"
             onClick={(event) => {
               event.stopPropagation();
               setStopping(true);

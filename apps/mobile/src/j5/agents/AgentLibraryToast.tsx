@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 
 export interface AgentLibraryNotification {
   readonly type: "success" | "error";

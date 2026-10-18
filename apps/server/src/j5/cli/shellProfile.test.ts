@@ -4,7 +4,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { J5_PATH_MARKER } from "@t3tools/shared/j5/shellProfile";
 
 import { planShellCleanup, removeAppLinks, removeJ5PathLines } from "./shellProfile.ts";
@@ -33,7 +33,7 @@ const makeHome = Effect.gen(function* () {
 
 const plan = (home: string, baseDir: string, folders?: ReadonlyArray<string>) =>
   planShellCleanup(baseDir, folders).pipe(
-    Effect.provideService(HostProcessEnvironment, { HOME: home }),
+    Effect.provideService(HostProcess.Environment, { HOME: home }),
   );
 
 it.layer(NodeServices.layer)("j5 uninstall's shell cleanup", (it) => {
@@ -50,7 +50,7 @@ it.layer(NodeServices.layer)("j5 uninstall's shell cleanup", (it) => {
       yield* removeJ5PathLines(profiles);
       assert.equal(yield* fs.readFileString(path.join(home, ".zshrc")), before);
       assert.equal(yield* fs.readFileString(path.join(home, ".bashrc")), before);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("takes the link the desktop app's install command made", () =>
@@ -64,7 +64,7 @@ it.layer(NodeServices.layer)("j5 uninstall's shell cleanup", (it) => {
       const { profiles, installerLink } = yield* plan(home, baseDir);
       assert.equal(installerLink, command);
       assert.deepStrictEqual(profiles, [path.join(home, ".zshrc")]);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("leaves another home's j5 and its line alone", () =>
@@ -77,7 +77,7 @@ it.layer(NodeServices.layer)("j5 uninstall's shell cleanup", (it) => {
         installerLink: undefined,
         appLinks: [],
       });
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("keeps every other byte of a non-UTF-8 profile, including .profile", () =>
@@ -97,7 +97,7 @@ it.layer(NodeServices.layer)("j5 uninstall's shell cleanup", (it) => {
 
       yield* removeJ5PathLines(profiles);
       assert.deepStrictEqual([...(yield* fs.readFile(profile))], [...before]);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   // The app can link into any of four folders; the tests stand in for the
@@ -128,7 +128,7 @@ it.layer(NodeServices.layer)("j5 uninstall's shell cleanup", (it) => {
       );
       yield* removeAppLinks(appLinks);
       for (const link of appLinks) assert.isFalse(yield* fs.exists(link));
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("leaves another home's link, and a regular file named j5", () =>
@@ -140,7 +140,7 @@ it.layer(NodeServices.layer)("j5 uninstall's shell cleanup", (it) => {
       yield* fs.writeFileString(path.join(folders[1]!, "j5"), "#!/bin/sh\n");
 
       assert.deepStrictEqual((yield* plan(home, baseDir, folders)).appLinks, []);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("reports a folder it can't write to and carries on", () =>
@@ -167,6 +167,6 @@ it.layer(NodeServices.layer)("j5 uninstall's shell cleanup", (it) => {
         lines.join("\n"),
         `${path.join(folders[0]!, "j5")}; the desktop app's j5 link is left behind`,
       );
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 });

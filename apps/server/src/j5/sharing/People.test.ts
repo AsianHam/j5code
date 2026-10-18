@@ -3,11 +3,11 @@ import { assert, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
-  AuthAdministrativeScopes,
   AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
+  AuthRelayWriteScope,
   AuthSessionId,
   AuthStandardClientScopes,
   ProjectId,
@@ -385,7 +385,7 @@ it.layer(testLayer)("share links", (it) => {
       for (const subject of ["one-time-token", "desktop-bootstrap", "administrative-bootstrap"]) {
         // The very same effect: nothing is read, written or wrapped for a member.
         assert.strictEqual(
-          tied({ subject, scopes: AuthAdministrativeScopes }, "credential")(issue),
+          tied({ subject, scopes: AuthStandardClientScopes }, "credential")(issue),
           issue,
         );
       }
@@ -1548,11 +1548,17 @@ it.layer(testLayer)("who may ask for what", (it) => {
         subject: "one-time-token",
         scopes,
       });
-      const admin = member(AuthAdministrativeScopes);
-      // An ordinary paired device: it operates agents and manages no access.
-      const paired = member(AuthStandardClientScopes);
+      const admin = member(AuthStandardClientScopes);
+      // A device paired without Manage access: it operates agents and manages no access.
+      const paired = member(
+        AuthStandardClientScopes.filter(
+          (scope) =>
+            scope !== AuthAccessReadScope &&
+            scope !== AuthAccessWriteScope &&
+            scope !== AuthRelayWriteScope,
+        ),
+      );
       const reader = member([AuthOrchestrationReadScope, AuthAccessReadScope]);
-      assert.notInclude(AuthStandardClientScopes, AuthAccessWriteScope);
 
       for (const method of MANAGE) {
         assert.strictEqual(yield* call(admin, method, {}), "ran", method);
@@ -1580,7 +1586,7 @@ it.layer(testLayer)("who may ask for what", (it) => {
     Effect.gen(function* () {
       const guest = yield* pairedGuest("asks-to-manage");
       // A guest's session never holds these; the gate refuses them even if one somehow did.
-      const overScoped = { ...guest.session, scopes: AuthAdministrativeScopes };
+      const overScoped = { ...guest.session, scopes: AuthStandardClientScopes };
       for (const method of [...MANAGE, J5_SHARING_WS_METHODS.listPeople]) {
         for (const who of [guest.session, overScoped]) {
           assert.match(

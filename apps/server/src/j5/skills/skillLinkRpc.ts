@@ -16,7 +16,7 @@ import {
   type SkillLinkUnlinkBatch,
   type ExistingSkillLink,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -110,7 +110,7 @@ export const makeSkillLinkRpcHandlers = Effect.fn("j5.makeSkillLinkRpcHandlers")
   const settingsService = yield* ServerSettingsService;
   const providers = yield* ProviderRegistry;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const processRunner = yield* ProcessRunner.ProcessRunner.pipe(
     Effect.provide(ProcessRunner.layer),
   );
@@ -290,7 +290,7 @@ export const makeSkillLinkRpcHandlers = Effect.fn("j5.makeSkillLinkRpcHandlers")
         const layout = yield* resolveCodexHomeLayout(config).pipe(
           Effect.provideService(Path.Path, path),
         );
-        const env = mergeProviderInstanceEnvironment(instance.environment);
+        const env = yield* mergeProviderInstanceEnvironment(instance.environment);
         const home = (platform === "win32" ? env.USERPROFILE : env.HOME) || NodeOS.homedir();
         candidates.push({
           root: path.resolve(

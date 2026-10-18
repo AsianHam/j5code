@@ -13,7 +13,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { writeFileStringAtomically } from "../../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { ServerConfig } from "../../config.ts";
 
 export const ARTIFACT_DIRECTORY_NAME = "artifacts";
@@ -111,13 +111,11 @@ const looksBinary = (bytes: Uint8Array) => {
   return inspected.some((byte) => byte === 0);
 };
 
-// ---------------------------------------------------------------------------
 // Versioned files. The whole file is rendered from the versions it holds, so a retried write
 // converges and a hand-edited or pre-existing file is simply treated as version 1. The marker on
 // the first line lists every kept version as `<number>@<timestamp>`, and the parser only treats a
 // line as a boundary when it equals the heading rendered for one of those entries. Bodies are
 // never trimmed of separators, so a handoff may quote an earlier heading or end with `---`.
-// ---------------------------------------------------------------------------
 
 const VERSIONED_MARKER = /^<!-- j5-artifact-versions: .*?; (.*?) -->\s*$/;
 

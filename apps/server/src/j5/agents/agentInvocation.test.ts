@@ -143,6 +143,7 @@ const fixture = Effect.gen(function* () {
                     status: "running" as const,
                     workState: "working" as const,
                     hasPendingChildRuns: true,
+                    hasPendingQuestion: false,
                     latestTerminalRunId: null,
                     latestTerminalStatus: null,
                     latestTerminalSummary: null,

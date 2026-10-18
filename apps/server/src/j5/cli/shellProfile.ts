@@ -1,4 +1,4 @@
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   hasJ5PathLine,
   shellProfilePaths,
@@ -45,14 +45,14 @@ export const planShellCleanup = Effect.fn("j5.cli.plan_shell_cleanup")(function*
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
   const home = environment["HOME"];
   const nothing = {
     profiles: [] as Array<string>,
     installerLink: undefined as string | undefined,
     appLinks: [] as Array<string>,
   };
-  if ((yield* HostProcessPlatform) === "win32" || !home) return nothing;
+  if ((yield* HostProcess.Platform) === "win32" || !home) return nothing;
 
   const launcher = path.join(agentCliDirectory(path, baseDir), "j5");
   const appLinks: Array<string> = [];

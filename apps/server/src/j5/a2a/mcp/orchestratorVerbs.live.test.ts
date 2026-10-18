@@ -1,4 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { GitVcsDriver } from "../../../vcs/GitVcsDriver.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -50,9 +53,9 @@ import * as ProjectService from "../../../project/ProjectService.ts";
 import { AntigravityInstallation } from "../../../provider/AntigravityInstallation.ts";
 import * as CodexInstallation from "../../../provider/CodexInstallation.ts";
 import * as ModelManifest from "../../../provider/ModelManifest.ts";
-import * as OpenCodeRuntime from "../../../provider/opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "../../../provider/OpenCodeServerLedger.ts";
-import * as ProviderEventLoggers from "../../../provider/ProviderEventLoggers.ts";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderInstanceRegistryHydration from "../../../provider/ProviderInstanceRegistryHydration.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ResetCreditCoordinator from "../../../provider/resetCreditCoordinator.ts";
@@ -145,6 +148,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydration.layer.pi
         ProviderEventLoggers.ProviderEventLoggers,
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
+      ProviderLatestVersions.layer,
       CodexInstallation.CodexInstallation.layer.pipe(
         Layer.provide(serverConfigLayer),
         Layer.provide(FetchHttpClient.layer),
@@ -245,6 +249,7 @@ const liveLayer = Layer.mergeAll(
     }),
   ),
   Layer.provide(mcpSessionRegistryTestLayer),
+  Layer.provide(Layer.mock(GitVcsDriver)({})),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(checkpointStoreLayer),
   Layer.provide(serverConfigLayer),
@@ -254,6 +259,7 @@ const liveLayer = Layer.mergeAll(
   Layer.provide(ResetCreditCoordinator.layer),
   Layer.provide(backgroundPolicyLayer),
   Layer.provide(ModelManifest.layerTest),
+  Layer.provide(McpProviderSessions.layer),
   Layer.provide(NodeServices.layer),
 );
 const testLayer = Layer.mergeAll(liveLayer, NodeServices.layer);

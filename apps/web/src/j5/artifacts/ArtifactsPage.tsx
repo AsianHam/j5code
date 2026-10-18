@@ -374,7 +374,7 @@ export function ArtifactsPage({
                         key={projectKey(project)}
                         aria-pressed={selected}
                         className={cn(
-                          "flex w-full cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring",
+                          "flex w-full cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                           selected && "bg-muted",
                         )}
                         onClick={() => {
@@ -434,7 +434,7 @@ export function ArtifactsPage({
                       key={entry.path}
                       aria-pressed={selectedPath === entry.path}
                       className={cn(
-                        "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring",
+                        "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                         selectedPath === entry.path && "bg-muted",
                       )}
                       onClick={() => {

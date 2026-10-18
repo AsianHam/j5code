@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentRoutePolicyFields } from "./AgentDefinitionFields";
 import { agentPersonaEnvironment } from "./agentPersonaAtoms";

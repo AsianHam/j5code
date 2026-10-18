@@ -86,9 +86,7 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
         return pairingUrl;
       }
     }
-  } catch {
-    // Treat non-URL payloads as raw pairing-url text so the normal input validation can decide.
-  }
+  } catch {}
 
   return trimmed;
 }

@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - a build-time helper for the live-test home; plain git and file writes.
 /**
- * The repository an agent live-tests against: a small TODO app with a few
+ * The repository an agent live-tests against: a small to-do app with a few
  * commits, a test suite, a gate script that holds a turn open, and two
  * playbooks. It is written from the strings below so nothing in it comes from,
  * or points at, a real repository. Its `origin` is a bare repository beside it.
@@ -192,7 +192,7 @@ const COMMITS: ReadonlyArray<RepoCommit> = [
 ];
 
 /**
- * Creates the TODO app at `repoDir` on branch `main`, with a bare `origin` at
+ * Creates the to-do app at `repoDir` on branch `main`, with a bare `origin` at
  * `originDir` that `main` tracks. Both directories must not exist yet.
  */
 export function createLiveTestRepo(input: {

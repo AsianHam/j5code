@@ -11,11 +11,8 @@ import {
   CLAUDE_READ_ONLY_ALLOWED_TOOLS,
   claudeRuntimeQueryPolicyForRuntimePolicy,
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import { cursorRuntimeAgentPolicy } from "../../orchestration-v2/Adapters/CursorAdapterV2.ts";
-import { openCodePermissionRules } from "../../orchestration-v2/Adapters/OpenCodeAdapterV2.ts";
-import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
+import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import { antigravityPermissionMode } from "../../provider/acp/AntigravityAcpSupport.ts";
-import { grokAcpSpawnArgs } from "../../provider/acp/GrokAcpSupport.ts";
 import {
   agentPersonaPolicyEnforcement,
   providerCanEnforceAgentPersonaAuthority,
@@ -207,25 +204,7 @@ describe("full-access agent persona policy", () => {
     assert.isUndefined(policy.allowedTools);
   });
 
-  it("disables the Cursor sandbox and auto review", () => {
-    assert.deepEqual(cursorRuntimeAgentPolicy(runtimePolicy("full-access", "cursor")), {
-      autoReview: false,
-      sandboxEnabled: false,
-    });
-  });
-
-  it("allows every OpenCode permission", () => {
-    assert.deepEqual(openCodePermissionRules(runtimePolicy("full-access", "opencode")), [
-      { permission: "*", pattern: "*", action: "allow" },
-    ]);
-  });
-
-  it("starts Grok with always-approve and Antigravity in yolo mode", () => {
-    assert.deepEqual(grokAcpSpawnArgs(runtimePolicy("full-access", "grok").runtimeMode), [
-      "agent",
-      "--always-approve",
-      "stdio",
-    ]);
+  it("starts Antigravity in yolo mode", () => {
     assert.equal(
       antigravityPermissionMode(runtimePolicy("full-access", "antigravity").runtimeMode),
       "yolo",

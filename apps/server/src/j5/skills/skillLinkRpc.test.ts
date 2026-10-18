@@ -8,7 +8,7 @@ import {
   type SkillLinkCreate,
   type SkillLinkRequest,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -96,7 +96,7 @@ const fixture = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-  const homeVar = (yield* HostProcessPlatform) === "win32" ? "USERPROFILE" : "HOME";
+  const homeVar = (yield* HostProcess.Platform) === "win32" ? "USERPROFILE" : "HOME";
   const layer = Layer.mergeAll(
     configLayer(root, stateDir),
     settingsLayer({
@@ -630,7 +630,7 @@ describe("skill link RPCs", () => {
       run(
         Effect.gen(function* () {
           const f = yield* fixture;
-          const homeVar = (yield* HostProcessPlatform) === "win32" ? "USERPROFILE" : "HOME";
+          const homeVar = (yield* HostProcess.Platform) === "win32" ? "USERPROFILE" : "HOME";
           yield* f.settings.updateSettings({
             providerInstances: {
               [sourceId]: {
@@ -870,7 +870,7 @@ describe("skill link RPCs", () => {
       run(
         Effect.gen(function* () {
           const f = yield* fixture;
-          const homeVar = (yield* HostProcessPlatform) === "win32" ? "USERPROFILE" : "HOME";
+          const homeVar = (yield* HostProcess.Platform) === "win32" ? "USERPROFILE" : "HOME";
           const codex = yield* resolveSkillRoot(
             {
               driver: ProviderDriverKind.make("codex"),

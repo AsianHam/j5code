@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { ProviderInstanceId, type SkillCatalogReplacement } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { stringify } from "yaml";
 
@@ -26,7 +26,7 @@ import { canonicalSkillRoot } from "./skillFileSystem.ts";
 import { createManagedSkillLink, listManagedSkillLinks, previewSkillLink } from "./skillLinks.ts";
 
 vi.mock("node:fs/promises", async (original) => ({ ...(await original<typeof NodeFSP>()) }));
-const windows = HostProcessPlatform.defaultValue() === "win32";
+const windows = HostProcess.Platform.defaultValue() === "win32";
 const linkType = windows ? "junction" : "dir";
 let root: string;
 let homeDir: string;

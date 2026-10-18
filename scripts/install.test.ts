@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Drives the real shell installer through a PTY and a gated HTTP fixture.
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -9,11 +9,10 @@ import * as NodePath from "node:path";
 import { J5_PATH_MARKER } from "@t3tools/shared/j5/shellProfile";
 import { describe, expect, it } from "vite-plus/test";
 
-// util-linux's script gives the real installer a terminal without a browser or extra packages.
 // J5 publishes Linux archives for x64 only; the installer refuses other architectures.
 describe.skipIf(
-  HostProcessPlatform.defaultValue() !== "linux" ||
-    HostProcessArchitecture.defaultValue() !== "x64",
+  HostProcess.Platform.defaultValue() !== "linux" ||
+    HostProcess.Architecture.defaultValue() !== "x64",
 )("installer terminal", () => {
   // Releases before the rename ship the executable as `t3`; the installer links whichever is there.
   it.each([
@@ -25,7 +24,7 @@ describe.skipIf(
     async ({ fail, executable }) => {
       const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-progress-"));
       const version = "1.2.3";
-      const stem = `t3-${version}-linux-${HostProcessArchitecture.defaultValue()}`;
+      const stem = `t3-${version}-linux-${HostProcess.Architecture.defaultValue()}`;
       const archiveName = `${stem}.tar.gz`;
       let resumeDownload: (() => void) | undefined;
       let sawPartialProgress = false;
@@ -145,8 +144,8 @@ describe.skipIf(
 
 // J5: the PATH step, run against an already-downloaded version so nothing is fetched.
 describe.skipIf(
-  HostProcessPlatform.defaultValue() !== "linux" ||
-    HostProcessArchitecture.defaultValue() !== "x64",
+  HostProcess.Platform.defaultValue() !== "linux" ||
+    HostProcess.Architecture.defaultValue() !== "x64",
 )("installer PATH line", () => {
   const runInstaller = async (
     configure: (paths: { readonly home: string; readonly bin: string }) => Promise<void>,

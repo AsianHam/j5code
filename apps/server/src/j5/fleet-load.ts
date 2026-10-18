@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { J5ThreadRegistrationLayer } from "./a2a/runtimeLayer.ts";
 // @effect-diagnostics nodeBuiltinImport:off globalTimersInEffect:off globalDateInEffect:off globalConsole:off - Standalone host-side benchmark owns an isolated process and temporary SQLite state.
 
@@ -31,7 +32,7 @@ import {
 } from "../orchestration-v2/runtimeLayer.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
-import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
 import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
@@ -65,7 +66,7 @@ const orchestrationAdapter = {
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
   openSession: () => Effect.die("The J5 load harness does not start provider turns."),
-} as ProviderAdapterV2Shape;
+} as ProviderAdapter.ProviderAdapterV2["Service"];
 
 const providerInstance = {
   instanceId: modelSelection.instanceId,
@@ -113,6 +114,7 @@ const HarnessLayer = Layer.merge(OrchestrationV2LayerLive, OrchestrationV2EventS
   ),
   Layer.provide(Layer.mock(ProjectService)({ getById: () => Effect.succeed(Option.none()) })),
   Layer.provide(mcpSessionRegistryTestLayer),
+  Layer.provide(McpProviderSessions.layer),
   Layer.provideMerge(SqlitePersistenceLive),
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),

@@ -123,7 +123,7 @@ export function ThreadPeopleChip({
   return canManage ? (
     <button
       type="button"
-      className={`${className} cursor-pointer outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring`}
+      className={`${className} cursor-pointer outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring`}
       aria-label={`Shared with ${label}. Share thread`}
       onClick={() =>
         openSharingDialog({ kind: "share", environmentId, target: { kind: "thread", threadId } })

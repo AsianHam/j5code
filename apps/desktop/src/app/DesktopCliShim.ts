@@ -6,13 +6,8 @@ import * as Option from "effect/Option";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
-// A desktop install puts no `j5` on PATH, so commands the server asks a person
-// to run (`sudo j5 browser setup`) had nothing to call. The app keeps a small
-// launcher for its bundled CLI in the J5 home, which is never on the person's
-// PATH and so never shadows another `j5`, and the server names it by absolute
-// path in those commands through T3CODE_CLI_PATH. An AppImage mounts somewhere
-// new each run, so its launcher mounts the AppImage itself instead of pointing
-// into it.
+// An AppImage mounts somewhere new each run, so its launcher mounts the
+// AppImage itself instead of pointing into it.
 //
 // J5: the launcher is `<home>/bin/j5`, which the backend also puts first on
 // its agents' PATH (`apps/server/src/j5/cli/agentPath.ts`).
@@ -22,7 +17,6 @@ const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 // so a launcher (and a link to it) left by an older app is still the app's.
 export const MARKER = "J5 Code desktop app: runs the CLI bundled in the app.";
 
-/** Server entry inside the app, relative to its server root (an asar archive when packaged). */
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
 
 const shellWord = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -38,11 +32,10 @@ export type CliShimTarget =
   | { readonly kind: "windows"; readonly executable: string; readonly entry: string };
 
 /**
- * The launcher script. Electron runs the server as plain Node with
- * `ELECTRON_RUN_AS_NODE`, which reads the entry from inside the asar archive.
- * The launcher's own path and the app's J5 home are written in, so the command
- * the server shows is absolute and `sudo`, which clears the environment, still
- * runs against this install's home.
+ * Electron runs the server as plain Node with `ELECTRON_RUN_AS_NODE`, which
+ * reads the entry from inside the asar archive. The launcher's own path and the
+ * app's T3 home are written in, so the command the server shows is absolute and
+ * `sudo`, which clears the environment, still runs against this install's home.
  */
 export const renderCliShim = (input: {
   readonly target: CliShimTarget;
@@ -60,9 +53,9 @@ export const renderCliShim = (input: {
       `rem ${MARKER}`,
       // Delayed expansion would rewrite `!name!` in paths and arguments.
       "setlocal EnableExtensions DisableDelayedExpansion",
-      // The file is UTF-8. Only a non-ASCII path needs the console switched to
-      // UTF-8 to read it; a Ctrl-C that ends the batch skips the restore, so the
-      // switch is left out for the common all-ASCII install.
+      // Only a non-ASCII path needs the console switched to UTF-8 to read it; a
+      // Ctrl-C that ends the batch skips the restore, so the switch is left out
+      // for the common all-ASCII install.
       ...(utf8
         ? [
             `for /f "tokens=2 delims=:." %%c in ('chcp') do set "t3_codepage=%%c"`,
@@ -72,6 +65,8 @@ export const renderCliShim = (input: {
       `set "T3CODE_CLI_PATH=${cmdText(input.shimPath)}"`,
       `if not defined J5CODE_HOME set "J5CODE_HOME=${cmdText(input.t3Home)}"`,
       'set "ELECTRON_RUN_AS_NODE=1"',
+      // Electron's Windows executable starts without stdin; this tells the CLI to reopen the console.
+      'set "T3CODE_DESKTOP_CLI_LAUNCHER=1"',
       // A goto, not a parenthesized block: "Program Files (x86)" would close the block early.
       `if exist ${cmdWord(target.executable)} goto run`,
       ...restore,
@@ -131,7 +126,6 @@ export const renderCliShim = (input: {
   ].join("\n");
 };
 
-/** Where the packaged app keeps its launcher: `<J5 home>/bin/j5`, `j5.cmd` on Windows. */
 export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment["Service"]) =>
   environment.path.join(
     environment.baseDir,
@@ -139,11 +133,6 @@ export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment[
     environment.platform === "win32" ? "j5.cmd" : "j5",
   );
 
-/**
- * Writes the packaged app's launcher to `<J5 home>/bin` and returns its path
- * for the backend's T3CODE_CLI_PATH. Development builds run from a checkout
- * and get none.
- */
 export const install = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   if (!environment.isPackaged) return Option.none<string>();
@@ -160,7 +149,6 @@ export const install = Effect.gen(function* () {
           appImage,
           executableName: path.basename(process.execPath),
         }),
-        // macOS and .deb installs live at a fixed path, so the launcher runs the app directly.
         onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
       });
   const content = renderCliShim({ target, shimPath, t3Home: environment.baseDir });
@@ -168,13 +156,11 @@ export const install = Effect.gen(function* () {
   return yield* Effect.gen(function* () {
     const existing = yield* fs.readFileString(shimPath).pipe(Effect.option);
     if (Option.isSome(existing) && !existing.value.includes(MARKER)) {
-      // Someone else's file; leave it, and let commands fall back to plain `j5`.
       yield* logWarning("leaving a j5 launcher the app did not write", { shimPath });
       return Option.none<string>();
     }
     if (Option.getOrUndefined(existing) !== content) {
       yield* fs.makeDirectory(path.dirname(shimPath), { recursive: true });
-      // Written beside the launcher and renamed over it, so a running `j5` never reads half a file.
       const staging = `${shimPath}.${process.pid}.tmp`;
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
@@ -182,7 +168,6 @@ export const install = Effect.gen(function* () {
     }
     return Option.some(shimPath);
   }).pipe(
-    // Best-effort: nothing here may block the backend's start; commands then fall back to plain `j5`.
     Effect.catchCause((cause) =>
       logWarning("could not install j5 launcher", { shimPath, cause: Cause.pretty(cause) }).pipe(
         Effect.as(Option.none<string>()),

@@ -1,4 +1,5 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../../components/ui/tooltip";
+import { observeResize } from "~/lib/observeResize";
 import type { ChatMessage } from "~/types";
 import { useNowMinute } from "~/hooks/useNowMinute";
 import type { ScopedThreadRef } from "@t3tools/contracts";
@@ -512,12 +513,12 @@ function A2ABodyClamp({
     };
 
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
     // The collapsed wrapper keeps its capped height while the markdown inside grows, as images
     // load and code blocks highlight, so the markdown root is observed too.
-    if (element.firstElementChild) observer.observe(element.firstElementChild);
-    return () => observer.disconnect();
+    return observeResize(
+      element.firstElementChild ? [element, element.firstElementChild] : element,
+      measure,
+    );
   }, [body]);
 
   return (
@@ -535,7 +536,7 @@ function A2ABodyClamp({
         <button
           type="button"
           aria-expanded={expanded}
-          className="mt-1 inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+          className="mt-1 inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
           onClick={() => setExpanded((current) => !current)}
         >
           <ChevronRightIcon

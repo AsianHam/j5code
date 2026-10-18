@@ -535,7 +535,7 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
               }
             >
               <details className="group/skill-group pb-3 text-xs">
-                <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
                   <ChevronRightIcon
                     aria-hidden
                     className="size-3.5 shrink-0 group-open/skill-group:rotate-90"

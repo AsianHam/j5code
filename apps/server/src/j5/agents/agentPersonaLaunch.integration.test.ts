@@ -205,7 +205,11 @@ it.effect("blocks a direct persona launch when both declared model routes are un
         .pipe(Effect.flip);
 
       assert.instanceOf(error, ThreadLaunch.ThreadLaunchError);
-      assert.equal(error.operation, "resolve-agent-persona");
+      assert.equal(error._tag, "ThreadLaunchError");
+      assert.equal(
+        error._tag === "ThreadLaunchError" ? error.operation : undefined,
+        "resolve-agent-persona",
+      );
       assert.include(
         error.message,
         "Persona scout is blocked because its primary and fallback models are unavailable: ",
@@ -293,7 +297,11 @@ it.effect(
           threadId: ThreadId.make("thread:imported-persona:disabled"),
         })
         .pipe(Effect.flip);
-      assert.equal(disabledError.operation, "resolve-agent-persona");
+      assert.equal(disabledError._tag, "ThreadLaunchError");
+      assert.equal(
+        disabledError._tag === "ThreadLaunchError" ? disabledError.operation : undefined,
+        "resolve-agent-persona",
+      );
       assert.include(disabledError.message, "disabled");
       assert.equal((yield* launches.launch(input)).threadId, launched.threadId);
       yield* library.setImportedEnabled(definition.id, true);
@@ -322,7 +330,11 @@ it.effect(
           threadId: ThreadId.make("thread:imported-persona:missing"),
         })
         .pipe(Effect.flip);
-      assert.equal(error.operation, "resolve-agent-persona");
+      assert.equal(error._tag, "ThreadLaunchError");
+      assert.equal(
+        error._tag === "ThreadLaunchError" ? error.operation : undefined,
+        "resolve-agent-persona",
+      );
       assert.include(error.message, "Unknown persona");
     }).pipe(
       Effect.provide(

@@ -539,7 +539,7 @@ export const makePlaybookStore = Effect.gen(function* () {
             );
           const timestamp = yield* now;
           const run: PlaybookRun = {
-            runId: yield* crypto.randomUUIDv4,
+            runId: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
             ownerThreadId: owner,
             definitionPath,
             currentStepId: definition.steps[0]!.id,

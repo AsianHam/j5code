@@ -410,7 +410,7 @@ export function PlaybookLibrarySettings() {
                   render={
                     <span
                       tabIndex={0}
-                      className="block truncate rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="block truncate rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                     />
                   }
                 >

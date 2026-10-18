@@ -5,6 +5,7 @@ import * as ArtifactMcpService from "../../../mcp/ArtifactMcpService.ts";
 import type { toolkitRegistration } from "../../../mcp/McpHttpServer.ts";
 import * as OrchestratorMcpService from "../../../mcp/OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../../mcp/ThreadMetadataMcpService.ts";
+import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ArtifactHandlers from "../../../mcp/toolkits/artifacts/handlers.ts";
 import { ArtifactToolkit } from "../../../mcp/toolkits/artifacts/tools.ts";
 import * as AttachmentHandlers from "../../../mcp/toolkits/attachment/handlers.ts";
@@ -53,7 +54,10 @@ export const layerJ5Toolkits = (register: typeof toolkitRegistration) =>
       handlersFor(J5AttachmentUploadToolkit, AttachmentHandlers.layer),
     ),
     register(J5ProjectToolkit, handlersFor(J5ProjectToolkit, ProjectHandlers.layer)),
-    register(J5EnvironmentToolkit, handlersFor(J5EnvironmentToolkit, EnvironmentHandlers.layer)),
+    register(
+      J5EnvironmentToolkit,
+      handlersFor(J5EnvironmentToolkit, EnvironmentHandlers.layer),
+    ).pipe(Layer.provide(ThreadCommandExecutor.layer)),
     register(ArtifactToolkit, ArtifactHandlers.layer).pipe(
       Layer.provide(ArtifactMcpService.layer.pipe(Layer.provide(ArtifactWorkspaceLive))),
     ),

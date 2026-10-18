@@ -792,12 +792,12 @@ describe("baseEnvironment", () => {
 });
 
 describe("PAIRING_SCOPES", () => {
-  it("is the scope set of the server's startup pairing URL", async () => {
+  it("is every scope a client can be given", async () => {
     // The contracts package is not a dependency of the scripts package, so load it by path.
     const contracts = (await import(
       NodePath.join(import.meta.dirname, "../../packages/contracts/src/auth.ts")
-    )) as { readonly AuthAdministrativeScopes: ReadonlyArray<string> };
-    assert.sameMembers([...PAIRING_SCOPES], [...contracts.AuthAdministrativeScopes]);
+    )) as { readonly AuthStandardClientScopes: ReadonlyArray<string> };
+    assert.sameMembers([...PAIRING_SCOPES], [...contracts.AuthStandardClientScopes]);
   });
 });
 

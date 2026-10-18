@@ -24,7 +24,6 @@ export function isHumanAuthoredUserMessage(message: ChatMessage): boolean {
   return !String(message.id).startsWith(SCHEDULED_TASK_MESSAGE_ID_PREFIX);
 }
 
-/** Keep full source text untouched until a minimap preview is opened. */
 export function deriveTimelineMinimapItems(
   rows: ReadonlyArray<MessagesTimelineRow>,
 ): TimelineMinimapItem[] {

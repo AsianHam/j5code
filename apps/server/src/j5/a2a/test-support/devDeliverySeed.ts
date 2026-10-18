@@ -1,4 +1,5 @@
 import { J5ThreadRegistrationLayer } from "../runtimeLayer.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { SourceControlProviderRegistry } from "../../../sourceControl/SourceControlProviderRegistry.ts";
 import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -60,7 +61,7 @@ import {
   ThreadManagementService,
 } from "../../../orchestration-v2/ThreadManagementService.ts";
 import { layerFromPath as makeSqlitePersistenceLive } from "../../../persistence/Sqlite.ts";
-import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { CodexProviderCapabilitiesV2 } from "../../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { ProviderInstanceRegistry } from "../../../provider/ProviderInstanceRegistry.ts";
@@ -293,7 +294,7 @@ const isDatabaseContention = (cause: unknown): boolean =>
     ? cause.reason._tag === "LockTimeoutError"
     : cause instanceof Error && isDatabaseContention(cause.cause);
 
-const unavailableAdapter: ProviderAdapterV2Shape = {
+const unavailableAdapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
   instanceId: fakeProviderInstanceId,
   driver: fakeDriver,
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
@@ -366,6 +367,7 @@ const makeRuntimeLayer = (databasePath: string, baseDir: string, cwd: string) =>
       }),
     ),
     Layer.provide(mcpSessionRegistryTestLayer),
+    Layer.provide(McpProviderSessions.layer),
     Layer.provide(checkpoint),
     Layer.provide(config),
     Layer.provide(ServerSettingsService.layerTest()),
@@ -538,7 +540,7 @@ export const runDevDeliverySeed = (
     const baseDir = yield* validateIsolatedBaseDir(requestedBaseDir);
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
-    const runId = `j5-a2a-seed-${yield* crypto.randomUUIDv4}`;
+    const runId = `j5-a2a-seed-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
     const now = DateTime.formatIso(yield* DateTime.now);
     const projectId = options.project?.id ?? ProjectId.make(`project:${runId}`);
     const workspaceRoot = options.project?.workspaceRoot ?? process.cwd();
