@@ -313,3 +313,28 @@ it.effect("an ask to someone removed from the server ends", () =>
     assert.strictEqual(yield* exchangeStatus(toSam), "dropped");
   }).pipe(Effect.provide(testLayer)),
 );
+
+it.effect("where only one person can write to the agent's thread, there is no everyone here", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const sql = yield* SqlClient.SqlClient;
+    // The thread was shared once; what counts is who can write to it now: Jackson alone.
+    yield* sql`
+      INSERT INTO j5_a2a_shared_thread (thread_id, shared_at) VALUES (${threadId}, ${AT})
+    `;
+    yield* sql`
+      UPDATE j5_a2a_person_level SET level = 'viewer' WHERE person_id IN (${PRIYA}, ${SAM})
+    `;
+    const rows = yield* (yield* A2ASendService).listParticipants(threadId);
+    assert.deepStrictEqual(
+      rows.filter((row) => row.participant.kind === "human").map((row) => row.participantId),
+      [JACKSON],
+    );
+    // An ask to everyone here is refused, naming the one person to ask.
+    const refused = yield* Effect.flip(ask(EVERYONE_HERE_PERSON_ID, "everyone-alone"));
+    assert.strictEqual(refused._tag, "A2AEveryoneHereNotSharedError");
+    assert.include(refused.message, `to="${JACKSON}"`);
+    // Asking that person goes on.
+    yield* ask(JACKSON, "jackson-directly");
+  }).pipe(Effect.provide(testLayer)),
+);

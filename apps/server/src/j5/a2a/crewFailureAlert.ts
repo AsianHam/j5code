@@ -62,7 +62,8 @@ export const makeCrewFailureAlert = Effect.gen(function* () {
   }) {
     if (!needsHumanForCrewFailure(input.failure)) return;
     const commandId = CommCommandId.make(`j5-crew-human-alert:${input.runId}`);
-    const toEveryone = yield* shared.isShared(input.instance.captainThreadId);
+    // Everyone here only while more than one person can write to the Captain's thread.
+    const toEveryone = (yield* shared.writers(input.instance.captainThreadId)).length >= 2;
     const outcome = yield* writer.withPermit(
       sql.withTransaction(
         Effect.gen(function* () {

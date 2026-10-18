@@ -195,6 +195,21 @@ export class A2AHumanAskOrReplyRequiredError extends Schema.TaggedError<A2AHuman
   }
 }
 
+/**
+ * An ask to everyone here from a thread only one person can write to. An agent reads this text as
+ * its tool's answer.
+ */
+export class A2AEveryoneHereNotSharedError extends Schema.TaggedError<A2AEveryoneHereNotSharedError>()(
+  "A2AEveryoneHereNotSharedError",
+  { soleWriterId: Schema.NullOr(Schema.String) },
+) {
+  override get message(): string {
+    return this.soleWriterId === null
+      ? "No one can write to your thread, so there is no everyone here to ask. Call j5_list_participants to see whom you can ask."
+      : `Only one person can write to your thread, so there is no everyone here to ask. Ask them directly: j5_send_message(to="${this.soleWriterId}", expect_reply=true, intent=..., urgency=...).`;
+  }
+}
+
 export class A2AHumanFollowupNotAllowedError extends Schema.TaggedError<A2AHumanFollowupNotAllowedError>()(
   "A2AHumanFollowupNotAllowedError",
   { participantId: Schema.String },
@@ -345,6 +360,7 @@ export type A2ASendError =
   | A2AUrgencyNotAcceptedError
   | A2AUrgencyRequiresExchangeError
   | A2AHumanAskOrReplyRequiredError
+  | A2AEveryoneHereNotSharedError
   | A2AHumanFollowupNotAllowedError
   | A2AExchangeNotOpenError
   | A2AExchangeAlreadyAnsweredError
@@ -380,6 +396,7 @@ export const isSendRefusal = Schema.is(
     A2AUrgencyNotAcceptedError,
     A2AUrgencyRequiresExchangeError,
     A2AHumanAskOrReplyRequiredError,
+    A2AEveryoneHereNotSharedError,
     A2AHumanFollowupNotAllowedError,
     A2AExchangeNotOpenError,
     A2AExchangeAlreadyAnsweredError,
@@ -830,8 +847,8 @@ const rawLayer: Layer.Layer<
 
     /**
      * The people an agent may ask: those who can write to its thread, or to its project when it
-     * has no thread (Inbox AC14). In a shared conversation it may also ask everyone here
-     * (Inbox AC15).
+     * has no thread (Inbox AC14). Where more than one person can write to its thread now, it may
+     * also ask everyone here (Inbox AC15); where one can, it asks them.
      */
     const askablePeople = Effect.fn("j5.a2a.send.askablePeople")(function* (
       projectId: LedgerProjectId,
@@ -854,7 +871,8 @@ const rawLayer: Layer.Layer<
         }) satisfies ParticipantDirectoryRow;
       return [
         ...writers.map((writer) => person(writer.personId, writer.displayName)),
-        ...(threadId !== undefined && (yield* shared.isShared(threadId))
+        // Only where more than one person can write now: with one, the agent asks them.
+        ...(threadId !== undefined && writers.length >= 2
           ? [person(EVERYONE_HERE_PERSON_ID, "everyone here")]
           : []),
       ];
@@ -988,22 +1006,31 @@ const rawLayer: Layer.Layer<
 
       const receiver = yield* participantMembership(input.to, sender.projectId, remote);
       const receiverId = receiver.participantId;
-      // An agent asks only someone who can write to its thread, or everyone here (Inbox AC14).
-      if (
-        receiver.kind === "human" &&
-        input.exchangeId === undefined &&
-        receiverId !== EVERYONE_HERE_PERSON_ID
-      ) {
+      // An agent asks only someone who can write to its thread, or everyone here where more
+      // than one person can (Inbox AC14, AC15).
+      if (receiver.kind === "human" && input.exchangeId === undefined) {
         const senderThread = yield* sql<{ readonly thread_id: string | null }>`
           SELECT thread_id FROM j5_a2a_membership
           WHERE project_id = ${sender.projectId} AND participant_id = ${sender.participantId}
         `;
         const threadId = senderThread[0]?.thread_id ?? null;
-        const writes = yield* shared.writesTo(receiverId, {
-          threadId: threadId === null ? null : ThreadId.make(threadId),
-          projectId: sender.projectId,
-        });
-        if (!writes) return yield* new A2AParticipantNotFoundError({ participantId: receiverId });
+        if (receiverId === EVERYONE_HERE_PERSON_ID) {
+          const writers =
+            threadId === null
+              ? yield* shared.projectWriters(ProjectId.make(sender.projectId))
+              : yield* shared.writers(ThreadId.make(threadId));
+          if (writers.length < 2) {
+            return yield* new A2AEveryoneHereNotSharedError({
+              soleWriterId: writers[0]?.personId ?? null,
+            });
+          }
+        } else {
+          const writes = yield* shared.writesTo(receiverId, {
+            threadId: threadId === null ? null : ThreadId.make(threadId),
+            projectId: sender.projectId,
+          });
+          if (!writes) return yield* new A2AParticipantNotFoundError({ participantId: receiverId });
+        }
       }
       if (
         receiver.kind === "human" &&

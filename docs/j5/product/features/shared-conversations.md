@@ -19,7 +19,7 @@ A **shared conversation** is a thread that more than one person can write to: on
 
 **Prompts belong to everyone who can write.** An agent raises three kinds of prompt in its thread: a question, a command waiting for approval, and a Crew roster waiting for approval. Anyone who can write to the thread answers one, the first answer settles it, and it then shows who answered. An answer to a question carries its author's name to the agent, and a Crew's Captain is told who decided its roster. Who approved a command is shown to the people on the thread and not told to the agent: an approval carries no words to put a name on. A Viewer sees each prompt with nothing to press.
 
-**An agent asks one person, or everyone here.** In a shared conversation an agent can ask, through the [inbox](inbox.md), any one person who can write to its thread, or **everyone here**: everyone who can write to its thread at the time the ask is read. An ask shows in the thread for everyone on it, and so does its reply. The first reply closes it for everyone. A Crew's later requests, a seat's approval and a request for a further seat, reach everyone who can write to that thread the same way ([Crews](crews.md)).
+**An agent asks one person, or everyone here.** In a shared conversation an agent can ask, through the [inbox](inbox.md), any one person who can write to its thread, or, while more than one person can write to it, **everyone here**: everyone who can write to its thread at the time the ask is read. Where only one person can write to the thread, there is no everyone here, and the agent asks that person. An ask shows in the thread for everyone on it, and so does its reply. The first reply closes it for everyone. A Crew's later requests, a seat's approval and a request for a further seat, reach everyone who can write to that thread the same way ([Crews](crews.md)).
 
 **Anyone who can write runs the thread.** A Collaborator, like an Owner, sends, queues and steers messages, interrupts and stops work, and changes or withdraws any queued message. When a person can no longer write to a thread, the messages they still have queued there are withdrawn.
 
@@ -63,7 +63,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 11. A Viewer sees each prompt and its outcome, with its controls shown disabled.
 12. A Crew seat's request for approval, and a Captain's request for a further seat, reach the inbox of everyone who can write to that thread, and the first answer settles each.
 
-13. In a shared conversation, an agent can ask one person who can write to its thread, or everyone here; an ask and its reply show in the thread to everyone on it.
+13. In a shared conversation, an agent can ask one person who can write to its thread, or everyone here while more than one person can write to it; an ask and its reply show in the thread to everyone on it.
 
 ### Queueing and steering
 
@@ -111,3 +111,4 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 - 2026-10-18 — a person's picture moves to the Later list (Jackson, 2026-10-17, for the build of [#636](https://github.com/Jacksondr5/j5code/issues/636)): AC17 draws initials, and former AC18 and AC19 are retired; former AC20 to AC22 are now AC18 to AC20. A copy of the guest-era History and Scenarios left in by the rewrite is removed.
 - 2026-10-18 — AC16: a message sent while its author could still write, and still on its way when their access ended, may still reach the agent; holding every send against every change of access would cost more than it returns, since that person was trusted when they sent it (security review of [#636](https://github.com/Jacksondr5/j5code/issues/636); provisional, for Jackson to confirm).
 - 2026-10-18 — the Owners line is dropped; the note names everyone who can write, Owners included (Jackson). Former AC9 is retired, and former AC10 to AC20 are now AC9 to AC19.
+- 2026-10-18 — "everyone here" only while more than one person can write to the thread; where one can, the agent asks that person (AC13; Jackson, in the review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).

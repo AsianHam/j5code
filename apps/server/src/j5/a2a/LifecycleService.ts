@@ -180,7 +180,7 @@ export const formatAccessEndedNotice = (input: {
   [
     `[Cross-agent messaging system notice: exchange dropped]`,
     `Exchange ${input.exchangeId} ended because ${input.personId} can no longer write to your thread, so they will not answer it (receiver-retired).`,
-    "If you still need an answer, ask someone who can write to your thread, or everyone here; call j5_list_participants to see who.",
+    "If you still need an answer, ask someone who can write to your thread; call j5_list_participants to see who.",
     "Facts: replyRequired=false; retryAllowed=false; replacementRequired=false.",
     "This is a platform-authored terminal notice, not a peer reply.",
   ].join("\n\n");

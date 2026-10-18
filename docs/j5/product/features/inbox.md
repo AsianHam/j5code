@@ -63,7 +63,7 @@ The inbox is **not** a backlog (a non-blocking note an agent wants to keep is a 
 ### Several people
 
 14. A server adds an ask only to the inbox of a person who can write to the asking agent's thread, and its agents are offered as someone to ask only the people who can write to their thread.
-15. In a thread more than one person can write to, an agent's address book offers "everyone here", and an ask to it reaches the inbox of everyone who can write to that thread when the ask is read, marked as for everyone.
+15. In a thread more than one person can write to, an agent's address book offers "everyone here", and an ask to it reaches the inbox of everyone who can write to that thread when the ask is read, marked as for everyone. From a thread only one person can write to, "everyone here" is not offered, and an ask to it is refused, naming that person.
 16. The first reply to an ask to everyone closes it for all of them, and for the others it moves to the Replied shelf naming who answered; a later reply is refused and changes nothing.
 17. An open item a person has typed an answer into stays in place when it closes, with their text and a line saying who answered or that the agent withdrew it, until they clear the text or leave the page.
 
@@ -86,3 +86,4 @@ The inbox is **not** a backlog (a non-blocking note an agent wants to keep is a 
 - 2026-10-07 — Squadrons retired: an item names the project its sender works in (Jackson, 2026-10-05; [#412](https://github.com/Jacksondr5/j5code/issues/412)).
 - 2026-10-10 — a server adds nothing to a guest's inbox (AC14); an ask in a shared conversation is defined by [shared conversations](shared-conversations.md) (Jackson; [record](../../worklog/2026-10-09-multi-player-session.md)).
 - 2026-10-17 — several people (Jackson; [record](../../worklog/2026-10-16-people-and-access-session.md)): asks go to the people who can write to the asking agent's thread, and Viewers have none (AC14 rewritten from the guest rule); an agent can ask everyone here, the first reply closing it for all (AC15, AC16); an item being answered stays in place when it closes (AC17).
+- 2026-10-18 — "everyone here" is offered, and taken, only while more than one person can write to the asking agent's thread; from a thread only one person can write to, the agent asks that person (AC15; Jackson, in the review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).
