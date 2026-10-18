@@ -697,6 +697,10 @@ function firstHeaderValue(value: string | undefined): string | undefined {
  * `Host`), come from this server's own host (directly or behind a proxy that
  * reports `X-Forwarded-Host`), or come from one of the trusted app origins.
  */
+// J5: named so J5's session renewal refuses what this refuses (FORK.md case 70).
+export const FOREIGN_ORIGIN_DIAGNOSTIC =
+  "Browser sessions are only accepted from the app's own origin.";
+
 function isBrowserOriginAllowed(
   request: HttpServerRequest.HttpServerRequest,
   trustedOrigins: ReadonlySet<string>,
@@ -798,9 +802,7 @@ export const make = Effect.gen(function* () {
       !isBrowserOriginAllowed(request, trustedBrowserOrigins)
     ) {
       return Effect.fail(
-        new ServerAuthInvalidCredentialError({
-          diagnostic: "Browser sessions are only accepted from the app's own origin.",
-        }),
+        new ServerAuthInvalidCredentialError({ diagnostic: FOREIGN_ORIGIN_DIAGNOSTIC }),
       );
     }
     return authenticateToken(credential.token).pipe(

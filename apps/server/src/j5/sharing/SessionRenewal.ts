@@ -33,8 +33,8 @@ import { PersonAccess } from "./PersonAccess.ts";
  * a token presented twice renews once.
  */
 
-/** What upstream says of a browser session presented from another origin (`EnvironmentAuth.ts`). */
-const FOREIGN_ORIGIN_DIAGNOSTIC = "Browser sessions are only accepted from the app's own origin.";
+/** What upstream says of a browser session presented from another origin. */
+const { FOREIGN_ORIGIN_DIAGNOSTIC } = EnvironmentAuth;
 
 // As upstream answers every credential it issues (`auth/http.ts`).
 const CREDENTIAL_RESPONSE_HEADERS = { "cache-control": "no-store", pragma: "no-cache" } as const;
