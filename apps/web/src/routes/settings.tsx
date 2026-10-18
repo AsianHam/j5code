@@ -16,6 +16,7 @@ import {
 } from "../components/settings/SettingsScopeContext";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
+import { SettingsPageGate } from "../j5/sharing/settingsAccess";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
@@ -136,7 +137,10 @@ function SettingsContentLayout() {
 
         <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
           <SettingsScopeBoundary pathname={location.pathname}>
-            <Outlet />
+            {/* J5 (case 72): a page that is not this person's sends them to one that is. */}
+            <SettingsPageGate pathname={location.pathname}>
+              <Outlet />
+            </SettingsPageGate>
           </SettingsScopeBoundary>
         </div>
       </div>

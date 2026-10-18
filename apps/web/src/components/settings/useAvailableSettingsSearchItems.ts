@@ -9,6 +9,7 @@ import { desktopWslStateAtom } from "~/state/desktopWslState";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
+import { useShownSettingsSearchItems } from "../../j5/sharing/settingsAccess";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import type { SettingsScopeSearch } from "./settingsScope";
@@ -32,7 +33,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     cloudLinkState?.linkRevoked !== true &&
     (cloudLinkState?.managedTunnelActive ?? cloudLinkState?.linked ?? false);
 
-  return useMemo(
+  const items = useMemo(
     () =>
       filterAvailableSettingsSearchItems({
         localEnvironmentDisabled,
@@ -73,4 +74,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
       scopeSearch.machine,
     ],
   );
+  // J5 (case 72): search finds only the pages a person is shown.
+  return useShownSettingsSearchItems(items);
 }

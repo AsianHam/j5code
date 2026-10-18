@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { createContext, type ReactNode, useContext, useMemo } from "react";
 
+import { useOwnedEnvironments } from "../../j5/sharing/settingsAccess";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFilesQueryState";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
@@ -50,7 +51,8 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
 
 function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironment: boolean) {
   const groups = useSettingsProjectGroups();
-  const { environments: availableEnvironments } = useEnvironments();
+  // J5 (case 72): Settings manages only the servers the person owns.
+  const availableEnvironments = useOwnedEnvironments(useEnvironments().environments);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const search = useMemo(
     () =>
