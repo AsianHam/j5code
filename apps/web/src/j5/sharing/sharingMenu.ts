@@ -77,7 +77,6 @@ export function sharingMenuItems<Id extends string>(
   const leave: ContextMenuItem<SharingMenuActionId> = {
     id: LEAVE_THREAD,
     label: "Leave thread",
-    icon: "log-out",
     destructive: true,
     separatorBefore: true,
   };
