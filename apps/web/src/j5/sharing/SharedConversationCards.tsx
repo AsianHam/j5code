@@ -1,3 +1,4 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { MessageAuthor } from "@t3tools/contracts/j5";
 import type { ReactNode } from "react";
 
@@ -52,8 +53,14 @@ export function SharedMessageAuthorLine({ author }: { readonly author: MessageAu
  * draws nothing for a prompt nobody is recorded as answering, which is every prompt of a thread
  * that is not shared, and nothing for a prompt still open (AC11).
  */
-export function PromptAnsweredBy({ toolData }: { readonly toolData: unknown }) {
-  const answer = usePromptAnswer(isSettledPrompt(toolData) ? toolData.requestId : null);
+export function PromptAnsweredBy({
+  threadRef,
+  toolData,
+}: {
+  readonly threadRef: ScopedThreadRef | null;
+  readonly toolData: unknown;
+}) {
+  const answer = usePromptAnswer(threadRef, isSettledPrompt(toolData) ? toolData.requestId : null);
   if (answer === undefined) return null;
   return (
     <span className="shrink-0 text-muted-foreground" data-j5-shared-conversation="answered-by">

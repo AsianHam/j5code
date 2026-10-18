@@ -2172,7 +2172,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   const userMessage = resolveUserMessagePresentation(row.message);
   // J5 (case 80): another person's message in a shared conversation sits on the left, named.
-  const sharedAuthor = useSharedMessageAuthor(row.message);
+  const sharedAuthor = useSharedMessageAuthor(ctx.threadRef, row.message);
   // A spawn brief shows only the spawner's words; the platform identity block
   // is already reflected in the thread header and the "Spawned by" divider.
   // It is literal text, so legacy composer-context upgrades skip it (J5).
@@ -5574,7 +5574,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 {answerPreview}
               </span>
             ) : null}
-            <PromptAnsweredBy toolData={workEntry.toolData} />
+            <PromptAnsweredBy threadRef={threadRef} toolData={workEntry.toolData} />
           </p>
         </div>
       }

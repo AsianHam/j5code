@@ -1,10 +1,20 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { MessageAuthor, PromptAnswer } from "@t3tools/contracts/j5";
 import { levelReaches } from "@t3tools/contracts/j5";
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
-import { useThreadAuthors } from "./sharedConversation";
-import { readAnswersFor, sharedMessageView, typedText } from "./sharedTimeline.logic";
+import {
+  authorIndex,
+  readThreadAuthors,
+  useThreadAuthors,
+  useThreadAuthorsValue,
+} from "./sharedConversation";
+import {
+  answersWithoutPrefix,
+  readAnswersFor,
+  sharedMessageView,
+  typedText,
+} from "./sharedTimeline.logic";
 import { useScopePeople } from "./scopeAccess";
 
 interface MessageEntry {
@@ -16,6 +26,12 @@ interface MessageEntry {
     readonly text: string;
     readonly createdBy?: unknown;
   };
+  readonly entry?: {
+    readonly questionAnswer?: {
+      readonly requestId: string;
+      readonly answers: Readonly<Record<string, unknown>>;
+    };
+  };
 }
 
 // Keyed by the message object the timeline holds, so nothing is kept for a thread off screen.
@@ -24,38 +40,27 @@ const notes = new WeakSet<object>();
 /** Whether the timeline's message is the notice J5 put before a message that carried a note. */
 export const isSharedNote = (message: object) => notes.has(message);
 
-// Whose each message of the thread on screen is, and who answered each prompt, for the rows that
-// draw them and for code that holds a message outside the timeline, such as the action that puts
-// a rewound message back in the composer.
-interface OnScreen {
-  readonly authors: ReadonlyMap<string, MessageAuthor>;
-  readonly answers: ReadonlyMap<string, PromptAnswer>;
-}
-let onScreen: OnScreen = { authors: new Map(), answers: new Map() };
-const listeners = new Set<() => void>();
-const subscribe = (listener: () => void) => {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-};
-const read = () => onScreen;
-
 /**
- * Who sent a message of the shared conversation on screen, when it was someone other than the
- * reader: upstream's bubble is then drawn on the left with their name (AC17).
+ * Who sent a message of a shared conversation, when it was someone other than the reader:
+ * upstream's bubble is then drawn on the left with their name (AC17). Every row of a thread reads
+ * the one record the thread's timeline holds.
  */
-export function useSharedMessageAuthor(message: {
-  readonly id: string;
-}): MessageAuthor | undefined {
-  const author = useSyncExternalStore(subscribe, read, read).authors.get(message.id);
+export function useSharedMessageAuthor(
+  thread: ScopedThreadRef | null,
+  message: { readonly id: string },
+): MessageAuthor | undefined {
+  const record = useThreadAuthorsValue(thread?.environmentId ?? null, thread?.threadId ?? null);
+  const author = authorIndex(record).authors.get(message.id);
   return author === undefined || author.you ? undefined : author;
 }
 
-/** Who answered one of the agent's prompts in the shared conversation on screen (AC11). */
-export function usePromptAnswer(requestId: string | null): PromptAnswer | undefined {
-  const all = useSyncExternalStore(subscribe, read, read);
-  return requestId === null ? undefined : all.answers.get(requestId);
+/** Who answered one of the agent's prompts in a shared conversation (AC11). */
+export function usePromptAnswer(
+  thread: ScopedThreadRef | null,
+  requestId: string | null,
+): PromptAnswer | undefined {
+  const record = useThreadAuthorsValue(thread?.environmentId ?? null, thread?.threadId ?? null);
+  return requestId === null ? undefined : authorIndex(record).answers.get(requestId);
 }
 
 /**
@@ -63,18 +68,44 @@ export function usePromptAnswer(requestId: string | null): PromptAnswer | undefi
  * put on it for the agent are taken off; sent again with them, the agent would read a typed
  * author's line under the real one.
  */
-export function sharedMessageTypedText(message: { readonly id: string; readonly text: string }) {
-  const author = onScreen.authors.get(message.id);
+export function sharedMessageTypedText(
+  thread: ScopedThreadRef,
+  message: { readonly id: string; readonly text: string },
+) {
+  const author = readThreadAuthors(thread).authors.get(message.id);
   return author === undefined ? message.text : typedText(message.text, author);
+}
+
+/**
+ * A thread's queued messages with the words their authors typed, for the queue's rows and the
+ * composer an edit loads (Shared conversations AC15): the server records a message's author when
+ * it is queued.
+ */
+export function useSharedQueuedRuns<
+  Queued extends { readonly run: { readonly userMessageId: string }; readonly text: string },
+>(environmentId: EnvironmentId, threadId: ThreadId, queued: ReadonlyArray<Queued>) {
+  const record = useThreadAuthorsValue(environmentId, threadId);
+  const { authors } = authorIndex(record);
+  return useMemo(
+    () =>
+      authors.size === 0
+        ? queued
+        : queued.map((item) => {
+            const author = authors.get(item.run.userMessageId);
+            return author === undefined ? item : { ...item, text: typedText(item.text, author) };
+          }),
+    [authors, queued],
+  );
 }
 
 /**
  * A thread's timeline as a shared conversation shows it (Shared conversations AC17). Each
  * person's message the server records an author for is shown as typed, and the note it carried
- * to the agent becomes a notice just before it. A message whose author the server has not
- * answered for yet is shown as this client's person typed it, or held back for the moment until
- * the answer comes, so no line meant for the agent is drawn. Every other entry, and every entry
- * of a thread only one person has ever been able to write to, is returned as it came.
+ * to the agent becomes a notice just before it. An answer to the agent's question is shown as
+ * given. A message whose author the server has not answered for yet is shown as this client's
+ * person typed it, or held back for the moment until the answer comes, so no line meant for the
+ * agent is drawn. Every other entry, and every entry of a thread only one person has ever been
+ * able to write to, is returned as it came.
  */
 export function useSharedConversationEntries<Entry extends MessageEntry>(
   threadRef: ScopedThreadRef | null,
@@ -93,15 +124,9 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
   const writers = (people.data?.people ?? []).filter((person) =>
     levelReaches(person.level, "collaborator"),
   ).length;
-  const mayBeShared = record?.shared === true || writers > 1;
-
-  useEffect(() => {
-    onScreen = {
-      authors: new Map((record?.authors ?? []).map((author) => [author.messageId, author])),
-      answers: new Map((record?.answers ?? []).map((answer) => [answer.requestId, answer])),
-    };
-    for (const listener of listeners) listener();
-  }, [record]);
+  // Until the first read answers or fails, any thread may be shared, so nothing is drawn plain
+  // that may carry lines for the agent.
+  const mayBeShared = record?.shared === true || writers > 1 || (record === null && !failed);
 
   // When this client first saw each server copy, and what its person typed for the messages they
   // sent from here, which are first drawn from what they typed.
@@ -116,9 +141,26 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
   }
 
   const shown = useMemo(() => {
-    const authors = new Map((record?.authors ?? []).map((author) => [author.messageId, author]));
+    const { authors, answers } = authorIndex(record);
     const pending: string[] = [];
     const out = entries.flatMap((entry): ReadonlyArray<Entry> => {
+      const questionAnswer = entry.entry?.questionAnswer;
+      const answer =
+        questionAnswer === undefined ? undefined : answers.get(questionAnswer.requestId);
+      if (questionAnswer !== undefined && answer !== undefined && answer.storedPrefix !== "") {
+        return [
+          {
+            ...entry,
+            entry: {
+              ...entry.entry,
+              questionAnswer: {
+                ...questionAnswer,
+                answers: answersWithoutPrefix(questionAnswer.answers, answer.storedPrefix),
+              },
+            },
+          },
+        ];
+      }
       const message = entry.message;
       if (message === undefined || message.role !== "user") return [entry];
       const fromServer = message.createdBy !== undefined;

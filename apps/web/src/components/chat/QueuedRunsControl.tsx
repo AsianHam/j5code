@@ -23,6 +23,7 @@ import {
   participantIdsForThreadA2AEnvelope,
 } from "../../j5/a2a/ThreadA2ARenderer";
 import { useParticipantLabels } from "../../j5/a2a/ParticipantIdentitiesClient";
+import { useSharedQueuedRuns } from "../../j5/sharing/sharedTimeline";
 import { threadEnvironment } from "../../state/threads";
 import { useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -111,7 +112,12 @@ export function QueuedRunsControl({
   const dragArmedRunIdRef = useRef<RunId | null>(null);
   const { workflow, queuedImageAttachmentIds, queuedImageAttachmentResources } =
     useQueueWorkflow(projection);
-  const queued = workflow?.queuedRuns ?? [];
+  // J5 (case 80): a shared conversation's queued messages read, and edit, as their authors typed them.
+  const queued = useSharedQueuedRuns(
+    props.environmentId,
+    props.threadId,
+    workflow?.queuedRuns ?? [],
+  );
   const activeRun = workflow?.activeRun ?? null;
   const canReorder = workflow?.canReorder === true;
   const queuedImageAttachmentUrls = useAssetUrls(

@@ -790,7 +790,7 @@ async function rewindToMessage(input: {
     }
     // J5 (case 80): a rewound message of a shared conversation comes back without the lines the
     // server put on it for the agent. Read before the rewind takes it out of the author record.
-    const typedText = sharedMessageTypedText(message);
+    const typedText = sharedMessageTypedText(input.routeThreadRef, message);
     const commandId = CommandId.make(randomUUID());
     await waitForRevertedMessage(
       input.routeThreadRef,
