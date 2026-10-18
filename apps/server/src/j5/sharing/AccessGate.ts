@@ -15,6 +15,7 @@ import {
   authScopeRequiredResponse,
 } from "@t3tools/contracts";
 import {
+  type ParticipantIdentitiesResponse,
   J5_ACCESS_WS_METHODS,
   J5_CLIENT_READ_WS_METHODS,
   J5_PEOPLE_WS_METHODS,
@@ -102,6 +103,8 @@ type AccessRpcRule = (
     }
   | { readonly kind: "collaborator" }
   | { readonly kind: "anyone" }
+  /** Agents' names, each told only when the person may know that agent (`participantVisible`). */
+  | { readonly kind: "identities" }
   | { readonly kind: "server" }
   | { readonly kind: "narrowed" }
   | {
@@ -322,8 +325,9 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaUsage]: serverHome,
   [J5_SKILL_CATALOG_WS_METHODS.getSkillCatalogStatus]: serverHome,
 
-  // Whose agents are named on a thread, and which J5 reads have moved; neither says what changed.
-  [J5_CLIENT_READ_WS_METHODS.readParticipantIdentities]: anyone,
+  // Which J5 reads have moved, which says nothing of what changed; and agents' names, each only
+  // for an agent the person may know.
+  [J5_CLIENT_READ_WS_METHODS.readParticipantIdentities]: { kind: "identities" },
   [J5_CLIENT_READ_WS_METHODS.subscribeReadChanges]: anyone,
 
   // A connection asking what it holds, answered for its own session; saying whose a device is;
@@ -642,6 +646,7 @@ export const layerRpcAuthorization = (
             switch (rule.kind) {
               case "narrowed":
               case "anyone":
+              case "identities":
                 return Effect.succeed(true);
               case "messageAsset":
                 return Effect.succeed(true);
@@ -695,6 +700,33 @@ export const layerRpcAuthorization = (
           return RpcScopeAuthorization.of((effect, options) => {
             const rule = ACCESS_RPC_RULES[options.rpc._tag as WsRpcMethod];
             if (rule === undefined) return Effect.fail(notSharedError());
+            if (rule.kind === "identities") {
+              if (reach.kind !== "person") return Effect.fail(notSharedError());
+              const personId = reach.person.personId;
+              // An agent the person may not know is told as unknown, as one with no name is.
+              return inner(effect, options).pipe(
+                Effect.flatMap((answered) => {
+                  const response = answered as unknown as ParticipantIdentitiesResponse;
+                  return Effect.forEach(response.entries, (entry) =>
+                    entry.identity.kind !== "known"
+                      ? Effect.succeed(entry)
+                      : access
+                          .participantVisible(personId, {
+                            participantId: entry.participantId,
+                            threadId: entry.identity.threadId ?? null,
+                          })
+                          .pipe(
+                            Effect.catch(refuseUnreadable),
+                            Effect.map((visible) =>
+                              visible
+                                ? entry
+                                : { ...entry, identity: { kind: "unknown" as const } },
+                            ),
+                          ),
+                  ).pipe(Effect.map((entries) => ({ entries }) as unknown as typeof answered));
+                }),
+              );
+            }
             if (rule.kind === "messageAsset") {
               if (reach.kind !== "person") return Effect.fail(notSharedError());
               const personId = reach.person.personId;

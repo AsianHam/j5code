@@ -258,6 +258,44 @@ it.layer(testLayer)("access gate", (it) => {
     }),
   );
 
+  it.effect("tells a narrowed person an agent's name only when they reach its thread", () =>
+    Effect.gen(function* () {
+      const mine = yield* thread("thread:identity-mine");
+      yield* thread("thread:identity-other");
+      const { session } = yield* signed(
+        "Name reader",
+        [{ scope: { kind: "thread", threadId: mine }, level: "viewer" }],
+        LEVEL_PERMISSIONS.viewer,
+      );
+      const known = (id: string) => ({
+        participantId: `agent:j5:a2a:thread:${id}`,
+        identity: { kind: "known", displayName: `Title of ${id}`, threadId: id },
+      });
+      const authorize = yield* RpcScopeAuthorization.pipe(
+        Effect.provide(
+          AccessGate.layerRpcAuthorization(session, RpcAuthorization.layer(session.scopes)),
+        ),
+      );
+      type Handler = Parameters<typeof authorize>[0];
+      const answer = yield* authorize(
+        Effect.succeed({
+          entries: [known("thread:identity-mine"), known("thread:identity-other")],
+        }) as unknown as Handler,
+        {
+          rpc: { _tag: J5_CLIENT_READ_WS_METHODS.readParticipantIdentities },
+          payload: { participantIds: [] },
+        } as unknown as Parameters<typeof authorize>[1],
+      );
+      assert.deepStrictEqual((answer as unknown as { entries: unknown }).entries, [
+        known("thread:identity-mine"),
+        {
+          participantId: "agent:j5:a2a:thread:thread:identity-other",
+          identity: { kind: "unknown" },
+        },
+      ]);
+    }),
+  );
+
   it.effect("ends a feed already open when the person loses what it shows", () =>
     Effect.gen(function* () {
       const people = yield* PersonAccess.PersonAccess;

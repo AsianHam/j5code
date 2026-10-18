@@ -239,6 +239,15 @@ export interface PersonAccessShape {
     personId: ParticipantId,
     asset: MessageAsset,
   ) => Effect.Effect<PersonLevel | null, PersonAccessStorageError>;
+  /**
+   * Whether a person may be told an agent's name: its own thread is one they reach, or it sent a
+   * message to an agent whose thread they reach. Anything else they are told nothing of, since an
+   * agent's name is its thread's title.
+   */
+  readonly participantVisible: (
+    personId: ParticipantId,
+    participant: { readonly participantId: string; readonly threadId: string | null },
+  ) => Effect.Effect<boolean, PersonAccessStorageError>;
   /** Everyone who reaches a thread or a project, with how. */
   readonly scopePeople: (
     scope: Exclude<PersonScope, { readonly kind: "server" }>,
@@ -661,6 +670,32 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           return highestLevel(levels.flat().map((row) => row.level));
         },
         Effect.mapError(storage("read a person's level on an attachment")),
+      ),
+
+      participantVisible: Effect.fn("j5.sharing.personAccess.participantVisible")(
+        function* (personId, participant) {
+          if (
+            participant.threadId !== null &&
+            (yield* coveringThread(participant.threadId as ThreadId, personId)).length > 0
+          ) {
+            return true;
+          }
+          const receivers = yield* sql<{ readonly thread_id: string }>`
+            SELECT DISTINCT member.thread_id
+            FROM j5_a2a_delivery AS delivery
+            JOIN j5_a2a_membership AS member
+              ON member.project_id = delivery.receiver_project_id
+             AND member.participant_id = delivery.receiver_id
+            WHERE delivery.sender_id = ${participant.participantId}
+          `;
+          for (const receiver of receivers) {
+            if ((yield* coveringThread(receiver.thread_id as ThreadId, personId)).length > 0) {
+              return true;
+            }
+          }
+          return false;
+        },
+        Effect.mapError(storage("read whether a person may know an agent")),
       ),
 
       scopePeople: Effect.fn("j5.sharing.personAccess.scopePeople")(
