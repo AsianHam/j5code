@@ -458,8 +458,13 @@ export const layer = HttpApiBuilder.group(
               link: issued,
               scopes: delegatedScopes,
             }).pipe(
+              // A link whose maker is not recorded would pair a device no one owns: revoked.
               Effect.catch((error) =>
-                failEnvironmentInternal("pairing_credential_issuance_failed", error),
+                Effect.ignore(serverAuth.revokePairingLink(issued.id)).pipe(
+                  Effect.andThen(
+                    failEnvironmentInternal("pairing_credential_issuance_failed", error),
+                  ),
+                ),
               ),
             );
             return issued;
