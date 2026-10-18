@@ -231,7 +231,7 @@ function EnvironmentRuns({
       ) : unsupported ? (
         <p role="status" className="text-sm text-muted-foreground">
           {guest
-            ? "Nothing from a server you are a guest on appears here."
+            ? "This server's Playbook runs are not shared with you."
             : "This environment does not support the playbook overview yet."}
         </p>
       ) : query.error ? (

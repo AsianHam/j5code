@@ -3,6 +3,7 @@ import { ProjectId, ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import { scopedInboxItemKey, type ScopedHumanInboxItem } from "@t3tools/contracts/j5";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  compareInboxItems,
   j5SourceNotice,
   mergeHumanInboxSources,
   type PresentedHumanInboxItem as HumanInboxItem,
@@ -63,6 +64,8 @@ import {
 import { useLogicalProjects } from "../logicalProjects";
 import { createVisibleRefreshHook } from "../useVisibleRefresh";
 import { notifyHumanInboxChanged } from "./humanInboxRefresh";
+import { answeredByLine, nextKeptItems } from "./inboxKept.logic";
+import { useConnectionAccess } from "../sharing/access";
 
 interface HumanInboxAnswerAttempt {
   readonly message: string;
@@ -96,6 +99,23 @@ function SenderName({
       <TooltipTrigger render={<span className={className} />}>{sender.label}</TooltipTrigger>
       <TooltipPopup>{sender.tooltipParticipantId}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+/** The reader's own name on an item's server, so "Priya answered" can read "You answered". */
+function useOwnName(environmentId: EnvironmentId): string | null {
+  const access = useConnectionAccess(environmentId);
+  return access?.kind === "person" ? access.name : null;
+}
+
+/** The mark on an ask addressed to everyone who can write to the asking agent's thread (AC15). */
+function ForEveryoneMark({ item }: { readonly item: HumanInboxItem }) {
+  if (item.forEveryone !== true) return null;
+  return (
+    <>
+      <span aria-hidden>·</span>
+      <span className="shrink-0">for everyone here</span>
+    </>
   );
 }
 
@@ -246,8 +266,14 @@ function OpenInboxItem({
   senderLabels,
   projectNameOf,
   showEnvironment,
+  closed,
 }: {
   readonly item: HumanInboxItem;
+  /**
+   * The item closed while the person had typed into it, and stays with their words (AC17): who
+   * answered, or that it is no longer open. `undefined` for an open item.
+   */
+  readonly closed?: { readonly answeredBy: string | null | undefined } | undefined;
   readonly answer: (item: HumanInboxItem) => void;
   readonly senderLabels: SenderLabels;
   readonly projectNameOf: ProjectNameOf;
@@ -263,6 +289,9 @@ function OpenInboxItem({
     j5Environment.answerHumanExchange.permissionAtom(item.environmentId),
   );
   const canAnswer = item.sourceReady && mayAnswer;
+  const ownName = useOwnName(item.environmentId);
+  const closedLine =
+    closed === undefined ? null : (answeredByLine(closed.answeredBy, ownName) ?? "No longer open");
   return (
     <li className="border-b border-border/70 last:border-b-0">
       <details className="group/details">
@@ -279,6 +308,7 @@ function OpenInboxItem({
               />
               <span aria-hidden>·</span>
               <span className="truncate">{projectNameOf(item)}</span>
+              <ForEveryoneMark item={item} />
               {showEnvironment || !item.connected ? (
                 <>
                   <span aria-hidden>·</span>
@@ -324,18 +354,24 @@ function OpenInboxItem({
                 item={item}
                 onOpen={onOpenThread}
               />
-              <Button
-                disabled={!canAnswer || pendingExchangeId !== null || answerText.length === 0}
-                title={
-                  canAnswer
-                    ? undefined
-                    : "This environment is unavailable or this connection is read-only."
-                }
-                onClick={() => answer(item)}
-                type="button"
-              >
-                {pendingExchangeId === scopedInboxItemKey(item) ? "Delivering…" : "Answer"}
-              </Button>
+              {closedLine !== null ? (
+                <p className="text-sm text-muted-foreground" data-j5-inbox="closed">
+                  {closedLine}
+                </p>
+              ) : (
+                <Button
+                  disabled={!canAnswer || pendingExchangeId !== null || answerText.length === 0}
+                  title={
+                    canAnswer
+                      ? undefined
+                      : "This environment is unavailable or this connection is read-only."
+                  }
+                  onClick={() => answer(item)}
+                  type="button"
+                >
+                  {pendingExchangeId === scopedInboxItemKey(item) ? "Delivering…" : "Answer"}
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -381,7 +417,9 @@ function AnsweredShelf({
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   <SenderName item={item} senderLabels={senderLabels} /> · {projectNameOf(item)}
                   {showEnvironment ? ` · ${item.environmentLabel}` : ""}
+                  {item.forEveryone === true ? " · for everyone here" : ""}
                   {` · ${formatAnsweredAgeLabel(answeredDuration)}`}
+                  <AnsweredBy item={item} />
                 </p>
               </div>
               <OpenThreadButton
@@ -395,6 +433,12 @@ function AnsweredShelf({
       </ol>
     </details>
   );
+}
+
+/** " · Priya answered", for an ask whose answerer the server names (AC16). */
+function AnsweredBy({ item }: { readonly item: HumanInboxItem }) {
+  const line = answeredByLine(item.answeredBy, useOwnName(item.environmentId));
+  return line === null ? null : <> · {line}</>;
 }
 
 export async function refreshHumanInboxes(environmentId?: EnvironmentId, force = false) {
@@ -434,6 +478,30 @@ export function HumanInboxPage() {
   );
   const [answers, setAnswers] = useState<HumanInboxAnswers>({});
   const [pendingExchangeId, setPendingExchangeId] = useState<string | null>(null);
+  // An item that closed while the person was answering it stays in place with their words.
+  const [kept, setKept] = useState<ReadonlyMap<string, HumanInboxItem>>(new Map());
+  const previousItems = useRef<ReadonlyArray<HumanInboxItem>>([]);
+  useEffect(() => {
+    setKept((current) =>
+      nextKeptItems({
+        previous: previousItems.current,
+        current: items,
+        kept: current,
+        answers,
+        submitting: pendingExchangeId,
+        keyOf: scopedInboxItemKey,
+      }),
+    );
+    previousItems.current = items;
+  }, [answers, items, pendingExchangeId]);
+  const shownItems = useMemo(
+    () => (kept.size === 0 ? items : [...items, ...kept.values()].toSorted(compareInboxItems)),
+    [items, kept],
+  );
+  const answeredByKey = useMemo(
+    () => new Map(answeredItems.map((item) => [scopedInboxItemKey(item), item.answeredBy])),
+    [answeredItems],
+  );
   const [error, setError] = useState<string | null>(null);
   const answerAttempts = useRef(new Map<string, HumanInboxAnswerAttempt>());
   useInboxRefresh();
@@ -688,7 +756,7 @@ export function HumanInboxPage() {
             {complete &&
             !loading &&
             error === null &&
-            items.length === 0 &&
+            shownItems.length === 0 &&
             proposals.length === 0 &&
             runtimeRequests.length === 0 ? (
               <div className="flex min-h-56 flex-col items-center justify-center px-6 py-12 text-center">
@@ -702,8 +770,13 @@ export function HumanInboxPage() {
               </div>
             ) : (
               <ol className="divide-y divide-border/70">
-                {items.map((item) => (
+                {shownItems.map((item) => (
                   <OpenInboxItem
+                    closed={
+                      kept.has(scopedInboxItemKey(item))
+                        ? { answeredBy: answeredByKey.get(scopedInboxItemKey(item)) }
+                        : undefined
+                    }
                     answer={answer}
                     answerText={answers[scopedInboxItemKey(item)] ?? ""}
                     item={item}
