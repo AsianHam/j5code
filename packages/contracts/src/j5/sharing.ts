@@ -96,17 +96,18 @@ export type SharingGrantTarget = typeof SharingGrantTarget.Type;
 // characters, which a member cannot see and a model reads as plain letters. Emoji joined by a
 // zero-width joiner go with them: a name does not need them, and one plain rule is worth more.
 //
-// Square brackets go too. A person's name is written into the line that tells an agent who a
-// message is from, `[Message from Priya (guest)]`, and a name holding a bracket could make that
-// line read as two. Parentheses stay: people write names like "Sam (QA)".
-const NOT_IN_A_PERSON_NAME = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}\p{Zl}\p{Zp}[\]]/u;
+// Square and angle brackets go too (AC45). A person's name is written into the line that tells
+// an agent who a message is from, `[Message from Priya (collaborator)]`, and into platform notes
+// an agent reads as markup; a name holding a bracket could make either read as something else.
+// Parentheses stay: people write names like "Sam (QA)".
+const NOT_IN_A_PERSON_NAME = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}\p{Zl}\p{Zp}[\]<>]/u;
 // An accent or a vowel sign is one or two marks on a letter; a longer run stacks marks to draw
 // over the lines around it.
 const TOO_MANY_MARKS = /\p{M}{3,}/u;
 
 /**
  * Whether a person's name is one line of visible, ordinary characters, up to 80 of them, with
- * no square brackets. A name
+ * no square or angle brackets. A name
  * is shown to everyone on a shared thread and goes on that person's messages to an agent, so it
  * is held to this whoever typed it.
  */
@@ -120,7 +121,7 @@ export const isPersonName = (name: string) =>
 export const SharingPersonName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(80),
   Schema.makeFilter((name: string) => isPersonName(name), {
-    title: "one line of visible characters, with no square brackets",
+    title: "one line of visible characters, with no square or angle brackets",
   }),
 );
 
