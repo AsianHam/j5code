@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as PairingGrantStore from "../../../auth/PairingGrantStore.ts";
 import * as SessionStore from "../../../auth/SessionStore.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -32,7 +33,7 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 export const PROJECT = ProjectId.make("project:billing-migration");
 export const OTHER_PROJECT = ProjectId.make("project:website-redesign");
 
-const sessionStore = SessionStore.layer.pipe(
+const sessionStore = Layer.mergeAll(SessionStore.layer, PairingGrantStore.layer).pipe(
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {

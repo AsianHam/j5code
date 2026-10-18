@@ -9,9 +9,11 @@ import * as Result from "effect/Result";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as PairingGrantStore from "../../auth/PairingGrantStore.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
 import { Access } from "./Access.ts";
+import { PairingIntents } from "./PairingIntents.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 import { makeSessionRenewal } from "./SessionRenewal.ts";
 import {
@@ -159,6 +161,27 @@ it.layer(accessLayer)("Access", (it) => {
         { concurrency: 2 },
       );
       assert.strictEqual(results.filter(Result.isSuccess).length, 1);
+    }),
+  );
+
+  it.effect("revokes the links still waiting to pair a removed person's device", () =>
+    Effect.gen(function* () {
+      const access = yield* Access;
+      const grants = yield* PairingGrantStore.PairingGrantStore;
+      const intents = yield* PairingIntents;
+      const contractor = yield* person("Removed contractor", [
+        { scope: { kind: "server" }, level: "viewer" },
+      ]);
+      const link = yield* grants.issueOneTimeToken({ scopes: LEVEL_PERMISSIONS.viewer });
+      yield* intents.record({
+        pairingLinkId: link.id,
+        credential: link.credential,
+        personId: contractor.personId,
+        linkId: null,
+        ceiling: null,
+      });
+      yield* access.removePerson(contractor.personId);
+      assert.isFalse((yield* grants.listActive()).some((active) => active.id === link.id));
     }),
   );
 

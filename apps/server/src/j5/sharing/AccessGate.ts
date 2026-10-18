@@ -33,6 +33,7 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
+import type * as PairingGrantStore from "../../auth/PairingGrantStore.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import { layer as accessLayer, renewOutdatedDevicesAtStartup } from "./Access.ts";
 import { issueGuestProjectIconUrl, projectIdOfGuestIconPath } from "./GuestProjectIcons.ts";

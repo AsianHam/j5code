@@ -17,6 +17,7 @@ import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 
+import * as PairingGrantStore from "../../auth/PairingGrantStore.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import type { ParticipantId } from "../a2a/contracts.ts";
 import {
@@ -169,6 +170,7 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const people = yield* PersonAccess;
   const sessions = yield* SessionStore.SessionStore;
+  const grants = yield* PairingGrantStore.PairingGrantStore;
   const changes = yield* Effect.acquireRelease(PubSub.sliding<AccessChange>(256), (pubsub) =>
     PubSub.shutdown(pubsub),
   );
@@ -282,6 +284,26 @@ const make = Effect.gen(function* () {
       const owner = snapshotOf(yield* people.listLevels(personId)).owner;
       yield* committed(
         Effect.gen(function* () {
+          // The pairing links still waiting to pair a device as them are revoked upstream, so
+          // none of them can pair a device the server would then not know (AC49).
+          const waiting = yield* sql<{ readonly pairing_link_id: string }>`
+            SELECT pairing_link_id FROM j5_a2a_pairing_intent WHERE person_id = ${personId}
+          `.pipe(
+            Effect.mapError(
+              (cause) =>
+                new PersonAccessStorageError({ operation: "read a person's links", cause }),
+            ),
+          );
+          for (const link of waiting) {
+            yield* grants
+              .revoke(link.pairing_link_id)
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new PersonAccessStorageError({ operation: "revoke a person's link", cause }),
+                ),
+              );
+          }
           const ended = yield* people.removePerson(personId);
           for (const sessionId of ended) {
             yield* sessions
@@ -356,7 +378,10 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   Access,
   never,
-  SqlClient.SqlClient | PersonAccess | SessionStore.SessionStore
+  | SqlClient.SqlClient
+  | PersonAccess
+  | SessionStore.SessionStore
+  | PairingGrantStore.PairingGrantStore
 > = Layer.effect(Access, make);
 
 /**

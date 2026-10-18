@@ -451,12 +451,8 @@ export const layer: Layer.Layer<
       }),
 
       removePerson: Effect.fn("j5.sharing.people.removePerson")(function* (rawPersonId) {
-        const personId = yield* personIdOf(rawPersonId);
-        const unused = (yield* intentPeople).filter((row) => row.person_id === personId);
-        yield* access.removePerson(personId);
-        yield* Effect.forEach(unused, (row) => auth.revokePairingLink(row.pairing_link_id), {
-          discard: true,
-        }).pipe(upstream("revoke the person's unused links"));
+        // `Access` ends their devices and revokes their unused links with them.
+        yield* access.removePerson(yield* personIdOf(rawPersonId));
       }),
 
       revokeDevice: Effect.fn("j5.sharing.people.revokeDevice")(function* (sessionId) {
