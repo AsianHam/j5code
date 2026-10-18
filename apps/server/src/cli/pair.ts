@@ -1,5 +1,4 @@
 import {
-  type AuthEnvironmentScope,
   AuthStandardClientScopes,
   ExecutionEnvironmentDescriptor,
   PortSchema,
@@ -30,8 +29,10 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { cliEnvironmentAuth as j5CliEnvironmentAuth } from "../j5/sharing/AccessGate.ts";
 import {
+  type PairingScopes as J5PairingScopes,
   type PersonPairingFlags as J5PersonPairingFlags,
   pairingLinkForPerson as j5PairingLinkForPerson,
+  pairingScopesFlag as j5PairingScopesFlag,
   personPairingFlags as j5PersonPairingFlags,
 } from "../j5/sharing/cliPairing.ts";
 import { resolveBaseDir } from "../os-jank.ts";
@@ -48,7 +49,6 @@ import {
   renderTerminalQrCode,
   resolveHeadlessConnectionString,
 } from "../startupAccess.ts";
-import { authScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
@@ -480,7 +480,7 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
 
 const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
   readonly config: ServerConfig.ServerConfig["Service"];
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly scopes: J5PairingScopes;
   readonly ttl: Option.Option<Duration.Duration>;
   readonly label: Option.Option<string>;
   readonly person: J5PersonPairingFlags;
@@ -538,7 +538,8 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
 
 export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
-  scopes: authScopesFlag(AuthStandardClientScopes),
+  // J5: also says whether --scope was given (FORK.md case 79).
+  scopes: j5PairingScopesFlag(AuthStandardClientScopes),
   ttl: ttlFlag,
   label: labelFlag,
   tailscale: tailscaleFlag,

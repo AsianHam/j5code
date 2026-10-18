@@ -3,6 +3,7 @@ import { AuthOrchestrationReadScope, AuthStandardClientScopes } from "@t3tools/c
 import { LEVEL_PERMISSIONS, type PersonLevel } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PairingGrantStore from "../../auth/PairingGrantStore.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
@@ -26,16 +27,17 @@ const flags = (
   thread: Option.fromUndefinedOr(input.thread),
 });
 
+/** `--scope` as given; left out, the command's default. */
 const pair = (
   given: Parameters<typeof flags>[0],
-  scopes: ReadonlyArray<(typeof AuthStandardClientScopes)[number]> = AuthStandardClientScopes,
+  scopes?: ReadonlyArray<(typeof AuthStandardClientScopes)[number]>,
   withoutPerson: "refuse" | "ask" = "refuse",
 ) =>
   Effect.gen(function* () {
     const grants = yield* PairingGrantStore.PairingGrantStore;
     return yield* pairingLinkForPerson({
       flags: flags(given),
-      scopes,
+      scopes: { scopes: scopes ?? AuthStandardClientScopes, given: scopes !== undefined },
       mint: (minted) => grants.issueOneTimeToken({ scopes: [...minted] }),
       withoutPerson,
     });
@@ -64,7 +66,7 @@ it.layer(accessLayer)("j5 pair --person", (it) => {
         const intents = yield* PairingIntents;
         const people = yield* PersonAccess.PersonAccess;
         const sessions = yield* SessionStore.SessionStore;
-        const made = yield* pair({}, AuthStandardClientScopes, "ask");
+        const made = yield* pair({}, undefined, "ask");
         assert.include(made.said, "asked who they are");
         assert.isNull(yield* intents.intentOf(made.link.credential));
 
@@ -81,10 +83,7 @@ it.layer(accessLayer)("j5 pair --person", (it) => {
         assert.strictEqual(reach.kind, "unknown");
 
         // A level or scope without a person is still refused: there is no one to give it to.
-        assert.include(
-          yield* refusal(pair({ level: "viewer" }, AuthStandardClientScopes, "ask")),
-          "--person",
-        );
+        assert.include(yield* refusal(pair({ level: "viewer" }, undefined, "ask")), "--person");
       }),
   );
 
@@ -104,6 +103,58 @@ it.layer(accessLayer)("j5 pair --person", (it) => {
         yield* refusal(pair({ person: "Sam", level: "collaborator" })),
         "already on this server",
       );
+    }),
+  );
+
+  it.effect(
+    "keeps --scope as the ceiling only when it was given, and refuses one that gives nothing",
+    () =>
+      Effect.gen(function* () {
+        const intents = yield* PairingIntents;
+        yield* person("Ceiling person", [{ scope: { kind: "server" }, level: "viewer" }]);
+        const followsLevel = yield* pair({ person: "Ceiling person" });
+        assert.isNull((yield* intents.intentOf(followsLevel.link.credential))?.ceiling);
+        // Every default named by hand is a ceiling all the same.
+        const capped = yield* pair({ person: "Ceiling person" }, AuthStandardClientScopes);
+        assert.deepStrictEqual(
+          [...((yield* intents.intentOf(capped.link.credential))?.ceiling ?? [])],
+          [...AuthStandardClientScopes],
+        );
+        assert.include(
+          yield* refusal(pair({ person: "Ceiling person" }, ["terminal:operate"])),
+          "--scope gives nothing within Ceiling person's level",
+        );
+      }),
+  );
+
+  it.effect("makes no link when whose it is cannot be recorded", () =>
+    Effect.gen(function* () {
+      const grants = yield* PairingGrantStore.PairingGrantStore;
+      const people = yield* PersonAccess.PersonAccess;
+      const sql = yield* SqlClient.SqlClient;
+      const gone = yield* person("Removed meanwhile", [
+        { scope: { kind: "server" }, level: "viewer" },
+      ]);
+      const failed = yield* pairingLinkForPerson({
+        flags: flags({ person: "Removed meanwhile" }),
+        scopes: { scopes: AuthStandardClientScopes, given: false },
+        withoutPerson: "refuse",
+        // Upstream makes the link; the person goes before it is recorded as theirs.
+        mint: (minted) =>
+          grants
+            .issueOneTimeToken({ scopes: [...minted], label: "Removed meanwhile" })
+            .pipe(
+              Effect.tap(
+                () =>
+                  sql`UPDATE j5_a2a_human_person SET removed_at = 'now' WHERE person_id = ${gone.personId}`,
+              ),
+            ),
+      }).pipe(Effect.flip);
+      assert.strictEqual(failed._tag, "PairingIntentError");
+      assert.isFalse(
+        (yield* grants.listActive()).some((link) => link.label === "Removed meanwhile"),
+      );
+      assert.isNotNull(yield* people.readPerson(gone.personId));
     }),
   );
 

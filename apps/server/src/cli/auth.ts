@@ -19,6 +19,7 @@ import { authScopesFlag } from "./authScopes.ts";
 import { cliEnvironmentAuth as j5CliEnvironmentAuth } from "../j5/sharing/AccessGate.ts";
 import {
   pairingLinkForPerson as j5PairingLinkForPerson,
+  pairingScopesFlag as j5PairingScopesFlag,
   personPairingFlags as j5PersonPairingFlags,
 } from "../j5/sharing/cliPairing.ts";
 import {
@@ -86,7 +87,8 @@ const tokenOnlyFlag = Flag.Boolean("token-only").pipe(
 
 const pairingCreateCommand = Command.make("create", {
   ...authLocationFlags,
-  scopes: authScopesFlag(AuthStandardClientScopes),
+  // J5: also says whether --scope was given (FORK.md case 79).
+  scopes: j5PairingScopesFlag(AuthStandardClientScopes),
   ttl: ttlFlag,
   label: labelFlag,
   baseUrl: baseUrlFlag,

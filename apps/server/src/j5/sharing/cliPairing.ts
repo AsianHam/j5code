@@ -1,15 +1,9 @@
-import {
-  type AuthEnvironmentScope,
-  AuthStandardClientScopes,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { type AuthEnvironmentScope, AuthGrantScope, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   type PersonLevel,
   type PersonScope,
   devicePermissions,
   highestLevel,
-  samePermissions,
 } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -64,6 +58,29 @@ export const personPairingFlags = {
   ),
 };
 
+/** The permissions `--scope` asked for, or the command's default, and whether it was given. */
+export interface PairingScopes {
+  readonly scopes: ReadonlyArray<AuthGrantScope>;
+  readonly given: boolean;
+}
+
+/**
+ * Upstream's `--scope` flag (`cli/authScopes.ts`), which also says whether it was given at all:
+ * given, it is the device's ceiling; left out, the device follows its person's level, whatever
+ * upstream's default is.
+ */
+export const pairingScopesFlag = (defaults: ReadonlyArray<AuthGrantScope>) =>
+  Flag.Literals("scope", AuthGrantScope.literals).pipe(
+    Flag.withDescription(
+      `Authorization scope to grant. Repeat for multiple scopes; replaces the default set: ${defaults.join(", ")}.`,
+    ),
+    Flag.atLeast(0),
+    Flag.map((scopes): PairingScopes => ({
+      scopes: [...new Set(scopes.length > 0 ? scopes : defaults)],
+      given: scopes.length > 0,
+    })),
+  );
+
 export interface PersonPairingFlags {
   readonly person: Option.Option<string>;
   readonly level: Option.Option<PersonLevel>;
@@ -90,8 +107,7 @@ const LEVEL_NAMES: Record<PersonLevel, string> = {
 export const pairingLinkForPerson = Effect.fn("j5.sharing.cliPairing.pairingLinkForPerson")(
   function* <L extends { readonly id: string; readonly credential: string }, E, R>(input: {
     readonly flags: PersonPairingFlags;
-    /** The permissions `--scope` asked for; upstream's default when it was not given. */
-    readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+    readonly scopes: PairingScopes;
     readonly mint: (scopes: ReadonlyArray<AuthEnvironmentScope>) => Effect.Effect<L, E, R>;
     /** What a link without `--person` is: refused, or one for a device the server will ask about. */
     readonly withoutPerson: "refuse" | "ask";
@@ -134,7 +150,7 @@ export const pairingLinkForPerson = Effect.fn("j5.sharing.cliPairing.pairingLink
     ) {
       // Upstream's link as upstream makes it, with no record of a person.
       return {
-        link: yield* input.mint(input.scopes),
+        link: yield* input.mint(input.scopes.scopes),
         said: "Made a link for a device the server does not know yet: whoever pairs it is asked who they are before they can use anything.",
       };
     }
@@ -155,15 +171,17 @@ export const pairingLinkForPerson = Effect.fn("j5.sharing.cliPairing.pairingLink
       );
     }
     const name = yield* checkedPersonName(flags.person.value);
-    // `--scope` replaces upstream's whole default set; left out, the device follows the level.
-    const ceiling = samePermissions(input.scopes, AuthStandardClientScopes) ? null : input.scopes;
+    const ceiling = input.scopes.given ? input.scopes.scopes : null;
     // The link and the record of whose it is commit together: a link made without it would pair
-    // a device the server could not place.
+    // a device the server could not place. Upstream's link is written through the same database
+    // client (`cliEnvironmentAuth` builds both over one runtime).
     const mintFor = (personId: ParticipantId, levels: ReadonlyArray<HeldLevel>) =>
       Effect.gen(function* () {
-        const link = yield* input.mint(
-          devicePermissions(highestLevel(levels.map((held) => held.level)), ceiling),
-        );
+        const granted = devicePermissions(highestLevel(levels.map((held) => held.level)), ceiling);
+        if (granted.length === 0) {
+          return yield* refuse(`--scope gives nothing within ${name}'s level.`);
+        }
+        const link = yield* input.mint(granted);
         yield* intents.record({
           pairingLinkId: link.id,
           credential: link.credential,
