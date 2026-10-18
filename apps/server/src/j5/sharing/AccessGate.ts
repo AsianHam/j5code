@@ -416,6 +416,8 @@ export const accessHttpRule = (method: string, pathname: string): AccessHttpRule
     : { kind: "thread", threadId: ThreadId.make(threadId) };
 };
 
+const isServerAuthInternalError = Schema.is(EnvironmentAuth.ServerAuthInternalError);
+
 const requestPathname = (request: HttpServerRequest.HttpServerRequest) =>
   new URL(request.url, "http://environment.invalid").pathname;
 
@@ -590,7 +592,7 @@ export const layerGatedEnvironmentAuth = Layer.effect(
           .issueMcpClient(inner.issueMcpClientSession(input))
           .pipe(
             Effect.mapError((cause) =>
-              Schema.is(EnvironmentAuth.ServerAuthInternalError)(cause)
+              isServerAuthInternalError(cause)
                 ? cause
                 : new EnvironmentAuth.ServerAuthSessionTokenIssueError({ cause }),
             ),
