@@ -98,7 +98,8 @@ export function answerWithoutPrefix(answer: unknown, storedPrefix: string): unkn
   }
   if (Array.isArray(answer)) {
     const [first, ...rest] = answer as ReadonlyArray<unknown>;
-    return typeof first === "string" && first.trim() === storedPrefix.trim() ? rest : answer;
+    // The mark stands alone as the first option, without its trailing space.
+    return first === storedPrefix.trimEnd() ? rest : answer;
   }
   return answer;
 }
