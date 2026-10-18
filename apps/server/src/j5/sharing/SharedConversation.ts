@@ -36,6 +36,7 @@ import type * as SqlError from "effect/sql/SqlError";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import type { LedgerMessageId, ParticipantId } from "../a2a/contracts.ts";
 import { deliveryMessageId } from "../a2a/DeliveryTransport.ts";
+import { A2ALifecycleService } from "../a2a/LifecycleService.ts";
 import { Access } from "./Access.ts";
 import { authorLabel, beginsWithSlash, personNameInLine } from "./authorLabel.ts";
 import {
@@ -152,17 +153,23 @@ interface CarrierRun {
   readonly carried: string | null;
   readonly status: string | null;
   readonly started_at: string | null;
+  /** The message the run was started for, its `userMessageId`. */
+  readonly run_message: string | null;
 }
 
 /**
- * Whether what a message carried has reached the agent: its run has started, so the provider was
- * handed it, and has not been rolled back, which takes the agent's conversation back to before
- * it. A message whose run is queued, preparing or starting has told the agent nothing yet, and
- * may never; nor has one with no run, of which there is no evidence either way. Until one is
- * known to have run, every message carries the note again.
+ * Whether what a message carried has reached the agent: it is the message its run was started
+ * for, the run has started, so the provider was handed it, and it has not been rolled back,
+ * which takes the agent's conversation back to before it. A message whose run is queued,
+ * preparing or starting has told the agent nothing yet, and may never; nor has one with no run.
+ * Nor has a message steered into a run started for another: it is recorded against that run,
+ * which has started, whether or not the provider ever took the steer, and nothing says it did.
+ * Until one is known to have run, every message carries the note again: a note told twice is
+ * better than one never told.
  */
 const reachedAgent = (run: CarrierRun) =>
   run.carried !== null &&
+  run.run_message === run.carried &&
   run.started_at !== null &&
   run.status !== ("rolled_back" satisfies OrchestrationV2Run["status"]);
 
@@ -232,6 +239,12 @@ export interface SharedConversationShape {
    * (AC16). Run after every change of access; also here for a test to call.
    */
   readonly withdrawQueued: (personId: ParticipantId) => Effect.Effect<void>;
+  /**
+   * Ends the open asks to a person that they can no longer answer, because they can no longer
+   * write to the asking agent's thread, so no agent waits for a reply that cannot come (Inbox
+   * AC14). Run after every change of access, with `withdrawQueued`; also here for a test.
+   */
+  readonly endUnanswerableAsks: (personId: ParticipantId) => Effect.Effect<void>;
 }
 
 export class SharedConversation extends Context.Service<
@@ -244,6 +257,7 @@ const make = Effect.gen(function* () {
   const people = yield* PersonAccess;
   const shared = yield* SharedThreads;
   const threads = yield* ThreadManagementService;
+  const lifecycle = yield* A2ALifecycleService;
   const changed = yield* Effect.acquireRelease(PubSub.unbounded<ThreadId>(), PubSub.shutdown);
   const touch = (threadId: ThreadId) => PubSub.publish(changed, threadId);
 
@@ -306,7 +320,8 @@ const make = Effect.gen(function* () {
   ) {
     const rows = yield* sql<CarrierRun & { readonly told_json: string }>`
       SELECT author.told_json, message.message_id AS carried,
-        run.status AS status, json_extract(run.payload_json, '$.startedAt') AS started_at
+        run.status AS status, json_extract(run.payload_json, '$.startedAt') AS started_at,
+        json_extract(run.payload_json, '$.userMessageId') AS run_message
       FROM j5_a2a_message_author AS author
       LEFT JOIN orchestration_v2_projection_messages AS message
         ON message.message_id = author.message_id
@@ -315,7 +330,7 @@ const make = Effect.gen(function* () {
       ORDER BY author.rowid DESC
     `;
     // The agent last read the carrier whose run started last, which is not always the one sent
-    // last: a queue can be reordered, or a later message steered in ahead.
+    // last: a queue can be reordered.
     const reached = rows
       .filter(reachedAgent)
       .reduce<(typeof rows)[number] | undefined>(
@@ -796,13 +811,42 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // A person who can no longer write to a thread loses what they had queued there (AC16).
+  const endUnanswerableAsks: SharedConversationShape["endUnanswerableAsks"] = (personId) =>
+    Effect.gen(function* () {
+      const endedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* lifecycle.endAsksOf({
+        personId,
+        endedAt,
+        mayAnswer: (asker) =>
+          shared.writesTo(personId, {
+            threadId: asker.threadId === null ? null : (asker.threadId as ThreadId),
+            projectId: asker.projectId,
+          }),
+      });
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logError(
+          "J5 shared conversation could not end the asks a person can no longer answer",
+          {
+            cause,
+          },
+        ),
+      ),
+      Effect.withSpan("j5.sharing.sharedConversation.endUnanswerableAsks"),
+    );
+
+  // A person who can no longer write to a thread loses what they had queued there (AC16), and
+  // the asks to them from its agents end (Inbox AC14).
   const accessChanges = yield* (yield* Access).subscribe;
   yield* Effect.forkScoped(
     Effect.forever(
       PubSub.take(accessChanges).pipe(
         Effect.flatMap((change) =>
-          change.kind === "name" ? Effect.void : withdrawQueued(change.personId),
+          change.kind === "name"
+            ? Effect.void
+            : withdrawQueued(change.personId).pipe(
+                Effect.andThen(endUnanswerableAsks(change.personId)),
+              ),
         ),
       ),
     ),
@@ -863,6 +907,7 @@ const make = Effect.gen(function* () {
         ),
       ),
     withdrawQueued,
+    endUnanswerableAsks,
     recordReply: (personId, reply) =>
       Effect.gen(function* () {
         if (!(yield* shared.isShared(reply.threadId))) return;
@@ -900,5 +945,5 @@ const editorName = (editor: Author) =>
 export const layer: Layer.Layer<
   SharedConversation,
   never,
-  SqlClient.SqlClient | SharedThreads | ThreadManagementService | Access
+  SqlClient.SqlClient | SharedThreads | ThreadManagementService | Access | A2ALifecycleService
 > = Layer.effect(SharedConversation, make).pipe(Layer.provide(personAccessLayer));

@@ -663,3 +663,29 @@ it.effect(
       assert.strictEqual(reply!.storedPrefix, `${reply!.note}\n`);
     }).pipe(Effect.provide(conversationLayer)),
 );
+
+it.effect("a note steered into a running turn has not told the agent, so the next carries it", () =>
+  Effect.gen(function* () {
+    const owner = yield* jackson;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = yield* thread("thread:steered-note");
+    // A turn is running, started for a message from before the thread was shared.
+    yield* taken(threadId, "message:running", "running");
+    yield* personWith("Priya", onThread(threadId));
+    // The first shared message is steered into that turn: upstream records it against the
+    // running run, which has started, while the provider may refuse the steer every time.
+    const steered = message(threadId, "Stop and check the tests.");
+    const admitted = yield* (yield* SharedConversation).admit(owner, steered);
+    assert.isTrue(hasNote((admitted as { readonly text: string }).text));
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_messages (
+        message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json
+      ) VALUES (
+        ${steered.messageId}, ${threadId}, 'run:message:running', 'user', 0, ${AT}, ${AT},
+        ${JSON.stringify({ createdBy: "user", creationSource: "web" })}
+      )
+    `;
+    // Nothing shows the steer reached the agent, so the next message carries the note again.
+    assert.isTrue(hasNote(yield* say(owner, message(threadId, "Then carry on."), "queued")));
+  }).pipe(Effect.provide(conversationLayer)),
+);
