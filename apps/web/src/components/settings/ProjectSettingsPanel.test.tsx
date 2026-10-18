@@ -59,6 +59,10 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("~/connection/runtime", () => ({ connectionAtomRuntime: undefined }));
+// J5 (case 72): Settings' owned-server filter is made from a connection runtime when it loads.
+vi.mock("../../j5/sharing/settingsAccess", () => ({
+  useOwnedEnvironments: <Environment,>(environments: Environment) => environments,
+}));
 vi.mock("@t3tools/client-runtime/state/session", () => ({
   createEnvironmentSessionAtoms: () => ({
     sessionStateAtom: (id: EnvironmentId) => state.sessions.get(id)!,
