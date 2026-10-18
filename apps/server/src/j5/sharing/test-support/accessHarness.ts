@@ -21,7 +21,9 @@ import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import { humanPersonRegistryLayer } from "../../a2a/HumanPersonRegistry.ts";
 import * as Access from "../Access.ts";
+import * as Links from "../Links.ts";
 import * as PairingIntents from "../PairingIntents.ts";
+import * as People from "../People.ts";
 import * as PersonAccess from "../PersonAccess.ts";
 
 /**
@@ -54,6 +56,12 @@ const recordsLayer = PairingIntents.peopleLayer.pipe(
 );
 
 export const accessLayer = Access.layer.pipe(Layer.provideMerge(recordsLayer));
+
+/** The same, with the people and links an Owner manages over it. */
+export const peopleLayer = People.layer.pipe(
+  Layer.provideMerge(Links.layer),
+  Layer.provideMerge(accessLayer),
+);
 
 /** The same, with a hook run inside every change of what a person holds. */
 export const accessLayerWithHook = (hook: Access.AccessWriteHook["Service"]) =>

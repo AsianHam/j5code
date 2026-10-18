@@ -26,7 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
-import type { People } from "./People.ts";
+import type { LegacyPeople } from "./LegacyPeople.ts";
 import {
   type PersonAccess,
   type PersonAccessStorageError,
@@ -100,7 +100,7 @@ const noOpenLinks = Effect.fail(
  */
 export const makeSharingRpcHandlers = (options: {
   readonly access: PersonAccess["Service"];
-  readonly people: People["Service"];
+  readonly people: LegacyPeople["Service"];
   readonly session: SessionIdentity;
 }) => ({
   [J5_SHARING_WS_METHODS.listOpenLinks]: () => Effect.succeed({ links: [] }),

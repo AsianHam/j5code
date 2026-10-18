@@ -1,64 +1,54 @@
-import type { AuthClientSession, AuthSessionId, ThreadId } from "@t3tools/contracts";
+import type { AuthSessionId } from "@t3tools/contracts";
 import {
+  type PeopleEntry,
   type PersonLevel,
   type PersonScope,
-  type SharingGrant,
-  type SharingGrantLevel,
-  type SharingLink,
-  type SharingOwnGrant,
-  type SharingPendingLink,
-  type SharingPerson,
-  SharingThreadPeople,
-  devicePermissions,
-  highestLevel,
-  isPersonName,
+  type ProjectOrThreadScope,
+  type ScopePeople,
+  ScopePeople as ScopePeopleSchema,
+  type ScopeReach,
   levelReaches,
 } from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import { ParticipantId } from "../a2a/contracts.ts";
-import { Access, type AccessRenewalError, type NotYoursToLeaveError } from "./Access.ts";
-import {
-  J5_LINK_PAIRING_SUBJECT,
-  PairingIntents,
-  type PairingIntentError,
-} from "./PairingIntents.ts";
+import { Access, type AccessRenewalError } from "./Access.ts";
+import { Links, type LinkStorageError, type ScopeNotFoundError, requireScope } from "./Links.ts";
+import { type PersonNameError, checkedPersonName } from "./personNames.ts";
 import {
   type FirstOwnerFixedError,
-  type HeldLevel,
   type OwnerOutsideServerError,
   PersonAccess,
   type PersonAccessStorageError,
   type PersonNameTakenError,
   PersonNotFoundError,
-  type PersonRecord,
   type SessionIdentity,
+  isWide,
+  scopeColumns,
 } from "./PersonAccess.ts";
+import type { PairingIntentError } from "./PairingIntents.ts";
 
 /**
- * What an Owner does to people, their levels, devices and links, over the requests the People
- * page and the Share dialog make today. Each change goes through `Access`, which renews the
- * person's devices when it must. The transports over it check who may call which: every change
- * needs upstream's Manage access, which only an Owner's devices hold. No agent tool reaches this
- * service: an agent cannot share (AC34).
- *
- * The requests still speak of members, guests and grants; a member here is anyone who writes to
- * the whole server, and a grant a level at a project or thread.
+ * People and their levels, as an Owner manages them from the People page and the Share dialog,
+ * and as anyone who reaches a thread or project sees who else does
+ * (docs/j5/product/features/people-and-access.md). Each change goes through `Access`, which
+ * renews the person's devices when it must and runs its write hook. The transports over this
+ * check who may call which: every change needs upstream's Manage access, which only an Owner's
+ * devices hold. No agent tool reaches this service: an agent cannot share (AC34).
  */
 
-export class GrantTargetNotFoundError extends Schema.TaggedError<GrantTargetNotFoundError>()(
-  "GrantTargetNotFoundError",
-  { kind: Schema.Literals(["project", "thread"]), id: Schema.String },
+export class ScopeNotSharedError extends Schema.TaggedError<ScopeNotSharedError>()(
+  "ScopeNotSharedError",
+  {},
 ) {
   override get message(): string {
-    return `There is no ${this.kind} ${this.id} on this server to share.`;
+    return "This is not shared with you on this server.";
   }
 }
 
@@ -71,81 +61,25 @@ export class DeviceNotAPersonsError extends Schema.TaggedError<DeviceNotAPersons
   }
 }
 
-export class LinkNotAPersonsError extends Schema.TaggedError<LinkNotAPersonsError>()(
-  "LinkNotAPersonsError",
-  { linkId: Schema.String },
-) {
+export class NotAPersonError extends Schema.TaggedError<NotAPersonError>()("NotAPersonError", {}) {
   override get message(): string {
-    return `Link ${this.linkId} is not a link made for someone on this server.`;
+    return "This device is no one's on this server yet. Say who you are first.";
   }
 }
 
-export class PersonNameError extends Schema.TaggedError<PersonNameError>()("PersonNameError", {}) {
+export class DeviceEndError extends Schema.TaggedError<DeviceEndError>()("DeviceEndError", {
+  cause: Schema.Defect(),
+}) {
   override get message(): string {
-    return "A name is one line of ordinary, visible characters, up to 80 of them, with no square or angle brackets.";
+    return "Could not end the device.";
   }
 }
 
-export class LinkLifetimeError extends Schema.TaggedError<LinkLifetimeError>()(
-  "LinkLifetimeError",
-  { lifetime: Schema.String },
-) {
-  override get message(): string {
-    return `A link lasts 1 hour, 24 hours, 7 days or 30 days; "${this.lifetime}" is none of those.`;
-  }
-}
-
-export class ThreadNotSharedError extends Schema.TaggedError<ThreadNotSharedError>()(
-  "ThreadNotSharedError",
-  {},
-) {
-  override get message(): string {
-    return "This is not shared with you on this server.";
-  }
-}
-
-export class OwnerNameRequiredError extends Schema.TaggedError<OwnerNameRequiredError>()(
-  "OwnerNameRequiredError",
-  {},
-) {
-  override get message(): string {
-    return "Set your name first, so the people you share with know who you are.";
-  }
-}
-
-export class PeopleUpstreamError extends Schema.TaggedError<PeopleUpstreamError>()(
-  "PeopleUpstreamError",
-  { operation: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `Could not ${this.operation}.`;
-  }
-}
-
-/**
- * A name as it is stored: trimmed, and refused unless it is one a person may have. Every way of
- * naming someone checks it here, the offline build of a live-test home included.
- */
-export const checkedPersonName = (name: string): Effect.Effect<string, PersonNameError> => {
-  const trimmed = name.trim();
-  return isPersonName(trimmed) ? Effect.succeed(trimmed) : Effect.fail(new PersonNameError({}));
-};
-
-/** How long a link can be used for once made, by the choices the dialogs offer. */
-export const LINK_LIFETIMES = {
-  "1h": "1 hour",
-  "24h": "24 hours",
-  "7d": "7 days",
-  "30d": "30 days",
-} as const;
-const LINK_LIFETIME_MILLIS: Record<keyof typeof LINK_LIFETIMES, number> = {
-  "1h": 3_600_000,
-  "24h": 86_400_000,
-  "7d": 7 * 86_400_000,
-  "30d": 30 * 86_400_000,
-};
-
-type StorageError = PersonAccessStorageError | PeopleUpstreamError | PairingIntentError;
+type StorageError =
+  | PersonAccessStorageError
+  | LinkStorageError
+  | PairingIntentError
+  | PeopleStorageError;
 type ChangeError =
   | StorageError
   | PersonNotFoundError
@@ -153,125 +87,84 @@ type ChangeError =
   | OwnerOutsideServerError
   | AccessRenewalError;
 
-/** What the requests call a grant's target: a project or a thread. */
-export type GrantTarget = Exclude<PersonScope, { readonly kind: "server" }>;
+export class PeopleStorageError extends Schema.TaggedError<PeopleStorageError>()(
+  "PeopleStorageError",
+  { operation: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not ${this.operation}.`;
+  }
+}
 
 export interface PeopleShape {
-  /** Every person, with what each can reach, their devices and their unused links. */
-  readonly list: Effect.Effect<ReadonlyArray<SharingPerson>, StorageError>;
-  readonly createGuest: (input: {
-    readonly displayName: string;
-  }) => Effect.Effect<
-    SharingPerson,
-    StorageError | PersonNameError | PersonNameTakenError | OwnerNameRequiredError
-  >;
-  /** Names the server's first owner. */
-  readonly setOwnerName: (input: {
-    readonly displayName: string;
-  }) => Effect.Effect<
-    SharingPerson,
-    StorageError | PersonNotFoundError | PersonNameError | PersonNameTakenError
-  >;
-  /** Gives a person a level at a project or thread, or changes the one they hold there. */
-  readonly putGrant: (input: {
+  /** Everyone on the server, with their levels, devices and unused device links. */
+  readonly list: (
+    asker: SessionIdentity,
+  ) => Effect.Effect<ReadonlyArray<PeopleEntry>, StorageError>;
+  /**
+   * Who reaches a thread or project, for a connection that reaches it itself (AC26). Only an
+   * Owner is told each person's id, by which they act on them.
+   */
+  readonly scopePeople: (
+    asker: SessionIdentity,
+    scope: ProjectOrThreadScope,
+  ) => Effect.Effect<ScopePeople, StorageError | ScopeNotSharedError>;
+  /** A count that moves each time `scopePeople` would answer differently for that connection. */
+  readonly watchScopePeople: (
+    asker: SessionIdentity,
+    scope: ProjectOrThreadScope,
+  ) => Stream.Stream<number, StorageError | ScopeNotSharedError>;
+  /** Gives a person a level at a scope, or changes the one they hold there. */
+  readonly setLevel: (input: {
     readonly personId: string;
-    readonly target: GrantTarget;
-    readonly level: SharingGrantLevel;
-  }) => Effect.Effect<SharingPerson, ChangeError | GrantTargetNotFoundError>;
-  readonly removeGrant: (input: {
+    readonly scope: PersonScope;
+    readonly level: PersonLevel;
+  }) => Effect.Effect<void, ChangeError | ScopeNotFoundError>;
+  readonly removeLevel: (input: {
     readonly personId: string;
-    readonly target: GrantTarget;
-  }) => Effect.Effect<SharingPerson, ChangeError>;
+    readonly scope: PersonScope;
+  }) => Effect.Effect<void, ChangeError>;
   /** Removes a person: their devices and unused links end, and what they held goes (AC49). */
-  readonly removePerson: (personId: string) => Effect.Effect<void, ChangeError>;
-  /** Ends one device of a person's; the person and their levels stay. */
-  readonly revokeDevice: (
-    sessionId: AuthSessionId,
-  ) => Effect.Effect<void, StorageError | DeviceNotAPersonsError>;
-  /** A link that pairs one device as this person: their first, or a further one. */
-  readonly createLink: (
-    personId: string,
-    lifetime?: string,
-  ) => Effect.Effect<
-    SharingLink,
-    StorageError | PersonNotFoundError | LinkLifetimeError | OwnerNameRequiredError
-  >;
-  /** Gives a person a new name, under the rule every person's name is held to. */
+  readonly remove: (personId: string) => Effect.Effect<void, ChangeError>;
   readonly rename: (input: {
     readonly personId: string;
-    readonly displayName: string;
+    readonly name: string;
   }) => Effect.Effect<
-    SharingPerson,
+    void,
     StorageError | PersonNotFoundError | PersonNameError | PersonNameTakenError
   >;
-  /**
-   * Who reaches a thread, for a connection that reaches it itself. Someone narrower than the
-   * server is told the others' names and levels, and not their ids.
-   */
-  readonly threadPeople: (
+  /** A person renames themselves (AC46). */
+  readonly renameSelf: (
     session: SessionIdentity,
-    threadId: ThreadId,
-  ) => Effect.Effect<SharingThreadPeople, StorageError | ThreadNotSharedError>;
-  /** A count that moves each time `threadPeople` would answer differently for that connection. */
-  readonly watchThreadPeople: (
-    session: SessionIdentity,
-    threadId: ThreadId,
-  ) => Stream.Stream<number, StorageError | ThreadNotSharedError>;
-  /** Cancels a link that has not been used yet. */
-  readonly revokeLink: (linkId: string) => Effect.Effect<void, StorageError | LinkNotAPersonsError>;
-  /** Refuses while the first owner has no name; what bringing a new person in is held to. */
-  readonly requireOwnerName: Effect.Effect<void, StorageError | OwnerNameRequiredError>;
-  /** The levels this connection's person holds at projects and threads. */
-  readonly ownGrants: (
-    session: SessionIdentity,
-  ) => Effect.Effect<ReadonlyArray<SharingOwnGrant>, StorageError>;
-  /** A person gives up a level they hold (AC48). */
-  readonly leaveGrant: (
-    session: SessionIdentity,
-    target: GrantTarget,
-  ) => Effect.Effect<void, ChangeError | NotYoursToLeaveError>;
+    name: string,
+  ) => Effect.Effect<
+    void,
+    StorageError | PersonNotFoundError | PersonNameError | PersonNameTakenError | NotAPersonError
+  >;
+  /** Ends one device of a person's; the person and their levels stay (AC50). */
+  readonly revokeDevice: (
+    sessionId: AuthSessionId,
+  ) => Effect.Effect<void, StorageError | DeviceNotAPersonsError | DeviceEndError>;
 }
 
 export class People extends Context.Service<People, PeopleShape>()("t3/j5/sharing/People") {}
 
-const toGrantLevel = (level: PersonLevel): SharingGrantLevel =>
-  level === "viewer" ? "view" : "collaborate";
-const fromGrantLevel = (level: SharingGrantLevel): PersonLevel =>
-  level === "view" ? "viewer" : "collaborator";
-
-const grantsOf = (levels: ReadonlyArray<HeldLevel>): ReadonlyArray<SharingGrant> =>
-  levels.flatMap((held): ReadonlyArray<SharingGrant> =>
-    held.scope.kind === "server"
-      ? []
-      : [{ target: held.scope, level: toGrantLevel(held.level), note: null }],
-  );
-
-/** Whether a person writes to the whole server, which the requests call a member. */
-const isMember = (record: { readonly levels: ReadonlyArray<HeldLevel> }) =>
-  record.levels.some(
-    (held) => held.scope.kind === "server" && levelReaches(held.level, "collaborator"),
-  );
-
 const isParticipantId = Schema.is(ParticipantId);
-const encodeThreadPeople = Schema.encodeSync(Schema.fromJsonString(SharingThreadPeople));
+const encodeScopePeople = Schema.encodeSync(Schema.fromJsonString(ScopePeopleSchema));
+const NEARNESS = { thread: 0, ancestor: 1, project: 2, server: 3 } as const;
 
 export const layer: Layer.Layer<
   People,
   never,
-  PersonAccess | Access | PairingIntents | EnvironmentAuth.EnvironmentAuth | SqlClient.SqlClient
+  PersonAccess | Access | Links | SessionStore.SessionStore | SqlClient.SqlClient
 > = Layer.effect(
   People,
   Effect.gen(function* () {
     const people = yield* PersonAccess;
     const access = yield* Access;
-    const intents = yield* PairingIntents;
-    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const links = yield* Links;
+    const sessions = yield* SessionStore.SessionStore;
     const sql = yield* SqlClient.SqlClient;
-
-    const upstream =
-      (operation: string) =>
-      <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-        effect.pipe(Effect.mapError((cause) => new PeopleUpstreamError({ operation, cause })));
 
     /** A person id as a client sent it. One that could not be an id names no one. */
     const personIdOf = (personId: string) =>
@@ -279,260 +172,128 @@ export const layer: Layer.Layer<
         ? Effect.succeed(personId)
         : Effect.fail(new PersonNotFoundError({ personId }));
 
-    /** The unused links recorded for people, by upstream's link id. */
-    const intentPeople = sql<{ readonly pairing_link_id: string; readonly person_id: string }>`
-      SELECT pairing_link_id, person_id FROM j5_a2a_pairing_intent
-    `.pipe(upstream("read the links made for people"));
-
-    const describe = (
-      records: ReadonlyArray<PersonRecord>,
-      sessions: ReadonlyArray<AuthClientSession>,
-      links: ReadonlyMap<string, ReadonlyArray<SharingPendingLink>>,
-    ) => {
-      const sessionById = new Map(sessions.map((session) => [session.sessionId, session]));
-      return records.map((record): SharingPerson => ({
-        personId: record.person.personId,
-        kind: isMember(record) ? "member" : "guest",
-        displayName: record.person.displayName,
-        you: record.person.firstOwner,
-        nameSelfGiven: false,
-        joinedOpenLinkId: null,
-        createdAt: record.createdAt,
-        grants: grantsOf(record.levels),
-        // A recorded session upstream no longer lists has expired or been ended.
-        devices: record.devices.flatMap((device) => {
-          const session = sessionById.get(device.sessionId);
-          return session === undefined
-            ? []
-            : [
-                {
-                  sessionId: session.sessionId,
-                  client: session.client,
-                  issuedAt: session.issuedAt,
-                  expiresAt: session.expiresAt,
-                  lastConnectedAt: session.lastConnectedAt,
-                  connected: session.connected,
-                },
-              ];
-        }),
-        pendingLinks: links.get(record.person.personId) ?? [],
-      }));
-    };
-
-    const list: PeopleShape["list"] = Effect.gen(function* () {
-      const records = yield* people.listPeople;
-      const sessions = yield* auth.listSessions().pipe(upstream("list devices"));
-      const linkPeople = new Map(
-        (yield* intentPeople).map((row) => [row.pairing_link_id, row.person_id]),
+    const titleOf = Effect.fn("j5.sharing.people.titleOf")(function* (scope: PersonScope) {
+      if (scope.kind === "server") return null;
+      const rows = yield* (
+        scope.kind === "project"
+          ? sql<{ readonly title: string }>`
+              SELECT title FROM projection_projects WHERE project_id = ${scope.projectId}
+            `
+          : sql<{ readonly title: string }>`
+              SELECT title FROM orchestration_v2_projection_threads
+              WHERE thread_id = ${scope.threadId}
+            `
+      ).pipe(
+        Effect.mapError(
+          (cause) => new PeopleStorageError({ operation: "read what is shared", cause }),
+        ),
       );
-      const links = new Map<string, Array<SharingPendingLink>>();
-      // Upstream lists only links that can still be used.
-      for (const link of yield* auth.listPairingLinks().pipe(upstream("list links"))) {
-        const personId = linkPeople.get(link.id);
-        if (personId === undefined) continue;
-        links.set(personId, [
-          ...(links.get(personId) ?? []),
-          { linkId: link.id, createdAt: link.createdAt, expiresAt: link.expiresAt },
-        ]);
-      }
-      return describe(records, sessions, links);
-    }).pipe(Effect.withSpan("j5.sharing.people.list"));
-
-    const one = Effect.fn("j5.sharing.people.one")(function* (personId: ParticipantId) {
-      const person = (yield* list).find((candidate) => candidate.personId === personId);
-      if (person === undefined) return yield* new PersonNotFoundError({ personId });
-      return person;
+      return rows[0]?.title ?? null;
     });
 
-    const requireTarget = Effect.fn("j5.sharing.people.requireTarget")(function* (
-      target: GrantTarget,
-    ) {
-      const found = yield* (
-        target.kind === "project"
-          ? sql<{ readonly found: number }>`
-              SELECT 1 AS found FROM projection_projects
-              WHERE project_id = ${target.projectId} AND deleted_at IS NULL
-            `
-          : sql<{ readonly found: number }>`
-              SELECT 1 AS found FROM orchestration_v2_projection_threads
-              WHERE thread_id = ${target.threadId} AND deleted_at IS NULL
-            `
-      ).pipe(upstream("read what is being shared"));
-      if (found.length === 0) {
-        return yield* new GrantTargetNotFoundError({
-          kind: target.kind,
-          id: target.kind === "project" ? target.projectId : target.threadId,
-        });
-      }
-    });
-
-    const threadPeople: PeopleShape["threadPeople"] = Effect.fn("j5.sharing.people.threadPeople")(
-      function* (session, threadId) {
-        const reach = yield* people.sessionReach(session);
-        const wide = reach.kind === "service" || (reach.kind === "person" && isMember(reach));
-        if (
-          !wide &&
-          (reach.kind !== "person" ||
-            (yield* people.threadLevel(reach.person.personId, threadId)) === null)
-        ) {
-          return yield* new ThreadNotSharedError({});
+    const scopePeople: PeopleShape["scopePeople"] = Effect.fn("j5.sharing.people.scopePeople")(
+      function* (asker, scope) {
+        const reach = yield* people.sessionReach(asker);
+        if (!isWide(reach)) {
+          const held =
+            reach.kind !== "person"
+              ? null
+              : scope.kind === "thread"
+                ? yield* people.threadLevel(reach.person.personId, scope.threadId)
+                : yield* people.projectLevel(reach.person.personId, scope.projectId);
+          if (!levelReaches(held, "viewer")) return yield* new ScopeNotSharedError({});
         }
-        const everyone = yield* people.scopePeople({ kind: "thread", threadId });
-        const narrowCaller = !wide;
-        const callerId = reach.kind === "person" ? reach.person.personId : null;
-        const nearness = { thread: 0, ancestor: 1, project: 2, server: 3 } as const;
-        const members = everyone.filter((entry) =>
-          entry.via.some((via) => via.via === "server" && levelReaches(via.level, "collaborator")),
-        );
-        const guests = everyone
-          .filter((entry) => !members.includes(entry))
-          .map((entry) => ({
-            ...entry,
-            via: entry.via.toSorted((left, right) => nearness[left.via] - nearness[right.via]),
-          }));
+        const owner = reach.kind === "person" && levelReaches(reach.serverLevel, "owner");
+        const askerId = reach.kind === "person" ? reach.person.personId : null;
+        const everyone = yield* people.scopePeople(scope);
+        const titles = new Map<string, string | null>();
+        const title = (held: PersonScope) =>
+          Effect.gen(function* () {
+            const columns = scopeColumns(held);
+            const key = `${columns.kind}:${columns.id}`;
+            if (!titles.has(key)) titles.set(key, yield* titleOf(held));
+            return titles.get(key) ?? null;
+          });
         return {
-          members: members.map((member) => ({
-            personId: narrowCaller ? null : member.person.personId,
-            displayName: member.person.displayName,
-          })),
-          openLinks: [],
-          guests: guests.map((guest) => ({
-            personId: narrowCaller ? null : guest.person.personId,
-            displayName: guest.person.displayName,
-            level: toGrantLevel(guest.level),
-            grants: guest.via.flatMap((via) =>
-              via.via === "server" ? [] : [{ via: via.via, level: toGrantLevel(via.level) }],
-            ),
-            you: callerId === guest.person.personId,
-            nameSelfGiven: false,
-            joinedByOpenLink: false,
-          })),
+          people: yield* Effect.forEach(everyone, (entry) =>
+            Effect.gen(function* () {
+              const via = yield* Effect.forEach(
+                entry.via.toSorted((left, right) => NEARNESS[left.via] - NEARNESS[right.via]),
+                (held): Effect.Effect<ScopeReach, PeopleStorageError> =>
+                  title(held.scope).pipe(
+                    Effect.map((scopeTitle) => ({
+                      via: held.via,
+                      level: held.level,
+                      scope: held.scope,
+                      scopeTitle,
+                    })),
+                  ),
+              );
+              return {
+                personId: owner ? entry.person.personId : null,
+                name: entry.person.displayName,
+                level: entry.level,
+                via,
+                firstOwner: entry.person.firstOwner,
+                you: entry.person.personId === askerId,
+              };
+            }),
+          ),
         };
       },
     );
 
-    /**
-     * Bringing someone in waits for the first owner to have a name: the people shared with are
-     * told whose server they are on. Giving more access to someone already here does not wait.
-     */
-    const requireOwnerName = people.firstOwner.pipe(
-      Effect.flatMap((owner) =>
-        owner.displayName === null ? Effect.fail(new OwnerNameRequiredError({})) : Effect.void,
-      ),
-    );
-
     return People.of({
-      list,
-
-      createGuest: Effect.fn("j5.sharing.people.createGuest")(function* (input) {
-        yield* requireOwnerName;
-        const displayName = yield* checkedPersonName(input.displayName);
-        const person = yield* people.createPerson({ displayName });
-        return yield* one(person.personId).pipe(Effect.orDie);
+      list: Effect.fn("j5.sharing.people.list")(function* (asker) {
+        const askerReach = yield* people.sessionReach(asker);
+        const askerId = askerReach.kind === "person" ? askerReach.person.personId : null;
+        const records = yield* people.listPeople;
+        const active = yield* sessions
+          .listActive()
+          .pipe(
+            Effect.mapError(
+              (cause) => new PeopleStorageError({ operation: "list devices", cause }),
+            ),
+          );
+        const sessionById = new Map(active.map((session) => [session.sessionId, session]));
+        const deviceLinks = (yield* links.list).filter((link) => link.kind === "device");
+        return records.map((record): PeopleEntry => ({
+          personId: record.person.personId,
+          name: record.person.displayName,
+          firstOwner: record.person.firstOwner,
+          you: record.person.personId === askerId,
+          levels: record.levels,
+          // A recorded session upstream no longer lists has expired, been ended, or is waiting
+          // to renew; it is listed again once renewed.
+          devices: record.devices.flatMap((device) => {
+            const session = sessionById.get(device.sessionId);
+            return session === undefined
+              ? []
+              : [
+                  {
+                    sessionId: session.sessionId,
+                    client: session.client,
+                    issuedAt: session.issuedAt,
+                    expiresAt: session.expiresAt,
+                    lastConnectedAt: session.lastConnectedAt,
+                    connected: session.connected,
+                    permissions: [...(session.permissions ?? session.scopes)],
+                    ceiling: device.ceiling === null ? null : [...device.ceiling],
+                  },
+                ];
+          }),
+          unusedLinks: deviceLinks.filter((link) => link.personId === record.person.personId),
+        }));
       }),
 
-      putGrant: Effect.fn("j5.sharing.people.putGrant")(function* (input) {
-        const personId = yield* personIdOf(input.personId);
-        yield* requireTarget(input.target);
-        yield* access.setLevel({
-          personId,
-          scope: input.target,
-          level: fromGrantLevel(input.level),
-        });
-        return yield* one(personId);
-      }),
+      scopePeople,
 
-      removeGrant: Effect.fn("j5.sharing.people.removeGrant")(function* (input) {
-        const personId = yield* personIdOf(input.personId);
-        // Read first, so a level on someone who does not exist is a refusal and not a silent no.
-        yield* one(personId);
-        yield* access.removeLevel({ personId, scope: input.target });
-        return yield* one(personId);
-      }),
-
-      removePerson: Effect.fn("j5.sharing.people.removePerson")(function* (rawPersonId) {
-        // `Access` ends their devices and revokes their unused links with them.
-        yield* access.removePerson(yield* personIdOf(rawPersonId));
-      }),
-
-      revokeDevice: Effect.fn("j5.sharing.people.revokeDevice")(function* (sessionId) {
-        const sessions = yield* auth.listSessions().pipe(upstream("list devices"));
-        const session = sessions.find((entry) => entry.sessionId === sessionId);
-        const reach = session === undefined ? null : yield* people.sessionReach(session);
-        if (reach === null || reach.kind !== "person") {
-          return yield* new DeviceNotAPersonsError({ sessionId });
-        }
-        // Ending a session through `auth` cuts it loose from its person first (`AccessGate`).
-        yield* auth.revokeSession(sessionId).pipe(upstream("end the device"));
-      }),
-
-      createLink: Effect.fn("j5.sharing.people.createLink")(function* (rawPersonId, lifetime) {
-        yield* requireOwnerName;
-        const choice = lifetime ?? "7d";
-        if (!Object.hasOwn(LINK_LIFETIME_MILLIS, choice)) {
-          return yield* new LinkLifetimeError({ lifetime: choice });
-        }
-        const personId = yield* personIdOf(rawPersonId);
-        const person = yield* people.readPerson(personId);
-        if (person === null) return yield* new PersonNotFoundError({ personId });
-        const levels = yield* people.listLevels(personId);
-        const link = yield* auth
-          .createPairingLink({
-            subject: J5_LINK_PAIRING_SUBJECT,
-            scopes: devicePermissions(highestLevel(levels.map((held) => held.level)), null),
-            ttl: Duration.millis(LINK_LIFETIME_MILLIS[choice as keyof typeof LINK_LIFETIMES]),
-            ...(person.displayName === null ? {} : { label: person.displayName }),
-          })
-          .pipe(upstream("make a link"));
-        // A link with no person recorded would pair a device no one owns, so one that cannot be
-        // recorded is revoked rather than handed out.
-        yield* intents
-          .record({
-            pairingLinkId: link.id,
-            credential: link.credential,
-            personId,
-            linkId: null,
-            ceiling: null,
-          })
-          .pipe(Effect.tapError(() => Effect.ignore(auth.revokePairingLink(link.id))));
-        return {
-          linkId: link.id,
-          personId,
-          credential: link.credential,
-          expiresAt: link.expiresAt,
-        };
-      }),
-
-      revokeLink: Effect.fn("j5.sharing.people.revokeLink")(function* (linkId) {
-        // Forgotten first: a link with no person recorded pairs no one's device.
-        if (!(yield* intents.forget(linkId))) return yield* new LinkNotAPersonsError({ linkId });
-        yield* auth.revokePairingLink(linkId).pipe(upstream("revoke the link"));
-      }),
-
-      setOwnerName: Effect.fn("j5.sharing.people.setOwnerName")(function* (input) {
-        const displayName = yield* checkedPersonName(input.displayName);
-        const owner = yield* people.firstOwner;
-        yield* access.rename({ personId: owner.personId, displayName });
-        return yield* one(owner.personId).pipe(Effect.orDie);
-      }),
-
-      rename: Effect.fn("j5.sharing.people.rename")(function* (input) {
-        const personId = yield* personIdOf(input.personId);
-        const displayName = yield* checkedPersonName(input.displayName);
-        yield* access.rename({ personId, displayName });
-        return yield* one(personId);
-      }),
-
-      requireOwnerName,
-
-      threadPeople,
-
-      watchThreadPeople: (session, threadId) =>
+      watchScopePeople: (asker, scope) =>
         Stream.unwrap(
           Effect.gen(function* () {
             // Subscribed before the first read, so no change between the two is missed.
             const changes = yield* people.subscribeChanges;
-            const read = threadPeople(session, threadId).pipe(Effect.map(encodeThreadPeople));
+            const read = scopePeople(asker, scope).pipe(Effect.map(encodeScopePeople));
             return Stream.fromEffect(read).pipe(
               Stream.concat(Stream.fromSubscription(changes).pipe(Stream.mapEffect(() => read))),
               Stream.changes,
@@ -542,16 +303,58 @@ export const layer: Layer.Layer<
           }),
         ),
 
-      ownGrants: Effect.fn("j5.sharing.people.ownGrants")(function* (session) {
-        const reach = yield* people.sessionReach(session);
-        if (reach.kind !== "person") return [];
-        return grantsOf(reach.levels).map((grant): SharingOwnGrant => ({
-          target: grant.target,
-          level: grant.level,
-        }));
+      setLevel: Effect.fn("j5.sharing.people.setLevel")(function* (input) {
+        const personId = yield* personIdOf(input.personId);
+        yield* requireScope(sql, input.scope);
+        yield* access.setLevel({ personId, scope: input.scope, level: input.level });
       }),
 
-      leaveGrant: (session, target) => access.leave(session, target),
+      removeLevel: Effect.fn("j5.sharing.people.removeLevel")(function* (input) {
+        const personId = yield* personIdOf(input.personId);
+        // Read first, so a level on someone who does not exist is a refusal and not a silent no.
+        if ((yield* people.readPerson(personId)) === null) {
+          return yield* new PersonNotFoundError({ personId });
+        }
+        yield* access.removeLevel({ personId, scope: input.scope });
+      }),
+
+      remove: Effect.fn("j5.sharing.people.remove")(function* (rawPersonId) {
+        // `Access` ends their devices and revokes their unused links with them.
+        yield* access.removePerson(yield* personIdOf(rawPersonId));
+      }),
+
+      rename: Effect.fn("j5.sharing.people.rename")(function* (input) {
+        const personId = yield* personIdOf(input.personId);
+        const displayName = yield* checkedPersonName(input.name);
+        yield* access.rename({ personId, displayName });
+      }),
+
+      renameSelf: Effect.fn("j5.sharing.people.renameSelf")(function* (session, name) {
+        const reach = yield* people.sessionReach(session);
+        if (reach.kind !== "person") return yield* new NotAPersonError({});
+        const displayName = yield* checkedPersonName(name);
+        yield* access.rename({ personId: reach.person.personId, displayName });
+      }),
+
+      revokeDevice: Effect.fn("j5.sharing.people.revokeDevice")(function* (sessionId) {
+        // Cut loose from its person and ended together, so it can never renew (AC49, AC50).
+        yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const owner = yield* people.unbindSession(sessionId);
+              if (owner === null) return yield* new DeviceNotAPersonsError({ sessionId });
+              yield* sessions
+                .revoke(sessionId)
+                .pipe(Effect.mapError((cause) => new DeviceEndError({ cause })));
+            }),
+          )
+          .pipe(
+            Effect.catchTags({
+              SqlError: (cause) =>
+                Effect.fail(new PeopleStorageError({ operation: "end a device", cause })),
+            }),
+          );
+      }),
     });
   }),
 );

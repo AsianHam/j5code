@@ -65,7 +65,7 @@ import {
   runDevDeliverySeed,
   validateIsolatedBaseDir,
 } from "../a2a/test-support/devDeliverySeed.ts";
-import { checkedPersonName } from "../sharing/People.ts";
+import { checkedPersonName } from "../sharing/personNames.ts";
 import * as PersonAccess from "../sharing/PersonAccess.ts";
 import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
 import {

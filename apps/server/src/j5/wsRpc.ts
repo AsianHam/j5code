@@ -38,6 +38,8 @@ import { Access } from "./sharing/Access.ts";
 import { makeAccessRpcHandlers } from "./sharing/accessRpc.ts";
 import { makePeopleRpcHandlers } from "./sharing/peopleRpc.ts";
 import { makeSharedConversationRpcHandlers } from "./sharing/sharedConversationRpc.ts";
+import { LegacyPeople } from "./sharing/LegacyPeople.ts";
+import { Links } from "./sharing/Links.ts";
 import { People } from "./sharing/People.ts";
 import { PersonAccess, type SessionIdentity } from "./sharing/PersonAccess.ts";
 import { makeSharingRpcHandlers } from "./sharing/sharingRpc.ts";
@@ -70,7 +72,9 @@ type J5WsRpcServices =
   | ReadChanges
   | ArtifactDeletion
   | PersonAccess
+  | LegacyPeople
   | People
+  | Links
   | Access;
 
 /**
@@ -87,7 +91,9 @@ export const j5WsRpcServices = Effect.context<J5WsRpcServices>().pipe(
       ReadChanges,
       ArtifactDeletion,
       PersonAccess,
+      LegacyPeople,
       People,
+      Links,
       Access,
     ),
   ),
@@ -135,11 +141,11 @@ export const layerJ5WsRpc = (
           access: yield* Access,
           session,
         })),
-        ...makePeopleRpcHandlers(),
+        ...makePeopleRpcHandlers({ people: yield* People, links: yield* Links, session }),
         ...makeSharedConversationRpcHandlers(),
         ...makeSharingRpcHandlers({
           access: yield* PersonAccess,
-          people: yield* People,
+          people: yield* LegacyPeople,
           session,
         }),
       });

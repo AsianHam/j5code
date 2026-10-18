@@ -360,6 +360,17 @@ const make = Effect.gen(function* () {
                 ),
               );
           }
+          // So are the J5 links made for them that have not been used.
+          const revokedAt = DateTime.formatIso(yield* DateTime.now);
+          yield* sql`
+            UPDATE j5_a2a_link SET revoked_at = ${revokedAt}
+            WHERE person_id = ${personId} AND revoked_at IS NULL
+          `.pipe(
+            Effect.mapError(
+              (cause) =>
+                new PersonAccessStorageError({ operation: "revoke a person's links", cause }),
+            ),
+          );
           const ended = yield* people.removePerson(personId);
           for (const sessionId of ended) {
             yield* sessions

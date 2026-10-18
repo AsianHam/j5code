@@ -49,6 +49,8 @@ import {
   PairingIntents,
   peopleLayer as peopleRecordsLayer,
 } from "./PairingIntents.ts";
+import { layer as legacyPeopleLayer } from "./LegacyPeople.ts";
+import { layer as linksLayer } from "./Links.ts";
 import { McpApprovalGeneration } from "./McpApproval.ts";
 import { layer as peopleLayer } from "./People.ts";
 import {
@@ -636,7 +638,8 @@ export const gateEnvironmentAuth = <A, E, R>(
     R
   >,
 ) =>
-  peopleLayer.pipe(
+  Layer.mergeAll(peopleLayer, legacyPeopleLayer).pipe(
+    Layer.provideMerge(linksLayer),
     Layer.provideMerge(renewOutdatedDevicesAtStartup),
     Layer.provideMerge(layerGatedEnvironmentAuth),
     Layer.provideMerge(accessLayer),
