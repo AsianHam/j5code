@@ -56,11 +56,11 @@ export function SettingsPageGate({
   readonly children: ReactNode;
 }) {
   const ownerSomewhere = useOwnerSomewhere();
-  if (settingsPageShown({ path: pathname, ownerSomewhere: ownerSomewhere === true })) {
+  // Only an answer sends someone away: an Owner reloading one of their pages keeps it, and a
+  // server still being asked holds no page back. The server refuses what is not theirs to read.
+  if (ownerSomewhere !== false || settingsPageShown({ path: pathname, ownerSomewhere })) {
     return children;
   }
-  // An Owner reloading one of their pages waits for the answer rather than being sent away.
-  if (ownerSomewhere === "loading") return null;
   return <Navigate to={FIRST_PAGE_FOR_EVERYONE} replace />;
 }
 

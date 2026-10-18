@@ -163,9 +163,12 @@ const ownerSomewhereAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   return ownerSomewhereState({
     catalogReady: catalog.isReady,
-    answers: [...catalog.entries.keys()].map((id) => {
-      const access = get(j5Sharing.connectionAccess(id));
-      return access === null ? null : isOwnerAccess(access) ? "owner" : "other";
+    // A server that cannot answer, one from before people, settles with no answer and holds
+    // this client to nothing, as `isOwnerAccess` does; only one still being asked is unknown.
+    answers: [...catalog.entries.keys()].map((environmentId) => {
+      const result = get(j5Sharing.connectionAccessQuery({ environmentId, input: {} }));
+      if (result._tag === "Initial") return null;
+      return isOwnerAccess(Option.getOrNull(AsyncResult.value(result))) ? "owner" : "other";
     }),
   });
 }).pipe(Atom.withLabel("j5:access:owner-somewhere"));
