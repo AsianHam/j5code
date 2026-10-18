@@ -560,7 +560,7 @@ function HeldLevelLine({
         {project === null ? null : <ProjectFavicon project={project} />}
         <span className="min-w-0 flex-1 truncate text-foreground">{title}</span>
         {controls ? (
-          <>
+          <span className="flex shrink-0 items-center gap-1.5">
             <Select
               value={pending ?? held.level}
               onValueChange={(next) => {
@@ -589,7 +589,7 @@ function HeldLevelLine({
             >
               <XIcon className="size-3.5" />
             </Button>
-          </>
+          </span>
         ) : (
           <span className="text-muted-foreground">{levelLabel(held.level)}</span>
         )}
