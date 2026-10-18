@@ -1,6 +1,7 @@
 # People and sharing
 
-Several people can use one server. Each person has a name, a level at the server, a project or a
+Several people can use one server. Sharing is done from the web and desktop apps; the mobile app
+does not share, leave or rename. Each person has a name, a level at the server, a project or a
 thread, and the devices paired as them.
 
 - **Viewer** reads what they were given and changes nothing.
@@ -49,5 +50,6 @@ someone new.
 ## What changes for people who are not Owners
 
 Settings shows only Appearance, SnapShots, Open-source licenses and People to someone who owns no
-connected server. A device reconnects once when its person's level changes. Someone who has lost
-everything they were given sees "Nothing is shared with you" until an Owner shares something again.
+connected server. A device reconnects once when its person's level changes; a phone is paired again
+by hand. Someone who has lost everything they were given sees "Nothing is shared with you" until an
+Owner shares something again.
