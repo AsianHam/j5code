@@ -94,6 +94,16 @@ export interface PairingIntent {
   readonly ceiling: ReadonlyArray<string> | null;
 }
 
+/** Upstream's own failure to issue, carried out of the transaction unchanged. */
+class IssueFailed {
+  readonly error: unknown;
+  constructor(error: unknown) {
+    this.error = error;
+  }
+}
+const issueFailed = (error: unknown) => new IssueFailed(error);
+const isPairingIntentError = Schema.is(PairingIntentError);
+
 const hashCredential = (credential: string) =>
   NodeCrypto.createHash("sha256").update(credential).digest("hex");
 
@@ -262,54 +272,67 @@ const make: Layer.Layer<PairingIntents, never, SqlClient.SqlClient | ReadChanges
           if (input.grant.subject === RETIRED_GUEST_SUBJECT) {
             return yield* new PairingIntentError({ reason: "retired" });
           }
-          const intent = yield* intentOf(input.credential);
-          if (intent === null) return yield* input.issue;
-          const levels = yield* people.listLevels(intent.personId).pipe(Effect.mapError(storage));
-          const person = yield* people.readPerson(intent.personId).pipe(Effect.mapError(storage));
-          if (person === null) return yield* new PairingIntentError({ reason: "no_person" });
-          const allowed = devicePermissions(
-            highestLevel(levels.map((held) => held.level)),
-            intent.ceiling,
-          );
-          // Checked where the session is made, so a credential made before the person's level was
-          // lowered pairs nothing rather than a device holding more than they may.
-          if (!input.grant.scopes.every((scope) => allowed.includes(scope as never))) {
-            return yield* new PairingIntentError({ reason: "scopes" });
-          }
-          return yield* sql
+          // Read, checked, issued and bound in one transaction. A transaction holds the database's
+          // write lock from its start, so a change of level (`Access`) either commits first, and
+          // this reads the new level and refuses a credential that carries more, or waits for
+          // this to commit, and then finds the new device and renews it.
+          const issued = yield* sql
             .withTransaction(
               Effect.gen(function* () {
-                const session = yield* input.issue.pipe(
-                  Effect.mapError((error) => ({ issue: error })),
+                const intent = yield* intentOf(input.credential);
+                if (intent === null) {
+                  // A J5 link's credential always has an intent until it is used; one without
+                  // was made for someone since removed, and pairs no one's device.
+                  if (input.grant.subject === J5_LINK_PAIRING_SUBJECT) {
+                    return yield* new PairingIntentError({ reason: "no_person" });
+                  }
+                  return { session: yield* input.issue.pipe(Effect.mapError(issueFailed)), intent };
+                }
+                const person = yield* people.readPerson(intent.personId);
+                if (person === null) return yield* new PairingIntentError({ reason: "no_person" });
+                const levels = yield* people.listLevels(intent.personId);
+                const allowed = devicePermissions(
+                  highestLevel(levels.map((held) => held.level)),
+                  intent.ceiling,
                 );
-                // A device that asked for less than its level gives keeps to what it asked for.
-                const ceiling = samePermissions(session.scopes, allowed)
+                // A credential made before its person's level was lowered pairs nothing rather
+                // than a device holding more than they may.
+                if (!input.grant.scopes.every((scope) => allowed.includes(scope as never))) {
+                  return yield* new PairingIntentError({ reason: "scopes" });
+                }
+                const session = yield* input.issue.pipe(Effect.mapError(issueFailed));
+                // A device that asked for fewer permissions than its credential carries keeps to
+                // what it asked for; one that took them all follows its level from now on.
+                const ceiling = samePermissions(session.scopes, input.grant.scopes)
                   ? intent.ceiling
                   : session.scopes;
                 const boundAt = DateTime.formatIso(yield* DateTime.now);
                 yield* sql`
-                INSERT INTO j5_a2a_person_session (
-                  session_id, person_id, bound_at, ceiling_scopes
-                ) VALUES (
-                  ${session.sessionId}, ${intent.personId}, ${boundAt},
-                  ${ceiling === null ? null : encodeCeiling(ceiling)}
-                )
-              `;
+                  INSERT INTO j5_a2a_person_session (
+                    session_id, person_id, bound_at, ceiling_scopes
+                  ) VALUES (
+                    ${session.sessionId}, ${intent.personId}, ${boundAt},
+                    ${ceiling === null ? null : encodeCeiling(ceiling)}
+                  )
+                `;
                 yield* sql`
-                DELETE FROM j5_a2a_pairing_intent WHERE pairing_link_id = ${intent.pairingLinkId}
-              `;
-                return session;
+                  DELETE FROM j5_a2a_pairing_intent WHERE pairing_link_id = ${intent.pairingLinkId}
+                `;
+                return { session, intent };
               }),
             )
             .pipe(
               Effect.mapError((error) =>
-                typeof error === "object" && error !== null && "issue" in error
-                  ? error.issue
-                  : storage(error),
+                error instanceof IssueFailed
+                  ? (error.error as Effect.Error<typeof input.issue>)
+                  : isPairingIntentError(error)
+                    ? error
+                    : storage(error),
               ),
-              // Committed: the credential is used up and the person has a device.
-              Effect.tap(() => people.announce(intent.personId)),
             );
+          // Committed: the credential is used up and the person has a device.
+          if (issued.intent !== null) yield* people.announce(issued.intent.personId);
+          return issued.session;
         }),
       });
     }),
