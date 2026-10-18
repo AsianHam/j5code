@@ -63,7 +63,7 @@ export const PeopleLink = Schema.Struct({
   level: Schema.NullOr(PersonLevel),
   /** One person, or many: a link for many is a Viewer's (AC40). */
   use: Schema.Literals(["one", "many"]),
-  /** The person it is for, once known: the one it names, or who used a link for one. */
+  /** The person a device link is for; `null` for an invite, whose person is made as it is used. */
   personId: Schema.NullOr(TrimmedNonEmptyString),
   personName: Schema.NullOr(Schema.String),
   createdAt: Schema.DateTimeUtc,
