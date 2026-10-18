@@ -1,10 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
-  draftLevelFor,
   isOwnerAccess,
   reachesServer,
   sharingAllowsOperate,
+  threadLevelInProject,
   type KnownConnectionAccess,
 } from "@t3tools/client-runtime/j5/sharing";
 import {
@@ -76,8 +76,6 @@ export function useThreadLevel(
   );
 }
 
-const NOTHING_WITHHELD = Atom.make(true);
-
 /**
  * Whether this connection may write to a thread: upstream's server-wide "Operate tasks"
  * permission, and a Collaborator's or Owner's level over that thread. The chat view calls this
@@ -89,23 +87,22 @@ export function useCanOperateThread(
   threadId: ThreadId | null,
 ): boolean {
   const permitted = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const level = useAtomValue(
-    environmentId === null ? NOTHING_WITHHELD : j5Sharing.threadOperable(environmentId, threadId),
-  );
-  // A draft is no thread on the server yet, so its project decides (People and access AC14).
+  const access = useConnectionAccess(environmentId);
+  const threadLevel = useThreadLevel(environmentId, threadId);
+  // The thread's project, from the thread or, for a draft the server does not know yet, from the
+  // draft: its level holds over every thread there (People and access AC14).
   const ref =
     environmentId === null || threadId === null ? null : scopeThreadRef(environmentId, threadId);
+  const shellProjectId = useThreadShell(ref)?.projectId ?? null;
   const draftProjectId = useComposerDraftStore((store) =>
     ref === null ? null : (store.getDraftSessionByRef(ref)?.projectId ?? null),
   );
-  const persisted = useThreadShell(ref) !== null;
-  const access = useConnectionAccess(environmentId);
-  if (draftProjectId !== null && !persisted) {
-    return (
-      permitted && sharingAllowsOperate({ access, level: draftLevelFor(access, draftProjectId) })
-    );
-  }
-  return permitted && level;
+  const level = threadLevelInProject({
+    access,
+    threadLevel,
+    projectId: shellProjectId ?? draftProjectId,
+  });
+  return permitted && sharingAllowsOperate({ access, level });
 }
 
 // Upstream's thread action menu asks through `threadOperability.ts` and `sharingMenu.ts`, which

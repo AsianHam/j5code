@@ -27,10 +27,11 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   createSharingEnvironmentAtoms,
-  draftLevelFor,
+  projectLevelFor,
   reachesServer,
   sharingAllowsOperate,
   threadLevelFor,
+  threadLevelInProject,
 } from "./sharing.ts";
 import { createJ5EnvironmentAtoms } from "./state.ts";
 
@@ -213,14 +214,14 @@ describe("what a connection may do with a thread it is starting", () => {
     const access = person([
       { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
     ]);
-    expect(sharingAllowsOperate({ access, level: draftLevelFor(access, PROJECT) })).toBe(true);
+    expect(sharingAllowsOperate({ access, level: projectLevelFor(access, PROJECT) })).toBe(true);
   });
 
   it("does not let them write to one in another project", () => {
     const access = person([
       { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
     ]);
-    expect(sharingAllowsOperate({ access, level: draftLevelFor(access, "project:other") })).toBe(
+    expect(sharingAllowsOperate({ access, level: projectLevelFor(access, "project:other") })).toBe(
       false,
     );
   });
@@ -229,7 +230,18 @@ describe("what a connection may do with a thread it is starting", () => {
     const access = person([
       { scope: { kind: "thread", threadId: ThreadId.make("thread:one") }, level: "collaborator" },
     ]);
-    expect(draftLevelFor(access, PROJECT)).toBeNull();
+    expect(projectLevelFor(access, PROJECT)).toBeNull();
+  });
+
+  it("is not held back by an answer the server gave before the thread existed", () => {
+    const access = person([
+      { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
+    ]);
+    const level = threadLevelInProject({ access, threadLevel: null, projectId: PROJECT });
+    expect(sharingAllowsOperate({ access, level })).toBe(true);
+    expect(threadLevelInProject({ access, threadLevel: "owner", projectId: PROJECT })).toBe(
+      "owner",
+    );
   });
 
   it("gives a server's Viewer their server level, and the highest of the two", () => {
@@ -237,8 +249,8 @@ describe("what a connection may do with a thread it is starting", () => {
       { scope: { kind: "server" }, level: "viewer" },
       { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
     ]);
-    expect(draftLevelFor(SERVER_VIEWER, PROJECT)).toBe("viewer");
-    expect(draftLevelFor(access, PROJECT)).toBe("collaborator");
+    expect(projectLevelFor(SERVER_VIEWER, PROJECT)).toBe("viewer");
+    expect(projectLevelFor(access, PROJECT)).toBe("collaborator");
   });
 });
 

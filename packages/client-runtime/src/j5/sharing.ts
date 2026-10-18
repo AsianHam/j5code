@@ -3,6 +3,7 @@ import {
   type ConnectionAccess,
   J5_ACCESS_WS_METHODS,
   type PersonLevel,
+  higherLevel,
   highestLevel,
   levelReaches,
 } from "@t3tools/contracts/j5";
@@ -68,11 +69,12 @@ export const threadLevelFor = (
 };
 
 /**
- * The level a connection holds over a thread it is starting in a project, which the server does
- * not know yet: what it holds over the project, from the project itself or the server. A level on
- * one of the project's threads does not reach a new thread there.
+ * The level a connection holds over a project, from the project itself or the server. Every
+ * thread in the project is held at least at this level, a thread being started there included,
+ * which the server does not know yet. A level on one of the project's threads does not reach the
+ * project.
  */
-export const draftLevelFor = (
+export const projectLevelFor = (
   access: KnownConnectionAccess,
   projectId: string,
 ): PersonLevel | null => {
@@ -88,6 +90,22 @@ export const draftLevelFor = (
     ),
   );
 };
+
+/**
+ * The level a connection holds over a thread in a project: the thread's own, as the server last
+ * sent it, and never less than the project's. The server's answer for a thread is sent again only
+ * when people or levels change, so one given for a draft's id, before its thread existed, would
+ * otherwise hold the thread back once it does.
+ */
+export const threadLevelInProject = (input: {
+  readonly access: KnownConnectionAccess;
+  readonly threadLevel: PersonLevel | null;
+  readonly projectId: string | null;
+}): PersonLevel | null =>
+  higherLevel(
+    input.threadLevel,
+    input.projectId === null ? null : projectLevelFor(input.access, input.projectId),
+  );
 
 /** Whether the level a connection holds over a thread lets it write there; see `KnownConnectionAccess`. */
 export const sharingAllowsOperate = (input: {
