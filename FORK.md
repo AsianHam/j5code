@@ -785,8 +785,8 @@ explicitly marked.
 | `apps/web/src/components/chat/ChatComposer.tsx`                       | A       | Saved-agent mentions, Role library, 45, 49, 73     |
 | `apps/web/src/components/chat/MessagesTimeline.test.tsx`              | N       | B                                                  |
 | `apps/web/src/components/chat/timelineMinimapItems.ts`                | A       | 24                                                 |
-| `apps/web/src/components/chat/MessagesTimeline.tsx`                   | A       | B, 7, 24                                           |
-| `apps/web/src/components/chat/QueuedRunsControl.tsx`                  | A       | 24                                                 |
+| `apps/web/src/components/chat/MessagesTimeline.tsx`                   | A       | B, 7, 24, 80                                       |
+| `apps/web/src/components/chat/QueuedRunsControl.tsx`                  | A       | 24, 80                                             |
 | `apps/web/src/components/sidebar/SidebarChrome.tsx`                   | A       | 6, 33, 75, B                                       |
 | `apps/web/src/onboarding/firstRun.ts`                                 | N       | 75                                                 |
 | `apps/web/src/confirmDialog.test.ts`                                  | R       | 22                                                 |
