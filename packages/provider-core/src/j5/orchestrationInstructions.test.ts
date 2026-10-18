@@ -1,33 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import {
-  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-  t3OrchestrationSystemPrompt,
-} from "../server/orchestrationInstructions.ts";
-import { J5_ORCHESTRATION_INSTRUCTIONS, setServerOwners } from "./orchestrationInstructions.ts";
+import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../server/orchestrationInstructions.ts";
+import { J5_ORCHESTRATION_INSTRUCTIONS } from "./orchestrationInstructions.ts";
 
 describe("J5 orchestration instructions", () => {
   it("are what upstream's exported constant carries to every harness", () => {
     assert.strictEqual(T3_CODE_ORCHESTRATION_INSTRUCTIONS, J5_ORCHESTRATION_INSTRUCTIONS);
-  });
-
-  it("name the server's Owners, and a reader of upstream's constant sees them change", () => {
-    try {
-      assert.notInclude(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "This server");
-      setServerOwners(["Jackson"]);
-      // Read after the change, through upstream's export and through a helper that reads it.
-      assert.isTrue(T3_CODE_ORCHESTRATION_INSTRUCTIONS.includes("This server belongs to Jackson."));
-      assert.isTrue(t3OrchestrationSystemPrompt(true)?.includes("This server belongs to Jackson."));
-      setServerOwners(["Jackson", "Maria", "Sam"]);
-      assert.isTrue(
-        T3_CODE_ORCHESTRATION_INSTRUCTIONS.includes(
-          "This server's owners are Jackson, Maria and Sam.",
-        ),
-      );
-      assert.notInclude(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "belongs to Jackson.");
-    } finally {
-      setServerOwners([]);
-    }
   });
 
   it("steers to provider-native Subagents and platform Peer Agents", () => {

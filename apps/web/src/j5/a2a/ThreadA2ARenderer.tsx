@@ -245,7 +245,7 @@ function parseAgentAuthoredEnvelope(rawEnvelope: string) {
 // A person's inbox reply that names them: "[Message from Priya (human:…)]", and in a shared
 // conversation "[Message from Priya (collaborator) (human:…)]". The id is the trailing
 // parenthesis, as in the outside-agent header; the name before it may itself hold spaces and
-// parentheses. The level is the agent's to read and is not drawn (Shared conversations AC17).
+// parentheses. The level is the agent's to read and is not drawn (Shared conversations AC16).
 const HUMAN_NAMED_HEADER = /^\[Message from ([^\]\n]+) \((human:[^\]\s()]+)\)\]\n\n/;
 const WRITER_LEVEL_TAG = / \((?:owner|collaborator)\)$/;
 

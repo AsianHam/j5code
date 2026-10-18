@@ -12,7 +12,6 @@ import {
   translateAgentPersonaProviderPolicy,
 } from "./agentPersonaProviderPolicy.ts";
 import { agentPersonaArtifactInstructions } from "./agentPersonaArtifacts.ts";
-import { makeOwnersRefresh } from "../sharing/ownersInInstructions.ts";
 import { makeCrewSeatLookup, withCrewSeatQuestions } from "../a2a/crewSeatRuntime.ts";
 
 /**
@@ -101,11 +100,8 @@ export const makeAgentPersonaRuntimePolicyResolver = <E>(
   Effect.gen(function* () {
     const library = yield* makeAgentPersonaLibrary;
     const isCrewSeat = yield* makeCrewSeatLookup;
-    // Read just before a provider reads the standing instructions, so they name the Owners as
-    // they are now, whichever process changed them (Shared conversations AC9).
-    const refreshOwners = yield* makeOwnersRefresh;
     return (input: AgentPersonaRuntimePolicyInput) =>
-      refreshOwners.pipe(Effect.andThen(resolveAgentPersonaRuntimePolicy(input, library))).pipe(
+      resolveAgentPersonaRuntimePolicy(input, library).pipe(
         Effect.flatMap((policy) =>
           isCrewSeat(input.thread).pipe(
             Effect.map((seat) => (seat ? withCrewSeatQuestions(policy) : policy)),

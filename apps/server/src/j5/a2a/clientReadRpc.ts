@@ -103,7 +103,7 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
           Effect.catch(failed("Reading crew proposals failed.")),
         );
         // Listed to whoever reaches the Captain: a Viewer sees a roster's prompt and how it was
-        // answered, with nothing to press (Shared conversations AC12).
+        // answered, with nothing to press (Shared conversations AC11).
         const reachesCaptain = yield* reaches;
         return {
           proposals: yield* Effect.filter(listed.proposals, (proposal) =>

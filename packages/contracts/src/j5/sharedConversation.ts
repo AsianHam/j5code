@@ -48,7 +48,7 @@ export const MessageAuthor = Schema.Struct({
 });
 export type MessageAuthor = typeof MessageAuthor.Type;
 
-/** Who answered one of the agent's prompts: a question, an approval or a Crew roster (AC11). */
+/** Who answered one of the agent's prompts: a question, an approval or a Crew roster (AC10). */
 export const PromptAnswer = Schema.Struct({
   requestId: Schema.String,
   name: Schema.NullOr(Schema.String),

@@ -8,7 +8,7 @@
 import { AGENT_INVOCATION_INSTRUCTIONS } from "./agentInvocationInstructions.ts";
 import { PLAYBOOK_INSTRUCTIONS } from "./playbookInstructions.ts";
 
-const STANDING_INSTRUCTIONS = `
+export const J5_ORCHESTRATION_INSTRUCTIONS = `
 
 ## J5 Code orchestration
 
@@ -38,36 +38,3 @@ ACP fallback: some ACP agents accept the injected MCP server but fail to expose 
 
 When a chart, table, diagram, image collage, or mockup would say more than prose, build a self-contained HTML page, check it with \`html_preview\`, then publish it with \`html_render\` before your final reply. The reader sees the page above that reply, so don't announce or restate it; add only what it doesn't say.
 `;
-
-/**
- * Who the server belongs to, as every agent on it is told (Shared conversations AC9), so that an
- * agent knows its Owners by name before anyone else writes to it. Empty while no Owner has a
- * name.
- */
-export const ownersLine = (names: ReadonlyArray<string>) => {
-  if (names.length === 0) return "";
-  const listed =
-    names.length === 1
-      ? names[0]
-      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-  return names.length === 1
-    ? `This server belongs to ${listed}.`
-    : `This server's owners are ${listed}.`;
-};
-
-const withOwners = (names: ReadonlyArray<string>) => {
-  const line = ownersLine(names);
-  return line.length === 0 ? STANDING_INSTRUCTIONS : `\n\n${line}${STANDING_INSTRUCTIONS}`;
-};
-
-/**
- * The standing instructions as they are now. A live binding: the server sets its Owners here
- * when they change (`setServerOwners`), and every reader of upstream's re-export of this, which
- * reads it when a session or turn starts, reads the current text.
- */
-export let J5_ORCHESTRATION_INSTRUCTIONS = withOwners([]);
-
-/** Names the server's Owners in the standing instructions every agent is given from now on. */
-export const setServerOwners = (names: ReadonlyArray<string>) => {
-  J5_ORCHESTRATION_INSTRUCTIONS = withOwners(names);
-};

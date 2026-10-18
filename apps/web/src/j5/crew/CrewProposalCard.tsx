@@ -54,7 +54,7 @@ export function CrewProposalCard(props: {
 }) {
   const { proposal } = props;
   // Resolving a roster launches or refuses agents; the command says whether this session may,
-  // and anyone who can write to the Captain's thread may (Shared conversations AC10).
+  // and anyone who can write to the Captain's thread may (Shared conversations AC9).
   const permitted = useAtomValue(
     j5Environment.resolveCrewProposal.permissionAtom(props.environmentId),
   );

@@ -74,7 +74,7 @@ export const authorLine = (author: Author, editedBy: Author | null = null) =>
     : `[Message from ${authorLabel(author)}, edited by ${authorLabel(editedBy)}]`;
 
 /**
- * What the platform puts first on a person's answer to a question the agent asked (AC11). An
+ * What the platform puts first on a person's answer to a question the agent asked (AC10). An
  * answer does not pass through a message of the person's own: on some providers upstream writes
  * it into a message, on others it goes back as the result of the agent's tool call. Either way
  * the agent reads the answer's words, so its author goes on the words.
@@ -215,7 +215,7 @@ export interface SharedConversationShape {
   ) => Effect.Effect<string | null>;
   /**
    * Writes down who is answering a prompt on a shared thread, for an answer that does not come as
-   * a client's command: a Crew seat's approval answered from the inbox (AC11, Crews AC23).
+   * a client's command: a Crew seat's approval answered from the inbox (AC10, Crews AC23).
    */
   readonly claimAnswer: (
     personId: ParticipantId,
@@ -236,7 +236,7 @@ export interface SharedConversationShape {
   ) => Effect.Effect<void, PersonAccessStorageError>;
   /**
    * Withdraws the messages a person still has queued on threads they can no longer write to
-   * (AC16). Run after every change of access; also here for a test to call.
+   * (AC15). Run after every change of access; also here for a test to call.
    */
   readonly withdrawQueued: (personId: ParticipantId) => Effect.Effect<void>;
   /**
@@ -486,7 +486,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A queued message edited (AC15): it stays under its author, with "edited by" when someone else
+   * A queued message edited (AC14): it stays under its author, with "edited by" when someone else
    * edited it, and keeps the note it carries. A client that sends the stored text back has the
    * platform's text taken off it before it is written again. Edited into a command, it goes on as
    * typed and carries nothing; edited out of one, it is stamped as a new message would be. A
@@ -555,7 +555,7 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Writes down who is answering a prompt (AC11), on a shared thread. It is a claim, kept for each
+   * Writes down who is answering a prompt (AC10), on a shared thread. It is a claim, kept for each
    * command that answers: who answered is read as the claim whose command upstream's log shows
    * settled the prompt (`settledItsPrompt`), so an answer upstream refuses and one that loses to
    * an earlier answer name no one; a command id upstream already took makes no claim. The first
@@ -835,7 +835,7 @@ const make = Effect.gen(function* () {
       Effect.withSpan("j5.sharing.sharedConversation.endUnanswerableAsks"),
     );
 
-  // A person who can no longer write to a thread loses what they had queued there (AC16), and
+  // A person who can no longer write to a thread loses what they had queued there (AC15), and
   // the asks to them from its agents end (Inbox AC14).
   const accessChanges = yield* (yield* Access).subscribe;
   yield* Effect.forkScoped(

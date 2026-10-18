@@ -31,7 +31,7 @@ export function renderSharedConversationNote(props: {
 
 /**
  * The line above a message of a shared conversation. Above another person's: their initials and
- * name, and who edited it while it was queued; the level the agent is told is not drawn (AC17).
+ * name, and who edited it while it was queued; the level the agent is told is not drawn (AC16).
  * Above the reader's own, only who edited it, so no one finds words they did not type under
  * their name without being told.
  */
@@ -67,7 +67,7 @@ export function SharedMessageAuthorLine({
 /**
  * Who answered one of the agent's prompts, after the prompt's own line: "· answered by Priya". It
  * draws nothing for a prompt nobody is recorded as answering, which is every prompt of a thread
- * that is not shared, and nothing for a prompt still open (AC11).
+ * that is not shared, and nothing for a prompt still open (AC10).
  */
 export function PromptAnsweredBy({
   threadRef,

@@ -20,7 +20,7 @@ const SIZES = {
 } as const;
 
 /**
- * A person's initials on a coloured circle, where a picture would go (Shared conversations AC17;
+ * A person's initials on a coloured circle, where a picture would go (Shared conversations AC16;
  * pictures are on the Later list). Someone with no name yet gets an empty grey circle.
  */
 export function PersonAvatar({

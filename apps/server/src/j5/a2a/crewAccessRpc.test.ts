@@ -17,7 +17,7 @@ import { PeerAdminService } from "./PeerAdminService.ts";
 import { layer as readChangesLayer } from "./ReadChanges.ts";
 
 /**
- * Who reads and answers a Crew's prompts (Crews AC23, Shared conversations AC12): the access
+ * Who reads and answers a Crew's prompts (Crews AC23, Shared conversations AC11): the access
  * checks of the real handlers, over real people and levels, with the Crew services stood in for.
  */
 
@@ -89,7 +89,7 @@ const outcome = <A, E extends { readonly message: string }, R>(effect: Effect.Ef
     Effect.catch((error) => Effect.succeed(`refused: ${error.message}`)),
   );
 
-it.effect("a Viewer of the Captain sees the roster's prompt and cannot decide it (AC12)", () =>
+it.effect("a Viewer of the Captain sees the roster's prompt and cannot decide it (AC11)", () =>
   Effect.gen(function* () {
     yield* seed;
     const viewer = yield* connection("Vic", [

@@ -59,6 +59,6 @@ export default Effect.gen(function* () {
     )
   `;
 
-  // A Crew roster: who approved or declined it, as its Captain is told (AC11).
+  // A Crew roster: who approved or declined it, as its Captain is told (AC10).
   yield* sql`ALTER TABLE j5_agent_crew_proposal ADD COLUMN decided_by TEXT`;
 });

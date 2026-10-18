@@ -422,7 +422,7 @@ it.effect("an answer carries its author, and who answered shows once upstream se
   }).pipe(Effect.provide(conversationLayer)),
 );
 
-it.effect("a person who can no longer write has their queued messages there withdrawn (AC16)", () =>
+it.effect("a person who can no longer write has their queued messages there withdrawn (AC15)", () =>
   Effect.gen(function* () {
     yield* jackson;
     const access = yield* Access;

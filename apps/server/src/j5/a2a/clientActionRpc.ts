@@ -98,7 +98,7 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
     );
   const forCaptainOf = (target: Parameters<typeof crewCaptainThread>[1]) =>
     services(requireWrites(session, crewCaptainThread(sql, target)));
-  // A Viewer reads a roster's prompt and how it was answered, with nothing to press (AC12).
+  // A Viewer reads a roster's prompt and how it was answered, with nothing to press (AC11).
   const readsCaptainOf = (target: Parameters<typeof crewCaptainThread>[1]) =>
     services(requireReaches(session, crewCaptainThread(sql, target)));
   return {
@@ -109,7 +109,7 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
     [METHODS.resolveCrewProposal]: (input: CrewProposalResolveRequest) =>
       forCaptainOf({ kind: "proposal", proposalId: input.proposalId }).pipe(
         Effect.andThen(people.sessionReach(session).pipe(Effect.orElseSucceed(() => null))),
-        // In a shared conversation the Captain is told who decided (Shared conversations AC11).
+        // In a shared conversation the Captain is told who decided (Shared conversations AC10).
         Effect.flatMap((reach) =>
           conversation.rosterDecider(
             reach === null ? null : reachPersonId(reach),

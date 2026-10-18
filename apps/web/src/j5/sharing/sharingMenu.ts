@@ -36,7 +36,7 @@ export function provideSharingMenuAccess(
 
 // Not an Owner's: for now archiving and deleting are for Owners, and project settings are part of
 // Settings, which is theirs (People and access AC14, AC27). A Viewer changes nothing, the read
-// marker included, which is one value for everyone on the thread (Shared conversations AC20).
+// marker included, which is one value for everyone on the thread (Shared conversations AC19).
 const OWNERS_ONLY: ReadonlySet<string> = new Set(["archive", "delete", "project-settings"]);
 const NOT_A_VIEWERS: ReadonlySet<string> = new Set(["mark-unread"]);
 

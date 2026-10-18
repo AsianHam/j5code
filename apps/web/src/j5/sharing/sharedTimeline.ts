@@ -43,7 +43,7 @@ export const isSharedNote = (message: object) => notes.has(message);
 
 /**
  * Who sent a message of a shared conversation, when it was someone other than the reader:
- * upstream's bubble is then drawn on the left with their name (AC17). Every row of a thread reads
+ * upstream's bubble is then drawn on the left with their name (AC16). Every row of a thread reads
  * the one record the thread's timeline holds.
  */
 export function useSharedMessageAuthor(
@@ -63,7 +63,7 @@ export function useAnySharedMessageAuthor(
   return authorIndex(record).authors.get(message.id);
 }
 
-/** Who answered one of the agent's prompts in a shared conversation (AC11). */
+/** Who answered one of the agent's prompts in a shared conversation (AC10). */
 export function usePromptAnswer(
   thread: ScopedThreadRef | null,
   requestId: string | null,
@@ -87,7 +87,7 @@ export function sharedMessageTypedText(
 
 /**
  * A thread's queued messages with the words their authors typed, for the queue's rows and the
- * composer an edit loads (Shared conversations AC15): the server records a message's author when
+ * composer an edit loads (Shared conversations AC14): the server records a message's author when
  * it is queued. Until the thread's record has been read, or has failed, no queued row is shown,
  * as the timeline holds a message back, so no line meant for the agent is drawn or edited.
  */
@@ -112,7 +112,7 @@ export function useSharedQueuedRuns<
 }
 
 /**
- * A thread's timeline as a shared conversation shows it (Shared conversations AC17). Each
+ * A thread's timeline as a shared conversation shows it (Shared conversations AC16). Each
  * person's message the server records an author for is shown as typed, and the note it carried
  * to the agent becomes a notice just before it. An answer to the agent's question is shown as
  * given. A message whose author the server has not answered for yet is shown as this client's
