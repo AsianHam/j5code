@@ -459,10 +459,16 @@ function writeSettingsAndPersonas(home: string): void {
 
 /**
  * Names the home's owner the way the running server does, on the database alone: no server is
- * up yet, and a hand-written row would skip what `setOperatorName` keeps true.
+ * up yet, and a hand-written row would skip what `setName` keeps true.
  */
 const nameOwner = (databasePath: string, ownerName: string) =>
-  PersonAccess.PersonAccess.use((access) => access.setOperatorName(ownerName)).pipe(
+  PersonAccess.PersonAccess.use((access) =>
+    access.firstOwner.pipe(
+      Effect.flatMap((owner) =>
+        access.setName({ personId: owner.personId, displayName: ownerName }),
+      ),
+    ),
+  ).pipe(
     Effect.provide(
       PersonAccess.layer.pipe(
         Layer.provide(SqlitePersistence.layerFromPath(databasePath)),

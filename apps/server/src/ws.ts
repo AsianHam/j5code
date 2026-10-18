@@ -41,6 +41,7 @@ import {
   type FileManagerRevealKind,
   type OrchestrationClientOrigin,
   type OrchestrationV2Command,
+  type OrchestrationV2ThreadLaunchInput,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type MessageId,
@@ -176,7 +177,8 @@ import {
 } from "./j5/a2a/crewSeatArchiveGuard.ts";
 import { refreshSkillProviders } from "./j5/skills/skillProviderRefresh.ts";
 import { PlaybookStore } from "./j5/playbooks/PlaybookStore.ts";
-import { layerRpcAuthorization as j5LayerRpcAuthorization } from "./j5/sharing/GuestGate.ts";
+import { layerRpcAuthorization as j5LayerRpcAuthorization } from "./j5/sharing/AccessGate.ts";
+import { makeCommandAdmission as j5CommandAdmission } from "./j5/sharing/CommandAdmission.ts";
 import { connectionView as j5ConnectionView } from "./j5/sharing/GuestView.ts";
 import { J5_WS_RPC_METHODS, j5WsRpcServices, layerJ5WsRpc } from "./j5/wsRpc.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
@@ -1182,8 +1184,11 @@ const layerWsRpc = (
   UpstreamWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
-      // J5: a guest's connection is given reduced answers; a member's, upstream's (FORK.md case 69).
+      // J5: a narrowed connection is given reduced answers; a wide one, upstream's (FORK.md case 69).
       const j5View = yield* j5ConnectionView(currentSession);
+      // J5: a person's commands are held to what their level and scope allow, and a Crew seat is
+      // never archived alone (FORK.md cases 37 and 78).
+      const j5Commands = yield* j5CommandAdmission(j5CrewSeatArchiveGuard);
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -1838,8 +1843,6 @@ const layerWsRpc = (
                   ).pipe(Effect.provide(intakeContext)),
                 )
                 .pipe(
-                  // J5: a lone Crew seat archive or delete is refused before this is enqueued.
-                  (enqueue) => Effect.andThen(j5CrewSeatArchiveGuard(command), enqueue),
                   Effect.tap(() => recordClientCommandAnalytics(command)),
                   Effect.map((result) => ({ sequence: result.sequence })),
                   Effect.mapError((cause) => {
@@ -3118,7 +3121,17 @@ const layerWsRpc = (
             ),
           ),
       });
-      return handlers;
+      return {
+        ...handlers,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          j5Commands
+            .admit(currentSession, command)
+            .pipe(Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand])),
+        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input: OrchestrationV2ThreadLaunchInput) =>
+          j5Commands
+            .admitLaunch(currentSession, input)
+            .pipe(Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.launchThread])),
+      };
     }),
   );
 
@@ -3183,7 +3196,7 @@ export const layer = Layer.unwrap(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
             Effect.provide(
               Layer.merge(
-                // J5: a guest's connection is checked against its grants first (FORK.md case 69).
+                // J5: a narrowed connection is checked against its scope first (FORK.md case 69).
                 j5LayerRpcAuthorization(session, RpcAuthorization.layer(session.scopes)),
                 rpcInstrumentationLayer,
               ),

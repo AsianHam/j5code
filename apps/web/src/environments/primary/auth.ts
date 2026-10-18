@@ -240,7 +240,9 @@ async function exchangeBootstrapCredential(credential: string): Promise<AuthBrow
       ) {
         throw new PrimaryEnvironmentPairingCredentialRejectedError({
           providedLength: credential.length,
-          ...(error.pairingRefusal === "guest_link_for_member" ? { guestLinkForMember: true } : {}),
+          ...(error.pairingRefusal === "paired_as_someone_else"
+            ? { guestLinkForMember: true }
+            : {}),
           cause: error,
         });
       }

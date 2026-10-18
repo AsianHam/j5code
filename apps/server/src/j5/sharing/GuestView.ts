@@ -21,7 +21,15 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { guestIconPath } from "./GuestProjectIcons.ts";
-import { GUEST_SESSION_SUBJECT, PersonAccess, type SessionIdentity } from "./PersonAccess.ts";
+import { levelReaches } from "@t3tools/contracts/j5";
+
+import {
+  PersonAccess,
+  type SessionIdentity,
+  type SessionReach,
+  isWide,
+  reachPersonId,
+} from "./PersonAccess.ts";
 
 /**
  * What a guest's connection is told (Shared server AC12, AC23). A guest's client cannot connect
@@ -183,11 +191,23 @@ const MEMBER_VIEW: ConnectionView = {
   shellStream: (input, subscribe) => subscribe(input),
 };
 
-const makeShellFilter = (access: PersonAccess["Service"], session: SessionIdentity) => {
+/**
+ * How a narrowed connection's sidebar is cut to what its person reaches. A Viewer's projects and
+ * threads are reduced to what names nothing of the host; a Collaborator's keep their folders,
+ * which their terminals and files open.
+ */
+const makeShellFilter = (access: PersonAccess["Service"], reach: SessionReach, reduce: boolean) => {
+  const personId = reachPersonId(reach);
   const seesThread = (threadId: ThreadId) =>
-    access.threadAccess(session, threadId).pipe(Effect.map((level) => level !== "none"));
+    personId === null
+      ? Effect.succeed(false)
+      : access.threadLevel(personId, threadId).pipe(Effect.map((level) => level !== null));
   const holdsProject = (projectId: ProjectId) =>
-    access.projectAccess(session, projectId).pipe(Effect.map((level) => level !== "none"));
+    personId === null
+      ? Effect.succeed(false)
+      : access.projectLevel(personId, projectId).pipe(Effect.map((level) => level !== null));
+  const project = reduce ? reduceProject : identity<OrchestrationProjectShell>;
+  const thread = reduce ? reduceThread : identity<OrchestrationV2ThreadShell>;
 
   /** The threads a guest's grants cover, and the projects those threads or a grant name. */
   const snapshot = Effect.fn("j5.sharing.guestView.shellSnapshot")(function* (
@@ -201,8 +221,8 @@ const makeShellFilter = (access: PersonAccess["Service"], session: SessionIdenti
     return {
       schemaVersion: full.schemaVersion,
       snapshotSequence: full.snapshotSequence,
-      projects: projects.map(reduceProject),
-      threads: threads.map(reduceThread),
+      projects: projects.map(project),
+      threads: threads.map(thread),
       archivedThreads: [],
     } satisfies OrchestrationV2ShellSnapshot;
   });
@@ -253,7 +273,7 @@ const makeShellFilter = (access: PersonAccess["Service"], session: SessionIdenti
                   return drop;
                 }
                 threads.add(item.thread.id);
-                return pass({ ...item, thread: reduceThread(item.thread) });
+                return pass({ ...item, thread: thread(item.thread) });
               }
               case "thread.removed":
                 return threads.delete(item.threadId) ? pass(item) : drop;
@@ -262,7 +282,7 @@ const makeShellFilter = (access: PersonAccess["Service"], session: SessionIdenti
                   return drop;
                 }
                 projects.add(item.project.id);
-                return pass({ ...item, project: reduceProject(item.project) });
+                return pass({ ...item, project: project(item.project) });
               }
               case "project.removed":
                 return projects.delete(item.projectId) ? pass(item) : drop;
@@ -285,19 +305,27 @@ const shellFailure = (cause: unknown) =>
         cause,
       });
 
-const guestView = (access: PersonAccess["Service"], session: SessionIdentity): ConnectionView => {
-  const filter = makeShellFilter(access, session);
+const narrowedView = (access: PersonAccess["Service"], reach: SessionReach): ConnectionView => {
+  // The configuration names the host's folders, network addresses, provider accounts and
+  // settings. A Viewer is shown none of them (AC24); a Collaborator, who can open a terminal on
+  // the host, is given upstream's.
+  const writes =
+    reach.kind === "person" &&
+    reach.levels.some((held) => levelReaches(held.level, "collaborator"));
+  const filter = makeShellFilter(access, reach, !writes);
   return {
-    config: reduceServerConfig,
+    config: writes ? identity : reduceServerConfig,
     // Every later provider, settings, keybinding, theme and usage update is dropped rather than
-    // reduced: a guest's client keeps the providers and models it was told of when it connected.
-    configStream: (stream) =>
-      stream.pipe(
-        Stream.filter((event) => event.type === "snapshot"),
-        Stream.map((event) => ({ ...event, config: reduceServerConfig(event.config) })),
-      ),
+    // reduced: a Viewer's client keeps the providers and models it was told of when it connected.
+    configStream: writes
+      ? identity
+      : (stream) =>
+          stream.pipe(
+            Stream.filter((event) => event.type === "snapshot"),
+            Stream.map((event) => ({ ...event, config: reduceServerConfig(event.config) })),
+          ),
     // A client waits for the welcome before it draws anything. The other events report a server
-    // update or a migration, which a guest neither starts nor is told about.
+    // update or a migration, which a narrowed connection neither starts nor is told about.
     lifecycleStream: (stream) =>
       stream.pipe(
         Stream.filter((event) => event.type === "welcome"),
@@ -314,24 +342,24 @@ const guestView = (access: PersonAccess["Service"], session: SessionIdentity): C
         })),
       ),
     /**
-     * A guest's feed always begins from a full snapshot, the answer upstream already gives a
-     * client whose cursor is too old to replay from, because what a replay may tell a guest
-     * depends on what its client was sent before. It begins again, without the client
-     * reconnecting, each time the guest's grants change (AC10, AC11).
+     * A narrowed feed always begins from a full snapshot, the answer upstream already gives a
+     * client whose cursor is too old to replay from, because what a replay may tell this
+     * connection depends on what its client was sent before. It begins again, without the
+     * client reconnecting, each time what the person reaches changes (AC10, AC12).
      */
     shellStream: (input, subscribe) =>
       Stream.unwrap(
         Effect.gen(function* () {
-          const person = yield* access.sessionPerson(session);
-          const grantChanges = yield* access.subscribeGrantChanges;
+          const personId = reachPersonId(reach);
+          const reachChanges = yield* access.subscribeChanges;
           const restarts = yield* Queue.sliding<void>(1);
           const restart = Queue.offer(restarts, undefined);
           const begin = (marker: boolean) =>
             filter.stream(subscribe(marker ? { requestCompletionMarker: true } : {}), restart);
           return Stream.merge(
             Stream.fromQueue(restarts),
-            Stream.fromSubscription(grantChanges).pipe(
-              Stream.filter((personId) => personId === person?.personId),
+            Stream.fromSubscription(reachChanges).pipe(
+              Stream.filter((changed) => changed === personId),
             ),
           ).pipe(
             Stream.as(false),
@@ -343,10 +371,24 @@ const guestView = (access: PersonAccess["Service"], session: SessionIdentity): C
   };
 };
 
-/** The view for one WebSocket connection: upstream's own for a member, the reduced one for a guest. */
+/**
+ * The view for one WebSocket connection: upstream's own for a wide session, the narrowed one for
+ * anyone else. Whose the session is is read once, when the socket opens; a change that would
+ * alter it renews the session, which closes the socket (`Access`).
+ */
 export const connectionView = (
   session: SessionIdentity,
 ): Effect.Effect<ConnectionView, never, PersonAccess> =>
-  session.subject !== GUEST_SESSION_SUBJECT
-    ? Effect.succeed(MEMBER_VIEW)
-    : Effect.map(PersonAccess, (access) => guestView(access, session));
+  Effect.gen(function* () {
+    const access = yield* PersonAccess;
+    const reach = yield* access
+      .sessionReach(session)
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logError("J5 could not read whose a socket is; narrowing its view", {
+            cause,
+          }).pipe(Effect.as({ kind: "unknown" } as SessionReach)),
+        ),
+      );
+    return isWide(reach) ? MEMBER_VIEW : narrowedView(access, reach);
+  });

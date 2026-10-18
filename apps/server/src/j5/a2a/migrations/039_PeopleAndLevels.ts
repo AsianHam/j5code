@@ -157,4 +157,7 @@ export default Effect.gen(function* () {
   yield* sql`ALTER TABLE j5_a2a_human_person DROP COLUMN kind`;
   yield* sql`ALTER TABLE j5_a2a_human_person DROP COLUMN name_self_given`;
   yield* sql`ALTER TABLE j5_a2a_human_person DROP COLUMN joined_open_link_id`;
+  // A person an Owner removed stays, so the messages they wrote keep their name (AC21, AC47),
+  // but holds nothing, and their name is free for someone else.
+  yield* sql`ALTER TABLE j5_a2a_human_person ADD COLUMN removed_at TEXT`;
 });

@@ -154,7 +154,7 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
     reason: EnvironmentAuthInvalidReason,
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
     // J5: why a pairing link was refused when the token itself was good (FORK.md case 70).
-    pairingRefusal: Schema.optionalKey(Schema.Literal("guest_link_for_member")),
+    pairingRefusal: Schema.optionalKey(Schema.Literal("paired_as_someone_else")),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },

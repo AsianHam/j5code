@@ -17,20 +17,21 @@ import {
   type SharingLinkRequest,
   type SharingPersonRequest,
   type SharingPutGrantRequest,
+  type SharingConnectionAccess,
   type SharingThreadAccess,
   type SharingThreadAccessRequest,
 } from "@t3tools/contracts/j5";
+import { J5ActionError } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
-import type { OpenLinks } from "./OpenLinks.ts";
 import type { People } from "./People.ts";
 import {
-  type Access,
-  GUEST_SESSION_SUBJECT,
   type PersonAccess,
+  type PersonAccessStorageError,
   type SessionIdentity,
+  isWide,
 } from "./PersonAccess.ts";
 
 /**
@@ -66,27 +67,29 @@ export const SHARING_RPC_SCOPES = {
 const refused = failAsJ5ActionError({
   refusals: [
     "PersonNotFoundError",
-    "GrantOnMemberError",
-    "MemberNotRemovableError",
+    "FirstOwnerFixedError",
+    "OwnerOutsideServerError",
     "GrantTargetNotFoundError",
-    "DeviceNotAGuestsError",
-    "LinkForMemberError",
+    "DeviceNotAPersonsError",
     "LinkLifetimeError",
     "PersonNameError",
     "PersonNameTakenError",
     "OwnerNameRequiredError",
     "ThreadNotSharedError",
-    "LinkNotAGuestsError",
-    "NotAGuestError",
-    "GrantNotHeldError",
-    "OpenLinkNotFoundError",
-    "NameNotConfirmedError",
+    "LinkNotAPersonsError",
+    "NotYoursToLeaveError",
+    "AccessRenewalError",
   ],
   failed: "Sharing could not be changed.",
 });
 
-const toThreadAccess = (access: Access): SharingThreadAccess =>
-  access === "member" ? { kind: "member", level: "collaborate" } : { kind: "guest", level: access };
+// Links for many people are being rebuilt as the one kind of link (People and access AC31).
+const noOpenLinks = Effect.fail(
+  new J5ActionError({
+    code: "OpenLinksRetired",
+    message: "Links for many people are not available on this server yet.",
+  }),
+);
 
 /**
  * Tells one connection what it holds on a shared server: whether it is a guest's, its level on a
@@ -96,20 +99,13 @@ const toThreadAccess = (access: Access): SharingThreadAccess =>
  * is logged here and told to the client plainly.
  */
 export const makeSharingRpcHandlers = (options: {
-  readonly access: Pick<PersonAccess["Service"], "watchThreadAccess" | "operatorName">;
+  readonly access: PersonAccess["Service"];
   readonly people: People["Service"];
-  readonly openLinks: OpenLinks["Service"];
   readonly session: SessionIdentity;
 }) => ({
-  [J5_SHARING_WS_METHODS.listOpenLinks]: () =>
-    options.openLinks.list.pipe(
-      Effect.map((links) => ({ links })),
-      Effect.catch(refused),
-    ),
-  [J5_SHARING_WS_METHODS.createOpenLink]: (input: SharingCreateOpenLinkRequest) =>
-    options.openLinks.create(input.threadId, input.lifetime).pipe(Effect.catch(refused)),
-  [J5_SHARING_WS_METHODS.revokeOpenLink]: (input: SharingOpenLinkRequest) =>
-    options.openLinks.revoke(input.linkId).pipe(Effect.as({}), Effect.catch(refused)),
+  [J5_SHARING_WS_METHODS.listOpenLinks]: () => Effect.succeed({ links: [] }),
+  [J5_SHARING_WS_METHODS.createOpenLink]: (_input: SharingCreateOpenLinkRequest) => noOpenLinks,
+  [J5_SHARING_WS_METHODS.revokeOpenLink]: (_input: SharingOpenLinkRequest) => noOpenLinks,
   [J5_SHARING_WS_METHODS.listOwnGrants]: () =>
     options.people.ownGrants(options.session).pipe(
       Effect.map((grants) => ({ grants })),
@@ -141,26 +137,64 @@ export const makeSharingRpcHandlers = (options: {
   [J5_SHARING_WS_METHODS.renamePerson]: (input: SharingRenamePersonRequest) =>
     options.people.rename(input).pipe(Effect.catch(refused)),
   [J5_SHARING_WS_METHODS.listThreadPeople]: (input: SharingThreadAccessRequest) =>
-    options.openLinks.threadPeople(options.session, input.threadId).pipe(Effect.catch(refused)),
+    options.people.threadPeople(options.session, input.threadId).pipe(Effect.catch(refused)),
   [J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges]: (input: SharingThreadAccessRequest) =>
-    options.openLinks.watchThreadPeople(options.session, input.threadId).pipe(
+    options.people.watchThreadPeople(options.session, input.threadId).pipe(
       Stream.map((revision) => ({ revision })),
       Stream.catch((cause) => Stream.fromEffect(refused(cause))),
     ),
   [J5_SHARING_WS_METHODS.revokeLink]: (input: SharingLinkRequest) =>
     options.people.revokeLink(input.linkId).pipe(Effect.as({}), Effect.catch(refused)),
+  // A connection that writes to the whole server is told it is a member's; anyone else a guest's.
   [J5_SHARING_WS_METHODS.getConnectionAccess]: () =>
-    options.session.subject === GUEST_SESSION_SUBJECT
-      ? Effect.succeed({ kind: "guest" as const })
-      : // One read per connection, of one row: a member's client learns here whether the owner
-        // has a name yet. If it cannot be read the client is told there is none it knows of.
-        options.access.operatorName.pipe(
-          Effect.orElseSucceed(() => null),
-          Effect.map((ownerName) => ({ kind: "member" as const, ownerName })),
+    options.access.sessionReach(options.session).pipe(
+      Effect.flatMap((reach): Effect.Effect<SharingConnectionAccess, PersonAccessStorageError> =>
+        isWide(reach)
+          ? options.access.firstOwner.pipe(
+              Effect.map((owner) => ({ kind: "member" as const, ownerName: owner.displayName })),
+            )
+          : Effect.succeed({ kind: "guest" as const }),
+      ),
+      Effect.catch((cause) =>
+        Effect.logError("J5 sharing could not read a connection's access", { cause }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new SharingAccessError({ message: "Could not read what is shared with you." }),
+            ),
+          ),
         ),
+      ),
+    ),
   [J5_SHARING_WS_METHODS.subscribeThreadAccess]: (input: SharingThreadAccessRequest) =>
-    options.access.watchThreadAccess(options.session, input.threadId).pipe(
-      Stream.map(toThreadAccess),
+    Stream.unwrap(
+      Effect.gen(function* () {
+        // Subscribed before the first read, so no change between the two is missed.
+        const changes = yield* options.access.subscribeChanges;
+        const read = options.access.sessionReach(options.session).pipe(
+          Effect.flatMap((reach): Effect.Effect<SharingThreadAccess, PersonAccessStorageError> =>
+            isWide(reach)
+              ? Effect.succeed({ kind: "member" as const, level: "collaborate" as const })
+              : reach.kind !== "person"
+                ? Effect.succeed({ kind: "guest" as const, level: "none" as const })
+                : options.access.threadLevel(reach.person.personId, input.threadId).pipe(
+                    Effect.map((level) => ({
+                      kind: "guest" as const,
+                      level:
+                        level === null
+                          ? ("none" as const)
+                          : level === "viewer"
+                            ? ("view" as const)
+                            : ("collaborate" as const),
+                    })),
+                  ),
+          ),
+        );
+        return Stream.fromEffect(read).pipe(
+          Stream.concat(Stream.fromSubscription(changes).pipe(Stream.mapEffect(() => read))),
+          Stream.changesWith((a, b) => a.kind === b.kind && a.level === b.level),
+        );
+      }),
+    ).pipe(
       Stream.catch((cause) =>
         Stream.fromEffect(
           Effect.logError("J5 sharing could not read a thread's access", { cause }).pipe(

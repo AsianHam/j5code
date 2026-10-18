@@ -128,8 +128,8 @@ import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import { j5AuthenticatedRoutesLayer } from "./j5/a2a/J5AuthenticatedRoutes.ts";
-import { gateEnvironmentAuth } from "./j5/sharing/GuestGate.ts";
-import { layer as J5GuestPairingLive } from "./j5/sharing/GuestPairing.ts";
+import { gateEnvironmentAuth } from "./j5/sharing/AccessGate.ts";
+import { peopleLayer as J5PeopleLive } from "./j5/sharing/PairingIntents.ts";
 import { J5A2AAuxiliaryLayer, J5ThreadRegistrationLayer } from "./j5/a2a/runtimeLayer.ts";
 import { layer as J5ArtifactRunFinalizationObserverLive } from "./j5/artifacts/ArtifactRunFinalizationObserver.ts";
 import { layer as J5ArtifactWorkspaceLive } from "./j5/artifacts/ArtifactWorkspace.ts";
@@ -453,11 +453,11 @@ const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
 
 const layerServerEnvironment = ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer));
 
-// J5: a guest's connection is refused everything its grants do not cover (FORK.md case 69).
+// J5: a narrowed connection is refused everything its scope does not cover (FORK.md case 69).
 const layerAuth = gateEnvironmentAuth(
   EnvironmentAuth.layer.pipe(
-    // J5: upstream's pairing ties a guest's session to its guest through this (FORK.md case 70).
-    Layer.provideMerge(J5GuestPairingLive),
+    // J5: upstream's pairing ties each session to its person through this (FORK.md case 70).
+    Layer.provideMerge(J5PeopleLive),
     Layer.provideMerge(layerPersistence),
     Layer.provide(layerServerEnvironment),
     Layer.provide(ServerSecretStore.layer),

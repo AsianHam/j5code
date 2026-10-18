@@ -45,7 +45,7 @@ import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./Reusa
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { isGuestPairingGrant, makePairingSessionIssuer } from "../j5/sharing/GuestPairing.ts";
+import { makeMcpApprovalCheck, makePairingSessionIssuer } from "../j5/sharing/PairingIntents.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -728,8 +728,9 @@ export const make = Effect.gen(function* () {
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
   const devAuth = resolveReusableDevAuth(config);
-  // J5: a session issued from a guest's share link is tied to its guest (FORK.md case 70).
-  const j5TiedToGuest = yield* makePairingSessionIssuer;
+  // J5: a session issued from a pairing credential is tied to its person (FORK.md case 70).
+  const j5TiedToPerson = yield* makePairingSessionIssuer;
+  const j5ApprovesMcpClient = yield* makeMcpApprovalCheck;
 
   const authenticateToken = (
     token: string,
@@ -908,7 +909,7 @@ export const make = Effect.gen(function* () {
         },
       })
       .pipe(
-        j5TiedToGuest(grant, credential),
+        j5TiedToPerson(grant, credential),
         Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })),
       );
     return {
@@ -995,7 +996,7 @@ export const make = Effect.gen(function* () {
                 },
               })
               .pipe(
-                j5TiedToGuest(grant, credential),
+                j5TiedToPerson(grant, credential),
                 Effect.mapError(
                   (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
                 ),
@@ -1332,13 +1333,18 @@ export const make = Effect.gen(function* () {
           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
       }),
       Effect.flatMap((grant) =>
-        // J5: a guest's share link approves no MCP client (FORK.md case 70).
-        isGuestPairingGrant(grant) ||
-        (grant.method !== "one-time-token" && grant.method !== "reusable-dev-token")
-          ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
-          : mcpClientScopes(access).every((scope) => grant.scopes.includes(scope))
-            ? Effect.void
-            : Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
+        // J5: only a code an Owner's level backs approves an MCP client (FORK.md case 70).
+        j5ApprovesMcpClient(grant, code.trim()).pipe(
+          Effect.orElseSucceed(() => false),
+          Effect.flatMap((j5Approves) =>
+            !j5Approves ||
+            (grant.method !== "one-time-token" && grant.method !== "reusable-dev-token")
+              ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
+              : mcpClientScopes(access).every((scope) => grant.scopes.includes(scope))
+                ? Effect.void
+                : Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
+          ),
+        ),
       ),
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );

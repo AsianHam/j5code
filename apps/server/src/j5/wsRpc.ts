@@ -6,6 +6,7 @@ import {
   SkillLinkError,
 } from "@t3tools/contracts";
 import {
+  J5AccessRpcGroup,
   J5ClientActionRpcGroup,
   J5ClientReadRpcGroup,
   J5PlaybookRpcGroup,
@@ -31,7 +32,8 @@ import { makeArtifactRpcHandlers } from "./artifacts/artifactRpc.ts";
 import type { ArtifactWorkspace } from "./artifacts/ArtifactWorkspace.ts";
 import { PlaybookStore } from "./playbooks/PlaybookStore.ts";
 import { makePlaybookRpcHandlers } from "./playbooks/playbookRpc.ts";
-import { OpenLinks } from "./sharing/OpenLinks.ts";
+import { Access } from "./sharing/Access.ts";
+import { makeAccessRpcHandlers } from "./sharing/accessRpc.ts";
 import { People } from "./sharing/People.ts";
 import { PersonAccess, type SessionIdentity } from "./sharing/PersonAccess.ts";
 import { makeSharingRpcHandlers } from "./sharing/sharingRpc.ts";
@@ -46,6 +48,7 @@ const J5WsRpcGroup = J5AgentPersonaRpcGroup.merge(
   J5PlaybookRpcGroup,
   J5ClientActionRpcGroup,
   J5SharingRpcGroup,
+  J5AccessRpcGroup,
   J5ClientReadRpcGroup,
 );
 
@@ -62,7 +65,7 @@ type J5WsRpcServices =
   | ArtifactDeletion
   | PersonAccess
   | People
-  | OpenLinks;
+  | Access;
 
 /**
  * The server-lifetime J5 services the handlers call. `ws.ts` reads them once, where its route is
@@ -79,7 +82,7 @@ export const j5WsRpcServices = Effect.context<J5WsRpcServices>().pipe(
       ArtifactDeletion,
       PersonAccess,
       People,
-      OpenLinks,
+      Access,
     ),
   ),
 );
@@ -93,7 +96,7 @@ export const j5WsRpcServices = Effect.context<J5WsRpcServices>().pipe(
 export const layerJ5WsRpc = (
   artifactWorkspace: ArtifactWorkspace["Service"],
   services: Context.Context<J5WsRpcServices>,
-  session: SessionIdentity,
+  session: SessionIdentity & { readonly scopes: ReadonlyArray<string> },
 ) =>
   J5WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -121,10 +124,14 @@ export const layerJ5WsRpc = (
             ),
         })),
         ...(yield* makePlaybookRpcHandlers({ store: yield* PlaybookStore })),
+        ...(yield* makeAccessRpcHandlers({
+          people: yield* PersonAccess,
+          access: yield* Access,
+          session,
+        })),
         ...makeSharingRpcHandlers({
           access: yield* PersonAccess,
           people: yield* People,
-          openLinks: yield* OpenLinks,
           session,
         }),
       });
