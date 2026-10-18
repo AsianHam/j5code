@@ -19,6 +19,7 @@ import { makeSessionRenewal } from "./SessionRenewal.ts";
 import {
   PROJECT,
   accessLayer,
+  accessLayerWithHook,
   device,
   isLive,
   person,
@@ -245,6 +246,32 @@ it.layer(accessLayer)("Access", (it) => {
       }),
   );
 
+  it.effect("voids an MCP approval not yet issued when an Owner is lowered", () =>
+    Effect.gen(function* () {
+      const access = yield* Access;
+      const sessions = yield* SessionStore.SessionStore;
+      const owner = yield* person("Approving owner", [
+        { scope: { kind: "server" }, level: "owner" },
+      ]);
+      const issueAgent = sessions.issue({
+        subject: "mcp-client",
+        scopes: [AuthOrchestrationReadScope],
+      });
+      const before = yield* access.ownersChanged;
+      yield* access.issueMcpClient(before, issueAgent);
+
+      yield* access.setLevel({
+        personId: owner.personId,
+        scope: { kind: "server" },
+        level: "viewer",
+      });
+      const stale = yield* access.issueMcpClient(before, issueAgent).pipe(Effect.flip);
+      assert.strictEqual(stale._tag, "StaleMcpApprovalError");
+      // Approved again after the change, it issues.
+      yield* access.issueMcpClient(yield* access.ownersChanged, issueAgent);
+    }),
+  );
+
   it.effect("renews at startup every device whose permissions its level does not give", () =>
     Effect.gen(function* () {
       const access = yield* Access;
@@ -266,3 +293,23 @@ it.layer(accessLayer)("Access", (it) => {
     }),
   );
 });
+
+it.effect("runs the write hook inside a change, so a failing hook undoes the change", () =>
+  Effect.gen(function* () {
+    const access = yield* Access;
+    const people = yield* PersonAccess.PersonAccess;
+    const sam = yield* person("Hooked Sam");
+    const failed = yield* access
+      .setLevel({ personId: sam.personId, scope: { kind: "server" }, level: "viewer" })
+      .pipe(Effect.flip);
+    assert.strictEqual(failed._tag, "PersonAccessStorageError");
+    assert.deepStrictEqual(yield* people.listLevels(sam.personId), []);
+  }).pipe(
+    Effect.provide(
+      accessLayerWithHook({
+        afterChange: () =>
+          Effect.fail(new PersonAccess.PersonAccessStorageError({ operation: "record a writer" })),
+      }),
+    ),
+  ),
+);

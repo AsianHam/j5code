@@ -161,6 +161,22 @@ export interface AccessShape {
 
 export class Access extends Context.Service<Access, AccessShape>()("t3/j5/sharing/Access") {}
 
+/**
+ * Runs inside the transaction of every change to what a person holds, after the change is written
+ * and before it commits, so what it records commits with the change or not at all. Shared
+ * conversations record here that a thread gained a second writer, which a notice told after the
+ * commit could miss when the writer was added and removed before it was read. Optional: without
+ * it, a change does nothing more.
+ */
+export class AccessWriteHook extends Context.Service<
+  AccessWriteHook,
+  {
+    readonly afterChange: (
+      personId: ParticipantId,
+    ) => Effect.Effect<void, PersonAccessStorageError>;
+  }
+>()("t3/j5/sharing/Access/AccessWriteHook") {}
+
 interface Snapshot {
   readonly levels: ReadonlyArray<HeldLevel>;
   readonly wide: boolean;
@@ -196,6 +212,12 @@ const make = Effect.gen(function* () {
   const people = yield* PersonAccess;
   const sessions = yield* SessionStore.SessionStore;
   const grants = yield* PairingGrantStore.PairingGrantStore;
+  const writeHook = yield* Effect.serviceOption(AccessWriteHook);
+  const afterChange = (personId: ParticipantId) =>
+    Option.match(writeHook, {
+      onNone: () => Effect.void,
+      onSome: (hook) => hook.afterChange(personId),
+    });
   const changes = yield* Effect.acquireRelease(PubSub.sliding<AccessChange>(256), (pubsub) =>
     PubSub.shutdown(pubsub),
   );
@@ -280,6 +302,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const before = snapshotOf(yield* people.listLevels(personId));
         const result = yield* change;
+        yield* afterChange(personId);
         const after = snapshotOf(yield* people.listLevels(personId));
         const narrowed = lowered(before, after) || before.wide !== after.wide;
         const highest = highestOf(after.levels);

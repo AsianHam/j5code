@@ -44,12 +44,20 @@ const sessionStore = Layer.mergeAll(SessionStore.layer, PairingGrantStore.layer)
 );
 
 /** `PersonAccess`, `PairingIntents`, `Access` and `SessionStore` over one database. */
-export const accessLayer = Access.layer.pipe(
-  Layer.provideMerge(PairingIntents.peopleLayer),
+const recordsLayer = PairingIntents.peopleLayer.pipe(
   Layer.provideMerge(sessionStore),
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(NodeServices.layer),
 );
+
+export const accessLayer = Access.layer.pipe(Layer.provideMerge(recordsLayer));
+
+/** The same, with a hook run inside every change of what a person holds. */
+export const accessLayerWithHook = (hook: Access.AccessWriteHook["Service"]) =>
+  Access.layer.pipe(
+    Layer.provide(Layer.succeed(Access.AccessWriteHook, hook)),
+    Layer.provideMerge(recordsLayer),
+  );
 
 /** A thread in upstream's projection, with its lineage when it has a parent there. */
 export const thread = Effect.fn("test.thread")(function* (
