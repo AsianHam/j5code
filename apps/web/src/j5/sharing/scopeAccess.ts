@@ -59,12 +59,15 @@ export function useScopeTitle(environmentId: EnvironmentId, scope: PersonScope |
  * server counts each time its answer changes, and the answer is asked again then.
  */
 export function useScopePeople(
-  environmentId: EnvironmentId,
+  environmentId: EnvironmentId | null,
   scope: ProjectOrThreadScope | null,
 ): { readonly data: ScopePeople | null; readonly error: string | null } {
-  const key = scope === null ? null : JSON.stringify(scope);
+  const key = scope === null || environmentId === null ? null : JSON.stringify(scope);
   const target = useMemo(
-    () => (key === null ? null : { environmentId, input: { scope: JSON.parse(key) } }),
+    () =>
+      key === null || environmentId === null
+        ? null
+        : { environmentId, input: { scope: JSON.parse(key) as ProjectOrThreadScope } },
     [environmentId, key],
   );
   const query = target === null ? null : sharingManage.scopePeople(target);

@@ -50,6 +50,7 @@ import {
 } from "./chat/composerFocusRedirect";
 import { CrewRosterGate } from "../j5/crew/CrewRosterGate";
 import { useCanOperateThread } from "../j5/sharing/access";
+import { sharedMessageTypedText } from "../j5/sharing/sharedTimeline";
 import { expandPlaybookPrompt } from "@t3tools/client-runtime/j5/playbooks";
 import { PlaybookBoard } from "../j5/playbooks/PlaybookBoard";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -787,6 +788,9 @@ async function rewindToMessage(input: {
     ) {
       throw new Error("Make room for this message's attachments in the composer before rewinding.");
     }
+    // J5 (case 80): a rewound message of a shared conversation comes back without the lines the
+    // server put on it for the agent. Read before the rewind takes it out of the author record.
+    const typedText = sharedMessageTypedText(message);
     const commandId = CommandId.make(randomUUID());
     await waitForRevertedMessage(
       input.routeThreadRef,
@@ -807,7 +811,7 @@ async function rewindToMessage(input: {
       },
     );
     const currentPrompt = store.getComposerDraft(draftTarget)?.prompt ?? "";
-    const restoredPrompt = recallableComposerPrompt(message.text);
+    const restoredPrompt = recallableComposerPrompt(typedText);
     const nextPrompt =
       restoredPrompt.length === 0
         ? currentPrompt

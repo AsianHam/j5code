@@ -224,6 +224,35 @@ describe("ThreadA2ADeliveryRenderer", () => {
     expect(markup).toContain("Please prioritize the alert.");
   });
 
+  it("reads the name of an inbox reply that carries one, without the level the agent is told", () => {
+    for (const [header, label] of [
+      ["[Message from Jackson (human:viewer)]", "Jackson"],
+      ["[Message from Priya (collaborator) (human:viewer)]", "Priya"],
+      // A name with spaces and parentheses of its own.
+      ["[Message from Ada (she/her) Lovelace (owner) (human:viewer)]", "Ada (she/her) Lovelace"],
+    ] as const) {
+      const source = message({
+        id: deliveryId(`human-named-${label}`),
+        createdBy: "user",
+        text: humanClosedRaw.replace("[Message from human:viewer]", header),
+      });
+      expect(presentThreadA2ADelivery({ message: source })).toMatchObject({
+        kind: "human",
+        senderId: "human:viewer",
+        senderLabel: label,
+        exchange: "closed",
+      });
+    }
+  });
+
+  it("keeps a reply that carries only the id as it was", () => {
+    const source = message({ id: deliveryId("human-id"), createdBy: "user", text: humanClosedRaw });
+    expect(presentThreadA2ADelivery({ message: source })).toMatchObject({
+      senderId: "human:viewer",
+      senderLabel: null,
+    });
+  });
+
   it("uses You only when the caller proves the viewer matches the sender", () => {
     const markup = renderToStaticMarkup(
       <ThreadA2ADeliveryRenderer
