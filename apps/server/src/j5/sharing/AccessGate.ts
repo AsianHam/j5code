@@ -28,6 +28,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
@@ -36,7 +37,7 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import type * as PairingGrantStore from "../../auth/PairingGrantStore.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
-import { layer as accessLayer, renewOutdatedDevicesAtStartup } from "./Access.ts";
+import { Access, layer as accessLayer, renewOutdatedDevicesAtStartup } from "./Access.ts";
 import { issueGuestProjectIconUrl, projectIdOfGuestIconPath } from "./GuestProjectIcons.ts";
 import {
   PAIRED_AS_SOMEONE_ELSE,
@@ -433,6 +434,7 @@ export const layerGatedEnvironmentAuth = Layer.effect(
     const inner = yield* EnvironmentAuth.EnvironmentAuth;
     const access = yield* PersonAccess;
     const intents = yield* PairingIntents;
+    const changes = yield* Access;
     // Upstream's own session store, to read whose browser is asking. A test that stands in for
     // upstream's auth has none, and then no browser is taken for anyone's.
     const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
@@ -581,6 +583,18 @@ export const layerGatedEnvironmentAuth = Layer.effect(
           access.unbindOtherSessions(currentSessionId),
           inner.revokeOtherClientSessions(currentSessionId),
         ),
+      // An MCP client is approved by an Owner; one approved just before an Owner was lowered or
+      // removed is refused its session, and approved again (`Access.issueMcpClient`).
+      issueMcpClientSession: (input) =>
+        changes
+          .issueMcpClient(inner.issueMcpClientSession(input))
+          .pipe(
+            Effect.mapError((cause) =>
+              Schema.is(EnvironmentAuth.ServerAuthInternalError)(cause)
+                ? cause
+                : new EnvironmentAuth.ServerAuthSessionTokenIssueError({ cause }),
+            ),
+          ),
       authenticateHttpRequest: (request) =>
         inner.authenticateHttpRequest(request).pipe(Effect.flatMap((s) => gate(request, s))),
       authenticateWebSocketUpgrade: (request) =>
@@ -609,8 +623,8 @@ export const gateEnvironmentAuth = <A, E, R>(
 ) =>
   peopleLayer.pipe(
     Layer.provideMerge(renewOutdatedDevicesAtStartup),
-    Layer.provideMerge(accessLayer),
     Layer.provideMerge(layerGatedEnvironmentAuth),
+    Layer.provideMerge(accessLayer),
     Layer.provideMerge(upstream),
   );
 
@@ -620,9 +634,17 @@ export const gateEnvironmentAuth = <A, E, R>(
  * CLI can record whose device a pairing link it makes is for.
  */
 export const cliEnvironmentAuth = <E, R>(
-  runtime: Layer.Layer<EnvironmentAuth.EnvironmentAuth | SqlClient.SqlClient, E, R>,
+  runtime: Layer.Layer<
+    | EnvironmentAuth.EnvironmentAuth
+    | SqlClient.SqlClient
+    | SessionStore.SessionStore
+    | PairingGrantStore.PairingGrantStore,
+    E,
+    R
+  >,
 ) =>
   layerGatedEnvironmentAuth.pipe(
+    Layer.provideMerge(accessLayer),
     Layer.provideMerge(peopleRecordsLayer),
     Layer.provideMerge(runtime),
   );
