@@ -7,6 +7,8 @@ export * from "./j5/peerPoll.ts";
 export * from "./j5/playbook.ts";
 export * from "./j5/access.ts";
 export * from "./j5/levels.ts";
+export * from "./j5/people.ts";
+export * from "./j5/sharedConversation.ts";
 export * from "./j5/sharing.ts";
 
 import { ModelSelection } from "./modelSelection.ts";
@@ -36,6 +38,10 @@ export const HumanInboxItem = Schema.Struct({
   openedAt: Schema.String,
   status: Schema.Literals(["open", "answered"]),
   terminalAt: Schema.NullOr(Schema.String),
+  /** Asked of everyone who can write to the asking agent's thread (Inbox AC15). */
+  forEveryone: Schema.optionalKey(Schema.Boolean),
+  /** Who answered an ask that is closed, by the name they had then (Inbox AC16). */
+  answeredBy: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type HumanInboxItem = typeof HumanInboxItem.Type;
 export type ScopedHumanInboxItem = HumanInboxItem & { readonly environmentId: EnvironmentId };

@@ -168,6 +168,8 @@ import { J5SkillCatalogRpcGroup } from "./j5/skillCatalog.ts";
 import { J5PlaybookRpcGroup } from "./j5/playbook.ts";
 import { J5ClientActionRpcGroup, J5ClientReadRpcGroup } from "./j5.ts";
 import { J5AccessRpcGroup } from "./j5/access.ts";
+import { J5PeopleRpcGroup } from "./j5/people.ts";
+import { J5SharedConversationRpcGroup } from "./j5/sharedConversation.ts";
 import { J5SharingRpcGroup } from "./j5/sharing.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
 import {
@@ -2062,5 +2064,7 @@ export const WsRpcGroup = RpcGroup.make(
   .merge(J5ClientActionRpcGroup)
   .merge(J5SharingRpcGroup)
   .merge(J5AccessRpcGroup)
+  .merge(J5PeopleRpcGroup)
+  .merge(J5SharedConversationRpcGroup)
   .merge(J5ClientReadRpcGroup)
   .middleware(RpcScopeAuthorization);

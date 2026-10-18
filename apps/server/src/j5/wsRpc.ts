@@ -8,6 +8,8 @@ import {
 import {
   J5AccessRpcGroup,
   J5ClientActionRpcGroup,
+  J5PeopleRpcGroup,
+  J5SharedConversationRpcGroup,
   J5ClientReadRpcGroup,
   J5PlaybookRpcGroup,
   J5SharingRpcGroup,
@@ -34,6 +36,8 @@ import { PlaybookStore } from "./playbooks/PlaybookStore.ts";
 import { makePlaybookRpcHandlers } from "./playbooks/playbookRpc.ts";
 import { Access } from "./sharing/Access.ts";
 import { makeAccessRpcHandlers } from "./sharing/accessRpc.ts";
+import { makePeopleRpcHandlers } from "./sharing/peopleRpc.ts";
+import { makeSharedConversationRpcHandlers } from "./sharing/sharedConversationRpc.ts";
 import { People } from "./sharing/People.ts";
 import { PersonAccess, type SessionIdentity } from "./sharing/PersonAccess.ts";
 import { makeSharingRpcHandlers } from "./sharing/sharingRpc.ts";
@@ -49,6 +53,8 @@ const J5WsRpcGroup = J5AgentPersonaRpcGroup.merge(
   J5ClientActionRpcGroup,
   J5SharingRpcGroup,
   J5AccessRpcGroup,
+  J5PeopleRpcGroup,
+  J5SharedConversationRpcGroup,
   J5ClientReadRpcGroup,
 );
 
@@ -129,6 +135,8 @@ export const layerJ5WsRpc = (
           access: yield* Access,
           session,
         })),
+        ...makePeopleRpcHandlers(),
+        ...makeSharedConversationRpcHandlers(),
         ...makeSharingRpcHandlers({
           access: yield* PersonAccess,
           people: yield* People,

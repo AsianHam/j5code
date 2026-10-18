@@ -17,7 +17,9 @@ import {
 import {
   J5_ACCESS_WS_METHODS,
   J5_CLIENT_READ_WS_METHODS,
+  J5_PEOPLE_WS_METHODS,
   J5_PLAYBOOK_WS_METHODS,
+  J5_SHARED_CONVERSATION_WS_METHODS,
   J5_SHARING_WS_METHODS,
   type PersonLevel,
   levelReaches,
@@ -91,6 +93,11 @@ type AccessRpcRule = (
       readonly kind: "project";
       readonly level: PersonLevel;
       readonly projectId: (payload: unknown) => string | undefined;
+    }
+  | {
+      /** For the project or thread a `scope` field names, at the level given or higher. */
+      readonly kind: "scope";
+      readonly level: PersonLevel;
     }
   | { readonly kind: "collaborator" }
   | { readonly kind: "anyone" }
@@ -330,6 +337,12 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [J5_SHARING_WS_METHODS.subscribeThreadAccess]: narrowed,
   [J5_SHARING_WS_METHODS.listOwnGrants]: narrowed,
   [J5_SHARING_WS_METHODS.leaveGrant]: narrowed,
+  // Renaming oneself (AC46); who reaches a thread or project, by name and level (AC26); who
+  // wrote what in a thread one reads.
+  [J5_PEOPLE_WS_METHODS.renameSelf]: narrowed,
+  [J5_PEOPLE_WS_METHODS.listScopePeople]: { kind: "scope", level: "viewer" },
+  [J5_PEOPLE_WS_METHODS.subscribeScopePeopleChanges]: { kind: "scope", level: "viewer" },
+  [J5_SHARED_CONVERSATION_WS_METHODS.listThreadAuthors]: onThread("viewer"),
   // Who else reaches a thread: their names and levels, no more (AC26).
   [J5_SHARING_WS_METHODS.listThreadPeople]: onThread("viewer"),
   [J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges]: onThread("viewer"),
@@ -647,6 +660,22 @@ export const layerRpcAuthorization = (
                 const threadId = rule.threadId(payload);
                 if (threadId === undefined) return Effect.succeed(false);
                 return access.threadLevel(personId, ThreadId.make(threadId)).pipe(
+                  Effect.map((held) => levelReaches(held, rule.level)),
+                  Effect.catch(refuseUnreadable),
+                );
+              }
+              case "scope": {
+                const scope = field(payload, "scope");
+                const kind = field(scope, "kind");
+                const id = field(scope, kind === "thread" ? "threadId" : "projectId");
+                if (typeof id !== "string" || (kind !== "thread" && kind !== "project")) {
+                  return Effect.succeed(false);
+                }
+                return (
+                  kind === "thread"
+                    ? access.threadLevel(personId, ThreadId.make(id))
+                    : access.projectLevel(personId, ProjectId.make(id))
+                ).pipe(
                   Effect.map((held) => levelReaches(held, rule.level)),
                   Effect.catch(refuseUnreadable),
                 );

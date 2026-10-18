@@ -2,6 +2,7 @@ import { AuthAccessWriteScope, AuthOrchestrationOperateScope } from "../auth.ts"
 import { J5_CLIENT_ACTION_WS_METHODS } from "../j5.ts";
 import { J5_AGENT_PERSONA_WS_METHODS } from "./agentPersona.ts";
 import { J5_ARTIFACT_WS_METHODS } from "./artifacts.ts";
+import { J5_PEOPLE_WS_METHODS } from "./people.ts";
 import { J5_PLAYBOOK_WS_METHODS } from "./playbook.ts";
 import { J5_SHARING_WS_METHODS } from "./sharing.ts";
 import { J5_SKILL_CATALOG_WS_METHODS } from "./skillCatalog.ts";
@@ -59,4 +60,12 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_SHARING_WS_METHODS.revokeLink]: AuthAccessWriteScope,
   [J5_SHARING_WS_METHODS.createOpenLink]: AuthAccessWriteScope,
   [J5_SHARING_WS_METHODS.revokeOpenLink]: AuthAccessWriteScope,
+
+  [J5_PEOPLE_WS_METHODS.setLevel]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.removeLevel]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.removePerson]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.renamePerson]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.revokeDevice]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.createLink]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.revokeLink]: AuthAccessWriteScope,
 } as const;
