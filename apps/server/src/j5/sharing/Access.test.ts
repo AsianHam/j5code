@@ -12,7 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as PairingGrantStore from "../../auth/PairingGrantStore.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import { AuthSessionRepository } from "../../persistence/AuthSessions.ts";
-import { Access, MCP_APPROVAL_WINDOW_MS } from "./Access.ts";
+import { Access } from "./Access.ts";
 import { PairingIntents } from "./PairingIntents.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 import { makeSessionRenewal } from "./SessionRenewal.ts";
@@ -246,35 +246,39 @@ it.layer(accessLayer)("Access", (it) => {
       }),
   );
 
-  it.effect(
-    "refuses an MCP session approved before an Owner was lowered, for an approval's life",
-    () =>
-      Effect.gen(function* () {
-        const access = yield* Access;
-        const sessions = yield* SessionStore.SessionStore;
-        const owner = yield* person("Approving owner", [
-          { scope: { kind: "server" }, level: "owner" },
-        ]);
-        const issueAgent = sessions.issue({
-          subject: "mcp-client",
-          scopes: [AuthOrchestrationReadScope],
-        });
-        // Past any Owner change an earlier test made.
-        yield* TestClock.adjust(Duration.millis(MCP_APPROVAL_WINDOW_MS));
-        yield* access.issueMcpClient(issueAgent);
+  it.effect("refuses an MCP session approved before an Owner was lowered or removed", () =>
+    Effect.gen(function* () {
+      const access = yield* Access;
+      const sessions = yield* SessionStore.SessionStore;
+      const owner = yield* person("Approving owner", [
+        { scope: { kind: "server" }, level: "owner" },
+      ]);
+      const issueAgent = sessions.issue({
+        subject: "mcp-client",
+        scopes: [AuthOrchestrationReadScope],
+      });
+      yield* access.issueMcpClient(yield* access.ownersGeneration, issueAgent);
 
-        // Approved, then the Owner is lowered, then the approval is exchanged: refused.
-        yield* access.setLevel({
-          personId: owner.personId,
-          scope: { kind: "server" },
-          level: "viewer",
-        });
-        const stale = yield* access.issueMcpClient(issueAgent).pipe(Effect.flip);
-        assert.strictEqual(stale._tag, "StaleMcpApprovalError");
-        // An approval made after it has lived out its window issues.
-        yield* TestClock.adjust(Duration.millis(MCP_APPROVAL_WINDOW_MS));
-        yield* access.issueMcpClient(issueAgent);
-      }),
+      // Approved, then the Owner is lowered, then the approval is exchanged: refused.
+      const approved = yield* access.ownersGeneration;
+      yield* access.setLevel({
+        personId: owner.personId,
+        scope: { kind: "server" },
+        level: "viewer",
+      });
+      const stale = yield* access.issueMcpClient(approved, issueAgent).pipe(Effect.flip);
+      assert.strictEqual(stale._tag, "StaleMcpApprovalError");
+      // One approved after the change issues, however soon.
+      yield* access.issueMcpClient(yield* access.ownersGeneration, issueAgent);
+
+      const other = yield* person("Owner who leaves", [
+        { scope: { kind: "server" }, level: "owner" },
+      ]);
+      const beforeRemoval = yield* access.ownersGeneration;
+      yield* access.removePerson(other.personId);
+      const removed = yield* access.issueMcpClient(beforeRemoval, issueAgent).pipe(Effect.flip);
+      assert.strictEqual(removed._tag, "StaleMcpApprovalError");
+    }),
   );
 
   it.effect("renews at startup every device whose permissions its level does not give", () =>

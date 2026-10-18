@@ -129,6 +129,7 @@ import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import { j5AuthenticatedRoutesLayer } from "./j5/a2a/J5AuthenticatedRoutes.ts";
 import { gateEnvironmentAuth } from "./j5/sharing/AccessGate.ts";
+import { gateMcpOAuth } from "./j5/sharing/McpApproval.ts";
 import { peopleLayer as J5PeopleLive } from "./j5/sharing/PairingIntents.ts";
 import { J5A2AAuxiliaryLayer, J5ThreadRegistrationLayer } from "./j5/a2a/runtimeLayer.ts";
 import { layer as J5ArtifactRunFinalizationObserverLive } from "./j5/artifacts/ArtifactRunFinalizationObserver.ts";
@@ -703,7 +704,8 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(AuthHttp.layer),
-      Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
+      // J5: an MCP client approved before its Owner was lowered is refused (FORK.md case 70).
+      Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(gateMcpOAuth(McpOAuth.layer)))),
       Layer.provide(CloudHttp.layer),
       Layer.provide(OrchestrationHttp.layer),
       Layer.provide(PullRequestHttp.layer),

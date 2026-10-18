@@ -7,7 +7,6 @@ import {
   levelReaches,
   samePermissions,
 } from "@t3tools/contracts/j5";
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -78,13 +77,6 @@ export class DeviceAlreadyClaimedError extends Schema.TaggedError<DeviceAlreadyC
   }
 }
 
-/**
- * How long an MCP client's approval waits to be exchanged for its session: upstream's
- * `AUTHORIZATION_CODE_TTL_MS` in `auth/McpOAuth.ts`, which J5 does not edit. If upstream changes
- * it, change this with it (FORK.md case 70).
- */
-export const MCP_APPROVAL_WINDOW_MS = 60_000;
-
 export class StaleMcpApprovalError extends Schema.TaggedError<StaleMcpApprovalError>()(
   "StaleMcpApprovalError",
   {},
@@ -152,12 +144,18 @@ export interface AccessShape {
   readonly renewOutdatedDevices: Effect.Effect<number, ChangeError>;
   readonly subscribe: Effect.Effect<PubSub.Subscription<AccessChange>, never, Scope.Scope>;
   /**
-   * Issues an MCP client's session unless an Owner was lowered or removed within the last
-   * `MCP_APPROVAL_WINDOW`, the life of an approval that has not been exchanged yet: one approved
-   * before the change may be waiting, and is refused to be approved again. Held under the same
-   * lock as a change of level, so a change that waits finds the session and ends it.
+   * Which change of the server's Owners this is. Read under the same lock as a change of level,
+   * before an MCP client's approval is checked, so whatever the check saw is no older than it.
+   */
+  readonly ownersGeneration: Effect.Effect<number, PersonAccessStorageError>;
+  /**
+   * Issues an MCP client's session approved at `generation`, unless an Owner was lowered or
+   * removed since: the approval may have been an Owner's who is not one now, and is refused to be
+   * approved again. Held under the same lock as a change of level, so a change that waits finds
+   * the session and ends it.
    */
   readonly issueMcpClient: <A, E, R>(
+    generation: number,
     issue: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | StaleMcpApprovalError | PersonAccessStorageError, R>;
 }
@@ -276,13 +274,13 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const ownersLastChangedAt = yield* Ref.make<number | null>(null);
+  const ownersGeneration = yield* Ref.make(0);
   /**
    * Every MCP client on the server, ended, and every approval not yet issued voided: they were
    * approved by Owners, and the Owners changed.
    */
   const endMcpClients = Effect.gen(function* () {
-    yield* Ref.set(ownersLastChangedAt, yield* Clock.currentTimeMillis);
+    yield* Ref.update(ownersGeneration, (generation) => generation + 1);
     const active = yield* sessions
       .listActive()
       .pipe(Effect.mapError((cause) => new AccessRenewalError({ sessionId: "", cause })));
@@ -433,12 +431,12 @@ const make = Effect.gen(function* () {
 
     subscribe: PubSub.subscribe(changes),
 
-    issueMcpClient: (issue) =>
+    ownersGeneration: committed(Ref.get(ownersGeneration)),
+
+    issueMcpClient: (generation, issue) =>
       committed(
         Effect.gen(function* () {
-          const changedAt = yield* Ref.get(ownersLastChangedAt);
-          const now = yield* Clock.currentTimeMillis;
-          if (changedAt !== null && now - changedAt < MCP_APPROVAL_WINDOW_MS) {
+          if ((yield* Ref.get(ownersGeneration)) !== generation) {
             return yield* new StaleMcpApprovalError({});
           }
           return yield* issue;

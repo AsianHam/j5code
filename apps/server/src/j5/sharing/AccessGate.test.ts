@@ -18,7 +18,6 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
-import { Access } from "./Access.ts";
 import * as AccessGate from "./AccessGate.ts";
 import { PAIRED_AS_SOMEONE_ELSE, PairingIntents } from "./PairingIntents.ts";
 import * as PersonAccess from "./PersonAccess.ts";
@@ -59,7 +58,6 @@ const upstreamAuth = Layer.succeed(
     authenticateWebSocketUpgrade: (request: HttpServerRequest.HttpServerRequest) =>
       Effect.succeed(signedIn.get(request.headers["x-test-session"] ?? "")!),
     createBrowserSession: () => Effect.succeed({ paired: true }),
-    issueMcpClientSession: () => Effect.succeed({ token: "mcp-token", expiresAt: null }),
   } as unknown as EnvironmentAuth.EnvironmentAuth["Service"],
 );
 
@@ -419,29 +417,6 @@ it.layer(testLayer)("access gate", (it) => {
         scope: { kind: "thread", threadId: mine },
       });
       assert.match(yield* Fiber.join(feed), /^refused/);
-    }),
-  );
-
-  it.effect("refuses an MCP client its session when an Owner was lowered as it waited", () =>
-    Effect.gen(function* () {
-      const auth = yield* EnvironmentAuth.EnvironmentAuth;
-      const access = yield* Access;
-      const issue = auth.issueMcpClientSession({
-        label: "Agent",
-        access: "read-only",
-        client: { deviceType: "bot" },
-      });
-      // Validated and approved, then an Owner is lowered, then the code is exchanged.
-      const owner = yield* person("Owner who steps down", [
-        { scope: { kind: "server" }, level: "owner" },
-      ]);
-      yield* access.setLevel({
-        personId: owner.personId,
-        scope: { kind: "server" },
-        level: "viewer",
-      });
-      const refused = yield* issue.pipe(Effect.flip);
-      assert.strictEqual(refused._tag, "ServerAuthSessionTokenIssueError");
     }),
   );
 

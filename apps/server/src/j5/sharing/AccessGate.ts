@@ -37,13 +37,19 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import type * as PairingGrantStore from "../../auth/PairingGrantStore.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
-import { Access, layer as accessLayer, renewOutdatedDevicesAtStartup } from "./Access.ts";
+import {
+  Access,
+  layer as accessLayer,
+  renewOutdatedDevicesAtStartup,
+  StaleMcpApprovalError,
+} from "./Access.ts";
 import { issueGuestProjectIconUrl, projectIdOfGuestIconPath } from "./GuestProjectIcons.ts";
 import {
   PAIRED_AS_SOMEONE_ELSE,
   PairingIntents,
   peopleLayer as peopleRecordsLayer,
 } from "./PairingIntents.ts";
+import { McpApprovalGeneration } from "./McpApproval.ts";
 import { layer as peopleLayer } from "./People.ts";
 import {
   type MessageAsset,
@@ -586,18 +592,24 @@ export const layerGatedEnvironmentAuth = Layer.effect(
           access.unbindOtherSessions(currentSessionId),
           inner.revokeOtherClientSessions(currentSessionId),
         ),
-      // An MCP client is approved by an Owner; one approved just before an Owner was lowered or
-      // removed is refused its session, and approved again (`Access.issueMcpClient`).
+      // An MCP client is approved by an Owner; one approved before an Owner was lowered or
+      // removed is refused its session, and approved again (`Access.issueMcpClient`). Upstream
+      // issues one only from an exchange `McpApproval` gave the approval's generation to.
       issueMcpClientSession: (input) =>
-        changes
-          .issueMcpClient(inner.issueMcpClientSession(input))
-          .pipe(
-            Effect.mapError((cause) =>
-              isServerAuthInternalError(cause)
-                ? cause
-                : new EnvironmentAuth.ServerAuthSessionTokenIssueError({ cause }),
-            ),
+        Effect.serviceOption(McpApprovalGeneration).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.fail(new StaleMcpApprovalError({})),
+              onSome: (generation) =>
+                changes.issueMcpClient(generation, inner.issueMcpClientSession(input)),
+            }),
           ),
+          Effect.mapError((cause) =>
+            isServerAuthInternalError(cause)
+              ? cause
+              : new EnvironmentAuth.ServerAuthSessionTokenIssueError({ cause }),
+          ),
+        ),
       authenticateHttpRequest: (request) =>
         inner.authenticateHttpRequest(request).pipe(Effect.flatMap((s) => gate(request, s))),
       authenticateWebSocketUpgrade: (request) =>
