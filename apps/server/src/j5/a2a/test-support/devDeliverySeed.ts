@@ -370,7 +370,12 @@ const makeRuntimeLayer = (databasePath: string, baseDir: string, cwd: string) =>
     Layer.provide(McpProviderSessions.layer),
     Layer.provide(checkpoint),
     Layer.provide(config),
-    Layer.provide(ServerSettingsService.layerTest()),
+    // Upstream refuses a send to a provider instance the settings don't enable.
+    Layer.provide(
+      ServerSettingsService.layerTest({
+        providerInstances: { [fakeProviderInstanceId]: { driver: fakeDriver, enabled: true } },
+      }),
+    ),
     Layer.provide(providers),
     Layer.provide(NodeServices.layer),
     Layer.provideMerge(database),
