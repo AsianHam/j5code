@@ -10,6 +10,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { PersonLevel } from "@t3tools/contracts/j5";
@@ -19,7 +20,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { useThreadShell } from "../../state/entities";
+import { readThreadShell, useThreadShell } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { j5Sharing } from "../state";
 import { ownerSomewhereState } from "./settingsAccess.logic";
@@ -108,11 +109,22 @@ export function useCanOperateThread(
 // Upstream's thread action menu asks through `threadOperability.ts` and `sharingMenu.ts`, which
 // hold none of this module's imports; the open thread's view already holds the level, so these
 // reads ask nothing.
+// The level the menu reads by the same rule as `useCanOperateThread`, so the composer, the
+// details panel and the menu agree on a thread that was a draft a moment ago.
+const readThreadLevelInProject = (thread: ScopedThreadRef) =>
+  threadLevelInProject({
+    access: appAtomRegistry.get(j5Sharing.connectionAccess(thread.environmentId)),
+    threadLevel: appAtomRegistry.get(j5Sharing.threadLevel(thread.environmentId, thread.threadId)),
+    projectId:
+      readThreadShell(thread)?.projectId ??
+      useComposerDraftStore.getState().getDraftSessionByRef(thread)?.projectId ??
+      null,
+  });
+
 provideSharingThreadOperability((thread) =>
-  j5Sharing.readCanOperateThread(appAtomRegistry, {
-    environmentId: thread.environmentId,
-    threadId: thread.threadId,
-    permitted: true,
+  sharingAllowsOperate({
+    access: appAtomRegistry.get(j5Sharing.connectionAccess(thread.environmentId)),
+    level: readThreadLevelInProject(thread),
   }),
 );
 
@@ -121,7 +133,7 @@ provideSharingMenuAccess((thread) => {
   if (access === null || access.kind === "service") return null;
   return {
     owner: isOwnerAccess(access),
-    level: appAtomRegistry.get(j5Sharing.threadLevel(thread.environmentId, thread.threadId)),
+    level: readThreadLevelInProject(thread),
     holdsThread:
       access.kind === "person" &&
       !access.firstOwner &&
