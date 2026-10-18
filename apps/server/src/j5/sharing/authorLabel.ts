@@ -5,18 +5,16 @@ import type { WriterLevel } from "@t3tools/contracts/j5";
  * platform's notes, and on a reply they send from the inbox.
  */
 
-// The name rule already refuses brackets and line breaks (`isPersonName`). They are taken out
-// here as well, so that a name which reached the record some other way cannot close the line
-// early or open what looks like a second one. A parenthesised level in a name is taken out too,
-// so the only such word on the line is the platform's, at the end: someone named
-// "Jackson (owner)" who collaborates is written `Jackson (collaborator)`. The name is first put
-// in its compatibility form, so that fullwidth or other look-alike brackets are the plain ones
-// this looks for. Angle brackets go as square ones do: a name sits inside the platform's note,
-// which a tag closes.
+// The name rule already refuses brackets, line breaks and a level in parentheses
+// (`isPersonName`), so the line carries the name exactly as it is stored and two people never
+// read as one. Brackets and line breaks are taken out here as well, so that a name which reached
+// the record some other way cannot close the line early or open what looks like a second one,
+// after the name is put in its compatibility form, so that fullwidth or other look-alike brackets
+// are the plain ones this looks for. Angle brackets go as square ones do: a name sits inside the
+// platform's note, which a tag closes.
 export const personNameInLine = (name: string) =>
   name
     .normalize("NFKC")
-    .replace(/\(\s*(?:owner|collaborator|viewer)\s*\)/gi, " ")
     .replace(/[[\]<>\s]+/g, " ")
     .trim();
 

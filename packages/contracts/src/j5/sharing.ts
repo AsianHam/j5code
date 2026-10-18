@@ -104,24 +104,30 @@ const NOT_IN_A_PERSON_NAME = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}\p{Zl}\p{Zp}[\]<>]/
 // An accent or a vowel sign is one or two marks on a letter; a longer run stacks marks to draw
 // over the lines around it.
 const TOO_MANY_MARKS = /\p{M}{3,}/u;
+// A level in parentheses is the platform's word on that line, `Priya (collaborator)`, so a name
+// that holds one would read there as someone else: "Pat (owner)" collaborating would read as an
+// Owner called Pat. Checked in compatibility form, so fullwidth parentheses count too.
+const NAMES_A_LEVEL = /\(\s*(?:owner|collaborator|viewer)\s*\)/i;
 
 /**
  * Whether a person's name is one line of visible, ordinary characters, up to 80 of them, with
- * no square or angle brackets. A name
- * is shown to everyone on a shared thread and goes on that person's messages to an agent, so it
- * is held to this whoever typed it.
+ * no square or angle brackets and no level in parentheses. A name is shown to everyone on a
+ * shared thread and goes on that person's messages to an agent, so it is held to this whoever
+ * typed it.
  */
 export const isPersonName = (name: string) =>
   name.trim().length > 0 &&
   name.length <= 80 &&
   !NOT_IN_A_PERSON_NAME.test(name) &&
-  !TOO_MANY_MARKS.test(name);
+  !TOO_MANY_MARKS.test(name) &&
+  !NAMES_A_LEVEL.test(name.normalize("NFKC"));
 
 /** A person's name: what they are called everywhere on the server. */
 export const SharingPersonName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(80),
   Schema.makeFilter((name: string) => isPersonName(name), {
-    title: "one line of visible characters, with no square or angle brackets",
+    title:
+      "one line of visible characters, with no square or angle brackets and no level in parentheses",
   }),
 );
 

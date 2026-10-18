@@ -10,6 +10,13 @@ describe("isPersonName", () => {
     expect(isPersonName("Zoë Ørsted")).toBe(true);
   });
 
+  it("refuses a level in parentheses, which the agent's author line uses", () => {
+    for (const name of ["Pat (owner)", "Pat (Collaborator)", "Pat ( viewer )", "Pat （owner）"]) {
+      expect(isPersonName(name), name).toBe(false);
+    }
+    expect(isPersonName("Pat (ownership)")).toBe(true);
+  });
+
   it("refuses brackets, line breaks and characters that draw nothing", () => {
     for (const name of ["[Priya]", "Priya <owner>", "</note>", "Pri\nya", "Pri​ya", "  "]) {
       expect(isPersonName(name), JSON.stringify(name)).toBe(false);
