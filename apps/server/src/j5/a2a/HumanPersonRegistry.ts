@@ -22,9 +22,19 @@ export class A2ALocalOperatorNotFoundError extends Schema.TaggedError<A2ALocalOp
   }
 }
 
+// Who writes to every thread: the people who hold Collaborator or Owner at server scope.
+const WIDE_WRITER = `
+  EXISTS (
+    SELECT 1 FROM j5_a2a_person_level AS held
+    WHERE held.person_id = j5_a2a_human_person.person_id
+      AND held.scope_kind = 'server'
+      AND held.level IN ('collaborator', 'owner')
+  )
+`;
+
 /**
- * The people an agent can address and who have an inbox on this server: its members. A guest is
- * a person too, and is deliberately absent here (Shared server AC3, Inbox AC14).
+ * The people an agent can address and who have an inbox on this server: those who can write to
+ * every thread (Inbox AC14). Someone whose scope is narrower is a person too, and is absent here.
  */
 export const listRegisteredHumanPersonIds = Effect.fn(
   "j5.a2a.humanPersonRegistry.listRegisteredHumanPersonIds",
@@ -32,32 +42,32 @@ export const listRegisteredHumanPersonIds = Effect.fn(
   const rows = yield* sql<HumanPersonRow>`
     SELECT person_id
     FROM j5_a2a_human_person
-    WHERE kind = 'member'
+    WHERE ${sql.literal(WIDE_WRITER)}
     ORDER BY person_id
   `;
   return rows.map((row) => ParticipantId.make(row.person_id));
 });
 
-/** The names the server has recorded for its members, by person id; none for one with no name. */
+/** The names of those people, by person id; none for one with no name. */
 export const listRegisteredHumanPersonNames = Effect.fn(
   "j5.a2a.humanPersonRegistry.listRegisteredHumanPersonNames",
 )(function* (sql: SqlClient.SqlClient) {
   const rows = yield* sql<{ readonly person_id: string; readonly display_name: string }>`
     SELECT person_id, display_name
     FROM j5_a2a_human_person
-    WHERE kind = 'member' AND display_name IS NOT NULL
+    WHERE ${sql.literal(WIDE_WRITER)} AND display_name IS NOT NULL
   `;
   return new Map(rows.map((row) => [row.person_id, row.display_name]));
 });
 
-/** Whether the id is a member of this server; false for a guest, as for an unknown id. */
+/** Whether the id is one of those people; false for anyone narrower, as for an unknown id. */
 export const isRegisteredHumanPerson = Effect.fn(
   "j5.a2a.humanPersonRegistry.isRegisteredHumanPerson",
 )(function* (sql: SqlClient.SqlClient, personId: ParticipantId) {
   const rows = yield* sql<{ readonly count: number }>`
     SELECT COUNT(*) AS count
     FROM j5_a2a_human_person
-    WHERE person_id = ${personId} AND kind = 'member'
+    WHERE person_id = ${personId} AND ${sql.literal(WIDE_WRITER)}
   `;
   return (rows[0]?.count ?? 0) === 1;
 });
@@ -96,7 +106,15 @@ export const ensureLocalOperatorHumanPerson = Effect.fn(
         VALUES (${personId}, 1, ${createdAt})
         ON CONFLICT DO NOTHING
       `;
-      return yield* getLocalOperatorHumanPersonId(sql);
+      const firstOwner = yield* getLocalOperatorHumanPersonId(sql);
+      // The first owner is the server's Owner from the start (People and access AC2, AC51).
+      yield* sql`
+        INSERT INTO j5_a2a_person_level
+          (person_id, scope_kind, scope_id, level, created_at, updated_at)
+        VALUES (${firstOwner}, 'server', '', 'owner', ${createdAt}, ${createdAt})
+        ON CONFLICT DO NOTHING
+      `;
+      return firstOwner;
     }),
   );
 });

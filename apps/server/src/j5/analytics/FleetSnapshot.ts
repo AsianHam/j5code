@@ -9,7 +9,6 @@
  * @module FleetSnapshot
  */
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -60,7 +59,6 @@ const makeLayer = (daemon: boolean) =>
       const sql = yield* SqlClient.SqlClient;
 
       const record = Effect.gen(function* () {
-        const now = DateTime.formatIso(yield* DateTime.now);
         // A run holds its thread from `preparing` until it ends; `queued` waits behind another.
         // A thread's children are the subagents in its lineage (delegated tasks and the
         // provider's own) and the agents it spawned, Crew seats included.
@@ -135,19 +133,19 @@ const makeLayer = (daemon: boolean) =>
             (SELECT COUNT(*) FROM pull_requests) AS "threadsWithPullRequests",
             (SELECT COALESCE(SUM(n), 0) FROM pull_requests) AS "pullRequests",
             (SELECT COALESCE(MAX(n), 0) FROM pull_requests) AS "mostPullRequests",
-            (SELECT COUNT(*) FROM j5_a2a_human_person WHERE kind = 'guest') AS "guests",
             (
-              SELECT COUNT(DISTINCT target_id) FROM j5_a2a_person_grant
-              WHERE target_kind = 'thread'
+              SELECT COUNT(*) FROM j5_a2a_human_person WHERE is_local_operator = 0
+            ) AS "guests",
+            (
+              SELECT COUNT(DISTINCT scope_id) FROM j5_a2a_person_level
+              WHERE scope_kind = 'thread'
             ) AS "sharedThreads",
             (
-              SELECT COUNT(DISTINCT target_id) FROM j5_a2a_person_grant
-              WHERE target_kind = 'project'
+              SELECT COUNT(DISTINCT scope_id) FROM j5_a2a_person_level
+              WHERE scope_kind = 'project'
             ) AS "sharedProjects",
-            (
-              SELECT COUNT(*) FROM j5_a2a_open_link
-              WHERE revoked_at IS NULL AND expires_at > ${now}
-            ) AS "liveOpenLinks",
+            -- Links are counted again once the one kind of link lands (People and access AC31).
+            0 AS "liveOpenLinks",
             (SELECT COUNT(*) FROM j5_a2a_peer) AS "peerServers"
         `;
         yield* analytics.record("j5.fleet.snapshot", yield* decodeSnapshot(rows[0]));
