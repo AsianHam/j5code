@@ -26,6 +26,7 @@ import {
   machineParticipantIdForName,
   type A2ARosterEntry,
 } from "@t3tools/contracts/j5";
+import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
@@ -38,7 +39,7 @@ import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/cli";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import {
@@ -128,7 +129,14 @@ const resolveOrigin = Effect.fn("j5.a2a.cli.resolveOrigin")(function* (flags: Co
   const explicit = Option.orElse(flags.origin, () => Option.none<string>());
   const fromEnv = yield* envOption("J5_ORIGIN");
   const chosen = Option.orElse(explicit, () => fromEnv);
-  if (Option.isSome(chosen)) return chosen.value.replace(/\/+$/, "");
+  if (Option.isSome(chosen)) {
+    const origin = chosen.value.replace(/\/+$/, "");
+    const url = URL.parse(origin);
+    if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) {
+      return yield* usage(`${origin} is not an origin such as http://127.0.0.1:3773.`);
+    }
+    return origin;
+  }
 
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
@@ -141,10 +149,27 @@ const resolveOrigin = Effect.fn("j5.a2a.cli.resolveOrigin")(function* (flags: Co
   });
 });
 
+/**
+ * A value that cannot be a bearer header would fail in fetch before anything is
+ * sent, and read as exit 6, which scripts retry forever. Help text captured in
+ * place of `token issue --token-only` output is the usual case.
+ */
+const checkTokenShape = (token: string) =>
+  token.length === 0 || /^[\x21-\x7e]+$/.test(token)
+    ? Effect.succeedSome(token)
+    : Effect.fail(
+        new A2ACliFailure({
+          exitCode: A2A_EXIT_CODES.unauthenticated,
+          error: "token_malformed",
+          message:
+            "The token holds whitespace, a line break, or a character a bearer token cannot carry. Pass the value `j5 a2a token issue --token-only` printed, unchanged.",
+        }),
+      );
+
 const tryResolveToken = Effect.fn("j5.a2a.cli.tryResolveToken")(function* (flags: ConnectionFlags) {
   const fromEnv = yield* envOption("J5_TOKEN");
   const direct = Option.orElse(flags.token, () => fromEnv);
-  if (Option.isSome(direct)) return Option.some(direct.value.trim());
+  if (Option.isSome(direct)) return yield* checkTokenShape(direct.value.trim());
   const fileFromEnv = yield* envOption("J5_TOKEN_FILE");
   const file = Option.orElse(flags.tokenFile, () => fileFromEnv);
   if (Option.isNone(file)) return Option.none<string>();
@@ -159,7 +184,7 @@ const tryResolveToken = Effect.fn("j5.a2a.cli.tryResolveToken")(function* (flags
         }),
     ),
   );
-  return Option.some(contents.trim());
+  return yield* checkTokenShape(contents.trim());
 });
 
 const resolveToken = Effect.fn("j5.a2a.cli.resolveToken")(function* (flags: ConnectionFlags) {
@@ -217,6 +242,26 @@ const parseJson = (text: string): unknown => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/**
+ * Exit 6 tells scripts to queue and retry, so it is kept for a request that got
+ * no answer: the connection failed or timed out. Anything else is exit 1.
+ */
+const requestFailure = (target: string) => (cause: unknown) => {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return Cause.isTimeoutError(cause) ||
+    (HttpClientError.isHttpClientError(cause) && cause.reason._tag === "TransportError")
+    ? new A2ACliFailure({
+        exitCode: A2A_EXIT_CODES.unreachable,
+        error: "server_unreachable",
+        message: `Could not reach ${target}: ${detail}`,
+      })
+    : new A2ACliFailure({
+        exitCode: A2A_EXIT_CODES.failure,
+        error: "request_failed",
+        message: `The request to ${target} failed: ${detail}`,
+      });
+};
+
 const callServer = Effect.fn("j5.a2a.cli.callServer")(function* (input: {
   readonly origin: string;
   readonly token: string;
@@ -239,16 +284,7 @@ const callServer = Effect.fn("j5.a2a.cli.callServer")(function* (input: {
     const text = yield* response.text;
     return { status: response.status, body: parseJson(text) } satisfies ServerReply;
   });
-  return yield* attempt.pipe(
-    Effect.mapError(
-      (cause) =>
-        new A2ACliFailure({
-          exitCode: A2A_EXIT_CODES.unreachable,
-          error: "server_unreachable",
-          message: `Could not reach ${input.origin}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    ),
-  );
+  return yield* attempt.pipe(Effect.mapError(requestFailure(input.origin)));
 });
 
 const failureFromReply = (
@@ -904,14 +940,7 @@ const peerIdentityCommand = Command.make("identity", {
           .pipe(
             Effect.timeout(Duration.millis(flags.timeoutMs)),
             Effect.flatMap((response) => response.json),
-            Effect.mapError(
-              (cause) =>
-                new A2ACliFailure({
-                  exitCode: A2A_EXIT_CODES.unreachable,
-                  error: "server_unreachable",
-                  message: `Could not read the environment descriptor at ${origin}: ${cause instanceof Error ? cause.message : String(cause)}`,
-                }),
-            ),
+            Effect.mapError(requestFailure(`the environment descriptor at ${origin}`)),
           );
         const descriptor = isRecord(reply) ? reply : {};
         const environmentId =
