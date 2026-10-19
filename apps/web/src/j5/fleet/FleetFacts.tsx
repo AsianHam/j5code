@@ -203,10 +203,7 @@ function FleetProblems({
   readonly ledgerKnown: boolean;
 }) {
   const runtimeKnown = facts?.runtime.state === "known";
-  if (facts?.problems.length === 0 && runtimeKnown && ledgerKnown)
-    return (
-      <span className="col-span-full text-xs text-muted-foreground">No measured problems</span>
-    );
+  if (facts?.problems.length === 0 && runtimeKnown && ledgerKnown) return null;
   return (
     <span className="col-span-full flex flex-wrap gap-x-4 gap-y-1 text-xs">
       {facts?.problems.map((problem) => (

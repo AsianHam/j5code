@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import type { FleetDerivedFacts } from "@t3tools/client-runtime/j5/fleetFacts";
 import type { FleetRuntimeFact } from "@t3tools/contracts/j5";
 import {
   fleetCrewSummary,
   fleetAgentKey,
   fleetMinutes,
+  fleetTime,
   fleetProblemLabel,
   fleetSeatState,
   fleetSourceIsLive,
@@ -37,6 +38,34 @@ describe("Fleet presentation", () => {
     expect(fleetStatusLabel(runtime("idle"))).toMatch(/^Idle since /);
     expect(fleetStatusLabel(runtime("idle", true))).toBe("Settled");
     expect(fleetStatusLabel({ state: "unknown", reason: "missing runtime" })).toBe("?");
+  });
+
+  it("keeps prior-day dates explicit without advancing stale timestamps at midnight", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-10-19T10:00:00.000Z"));
+      const prior = "2026-10-18T10:00:00.000Z";
+      const idle = { ...runtime("idle"), since: prior };
+      const label = fleetStatusLabel(idle);
+      expect(label).toContain("18th October 2026");
+      expect(fleetTime(prior)).toContain("18th October 2026");
+      expect(
+        fleetProblemLabel({
+          kind: "delivery-failed",
+          messageId: "m",
+          receiverId: "a",
+          receiverName: "Agent",
+          at: prior,
+          reason: "offline",
+          exchangeOpen: false,
+        }),
+      ).toContain("18th October 2026");
+      vi.advanceTimersByTime(3 * 86_400_000);
+      expect(fleetStatusLabel(idle)).toBe(label);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps stale or unknown agents Active and respects background Waiting over a settle mark", () => {

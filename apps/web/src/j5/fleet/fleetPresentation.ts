@@ -1,6 +1,7 @@
 import type { FleetDerivedFacts } from "@t3tools/client-runtime/j5/fleetFacts";
 import type { J5ReadSource } from "@t3tools/client-runtime/j5/readSources";
 import type { FleetProblem, FleetRuntimeFact } from "@t3tools/contracts/j5";
+import { formatChatTimestampTooltip } from "../../timestampFormat";
 import type { CrewSeatState } from "../crew/crewState";
 
 export const fleetAgentKey = (environmentId: string, participantId: string) =>
@@ -12,13 +13,7 @@ export const fleetSourceIsLive = (
 ) => source.connected && source.status === "ready" && shellStatus === "live";
 
 export const fleetTime = (at: string | null | undefined) =>
-  at == null
-    ? "?"
-    : new Date(at).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
+  at == null ? "?" : formatChatTimestampTooltip(at, "locale") || "?";
 
 export const fleetMinutes = (since: string, now: number) =>
   Math.max(0, Math.floor((now - Date.parse(since)) / 60_000));
