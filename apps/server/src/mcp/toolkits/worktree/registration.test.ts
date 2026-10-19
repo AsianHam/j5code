@@ -1,3 +1,4 @@
+import { RequestReplayService } from "../../../j5/a2a/RequestReplayService.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
@@ -99,6 +100,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(PlaybookCrewRelay)({}),
   Layer.mock(PlaybookStore)({}),
   Layer.mock(SpawnCompositionService)({}),
+  Layer.mock(RequestReplayService)({}),
   Layer.mock(SpawnWorkspaceService)({}),
   Layer.mock(ThreadRegistration)({}),
 );

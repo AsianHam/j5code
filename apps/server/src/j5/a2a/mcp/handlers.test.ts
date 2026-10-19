@@ -1606,7 +1606,20 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
           }),
       }),
       threadManagementMock({
-        getThreadProjection: (threadId) => Effect.succeed(projection(threadId)),
+        getThreadProjection: (threadId) =>
+          Ref.get(commands).pipe(
+            Effect.map((all) => {
+              const create = all.find(
+                (command) => command.type === "thread.create" && command.threadId === threadId,
+              );
+              return create?.type === "thread.create"
+                ? {
+                    ...projection(threadId),
+                    thread: { ...projection(threadId).thread, ...create, id: threadId },
+                  }
+                : projection(threadId);
+            }),
+          ),
         getThreadShell: (threadId) =>
           Ref.get(personaCallerRuntimeMode).pipe(
             Effect.map((runtimeMode) =>

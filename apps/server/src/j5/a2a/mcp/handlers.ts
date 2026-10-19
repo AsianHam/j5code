@@ -76,6 +76,7 @@ import {
   actsAsThreadCaller,
 } from "./outsideAgent.ts";
 import { SpawnCompositionService } from "../SpawnCompositionService.ts";
+import { RequestReplayService } from "../RequestReplayService.ts";
 import {
   SpawnWorkspaceService,
   namedBaseRefs,
@@ -1002,35 +1003,73 @@ const handlers = {
               outside,
             };
       const { home } = spawner;
-      const selected = yield* selectSpawnModel(scope, input);
+      const requestKey =
+        input.client_request_id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+      const stableInput = { providerSessionId: spawner.requestNamespace, requestKey };
+      const threadId = spawnThreadId(stableInput);
       const threadManagement = yield* ThreadManagementService;
+      const existing = yield* threadManagement
+        .getThreadShell(threadId)
+        .pipe(
+          Effect.mapError((error) =>
+            stateError(
+              `Peer Agent thread ${threadId} could not be read: ${error.message}`,
+              "Retry j5_spawn_agent with the same client_request_id once it is readable.",
+            ),
+          ),
+        );
+      const workspaceRequest =
+        input.workspace.type === "worktree"
+          ? { ...input.workspace, start_from_origin: input.workspace.start_from_origin ?? false }
+          : input.workspace.type === "existing_worktree"
+            ? {
+                ...input.workspace,
+                worktree_path: input.workspace.worktree_path.replace(/[\\/]+$/, ""),
+              }
+            : input.workspace;
+      const request = {
+        ...input,
+        client_request_id: undefined,
+        title: input.title ?? null,
+        scratch: input.scratch ?? false,
+        workspace: workspaceRequest,
+      };
+      const replayService = yield* RequestReplayService;
+      const replayFailure = (error: { readonly message: string }) =>
+        stateError(error.message, "Inspect the original target before starting new work.");
+      yield* replayService.check(threadId, request).pipe(Effect.mapError(replayFailure));
+      const selected = existing?.modelSelection ?? (yield* selectSpawnModel(scope, input));
       const personaId = input.persona;
       const persona =
-        personaId === undefined
+        personaId === undefined || existing !== null
           ? undefined
           : yield* prepareSpawnPersona({ ...input, persona: personaId }, selected);
-      const modelSelection = persona?.modelSelection ?? selected;
+      const modelSelection = existing?.modelSelection ?? persona?.modelSelection ?? selected;
       // A persona's policy sets its permissions. Without one the agent gets the caller's modes,
       // or the ones the caller chose, which upstream's rule keeps within the caller's own.
-      if (persona !== undefined && input.runtime_mode !== undefined) {
+      if (personaId !== undefined && input.runtime_mode !== undefined) {
         return yield* stateError(
           `Persona ${personaId} sets its own permission mode, so runtime_mode cannot be chosen for it.`,
           "Retry j5_spawn_agent without runtime_mode, or without persona.",
         );
       }
       const { limits } = yield* loadCaller();
-      // An outside agent's persona is held to its approved level, which a thread caller's is not.
+      // An outside persona's replay is capped against the existing thread's modes below.
       if (persona !== undefined && personaId !== undefined && outside !== undefined) {
         yield* assertPersonaWithinApprovedLevel(outside, personaId, persona.runtimeMode);
       }
       // With no mode chosen the agent gets the caller's: its thread's, or its approved level.
       const runtimeMode =
+        existing?.runtimeMode ??
         input.runtime_mode ??
         persona?.runtimeMode ??
         home?.thread.runtimeMode ??
         limits.runtimeMode;
       const interactionMode =
-        input.interaction_mode ?? home?.thread.interactionMode ?? limits.interactionMode;
+        existing?.interactionMode ??
+        input.interaction_mode ??
+        home?.thread.interactionMode ??
+        limits.interactionMode;
       {
         // Each mode is held to the caller's own only where the caller chose it, so choosing an
         // interaction mode does not put a persona's permission mode under the ceiling.
@@ -1045,22 +1084,12 @@ const handlers = {
           );
         }
       }
-      const requestKey =
-        input.client_request_id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
-      const stableInput = {
-        providerSessionId: spawner.requestNamespace,
-        requestKey,
-      };
-      const threadId = spawnThreadId(stableInput);
-      const existing = yield* threadManagement
-        .getThreadShell(threadId)
-        .pipe(Effect.orElseSucceed(() => null));
       const firstAttempt = existing === null;
       // A retry finishes the agent its first attempt created, in the modes it was created with.
       // A caller's modes can be narrowed within one provider session, so those are checked
       // against what the caller may touch now. A persona's agent runs under its own policy,
       // except for an outside agent, whose approved level caps every agent it starts.
-      if (existing !== null && (persona === undefined || outside !== undefined)) {
+      if (existing !== null && (personaId === undefined || outside !== undefined)) {
         const exceeded = exceededDispatchModeLimit(limits, existing);
         if (exceeded !== undefined) {
           return yield* stateError(
@@ -1166,6 +1195,14 @@ const handlers = {
           stateError(`Peer Agent was not created: ${error.detail}`, error.nextStep),
         ),
       );
+      yield* replayService
+        .bind({
+          id: threadId,
+          target: `Peer Agent ${participantIdForThread(threadId)} on thread ${threadId}`,
+          request,
+          legacy: existing !== null,
+        })
+        .pipe(Effect.mapError(replayFailure));
       return yield* spawnWorkspace
         .withSpawnStart(
           { stableInput, threadId, workspace },
@@ -1176,31 +1213,29 @@ const handlers = {
             // that only one call at a time may run, and only before the thread exists; a replay
             // replays its create. The thread is looked for again now that this call holds the
             // start: an earlier attempt may have created it since the read above.
-            const created =
-              input.workspace.type === "root" &&
-              (yield* threadManagement
-                .getThreadShell(threadId)
-                .pipe(Effect.orElseSucceed(() => null))) !== null;
+            const current = yield* threadManagement
+              .getThreadShell(threadId)
+              .pipe(Effect.mapError(replayFailure));
             const sharedCheckout =
-              input.workspace.type !== "root" && home !== undefined
-                ? home.thread
-                : {
-                    branch: null,
-                    worktreePath: created
-                      ? null
-                      : Option.getOrNull(
-                          yield* (yield* ManagedProjectFolders)
-                            .folderForThread({ projectId: target, threadId, text: input.brief })
-                            .pipe(
-                              Effect.mapError((error) =>
-                                stateError(
-                                  `A folder for the agent could not be made: ${error.message}`,
-                                  "Retry j5_spawn_agent with the same client_request_id.",
-                                ),
+              current !== null
+                ? current
+                : input.workspace.type !== "root" && home !== undefined
+                  ? home.thread
+                  : {
+                      branch: null,
+                      worktreePath: Option.getOrNull(
+                        yield* (yield* ManagedProjectFolders)
+                          .folderForThread({ projectId: target, threadId, text: input.brief })
+                          .pipe(
+                            Effect.mapError((error) =>
+                              stateError(
+                                `A folder for the agent could not be made: ${error.message}`,
+                                "Retry j5_spawn_agent with the same client_request_id.",
                               ),
                             ),
-                        ),
-                  };
+                          ),
+                      ),
+                    };
             yield* threadManagement
               .dispatch({
                 type: "thread.create",
@@ -1210,11 +1245,13 @@ const handlers = {
                 threadId,
                 projectId: target,
                 title: spawnTitle(input.brief, input.title),
-                modelSelection,
-                runtimeMode,
-                interactionMode,
+                modelSelection: current?.modelSelection ?? modelSelection,
+                runtimeMode: current?.runtimeMode ?? runtimeMode,
+                interactionMode: current?.interactionMode ?? interactionMode,
                 ...(persona === undefined ? {} : { agentPersonaAssignment: persona.assignment }),
-                ...spawnThreadCheckout(workspace, sharedCheckout),
+                ...(current === null
+                  ? spawnThreadCheckout(workspace, sharedCheckout)
+                  : { branch: current.branch, worktreePath: current.worktreePath }),
               })
               .pipe(
                 Effect.mapError((error) =>
@@ -1236,6 +1273,17 @@ const handlers = {
                   ),
                 ),
               );
+            if (personaId === undefined || outside !== undefined) {
+              const exceeded = exceededDispatchModeLimit(
+                (yield* loadCaller()).limits,
+                child.thread,
+              );
+              if (exceeded !== undefined)
+                return yield* stateError(
+                  `Peer Agent ${participantIdForThread(threadId)} has modes broader than yours is now.`,
+                  "Ask the user to start that agent, or use a fresh client_request_id.",
+                );
+            }
             const facts = yield* (yield* SpawnCompositionService)
               .recordFacts({
                 homeCommandId: spawnHomeCommandId(stableInput),
@@ -1281,7 +1329,7 @@ const handlers = {
                     Effect.mapError((error) =>
                       stateError(
                         `Peer Agent ${facts.home.participantId} is registered and addressable, but its brief's attachments could not be claimed: ${error.message}`,
-                        "Retry j5_spawn_agent with the same client_request_id and attachments that are pending uploads.",
+                        "Retry j5_spawn_agent with the same client_request_id and the original attachment ids after repairing the upload; use a fresh client_request_id for a changed brief.",
                       ),
                     ),
                   )).attachments;
@@ -1304,9 +1352,9 @@ const handlers = {
                     ? { spawnerThreadId: scope.thread?.threadId }
                     : { outsideAgentName: outside.client.label }),
                 }),
-                modelSelection,
-                runtimeMode,
-                interactionMode,
+                modelSelection: child.thread.modelSelection,
+                runtimeMode: child.thread.runtimeMode,
+                interactionMode: child.thread.interactionMode,
                 attachments,
               })
               .pipe(

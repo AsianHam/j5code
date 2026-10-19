@@ -1,3 +1,4 @@
+import { RequestReplayService } from "../RequestReplayService.ts";
 import { Tool, Toolkit } from "effect/ai";
 import { playbookTools } from "../../playbooks/mcp.ts";
 import * as Schema from "effect/Schema";
@@ -620,6 +621,7 @@ const spawnDependencies = [
   ThreadRegistration,
   A2ALedger,
   SpawnCompositionService,
+  RequestReplayService,
   // Resolves the workspace, binds the request key to it, and starts the brief.
   SpawnWorkspaceService,
   ThreadManagementService,
