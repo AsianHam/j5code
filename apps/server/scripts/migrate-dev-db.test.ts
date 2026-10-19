@@ -194,6 +194,77 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
+  it.effect("copies a child table that sqlite_master lists before its parent", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-fk-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-fk-dest-" });
+      const source = yield* createFixtureSource(sourceDir);
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          // A migration that rebuilds a parent (create, copy, drop, rename) moves it after its
+          // children in sqlite_master, as J5's 008_LifecycleClosure did to j5_a2a_exchange.
+          yield* sql`CREATE TABLE fk_parent (id TEXT PRIMARY KEY)`;
+          yield* sql`CREATE TABLE fk_child (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL REFERENCES fk_parent(id))`;
+          yield* sql`CREATE TABLE fk_parent_new (id TEXT PRIMARY KEY)`;
+          yield* sql`DROP TABLE fk_parent`;
+          yield* sql`ALTER TABLE fk_parent_new RENAME TO fk_parent`;
+          yield* sql`INSERT INTO fk_parent (id) VALUES ('parent-1')`;
+          yield* sql`INSERT INTO fk_child (id, parent_id) VALUES ('child-1', 'parent-1')`;
+        }),
+      );
+
+      const result = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+        { sharedHome: sourceDir },
+      );
+
+      const children = yield* withDatabase(
+        result.databasePath,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ id: string }>`SELECT id FROM fk_child`;
+        }),
+      );
+      assert.deepStrictEqual(
+        children.map((row) => row.id),
+        ["child-1"],
+      );
+    }),
+  );
+
+  it.effect("fails loudly when the thread filter orphans a row", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-orphan-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-orphan-dest-" });
+      const source = yield* createFixtureSource(sourceDir);
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          // No thread_id column, so the snapshot copies it whole while its settled parent stays behind.
+          yield* sql`CREATE TABLE thread_notes (
+            id TEXT PRIMARY KEY,
+            about TEXT NOT NULL REFERENCES orchestration_v2_projection_threads(thread_id))`;
+          yield* sql`INSERT INTO thread_notes (id, about) VALUES ('note-1', 'settled-thread')`;
+        }),
+      );
+
+      const error = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+        { sharedHome: sourceDir },
+      ).pipe(Effect.flip);
+      assert.equal(error._tag, "MigrateDevDbPhaseError");
+      if (error._tag === "MigrateDevDbPhaseError") {
+        assert.equal(error.phase, "snapshot");
+        assert.include(String(error.cause), "thread_notes -> orchestration_v2_projection_threads");
+      }
+    }),
+  );
+
   it.effect("fails loudly on a migration slot collision", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
