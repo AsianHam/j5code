@@ -25,6 +25,7 @@ export interface FleetDerivedFacts {
 export const deriveFleetFacts = (input: {
   readonly shell: OrchestrationV2ThreadShell | undefined;
   readonly ledger: FleetAgentFacts | undefined;
+  readonly pendingSubagentRequest?: "approval" | "user_input" | null | undefined;
   readonly now: number;
 }): { readonly facts: FleetDerivedFacts; readonly nextDeadline?: number } => {
   const { shell } = input;
@@ -101,25 +102,33 @@ export const deriveFleetFacts = (input: {
     ? { state: "unknown", reason: "This environment does not report run timestamps." }
     : { state: "known", ...latest };
   const activity = shell.activityRunStatus ?? shell.status;
+  const approval =
+    input.pendingSubagentRequest === "approval" ||
+    (shell.pendingRuntimeRequest !== null &&
+      shell.pendingRuntimeRequest.kind !== "user_input" &&
+      shell.pendingRuntimeRequest.kind !== "auth_refresh");
+  const needsInput =
+    input.pendingSubagentRequest === "user_input" ||
+    shell.pendingRuntimeRequest?.kind === "user_input";
   const status = undispatched
     ? "waiting-to-start"
-    : shell.pendingRuntimeRequest !== null
-      ? shell.pendingRuntimeRequest.kind === "user_input"
+    : approval
+      ? "approval"
+      : needsInput
         ? "input"
-        : shell.pendingRuntimeRequest.kind === "auth_refresh"
+        : shell.pendingRuntimeRequest?.kind === "auth_refresh"
           ? "waiting"
-          : "approval"
-      : activity === "running"
-        ? "working"
-        : activity === "waiting"
-          ? "waiting"
-          : activity === "preparing" || activity === "starting" || shell.status === "queued"
-            ? "waiting"
-            : backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? [])
+          : activity === "running"
+            ? "working"
+            : activity === "waiting"
               ? "waiting"
-              : shell.status === "failed"
-                ? "failed"
-                : "idle";
+              : activity === "preparing" || activity === "starting" || shell.status === "queued"
+                ? "waiting"
+                : shell.status === "failed"
+                  ? "failed"
+                  : backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? [])
+                    ? "waiting"
+                    : "idle";
   const unknownRuntimeReason = missingRunTimes
     ? "This environment does not report run timestamps."
     : otherRunInProgress &&
@@ -159,6 +168,7 @@ export interface FleetFactRow {
   readonly shell: OrchestrationV2ThreadShell | undefined;
   readonly ledger: FleetAgentFacts | undefined;
   readonly live: boolean;
+  readonly pendingSubagentRequest?: "approval" | "user_input" | null | undefined;
 }
 
 /** Shared by every consumer in one registry. Only a future dispatch boundary schedules work. */
@@ -186,7 +196,12 @@ export const createFleetFactsAtom = (rows: Atom.Atom<ReadonlyArray<FleetFactRow>
         );
         continue;
       }
-      const result = deriveFleetFacts({ shell: row.shell, ledger: row.ledger, now });
+      const result = deriveFleetFacts({
+        shell: row.shell,
+        ledger: row.ledger,
+        pendingSubagentRequest: row.pendingSubagentRequest,
+        now,
+      });
       const cached = previous?.get(row.key);
       facts.set(
         row.key,

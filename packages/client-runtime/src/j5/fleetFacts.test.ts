@@ -168,6 +168,22 @@ describe("Fleet runtime measurements", () => {
     }
   });
 
+  it("preserves native child approval and input measurements on the parent row", () => {
+    const source = shell({
+      status: "running",
+      activityRunStatus: "running",
+      latestRunStartedAt: date,
+    });
+    expect(
+      deriveFleetFacts({ shell: source, ledger, pendingSubagentRequest: "approval", now }).facts
+        .runtime,
+    ).toMatchObject({ status: "approval" });
+    expect(
+      deriveFleetFacts({ shell: source, ledger, pendingSubagentRequest: "user_input", now }).facts
+        .runtime,
+    ).toMatchObject({ status: "input" });
+  });
+
   it("clears failed-latest-run when a healthy latest run replaces it", () => {
     const failed = shell({
       status: "failed",
@@ -175,6 +191,10 @@ describe("Fleet runtime measurements", () => {
       latestRunStartedAt: date,
       latestRunCompletedAt: date,
     });
+    expect(
+      derive({ ...failed, pendingBackgroundTasks: [{ kind: "monitor", taskId: "watch" }] }).facts
+        .runtime,
+    ).toMatchObject({ status: "failed" });
     expect(derive(failed).facts.problems).toEqual([{ kind: "failed-run", runId: "r", at }]);
     expect(derive({ ...failed, latestRunCompletedAt: null }).facts.problems).toEqual([
       { kind: "failed-run", runId: "r", at: null },

@@ -2,7 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ThreadId, type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import type { J5ReadRevisions } from "@t3tools/contracts/j5";
 
-import { classifyCrewSeat, type CrewSeatState, type CrewSeatThread } from "../crew/crewState";
+import type { CrewSeatState } from "../crew/crewState";
 import type { FleetAgent, FleetCrew, FleetLedgerProject } from "./fleetClient";
 
 /** One rendered row of the Roster tree. Crew members hang under their Captain as one unit. */
@@ -176,12 +176,6 @@ export interface FleetSections<S extends FleetLedgerProject = FleetLedgerProject
   readonly agentCount: number;
 }
 
-/** The client's thread shell for a thread on an environment; `undefined` when the client holds none. */
-export type FleetShellLookup = (
-  environmentId: EnvironmentId,
-  threadId: string,
-) => CrewSeatThread | undefined;
-
 /** Every agent in a subtree: the node itself, its plain children, and every Crew seat beneath it. */
 export function* fleetNodeAgents(node: FleetNode): Generator<FleetAgent> {
   yield node.row.agent;
@@ -191,8 +185,7 @@ export function* fleetNodeAgents(node: FleetNode): Generator<FleetAgent> {
 
 /**
  * A subtree is settled only when every agent in it, Crew seats included, reads as settled from
- * upstream's settle mechanic on its thread shell (`settledAt` / `settledOverride`, the facts
- * `classifyCrewSeat` reads). One running, failed, needs-you, idle, or unknown agent anywhere
+ * the same measured runtime and settle facts its row displays. One running, failed, needs-you, idle, or unknown agent anywhere
  * beneath the root keeps the whole subtree in Active: a settled Captain whose seats still work is
  * not done, and an agent the client cannot see is not assumed done. Idle is not settled; nothing
  * is inferred from silence.
@@ -215,16 +208,16 @@ export const isSettledFleetNode = (
  */
 export function partitionFleet<
   S extends FleetLedgerProject & { readonly environmentId: EnvironmentId },
->(projects: ReadonlyArray<S>, shellFor: FleetShellLookup): FleetSections<S> {
+>(
+  projects: ReadonlyArray<S>,
+  measuredState: (environmentId: EnvironmentId, agent: FleetAgent) => CrewSeatState,
+): FleetSections<S> {
   const active: Array<FleetSectionRow<S>> = [];
   const settled: Array<FleetSectionRow<S>> = [];
   let settledAgentCount = 0;
   let agentCount = 0;
   for (const ledgerProject of projects) {
-    const classify = (agent: FleetAgent) =>
-      classifyCrewSeat(
-        agent.threadId === null ? undefined : shellFor(ledgerProject.environmentId, agent.threadId),
-      );
+    const classify = (agent: FleetAgent) => measuredState(ledgerProject.environmentId, agent);
     agentCount += ledgerProject.agents.length;
     for (const node of buildFleetTree(ledgerProject)) {
       if (isSettledFleetNode(node, classify)) {
