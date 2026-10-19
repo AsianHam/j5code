@@ -8,6 +8,7 @@
  *   node scripts/j5/setup-agent-live-test.ts stop       stop the server
  *   node scripts/j5/setup-agent-live-test.ts rebuild    stop, delete the test home and repository, build and start again
  *   node scripts/j5/setup-agent-live-test.ts guest "<name>"   add a person, or a device for one, to the running server, with its pairing URL
+ *   node scripts/j5/setup-agent-live-test.ts upgrade    in a --base build, run this worktree's build on the base's home, at its address
  *
  * A start and `rebuild` take a mode flag. With none, the home holds a test
  * project and pre-made threads. `--fresh` gives an empty home, so the first-run
@@ -18,7 +19,10 @@
  * copy of their data, shared on the tailnet. Agents take no turns on it.
  * `--base <ref>` runs a second server from a checkout of this repository at
  * `<ref>`, on a home built by that checkout's own generator with the same
- * clock, for before and after screenshots. A
+ * clock, for before and after screenshots. `upgrade` then stops both and
+ * starts this worktree's build on the base's home, at the base's ports, as an
+ * install upgrades; the home as the base left it is kept, and each `upgrade`
+ * starts over from that copy. A
  * worktree has one live-test build at a time and its mode is fixed when it is
  * built: `rebuild` with another flag switches.
  *
@@ -31,8 +35,8 @@
  *
  * It signals only the process group it started, and only after confirming
  * that the group's leader is still the process it spawned (same pid and start
- * time) running from this worktree. It never finds a process by name. Linux
- * only: it reads `/proc`.
+ * time) running from this worktree. It never finds a process by name. It runs
+ * on Linux, where it reads `/proc`, and on macOS, where it asks `ps` and `lsof`.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -41,7 +45,7 @@ import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeUtil from "node:util";
 
-const COMMANDS = ["start", "status", "restart", "stop", "rebuild"] as const;
+const COMMANDS = ["start", "status", "restart", "stop", "rebuild", "upgrade"] as const;
 type LiveTestCommand = (typeof COMMANDS)[number];
 
 /** The live install's port. A test server must never end up on it. */
@@ -90,6 +94,8 @@ interface DefaultManifest {
   readonly baseCommit?: string;
   /** In base mode: the clock both builds are given, in epoch milliseconds. */
   readonly baseClock?: number;
+  /** Set by the first `upgrade`: the base's address, which the upgraded server keeps. */
+  readonly upgrade?: UpgradePorts;
   readonly project: { readonly id: string; readonly title: string };
   /** The name the home's owner was built with. Absent in a home built before the generator set one. */
   readonly ownerName?: string;
@@ -104,6 +110,11 @@ interface DefaultManifest {
   readonly holdScript: string;
   /** Titles of the threads left in a pre-made state. Absent in a home built before the generator made any. */
   readonly stateThreads?: ReadonlyArray<string>;
+}
+/** The ports a server listens on: the dev runner's API server and its web server. */
+export interface UpgradePorts {
+  readonly serverPort: number;
+  readonly webPort: number;
 }
 /** Marks a finished build and records its mode. */
 type Manifest = DefaultManifest | { readonly mode: "fresh" } | { readonly mode: "for-dev" };
@@ -128,6 +139,17 @@ export interface LiveTestPaths extends ServerPaths {
   /** In base mode, a git worktree of this repository at the base ref. */
   readonly base: string;
   readonly remote: ServerPaths & { readonly root: string };
+  /**
+   * After `upgrade`, the server this worktree runs on the base's own home.
+   * Its log and record are the head's; the home and repository are the base's.
+   */
+  readonly upgrade: ServerPaths & {
+    readonly root: string;
+    /** The base's own server log, which says the address the base used. */
+    readonly baseLog: string;
+    /** The base's home as it was before the first upgrade. */
+    readonly before: string;
+  };
 }
 
 const isInside = (candidate: string, parent: string) => {
@@ -217,6 +239,18 @@ export async function resolveLiveTestPaths(input: {
     log: NodePath.join(remoteRoot, "server.log"),
     record: NodePath.join(remoteRoot, "server.json"),
   };
+  const baseRoot = NodePath.join(root, "base", ".j5code", "live-test");
+  const upgradeRoot = NodePath.join(root, "upgrade");
+  const upgrade = {
+    worktree,
+    root: upgradeRoot,
+    home: NodePath.join(baseRoot, "home"),
+    testRepo: NodePath.join(baseRoot, "test-repo"),
+    log: NodePath.join(upgradeRoot, "server.log"),
+    record: NodePath.join(upgradeRoot, "server.json"),
+    baseLog: NodePath.join(baseRoot, "server.log"),
+    before: NodePath.join(upgradeRoot, "home-before"),
+  };
   // Two servers on one database would corrupt it, so Remote's home must be its own.
   for (const [mine, theirs] of [
     [home, remote.home],
@@ -238,6 +272,11 @@ export async function resolveLiveTestPaths(input: {
     NodePath.join(remote.home, "userdata"),
     remote.testRepo,
     NodePath.join(root, "base"),
+    // `upgrade` replaces the base's home with its kept copy, so both must be this build's.
+    upgrade.home,
+    NodePath.join(upgrade.home, "userdata"),
+    upgrade.root,
+    upgrade.before,
   ]) {
     if (!isInside(canonicalPath(inside), canonicalRoot)) {
       throw new LiveTestRefusal(
@@ -255,6 +294,7 @@ export async function resolveLiveTestPaths(input: {
     record: NodePath.join(root, "server.json"),
     remote,
     base: NodePath.join(root, "base"),
+    upgrade,
   };
 }
 
@@ -274,6 +314,11 @@ export function liveTestEnvironment(
     ...rest,
     // Without this the dev server registers <worktree>/apps/server as a project.
     T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
+    // Every node child here opens SQLite, and each process warns once that it is experimental:
+    // dozens of lines that bury what a command prints. Only that kind of warning is silenced.
+    NODE_OPTIONS: [rest.NODE_OPTIONS, "--disable-warning=ExperimentalWarning"]
+      .filter((option) => option !== undefined && option !== "")
+      .join(" "),
     // The dev runner spawns `vp`, which is often not on an agent's PATH.
     PATH: [NodePath.join(worktree, "node_modules", ".bin"), rest.PATH ?? ""].join(
       NodePath.delimiter,
@@ -293,10 +338,12 @@ export interface ServerLogFacts {
   readonly shareFailure: string | undefined;
 }
 
+// eslint-disable-next-line no-control-regex -- the server's pretty logger colours its output.
+const plainLog = (log: string) => log.replaceAll(/\u001B\[[0-9;]*m/g, "");
+
 /** What the dev server's log says so far. The latest pairing URL wins: a file-watch restart mints a new one. */
 export function readServerLog(log: string): ServerLogFacts {
-  // eslint-disable-next-line no-control-regex -- the server's pretty logger colours its output.
-  const text = log.replaceAll(/\u001B\[[0-9;]*m/g, "");
+  const text = plainLog(log);
   const runner = /\[dev-runner\] .*serverPort=(\d+) webPort=(\d+) baseDir=(\S+)/.exec(text);
   const pairingUrls = [...text.matchAll(/pairingUrl: (\S+)/g)];
   return {
@@ -308,6 +355,22 @@ export function readServerLog(log: string): ServerLogFacts {
     sharedUrl: /\[dev-runner\] shared on tailnet: (\S+)/.exec(text)?.[1],
     shareFailure: /\[dev-runner\] could not share on the tailnet: (.*)/.exec(text)?.[1],
   };
+}
+
+/**
+ * The log's last lines up to the server's exit, when the server has exited
+ * since it last minted a pairing URL; undefined while it has not. `node
+ * --watch` prints "Failed running" when the server it runs exits, then waits
+ * for a file to change, so the dev runner stays up with nothing serving. The
+ * lines after it are the web proxy failing to reach the server.
+ */
+export function serverExit(log: string): string | undefined {
+  const lines = plainLog(log).split("\n");
+  const exit = lines.findLastIndex((line) => line.startsWith("Failed running '"));
+  const pairing = lines.findLastIndex((line) => line.includes("pairingUrl: "));
+  return exit === -1 || exit < pairing
+    ? undefined
+    : lines.slice(Math.max(0, exit - 30), exit + 1).join("\n");
 }
 
 /**
@@ -337,6 +400,20 @@ export function startRefusal(input: {
   return undefined;
 }
 
+/** macOS has no /proc, so there the probes below ask `ps` and `lsof`. */
+// oxlint-disable-next-line t3code/no-global-process-runtime -- a standalone CLI with no Effect runtime.
+const IS_MACOS = NodeOS.platform() === "darwin";
+
+/** A probe's stdout, or undefined when it fails, as `ps` and `lsof` do when nothing matches. */
+function probeOutput(command: string, args: ReadonlyArray<string>): string | undefined {
+  const result = NodeChildProcess.spawnSync(command, [...args], {
+    encoding: "utf8",
+    // lstart's format follows the locale.
+    env: { ...process.env, LC_ALL: "C" },
+  });
+  return result.status === 0 ? result.stdout : undefined;
+}
+
 /** The fields of /proc/<pid>/stat after "pid (comm) ", or undefined when the process is gone. */
 function statFieldsOf(pid: number): ReadonlyArray<string> | undefined {
   try {
@@ -350,19 +427,40 @@ function statFieldsOf(pid: number): ReadonlyArray<string> | undefined {
 
 /** The process group of `pid`, or undefined when it is gone. */
 function processGroupOf(pid: number): number | undefined {
-  const group = statFieldsOf(pid)?.[2];
-  return group === undefined ? undefined : Number(group);
+  const group = IS_MACOS
+    ? probeOutput("ps", ["-o", "pgid=", "-p", String(pid)])?.trim()
+    : statFieldsOf(pid)?.[2];
+  return group === undefined || group === "" ? undefined : Number(group);
 }
 
 /**
- * When `pid` started, in clock ticks since boot. Together with the pid it
- * names one process for good: a recycled pid has a later start time.
+ * When `pid` started: clock ticks since boot on Linux, the start time to the
+ * second on macOS. Together with the pid it names one process for good: a
+ * recycled pid has a later start time.
  */
 function startTimeOf(pid: number): string | undefined {
-  return statFieldsOf(pid)?.[19];
+  if (!IS_MACOS) return statFieldsOf(pid)?.[19];
+  return probeOutput("ps", ["-o", "lstart=", "-p", String(pid)])?.trim() || undefined;
+}
+
+/** Pids in `group`, from `ps -A -o pid=,pgid=` output. */
+export function groupMembersFromPs(output: string, group: number): ReadonlyArray<number> {
+  return output
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/).map(Number))
+    .filter(([pid, pgid]) => pgid === group && Number.isInteger(pid))
+    .map(([pid]) => pid!);
 }
 
 function membersOfGroup(group: number): ReadonlyArray<number> {
+  if (IS_MACOS) {
+    // `ps -A` always lists something, so a failure must throw: read as an empty
+    // group, it would let stop and rebuild drop a server that is still running.
+    const output = NodeChildProcess.execFileSync("ps", ["-A", "-o", "pid=,pgid="], {
+      encoding: "utf8",
+    });
+    return groupMembersFromPs(output, group);
+  }
   return NodeFS.readdirSync("/proc")
     .filter((entry) => /^\d+$/.test(entry))
     .map(Number)
@@ -370,11 +468,36 @@ function membersOfGroup(group: number): ReadonlyArray<number> {
 }
 
 function listenerOn(port: number): number | undefined {
+  if (IS_MACOS) {
+    const pid = probeOutput("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"])?.split("\n")[0];
+    return pid ? Number(pid) : undefined;
+  }
   const output = NodeChildProcess.execFileSync("ss", ["-H", "-ltnp", `sport = :${port}`], {
     encoding: "utf8",
   });
   const pid = /pid=(\d+)/.exec(output)?.[1];
   return pid === undefined ? undefined : Number(pid);
+}
+
+/** The path in `lsof -Fn` output, whose name field is the line that starts with "n". */
+export function pathFromLsofFields(output: string): string | undefined {
+  return output
+    .split("\n")
+    .find((line) => line.startsWith("n"))
+    ?.slice(1);
+}
+
+function cwdOf(pid: number): string | undefined {
+  if (IS_MACOS) {
+    return pathFromLsofFields(
+      probeOutput("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]) ?? "",
+    );
+  }
+  try {
+    return NodeFS.readlinkSync(`/proc/${pid}/cwd`);
+  } catch {
+    return undefined;
+  }
 }
 
 /** What `start` writes when it spawns the server, and all `stop` trusts. */
@@ -460,13 +583,7 @@ function currentServerState(paths: ServerPaths): ServerState {
     listenerOn,
     processGroupOf,
     startTimeOf,
-    cwdOf: (pid) => {
-      try {
-        return NodeFS.readlinkSync(`/proc/${pid}/cwd`);
-      } catch {
-        return undefined;
-      }
-    },
+    cwdOf,
   });
 }
 
@@ -733,6 +850,20 @@ function readDefaultManifest(root: string): DefaultManifest {
   return JSON.parse(
     NodeFS.readFileSync(NodePath.join(root, "manifest.json"), "utf8"),
   ) as DefaultManifest;
+}
+
+/** The name the upgraded base's owner was built with, from the base's own manifest. */
+function upgradedOwner(paths: LiveTestPaths): string | undefined {
+  return readDefaultManifest(NodePath.dirname(paths.upgrade.home)).ownerName;
+}
+
+/**
+ * A pairing URL for the upgraded base's owner, as `printRunning` mints one: an owner with no
+ * name yet, from a base built before the generator gave one, pairs with the startup URL.
+ */
+function upgradedPairingUrl(paths: LiveTestPaths, facts: ServerLogFacts): string | undefined {
+  const owner = upgradedOwner(paths);
+  return owner === undefined ? facts.pairingUrl : mintPairingUrl(paths.upgrade, owner);
 }
 
 function logTail(paths: ServerPaths): string {
@@ -1117,15 +1248,34 @@ async function waitUntilReady(
   requireShare: boolean,
 ): Promise<ServerLogFacts> {
   for (;;) {
-    const facts = readServerLog(NodeFS.readFileSync(paths.log, "utf8"));
+    const log = NodeFS.readFileSync(paths.log, "utf8");
+    const facts = readServerLog(log);
     // Classify before anything else: a refusal below signals the group, and
     // only a group proven to be ours may be signalled.
     const state = currentServerState(paths);
-    if (state.kind === "unverified") throw new LiveTestRefusal(state.reason);
+    if (state.kind === "unverified") {
+      // A leader gone with members left is a group on its way out, most often
+      // because another command, such as `stop`, is ending it.
+      if (startTimeOf(state.group) !== undefined) throw new LiveTestRefusal(state.reason);
+      throw new LiveTestRefusal(
+        "The dev server stopped while this command waited for it to start; another command, such as `stop`, may have ended it.",
+      );
+    }
     if (state.kind === "stopped") {
+      if (!NodeFS.existsSync(paths.record)) {
+        throw new LiveTestRefusal(
+          "The dev server was stopped by another command while this one waited for it to start.",
+        );
+      }
       NodeFS.rmSync(paths.record, { force: true });
       throw new LiveTestRefusal(
         `The dev server exited while starting.\nLast lines of ${paths.log}:\n${logTail(paths)}`,
+      );
+    }
+    const exit = state.kind === "running" ? undefined : serverExit(log);
+    if (exit !== undefined) {
+      throw new LiveTestRefusal(
+        `The dev server exited while starting. Its file watcher is still running and starts it again when a file changes.\nLast lines of ${paths.log} up to the exit:\n${exit}\nTo stop it: ${selfCommand(paths, "stop")}`,
       );
     }
     const refusal = startRefusal({
@@ -1464,6 +1614,9 @@ async function start(
           rebuildCommand: (other) => selfCommand(paths, `rebuild ${modeFlags(other, baseRef)}`),
         });
   if (refusal !== undefined) throw new LiveTestRefusal(refusal);
+  // After `upgrade` the base build never starts again: it would open a home a newer build has migrated.
+  const upgraded = upgradeOf(paths);
+  if (upgraded !== undefined) return startUpgraded(paths, upgraded, deadline, undefined);
   const base = mode === "base" ? resolveBase(paths, baseRef ?? builtRef ?? "") : undefined;
   if (
     base !== undefined &&
@@ -1911,7 +2064,7 @@ function baseHeading(paths: LiveTestPaths): string {
 
 /** The base checkout stays registered in the real repository until it is removed. */
 const baseCheckoutNote = (paths: LiveTestPaths) =>
-  `The base checkout is a git worktree of this repository (detached, no branch) at ${paths.base}.\nWhen the before and after work is done, remove it with: ${selfCommand(paths, "rebuild")}`;
+  `The base checkout is a git worktree of this repository (detached, no branch) at ${paths.base}.\nTo run this worktree's build on the base's home, at the base's address: ${selfCommand(paths, "upgrade")}\nWhen the before and after work is done, remove it with: ${selfCommand(paths, "rebuild")}`;
 
 /**
  * Removes the base checkout through git, so the repository keeps no stale
@@ -1919,6 +2072,14 @@ const baseCheckoutNote = (paths: LiveTestPaths) =>
  */
 function removeBaseCheckout(paths: LiveTestPaths): void {
   if (!NodeFS.existsSync(paths.base)) return;
+  // Asked before anything is deleted, so a refusal leaves the base's home, or
+  // an upgraded one, in place. Ignored files, such as that home, are not listed.
+  const edited = gitIn(paths.base, "status", "--porcelain");
+  if (edited !== undefined && edited !== "") {
+    throw new LiveTestRefusal(
+      `The base checkout at ${paths.base} has files that were edited or added:\n${edited}\nNothing was deleted. Undo those changes, then run the command again.`,
+    );
+  }
   // The base's own test home is ignored there, but a nested repository's
   // worktrees are not something `git worktree remove` will delete for us.
   NodeFS.rmSync(NodePath.join(paths.base, ".j5code"), { recursive: true, force: true });
@@ -1933,7 +2094,238 @@ function removeBaseCheckout(paths: LiveTestPaths): void {
   }
 }
 
-/** The servers a build has: one, or Local and Remote in the peer modes. */
+/** The dev runner's first web port (BASE_WEB_PORT in scripts/dev-runner.ts); its offset counts from here. */
+const RUNNER_BASE_WEB_PORT = 5733;
+
+/**
+ * The address the upgraded server takes: the one the first upgrade recorded,
+ * or else the one the base's own log reports. Refuses a build with no base,
+ * a base that never started, and the live server's port.
+ */
+export function upgradeTarget(input: {
+  readonly built: LiveTestMode | undefined;
+  readonly recorded: UpgradePorts | undefined;
+  readonly baseFacts: ServerLogFacts;
+  readonly baseHome: string;
+  readonly baseHomeExists: boolean;
+  readonly inheritedPort: string | undefined;
+  /** What builds a base: `rebuild --base <ref>`. */
+  readonly rebuildCommand: string;
+  /** What starts this build's base. */
+  readonly startCommand: string;
+}): UpgradePorts {
+  if (input.built !== "base") {
+    throw new LiveTestRefusal(
+      `\`upgrade\` runs only in a --base build: it starts this worktree's build on the base server's home. Build one with: ${input.rebuildCommand}`,
+    );
+  }
+  if (input.recorded !== undefined) return input.recorded;
+  const { serverPort, webPort, baseDir } = input.baseFacts;
+  if (!input.baseHomeExists || serverPort === undefined || webPort === undefined) {
+    throw new LiveTestRefusal(
+      `The base server has never been started here, so there is no home of its own to upgrade. Start it with: ${input.startCommand}\nThen make the old state on it and run \`upgrade\` again.`,
+    );
+  }
+  if (baseDir !== undefined && canonicalPath(baseDir) !== canonicalPath(input.baseHome)) {
+    throw new LiveTestRefusal(
+      `The base's log says its server ran on ${baseDir}, not on its home ${input.baseHome}. Replace the build: ${input.rebuildCommand}`,
+    );
+  }
+  if (serverPort === LIVE_SERVER_PORT || String(serverPort) === input.inheritedPort) {
+    throw new LiveTestRefusal(`The base's log reports the live server's port ${serverPort}.`);
+  }
+  return { serverPort, webPort };
+}
+
+/**
+ * The dev runner settings that put a server on exactly these ports. An
+ * explicit server port and dev URL stop the runner looking for free ones, and
+ * its web port is always its first one plus the offset.
+ */
+export function upgradeRunner(ports: UpgradePorts): {
+  readonly environment: Readonly<Record<string, string>>;
+  readonly args: ReadonlyArray<string>;
+} {
+  return {
+    environment: { T3CODE_PORT_OFFSET: String(ports.webPort - RUNNER_BASE_WEB_PORT) },
+    args: ["--port", String(ports.serverPort), "--dev-url", `http://localhost:${ports.webPort}`],
+  };
+}
+
+/**
+ * What `upgrade`, `restart` and `status` print about the upgraded server while
+ * it runs. Only the command that upgraded says so in its heading.
+ */
+export function formatUpgrade(input: {
+  readonly paths: LiveTestPaths;
+  readonly facts: ServerLogFacts;
+  readonly pairingUrl: string | undefined;
+  /** The head commit, and whether the worktree has changes on top of it. */
+  readonly head: { readonly commit: string; readonly changed: boolean };
+  /**
+   * Set right after an upgrade, when a tab that was open on the base needs a
+   * reload. After a repeat, that tab has also cached state the put-back copy
+   * does not have, and keeps showing it until its cache is cleared.
+   */
+  readonly justUpgraded: "first" | "again" | undefined;
+  /** The name the base's owner was built with, from the base's own manifest. */
+  readonly ownerName?: string | undefined;
+}): string {
+  const { paths, facts } = input;
+  const revision = `${input.head.commit.slice(0, 10)}${input.head.changed ? " with this worktree's uncommitted changes" : ""}`;
+  const heading =
+    input.justUpgraded === undefined
+      ? ""
+      : `UPGRADED  Base's home now runs ${revision}, at Base's address
+Before    a copy of the home before the upgrade is kept at ${paths.upgrade.before}
+Next      ${
+          input.justUpgraded === "first"
+            ? "reload the tab you had on Base"
+            : "clear the tab's cached state (IndexedDB t3code:connection-runtime), then reload it; otherwise it keeps showing what happened after the copy was made"
+        }
+
+`;
+  return `${heading}J5 Code live-test server: RUNNING
+  Runs          Base's home, upgraded to ${revision}
+  Pairing URL   ${input.pairingUrl ?? `none could be minted; run: ${pairCommandLine(paths.upgrade, input.ownerName ?? "<the name the owner gave>")}`}
+  Web           http://localhost:${facts.webPort}
+  Server port   ${facts.serverPort}
+  Home          ${paths.upgrade.home}
+  Log           ${paths.upgrade.log}
+
+Head's own server and the base build stay stopped until \`rebuild\`.
+
+Commands:
+  ${selfCommand(paths, "upgrade")}   start over: put back the copy from before the upgrade, and upgrade it again
+  ${selfCommand(paths, "status")}    say whether it is running
+  ${selfCommand(paths, "restart")}   stop, then start the upgraded server on the same home
+  ${selfCommand(paths, "stop")}      stop the server
+  ${selfCommand(paths, 'guest "<name>"')}   add a second person, with their pairing URL
+                                      (flags: --thread <id> or --project <id>, --level view|collaborate)
+  ${selfCommand(paths, "rebuild")}   stop, delete ${paths.root} and the base checkout, build and start again
+                                      (flags as for a first start)
+
+How to test is in .agents/skills/j5-live-test/SKILL.md.
+`;
+}
+
+/** The ports the first `upgrade` recorded, or undefined before one. */
+function upgradeOf(paths: LiveTestPaths): UpgradePorts | undefined {
+  if (!NodeFS.existsSync(paths.manifest)) return undefined;
+  const manifest = readManifest(paths);
+  return "upgrade" in manifest ? manifest.upgrade : undefined;
+}
+
+function headRevision(paths: LiveTestPaths): {
+  readonly commit: string;
+  readonly changed: boolean;
+} {
+  return {
+    commit: gitIn(paths.worktree, "rev-parse", "HEAD") ?? "",
+    changed: (gitIn(paths.worktree, "status", "--porcelain") ?? "") !== "",
+  };
+}
+
+/** Starts this worktree's build on the base's home, at the base's address, or joins it. */
+async function startUpgraded(
+  paths: LiveTestPaths,
+  ports: UpgradePorts,
+  deadline: number,
+  justUpgraded: "first" | "again" | undefined,
+): Promise<void> {
+  if (currentServerState(paths.upgrade).kind === "stopped") {
+    for (const port of [ports.serverPort, ports.webPort]) {
+      const listener = listenerOn(port);
+      if (listener !== undefined) {
+        throw new LiveTestRefusal(
+          `Port ${port}, part of the base's address, is in use by process ${listener}. Nothing was started.`,
+        );
+      }
+    }
+  }
+  console.log("Starting this worktree's build on the base's home...");
+  const runner = upgradeRunner(ports);
+  const facts = await startServer(paths.upgrade, "dev", runner.environment, deadline, runner.args);
+  console.log(
+    formatUpgrade({
+      paths,
+      facts,
+      pairingUrl: upgradedPairingUrl(paths, facts),
+      ownerName: upgradedOwner(paths),
+      head: headRevision(paths),
+      justUpgraded,
+    }),
+  );
+}
+
+/**
+ * Turns provider update checks off in a home's settings, as the head's generator
+ * builds its own home: a provider found behind its latest release raises a
+ * toast over the top-right controls tests click. A base whose generator
+ * predates that leaves them on.
+ */
+function withoutProviderUpdateChecks(home: string): void {
+  const file = NodePath.join(home, "userdata", "settings.json");
+  const settings = NodeFS.existsSync(file)
+    ? (JSON.parse(NodeFS.readFileSync(file, "utf8")) as Record<string, unknown>)
+    : {};
+  NodeFS.writeFileSync(
+    file,
+    `${JSON.stringify({ ...settings, enableProviderUpdateChecks: false }, null, 2)}\n`,
+  );
+}
+
+/**
+ * Stops every server, then starts this worktree's build on the base's home at
+ * the base's address. The first run keeps a copy of that home; every later
+ * run puts the copy back first, so each one upgrades the same old state.
+ */
+async function upgrade(paths: LiveTestPaths): Promise<void> {
+  const built = builtMode(paths);
+  const baseRef = builtBaseRef(paths);
+  const recorded = upgradeOf(paths);
+  const ports = upgradeTarget({
+    built,
+    recorded,
+    baseFacts: readServerLog(
+      NodeFS.existsSync(paths.upgrade.baseLog)
+        ? NodeFS.readFileSync(paths.upgrade.baseLog, "utf8")
+        : "",
+    ),
+    baseHome: paths.upgrade.home,
+    baseHomeExists: NodeFS.existsSync(paths.upgrade.home),
+    inheritedPort: process.env.T3CODE_PORT,
+    rebuildCommand: selfCommand(paths, `rebuild ${modeFlags("base", baseRef)}`),
+    startCommand: selfCommand(paths, modeFlags("base", baseRef)),
+  });
+  await stop(paths);
+  if (recorded === undefined) {
+    // Every server is stopped, so a file copy of the home is a consistent one.
+    NodeFS.rmSync(paths.upgrade.root, { recursive: true, force: true });
+    NodeFS.mkdirSync(paths.upgrade.root);
+    NodeFS.cpSync(paths.upgrade.home, paths.upgrade.before, { recursive: true });
+    // Written once the copy is whole: a run cut off before this copies again.
+    const manifest: Manifest = { ...(readManifest(paths) as DefaultManifest), upgrade: ports };
+    NodeFS.writeFileSync(paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`);
+  } else {
+    if (!NodeFS.existsSync(paths.upgrade.before)) {
+      throw new LiveTestRefusal(
+        `The copy from before the upgrade is missing at ${paths.upgrade.before}. Start over with: ${selfCommand(paths, `rebuild ${modeFlags("base", baseRef)}`)}`,
+      );
+    }
+    NodeFS.rmSync(paths.upgrade.home, { recursive: true, force: true });
+    NodeFS.cpSync(paths.upgrade.before, paths.upgrade.home, { recursive: true });
+  }
+  withoutProviderUpdateChecks(paths.upgrade.home);
+  await startUpgraded(
+    paths,
+    ports,
+    Date.now() + START_BUDGET_MS,
+    recorded === undefined ? "first" : "again",
+  );
+}
+
+/** The servers a build has: one, Local and Remote in the peer modes, or Head and the upgraded base. */
 const serversOf = (
   paths: LiveTestPaths,
 ): ReadonlyArray<{ readonly name: string; readonly paths: ServerPaths }> =>
@@ -1942,7 +2334,12 @@ const serversOf = (
         { name: " Local", paths },
         { name: " Remote", paths: paths.remote },
       ]
-    : [{ name: "", paths }];
+    : upgradeOf(paths) !== undefined
+      ? [
+          { name: " Head", paths },
+          { name: " (upgraded Base)", paths: paths.upgrade },
+        ]
+      : [{ name: "", paths }];
 
 async function stop(paths: LiveTestPaths, replacing = false): Promise<void> {
   // Classify every server before signalling any, so a refusal leaves both alone.
@@ -1993,6 +2390,7 @@ async function stop(paths: LiveTestPaths, replacing = false): Promise<void> {
 }
 
 function status(paths: LiveTestPaths): void {
+  if (upgradeOf(paths) !== undefined) return statusOfUpgrade(paths);
   statusOfHead(paths);
   if (builtMode(paths) !== "base") return;
   const { progress, serverStatus, failure } = readBaseProgress(paths);
@@ -2013,6 +2411,31 @@ function status(paths: LiveTestPaths): void {
     throw new LiveTestRefusal(`The base is not ready. ${next}`);
   }
   console.log(`\n${baseHeading(paths)}\n\n${serverStatus}\n${baseCheckoutNote(paths)}`);
+}
+
+function statusOfUpgrade(paths: LiveTestPaths): void {
+  const state = currentServerState(paths.upgrade);
+  if (state.kind === "unverified") throw new LiveTestRefusal(state.reason);
+  if (state.kind === "running") {
+    return console.log(
+      formatUpgrade({
+        paths,
+        facts: state.facts,
+        pairingUrl: upgradedPairingUrl(paths, state.facts),
+        ownerName: upgradedOwner(paths),
+        head: headRevision(paths),
+        justUpgraded: undefined,
+      }),
+    );
+  }
+  if (state.kind === "notServing") {
+    return console.log(notServingMessage(paths.upgrade, " (upgraded Base)", state.reason));
+  }
+  console.log(`J5 Code live-test server (upgraded Base): STOPPED
+
+Base's home was upgraded to this worktree's build; Head's own server and the base build stay stopped.
+Start the upgraded server again with: ${selfCommand(paths, "restart")}
+Or start over from the copy made before the upgrade: ${selfCommand(paths, "upgrade")}`);
 }
 
 function statusOfHead(paths: LiveTestPaths): void {
@@ -2150,7 +2573,7 @@ export function parseGuest(args: ReadonlyArray<string>): GuestRequest {
  */
 export function guestRefusal(input: {
   readonly built: LiveTestMode | undefined;
-  /** Whether the server the guest goes to, Local in a peer build, is running. */
+  /** Whether the server the guest goes to, Local in a peer build or the upgraded base, is running. */
   readonly serving: boolean;
   readonly startCommand: string;
 }): string | undefined {
@@ -2235,8 +2658,12 @@ const cliRefusal = (run: NodeChildProcess.SpawnSyncReturns<string>) =>
  */
 function guest(paths: LiveTestPaths, request: GuestRequest): void {
   const built = builtMode(paths);
+  // After `upgrade` the server running here is this worktree's build on the base's home, whose
+  // test project the base's own generator recorded.
+  const upgraded = upgradeOf(paths) !== undefined;
+  const server = upgraded ? paths.upgrade : paths;
   // Identity first, as for a stop: only a server proven to be this script's is acted on.
-  const state = currentServerState(paths);
+  const state = currentServerState(server);
   if (state.kind === "unverified") throw new LiveTestRefusal(state.reason);
   const refusal = guestRefusal({
     built,
@@ -2265,10 +2692,10 @@ function guest(paths: LiveTestPaths, request: GuestRequest): void {
       "pairing",
       "create",
       "--base-dir",
-      paths.home,
+      server.home,
       "--json",
       "--base-url",
-      pairingBaseUrl(paths),
+      pairingBaseUrl(server),
     ]);
     const pairingUrl = /"pairUrl": "([^"]+)"/.exec(made.stdout ?? "")?.[1];
     if (made.status !== 0 || pairingUrl === undefined) throw refused(made);
@@ -2279,13 +2706,15 @@ function guest(paths: LiveTestPaths, request: GuestRequest): void {
     made.status === 0 ? /Pairing URL: (\S+)/.exec(made.stdout ?? "")?.[1] : undefined;
   // With no level or scope asked for, someone already here gets a link for a further device.
   if (request.level === undefined && request.scope === undefined) {
-    const forExisting = run(pairArguments(paths, request.name));
+    const forExisting = run(pairArguments(server, request.name));
     const pairingUrl = pairingUrlOf(forExisting);
     if (pairingUrl !== undefined) return print({ kind: "device", name: request.name }, pairingUrl);
     if (!refusedAsUnknownPerson(forExisting.stdout ?? "")) throw refused(forExisting);
   }
   const level = request.level ?? "viewer";
-  const manifest = readManifest(paths);
+  const manifest = upgraded
+    ? readDefaultManifest(NodePath.dirname(paths.upgrade.home))
+    : readManifest(paths);
   const scope: GuestScope | undefined =
     request.scope ??
     ("project" in manifest ? { kind: "project", id: manifest.project.id } : undefined);
@@ -2295,7 +2724,7 @@ function guest(paths: LiveTestPaths, request: GuestRequest): void {
     );
   }
   const added = run([
-    ...pairArguments(paths, request.name),
+    ...pairArguments(server, request.name),
     "--level",
     level,
     ...(scope.kind === "server" ? [] : [`--${scope.kind}`, scope.id]),
@@ -2307,12 +2736,12 @@ function guest(paths: LiveTestPaths, request: GuestRequest): void {
 
 const USAGE = `Usage: node scripts/j5/setup-agent-live-test.ts [--fresh | --peer [--poll] | --for-dev | --base <ref>]
        node scripts/j5/setup-agent-live-test.ts rebuild [--fresh | --peer [--poll] | --for-dev | --base <ref>]
-       node scripts/j5/setup-agent-live-test.ts status | restart | stop
+       node scripts/j5/setup-agent-live-test.ts status | restart | stop | upgrade
        ${GUEST_USAGE.slice("Usage: ".length)}`;
 
 /**
  * The command and, for a start or `rebuild`, the mode its flags ask for.
- * `status`, `restart` and `stop` act on whatever is built and take no flags.
+ * `status`, `restart`, `stop` and `upgrade` act on whatever is built and take no flags.
  */
 export function parseCommand(args: ReadonlyArray<string>): {
   readonly command: LiveTestCommand;
@@ -2356,8 +2785,8 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const parsed = args[0] === "guest" ? parseGuest(args.slice(1)) : parseCommand(args);
   // oxlint-disable-next-line t3code/no-global-process-runtime -- a standalone CLI with no Effect runtime.
-  if (NodeOS.platform() !== "linux") {
-    throw new LiveTestRefusal("This script reads /proc and runs only on Linux.");
+  if (NodeOS.platform() !== "linux" && !IS_MACOS) {
+    throw new LiveTestRefusal("This script runs only on Linux and macOS.");
   }
   const checkout = NodePath.resolve(import.meta.dirname, "../..");
   if (!NodeFS.existsSync(NodePath.join(checkout, "node_modules"))) {
@@ -2374,6 +2803,7 @@ async function main(): Promise<void> {
   const { command, mode, baseRef } = parsed;
   if (command === "status") return status(paths);
   if (command === "stop") return stop(paths);
+  if (command === "upgrade") return upgrade(paths);
   if (command === "restart" || command === "rebuild") await stop(paths, command === "rebuild");
   // resolveLiveTestPaths has confirmed this directory is inside the worktree's own .j5code.
   // Refuse an unusable base before a rebuild deletes the build that is there.

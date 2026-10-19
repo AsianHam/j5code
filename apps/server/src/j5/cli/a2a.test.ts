@@ -254,6 +254,41 @@ it.live(
     ),
 );
 
+it.live(
+  "rejects a token that cannot be a bearer header with exit 3, never the retryable exit 6",
+  () =>
+    withStub(
+      () => ({ status: 200, body: receipt }),
+      (stub) =>
+        Effect.gen(function* () {
+          const capturedHelp =
+            "DESCRIPTION\n  Issue a bearer token.\n\nUSAGE\n  j5 a2a token issue";
+          for (const verb of ["send", "whoami", "list"]) {
+            process.exitCode = undefined;
+            const args =
+              verb === "send"
+                ? sendArgs(stub.origin, ["--token", capturedHelp])
+                : ["a2a", verb, "--origin", stub.origin, "--token", capturedHelp, "--json"];
+            yield* runCli(args);
+            assert.equal(process.exitCode, A2A_EXIT_CODES.unauthenticated, verb);
+            assert.equal(lastJson().error, "token_malformed", verb);
+          }
+          assert.equal(stub.requests.length, 0);
+        }),
+    ),
+);
+
+it.live("treats an origin that is not an http(s) URL as a usage error", () =>
+  Effect.gen(function* () {
+    for (const origin of ["127.0.0.1:3773", "ftp://127.0.0.1"]) {
+      process.exitCode = undefined;
+      yield* runCli(["a2a", "whoami", "--origin", origin, "--token", "t", "--json"]);
+      assert.equal(process.exitCode, A2A_EXIT_CODES.usage, origin);
+      assert.equal(lastJson().error, "usage", origin);
+    }
+  }),
+);
+
 it.live("lists the roster as one line per participant and answers whoami", () => {
   const roster = {
     participants: [

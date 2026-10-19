@@ -99,7 +99,7 @@ The platform names five kinds of silence: the turn ended without the owed reply;
 
 ## Envelopes
 
-Every delivered message is wrapped in an **envelope**: the platform's wrapper that tells the receiving agent who sent this and from which project — and, for a sender on a peer server, which server — what it now owes and how to discharge it, and the measured time. A machine participant's envelope says that the sender is automated and cannot receive a reply, so the agent acts on the message directly and takes any question to a person or a peer. An outside agent's envelope names it by its label and its id, names no project, and says that `j5_send_message` cannot reply to it. Envelope wording is versioned configuration rendered from one place, so the channels never drift, and it is written in plain words for an agent reading it in the middle of its work. People reading the app see the letter, not the envelope.
+Every delivered message is wrapped in an **envelope**: the platform's wrapper that tells the receiving agent who sent this and from which project — and, for a sender on a peer server, which server — and what it now owes and how to discharge it. A machine participant's envelope says that the sender is automated and cannot receive a reply, so the agent acts on the message directly and takes any question to a person or a peer. An outside agent's envelope names it by its label and its id, names no project, and says that `j5_send_message` cannot reply to it. Envelope wording is versioned configuration rendered from one place, so the channels never drift, and it is written in plain words for an agent reading it in the middle of its work. People reading the app see the letter, not the envelope.
 
 ## Vocabulary this definition owns
 
@@ -145,7 +145,7 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 
 ### Envelopes
 
-22. Every delivered message carries an envelope naming the sender, the sender's project by its id with its title beside it, the sender's server when it is a peer server, what is owed, and the measured time.
+22. Every delivered message carries an envelope naming the sender, the sender's project by its id with its title beside it, the sender's server when it is a peer server, and what is owed.
 23. The answer a person gives in the inbox reaches the agent wrapped in an envelope that says the Exchange is closed and no further reply is owed.
 
 ### Machine participants
@@ -208,3 +208,4 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 - 2026-10-11 — a sending agent may ask for a steer or a restart; the queue stays the default and the GPT 6 exception stands. AC13 and AC14 rewritten: AC14 no longer says only a person steers (Jackson, [#519](https://github.com/Jacksondr5/j5code/issues/519)).
 - 2026-10-12 — outside agents: an agent signed in from outside the app is a participant for each sign-in, with no thread and no project. It sends plain messages to agents on its own server, recorded in the receiver's project and capped on every send by the level the sign-in was approved at. Nothing is delivered to it. It starts agents in a project it names, at the top level, under the same cap, personas included. AC30–AC40 and the two terminal scenarios (Jackson, 2026-10-11; [#498](https://github.com/Jacksondr5/j5code/issues/498)).
 - 2026-10-12 — a queued message removed before it ran is told to its sender; the delivery receipt is stated as joining the queue, with no stored queued status; AC41 (Jackson, [#504](https://github.com/Jacksondr5/j5code/issues/504)).
+- 2026-10-18 — envelopes no longer carry the measured time (former R25). It was a bet that agents would act on elapsed time, never built; scheduled tasks, silence notices and the inbox's open-for time cover the needs it named. Whether agents should be told the time is a broader question, not one for the envelope (Jackson, [#29](https://github.com/Jacksondr5/j5code/issues/29)).

@@ -10,7 +10,7 @@ const isMissingThread = Schema.is(ProjectionStoreThreadNotFoundError);
 
 /**
  * Resolves the workspace a playbook request targets: the project root, or the thread's
- * worktree when a thread is given. Returns null when the project or thread is gone or
+ * worktree when a thread is given. Environment-only requests use an empty workspace root. Returns null when the project or thread is gone or
  * belongs to another project; other failures pass through unchanged for the caller to map.
  */
 export const resolvePlaybookWorkspaceRoot = (
@@ -19,6 +19,7 @@ export const resolvePlaybookWorkspaceRoot = (
   input: PlaybookLibraryRequest,
 ) =>
   Effect.gen(function* () {
+    if (input.projectId === undefined) return input.threadId === undefined ? "" : null;
     const project = yield* projects.getById(input.projectId);
     if (Option.isNone(project) || project.value.deletedAt !== null) return null;
     let root = project.value.workspaceRoot;

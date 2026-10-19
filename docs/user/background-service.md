@@ -28,7 +28,7 @@ J5 releases up to 0.0.43 installed the service as `t3code.service` /
 `j5 service install` replaces that old service automatically, but only when its
 unit names `J5CODE_HOME`; a T3 Code service is never touched. Settings you added
 to the old unit, such as systemd drop-ins in `t3code.service.d/`, do not move on
-their own; see [Migrating to release archives](./migrating-to-release-archives.md).
+their own; see [Migrating to release archives](../j5/user/migrating-to-release-archives.md).
 
 `j5 update` downloads the newest release on your channel and switches `j5`
 and the service to it. Restarting interrupts running agent turns, terminals,

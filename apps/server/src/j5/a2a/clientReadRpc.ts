@@ -1,6 +1,5 @@
 import { AuthAccessReadScope, AuthOrchestrationReadScope, ThreadId } from "@t3tools/contracts";
 import {
-  J5ActionError,
   J5_CLIENT_READ_WS_METHODS,
   type FleetReadRequest,
   type HumanInboxListRequest,
@@ -54,14 +53,9 @@ const inboxFailure = failAsJ5ActionError({
 
 const failed = (message: string) => failAsJ5ActionError({ refusals: [], failed: message });
 
-const decodeParticipantIds = Schema.decodeUnknownEffect(Schema.Array(ParticipantId));
-/** The wire carries participant ids as plain strings; one that is not an id is the caller's mistake. */
-const participantIds = (ids: ReadonlyArray<string>) =>
-  decodeParticipantIds(ids).pipe(
-    Effect.mapError(
-      () => new J5ActionError({ code: "invalid_request", message: "A participant id is invalid." }),
-    ),
-  );
+/** An id that is not one names nobody, so it stays unknown rather than failing the ids beside it. */
+const isParticipantId = Schema.is(ParticipantId);
+
 /** Handlers for `J5ClientReadRpcGroup`: each calls one service method and maps its failure. */
 export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers")(function* (
   session: SessionIdentity,
@@ -149,13 +143,9 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
         .preArchiveFacts(input.threadId)
         .pipe(Effect.catch(failed("Pre-archive fact lookup failed."))),
     [METHODS.readParticipantIdentities]: (input: ParticipantIdentitiesRequest) =>
-      participantIds(input.participantIds).pipe(
-        Effect.flatMap((ids) =>
-          clientReads
-            .participantIdentities({ participantIds: ids })
-            .pipe(Effect.catch(failed("Client read failed."))),
-        ),
-      ),
+      clientReads
+        .participantIdentities({ participantIds: input.participantIds.filter(isParticipantId) })
+        .pipe(Effect.catch(failed("Client read failed."))),
     [METHODS.listPeers]: () => peers.list.pipe(Effect.catch(failed("Listing peers failed."))),
     [METHODS.subscribeReadChanges]: () => changes.changes,
   };

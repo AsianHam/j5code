@@ -187,7 +187,7 @@ it.effect("refuses an inbox person the registry does not hold in its own words",
   }),
 );
 
-it.effect("keeps identity requests exact, ordered, and total, and refuses an id that is none", () =>
+it.effect("keeps identity requests exact, ordered, and total, and drops an id that is none", () =>
   Effect.gen(function* () {
     const alpha = ParticipantId.make("agent:client-reads:alpha");
     const unknown = ParticipantId.make("agent:client-reads:unknown");
@@ -213,11 +213,9 @@ it.effect("keeps identity requests exact, ordered, and total, and refuses an id 
     });
     assert.deepStrictEqual(received, [[unknown, alpha, unknown]]);
 
-    assert.deepStrictEqual(yield* refusalOf(identities({ participantIds: [alpha, ""] })), {
-      code: "invalid_request",
-      message: "A participant id is invalid.",
-    });
-    assert.lengthOf(received, 1);
+    // An id that does not decode names nobody: it is left out, and the ids beside it still resolve.
+    assert.deepStrictEqual(yield* identities({ participantIds: [alpha, ""] }), { entries });
+    assert.deepStrictEqual(received[1], [alpha]);
 
     assert.deepStrictEqual(yield* handlers[METHODS.readOpenInboxCount]({}), {
       personId: LOCAL_PERSON,

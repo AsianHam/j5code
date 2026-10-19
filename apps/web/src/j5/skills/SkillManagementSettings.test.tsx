@@ -12,6 +12,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { SkillInventoryPanel } from "./SkillManagementSettings";
 
 const state = vi.hoisted(() => ({
+  notify: vi.fn(),
   providers: [] as ReadonlyArray<ServerProvider>,
   refresh: vi.fn(),
   preview: vi.fn(),
@@ -24,6 +25,12 @@ const state = vi.hoisted(() => ({
   refreshLinks: vi.fn(),
   links: [] as ReadonlyArray<ManagedSkillLink>,
   catalogSource: "/catalog",
+  lockedProject: null as null | {
+    id: string;
+    environmentId: string;
+    title: string;
+    workspaceRoot: string;
+  },
 }));
 // A command's permission atom is the string "permission"; every session here may operate.
 vi.mock("@effect/atom-react", () => ({
@@ -34,6 +41,9 @@ vi.mock("../../state/environments", () => ({
     connection: { phase: "connected" },
     serverConfig: { settings: { skillCatalogSource: state.catalogSource } },
   }),
+}));
+vi.mock("../settingsScopeEnvironment.logic", () => ({
+  lockedSettingsScopeProject: () => state.lockedProject,
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [
@@ -92,7 +102,8 @@ vi.mock("../../state/use-atom-command", () => ({
   },
 }));
 vi.mock("../../components/ui/dialog", () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => children,
+  Dialog: ({ children, open }: { children: React.ReactNode; open: boolean }) =>
+    open ? children : null,
   DialogPopup: ({ children }: { children: React.ReactNode }) => <div role="dialog">{children}</div>,
   DialogDescription: ({ children }: { children: React.ReactNode }) => <p>{children}</p>,
   DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -102,7 +113,44 @@ vi.mock("../../components/ui/dialog", () => ({
 }));
 vi.mock("../../components/settings/settingsLayout", () => ({
   SettingsPageContainer: () => null,
-  SettingsSection: () => null,
+  SettingsSection: ({
+    children,
+    title,
+    headerAction,
+  }: {
+    children: React.ReactNode;
+    title: string;
+    headerAction?: React.ReactNode;
+  }) => (
+    <section>
+      <h2>{title}</h2>
+      {headerAction}
+      {children}
+    </section>
+  ),
+  SettingsRow: ({
+    title,
+    description,
+    status,
+    control,
+    children,
+    role,
+  }: {
+    title: React.ReactNode;
+    description?: React.ReactNode;
+    status?: React.ReactNode;
+    control?: React.ReactNode;
+    children?: React.ReactNode;
+    role?: string;
+  }) => (
+    <div role={role}>
+      <h3>{title}</h3>
+      <p>{description}</p>
+      {status}
+      {control}
+      {children}
+    </div>
+  ),
 }));
 vi.mock("../../components/settings/providerDriverMeta", () => ({
   getDriverOption: () => undefined,
@@ -129,11 +177,11 @@ vi.mock("../../components/ui/select", () => ({
   SelectTrigger: () => null,
   SelectValue: () => null,
 }));
+vi.mock("../../components/ui/toast", () => ({ toastManager: { add: state.notify } }));
+
 vi.mock("../../components/ui/button", () => ({
-  Button: ({ children, onClick, disabled }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
-    <button onClick={onClick} disabled={disabled}>
-      {children}
-    </button>
+  Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button {...props}>{children}</button>
   ),
 }));
 vi.mock("../../components/ui/input", () => ({
@@ -144,9 +192,24 @@ vi.mock("../../components/ui/badge", () => ({
 }));
 vi.mock("../../components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => children,
-  TooltipTrigger: ({ children }: { children: React.ReactNode }) => <code>{children}</code>,
-  TooltipPopup: ({ children }: { children: React.ReactNode }) => (
-    <div role="tooltip">{children}</div>
+  TooltipTrigger: ({ render }: { render: React.ReactElement }) => render,
+  TooltipPopup: () => null,
+}));
+vi.mock("../../components/ui/menu", () => ({
+  Menu: ({ children }: { children: React.ReactNode }) => children,
+  MenuTrigger: ({
+    children,
+    render: _render,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & { render: React.ReactElement }) => (
+    <button {...props}>{children}</button>
+  ),
+  MenuPopup: ({ children }: { children: React.ReactNode }) => children,
+  MenuSeparator: () => <hr />,
+  MenuItem: ({ children, onClick, disabled }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button onClick={onClick} disabled={disabled}>
+      {children}
+    </button>
   ),
 }));
 
@@ -156,7 +219,10 @@ const checkedAt = "2026-09-18T00:00:00Z";
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.notify.mockReset();
   state.catalogSource = "/catalog";
+  state.lockedProject = null;
   state.links = [];
   state.inspect.mockReset().mockResolvedValue({ _tag: "Success", value: [] });
   state.unlink.mockReset();
@@ -231,6 +297,14 @@ async function renderPanel() {
   });
   return renderer!;
 }
+async function renderProjectPanel() {
+  const panel = await renderPanel();
+  await act(async () =>
+    panel.root.findAllByType("select")[0]!.props.onChange({ target: { value: "first" } }),
+  );
+  return panel;
+}
+
 function renderedText() {
   return JSON.stringify(renderer!.toJSON());
 }
@@ -244,8 +318,24 @@ function discoveryText() {
   return textContent(renderer!.root.findByProps({ role: "status" }));
 }
 function inventoryText() {
-  return renderer!.root.findAllByType("table").map(textContent).join(" ");
+  return inventoryLists().map(textContent).join(" ");
 }
+function inventoryStatusLabels() {
+  return inventoryItems().flatMap((row) =>
+    row.findAllByProps({ role: "img" }).map((node) => node.props["aria-label"]),
+  );
+}
+function inventoryLists() {
+  return renderer!.root.findAll((node) => node.type === "div" && node.props.role === "list");
+}
+function inventoryItems() {
+  return renderer!.root.findAll((node) => node.type === "div" && node.props.role === "listitem");
+}
+async function openDetails() {
+  await act(async () => buttonNamed("Details").props.onClick());
+  return renderer!.root.findByProps({ role: "dialog" });
+}
+
 function refreshButton() {
   return renderer!.root
     .findAllByType("button")
@@ -254,8 +344,68 @@ function refreshButton() {
 function categoryButton(origin: string) {
   return renderer!.root
     .findAllByType("button")
-    .find((button) => textContent(button).trimStart().startsWith(`${origin} `))!;
+    .find((button) => button.props["aria-label"]?.endsWith(`${origin} skills`))!;
 }
+
+it("uses the explicit settings project instead of an environment-wide default", async () => {
+  state.lockedProject = {
+    id: "second",
+    environmentId: "env",
+    title: "Second project",
+    workspaceRoot: "/second",
+  };
+  await renderPanel();
+  expect(state.refresh).toHaveBeenCalledExactlyOnceWith({
+    environmentId,
+    input: { instanceId, cwd: "/second" },
+  });
+  expect(renderer!.root.findAllByType("select")).toHaveLength(1);
+});
+
+it.each(["ready", "unchecked", "failed"])(
+  "exposes empty-provider availability as %s through compact status indicators",
+  async (discovery) => {
+    linkableSkill();
+    const claude = state.providers[1]!;
+    state.providers = [
+      state.providers[0]!,
+      {
+        ...claude,
+        // An instance that is off is hidden when empty, so "unchecked" is one
+        // that is on but has not reported ready yet.
+        status: discovery === "failed" ? "error" : discovery === "unchecked" ? "warning" : "ready",
+      },
+    ];
+    await renderPanel();
+    const row = inventoryItems()[0]!;
+    expect(textContent(row)).toContain("codex");
+    expect(textContent(row)).toContain("claudeAgent");
+    const statuses = row.findAllByProps({ role: "img" }).map((node) => node.props["aria-label"]);
+    expect(statuses).toContain("codex: review · Enabled");
+    expect(statuses).toContain(
+      `claudeAgent: review · ${discovery === "ready" ? "Not detected" : "Unknown"}`,
+    );
+    expect(textContent(row)).not.toMatch(/Enabled|Disabled|Not detected|Unknown/);
+    expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
+  },
+);
+
+it("does not show session-restart guidance when making a skill available changes nothing", async () => {
+  linkableSkill();
+  state.create.mockResolvedValue({
+    _tag: "Success",
+    value: {
+      action: "unchanged",
+      discovery: "detected",
+      message: "Already linked. Nothing changed.",
+    },
+  });
+  await renderPanel();
+  await act(async () => buttonNamed("Make available to…").props.onClick());
+  await act(async () => buttonNamed("Make available").props.onClick());
+  expect(renderedText()).toContain("Nothing changed.");
+  expect(renderedText()).not.toContain("Restart agent session");
+});
 
 it("shows matching skills while typing and updates rows when discovery changes", async () => {
   state.providers = [
@@ -292,7 +442,7 @@ it("shows matching skills while typing and updates rows when discovery changes",
   await act(async () => panel.update(<SkillInventoryPanel environmentId={environmentId} />));
 });
 
-it("requests missing discovery for the first project and selection changes, with an environment-only view", async () => {
+it("starts environment-wide and only requests workspace discovery after a project is selected", async () => {
   state.providers = [
     {
       ...state.providers[0]!,
@@ -315,16 +465,19 @@ it("requests missing discovery for the first project and selection changes, with
     },
   ];
   const panel = await renderPanel();
-  const skillRow = panel.root
-    .findAllByType("tr")
-    .find((row) => row.findAllByType("td").length === 2)!;
-  const providerCell = skillRow.findAllByType("td")[1]!;
-  expect(textContent(providerCell)).toContain("review");
-  expect(textContent(providerCell)).toContain("tools:review");
-  expect(textContent(providerCell)).toContain("/skills/review/SKILL.md");
-  expect(textContent(providerCell)).toContain("/plugins/review/SKILL.md");
-  expect(textContent(providerCell)).toContain("Disabled");
-  expect(textContent(providerCell)).toContain("User only");
+  expect(panel.root.findAllByType("select")[0]!.props.value).toBe("");
+  expect(state.refresh).not.toHaveBeenCalled();
+  expect(discoveryText()).toContain("Checked");
+  await act(async () =>
+    panel.root.findAllByType("select")[0]!.props.onChange({ target: { value: "first" } }),
+  );
+  const providerDetails = await openDetails();
+  expect(textContent(providerDetails)).toContain("review");
+  expect(textContent(providerDetails)).toContain("tools:review");
+  expect(textContent(providerDetails)).toContain("/skills/review/SKILL.md");
+  expect(textContent(providerDetails)).toContain("/plugins/review/SKILL.md");
+  expect(textContent(providerDetails)).toContain("Disabled");
+  expect(textContent(providerDetails)).toContain("User only");
   expect(state.refresh).toHaveBeenCalledExactlyOnceWith({
     environmentId,
     input: { instanceId, cwd: "/first" },
@@ -362,7 +515,7 @@ it("replaces an existing workspace on manual instance refresh, retains stale row
       workspaceSnapshots: [{ cwd: "/first", checkedAt, skills: [old], slashCommands: [] }],
     },
   ];
-  await renderPanel();
+  await renderProjectPanel();
   expect(state.refresh).not.toHaveBeenCalled();
   expect(renderedText()).toContain("old-skill");
   state.refresh.mockImplementation(() => {
@@ -389,18 +542,18 @@ it("replaces an existing workspace on manual instance refresh, retains stale row
   await act(async () => refreshButton().props.onClick());
   expect(renderedText()).toContain("new-skill");
   expect(discoveryText()).toContain("Refresh failed");
-  expect(inventoryText()).toContain("Stale");
+  expect(inventoryStatusLabels()).toContain("codex: new-skill · Unknown · Stale");
   state.refresh.mockImplementation(() =>
     Promise.resolve({ _tag: "Success", value: { providers: state.providers } }),
   );
   await act(async () => refreshButton().props.onClick());
   expect(discoveryText()).not.toContain("Refresh failed");
-  expect(inventoryText()).not.toContain("Stale");
+  expect(inventoryStatusLabels()).toContain("codex: new-skill · Enabled");
 });
 
 it("clears a transport failure when selecting an unchecked project succeeds later", async () => {
   state.refresh.mockResolvedValue({ _tag: "Failure" });
-  const panel = await renderPanel();
+  const panel = await renderProjectPanel();
   expect(discoveryText()).toContain("Refresh failed");
   await act(async () =>
     panel.root.findAllByType("select")[0]!.props.onChange({ target: { value: "" } }),
@@ -482,34 +635,25 @@ it("preserves provider-specific metadata when filtering a shared location and la
       ],
     },
   ];
-  const panel = await renderPanel();
-  for (const header of panel.root.findAllByType("thead")) {
-    expect(textContent(header)).toContain("codex (codex-work)");
-  }
-  const row = panel.root
-    .findAllByType("tr")
-    .find(
-      (entry) => entry.findAllByType("td").length === 6 && textContent(entry).includes("review"),
-    )!;
-  const cells = row.findAllByType("td");
-  expect(textContent(cells[3]!)).toContain("Not detected");
-  expect(textContent(cells[4]!)).toContain("Not checked");
-  expect(textContent(cells[5]!)).toContain("Refresh failed");
-  expect(textContent(row)).not.toContain("Stale");
+  const panel = await renderProjectPanel();
+  expect(inventoryText()).toContain("codex (codex-work)");
+  const details = await openDetails();
+  expect(textContent(details)).toContain("Not detected");
+  expect(textContent(details)).toContain("Not checked");
+  expect(textContent(details)).toContain("Refresh failed");
+  expect(inventoryStatusLabels().join(" ")).not.toContain("review · Unknown · Stale");
   await act(async () =>
     panel.root.findAllByType("select")[1]!.props.onChange({ target: { value: secondId } }),
   );
-  const selectedRow = panel.root
-    .findAllByType("tr")
-    .find((entry) => entry.findAllByType("td").length === 2)!;
-  expect(textContent(selectedRow)).toContain("audit");
-  expect(textContent(selectedRow)).toContain("audit@team");
-  expect(textContent(selectedRow)).toContain("Agent only");
-  expect(textContent(selectedRow)).not.toContain("/codex/review/SKILL.md");
-  expect(textContent(panel.root.findByType("thead"))).not.toContain("codex-personal");
+  const selectedDetails = await openDetails();
+  expect(textContent(selectedDetails)).toContain("audit");
+  expect(textContent(selectedDetails)).toContain("audit@team");
+  expect(textContent(selectedDetails)).toContain("Agent only");
+  expect(textContent(selectedDetails)).not.toContain("/codex/review/SKILL.md");
+  expect(inventoryText()).not.toContain("codex-personal");
 });
 
-it("hides empty providers in the current scope, retains cached skills, and keeps empty supported providers selectable and refreshable", async () => {
+it("shows empty supported providers, retains cached skills, and keeps them selectable and refreshable", async () => {
   const first = state.providers[0]!;
   const claudeId = ProviderInstanceId.make("claudeAgent");
   const skill = { name: "review", path: "/review/SKILL.md", enabled: true };
@@ -543,23 +687,22 @@ it("hides empty providers in the current scope, retains cached skills, and keeps
       skills: [{ ...skill, name: "deploy", path: "/deploy/SKILL.md" }],
     },
   ];
-  const panel = await renderPanel();
-  const headers = () =>
-    panel.root.findAllByType("thead").map((header) => header.findAllByType("th").map(textContent));
-  // The mocked registry has no OpenCode client, so its icon falls back to initials.
-  expect(headers()).toEqual([["Skill", "Codex Codex", "OP OpenCode OpenCode"]]);
-  expect(discoveryText()).not.toContain("Claude");
+  const panel = await renderProjectPanel();
+  expect(discoveryText()).toContain("Codex");
+  expect(discoveryText()).toContain("OpenCode");
+  expect(discoveryText()).toContain("Claude");
   expect(discoveryText()).not.toContain("Antigravity");
-  expect(inventoryText()).toContain("Stale");
+  expect(inventoryStatusLabels()).toContain("OpenCode: deploy · Unknown · Stale");
   expect(textContent(panel.root.findAllByType("select")[1]!)).toContain("Claude");
   await act(async () =>
     panel.root.findByType("input").props.onChange({ target: { value: "review" } }),
   );
-  expect(headers()).toEqual([["Skill", "Codex Codex", "OP OpenCode OpenCode"]]);
+  expect(discoveryText()).toContain("Codex");
+  expect(discoveryText()).toContain("OpenCode");
   await act(async () =>
     panel.root.findAllByType("select")[1]!.props.onChange({ target: { value: claudeId } }),
   );
-  expect(panel.root.findAllByType("table")).toHaveLength(0);
+  expect(inventoryItems()).toHaveLength(0);
   expect(discoveryText()).toContain("Claude");
   expect(discoveryText()).toContain("Checked");
   expect(renderedText()).toContain("No skills reported for this selection");
@@ -571,7 +714,10 @@ it("hides empty providers in the current scope, retains cached skills, and keeps
   await act(async () =>
     panel.root.findAllByType("select")[0]!.props.onChange({ target: { value: "" } }),
   );
-  expect(headers()).toEqual([["Skill", "Claude Claude", "OP OpenCode OpenCode"]]);
+  expect(inventoryText()).toContain("Claude");
+  expect(discoveryText()).toContain("OpenCode");
+  expect(inventoryText()).toContain("Codex");
+  expect(inventoryStatusLabels()).toContain("Codex: review · Not detected");
 });
 
 it("groups skills in origin order, collapses categories independently, and reveals search matches", async () => {
@@ -590,10 +736,9 @@ it("groups skills in origin order, collapses categories independently, and revea
       workspaceSnapshots: [{ cwd: "/first", checkedAt, skills, slashCommands: [] }],
     },
   ];
-  const panel = await renderPanel();
-  const tableNames = () =>
-    panel.root.findAllByType("table").map((table) => table.props["aria-label"]);
-  expect(tableNames()).toEqual([
+  const panel = await renderProjectPanel();
+  const listNames = () => inventoryLists().map((list) => list.props["aria-label"]);
+  expect(listNames()).toEqual([
     "Plugin skill inventory",
     "Catalog skill inventory",
     "Project skill inventory",
@@ -601,10 +746,11 @@ it("groups skills in origin order, collapses categories independently, and revea
     "Built-in skill inventory",
     "Other skill inventory",
   ]);
-  expect(textContent(categoryButton("Plugin"))).toContain("2");
-  for (const header of panel.root.findAllByType("thead")) {
-    expect(header.findAllByType("th").map(textContent)).toEqual(["Skill", "codex codex"]);
-  }
+  expect(
+    textContent(
+      panel.root.findAllByType("h2").find((heading) => textContent(heading) === "Plugin (2)")!,
+    ),
+  ).toBe("Plugin (2)");
 
   await act(async () => categoryButton("Plugin").props.onClick({}));
   // The node renderer has no DOM for Base UI to finish panel transitions.
@@ -622,8 +768,8 @@ it("groups skills in origin order, collapses categories independently, and revea
   await act(async () =>
     panel.root.findByType("input").props.onChange({ target: { value: "review" } }),
   );
-  expect(tableNames()).toEqual(["Plugin skill inventory"]);
-  expect(textContent(categoryButton("Plugin"))).toContain("1");
+  expect(listNames()).toEqual(["Plugin skill inventory"]);
+  expect(panel.root.findAllByType("h2").map(textContent)).toContain("Plugin (1)");
   expect(categoryButton("Plugin").props["aria-expanded"]).toBe(true);
   expect(inventoryText()).toContain("review");
   expect(inventoryText()).not.toContain("build");
@@ -707,7 +853,7 @@ it("offers only Codex and Claude instances in the inventory filter and link dest
     "claude-work",
     "codex-home",
   ]);
-  await act(async () => buttonNamed("Link…").props.onClick());
+  await act(async () => buttonNamed("Make available to…").props.onClick());
   const destination = panel.root.findByProps({ role: "dialog" }).findAllByType("select")[0]!;
   expect(options(destination)).toEqual(["codex-work", "claude-work", "codex-home"]);
   await act(async () => destination.props.onChange({ target: { value: "codex-home" } }));
@@ -716,19 +862,18 @@ it("offers only Codex and Claude instances in the inventory filter and link dest
 it("previews an environment-scoped destination before linking and separates creation from discovery", async () => {
   linkableSkill();
   await renderPanel();
-  await act(async () => buttonNamed("Link…").props.onClick());
+  await act(async () => buttonNamed("Make available to…").props.onClick());
   expect(state.preview).toHaveBeenLastCalledWith({
     environmentId,
     input: {
       source: { instanceId, path: "/shared/review/SKILL.md", name: "review" },
       targetInstanceId: "claude-work",
       scope: "user",
-      projectId: "first",
     },
   });
   expect(renderedText()).toContain("/home/.claude/skills/review");
   expect(state.create).not.toHaveBeenCalled();
-  await act(async () => buttonNamed("Link skill").props.onClick());
+  await act(async () => buttonNamed("Make available").props.onClick());
   expect(state.create).toHaveBeenLastCalledWith({
     environmentId,
     input: {
@@ -737,14 +882,18 @@ it("previews an environment-scoped destination before linking and separates crea
       expectedDestinationPath: "/home/.claude/skills/review",
     },
   });
+  expect(state.notify).toHaveBeenCalledWith(
+    expect.objectContaining({ description: expect.stringContaining("Restart agent session") }),
+  );
   expect(renderedText()).toContain("Link created. Discovery refresh failed.");
+  expect(renderedText()).toContain("Restart agent session");
   expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
   expect(state.refreshLinks).toHaveBeenCalledOnce();
 });
 it("defaults project skills to the selected project and discards a stale preview when scope changes", async () => {
   linkableSkill("project");
-  await renderPanel();
-  await act(async () => buttonNamed("Link…").props.onClick());
+  await renderProjectPanel();
+  await act(async () => buttonNamed("Make available to…").props.onClick());
   expect(state.preview.mock.calls[0]![0].input.scope).toBe("project");
   let resolve!: (value: unknown) => void;
   state.preview.mockImplementationOnce(
@@ -757,7 +906,7 @@ it("defaults project skills to the selected project and discards a stale preview
   await act(async () =>
     dialog.findAllByType("select")[1]!.props.onChange({ target: { value: "user" } }),
   );
-  expect(buttonNamed("Link skill").props.disabled).toBe(true);
+  expect(buttonNamed("Make available").props.disabled).toBe(true);
   expect(renderedText()).not.toContain("/home/.claude/skills/review");
   await act(async () =>
     resolve({
@@ -774,7 +923,7 @@ it("defaults project skills to the selected project and discards a stale preview
     }),
   );
   expect(renderedText()).toContain("Nothing will be overwritten");
-  expect(buttonNamed("Link skill").props.disabled).toBe(true);
+  expect(buttonNamed("Make available").props.disabled).toBe(true);
   expect(state.create).not.toHaveBeenCalled();
 });
 it("keeps plugin rows read-only and broken managed links removable", async () => {
@@ -791,13 +940,14 @@ it("keeps plugin rows read-only and broken managed links removable", async () =>
     },
   ];
   await renderPanel();
-  expect(buttonNamed("Link…")).toBeUndefined();
-  expect(buttonNamed("Unlink…")).toBeUndefined();
+  expect(buttonNamed("Make available to…")).toBeUndefined();
+  expect(buttonNamed("Remove provider link…")).toBeUndefined();
   expect(renderedText()).not.toContain("Link unavailable");
   expect(renderedText()).toContain("Broken link");
-  await act(async () => buttonNamed("Unlink").props.onClick());
+  await act(async () => buttonNamed("Remove provider link").props.onClick());
   expect(state.remove).toHaveBeenCalledWith({ environmentId, input: { id: "owned-link" } });
   expect(renderedText()).toContain("Link removed. The source is unchanged.");
+  expect(renderedText()).toContain("Restart agent session");
 });
 
 it("explains an outdated server and keeps linking disabled when the preview RPC is unknown", async () => {
@@ -807,10 +957,10 @@ it("explains an outdated server and keeps linking disabled when the preview RPC 
     cause: Cause.die("Unknown request tag: j5.skills.links.preview"),
   });
   await renderPanel();
-  await act(async () => buttonNamed("Link…").props.onClick());
+  await act(async () => buttonNamed("Make available to…").props.onClick());
   expect(renderedText()).toContain("Update and restart the app or server hosting this environment");
   expect(renderedText()).not.toContain("Close and reopen");
-  expect(buttonNamed("Link skill").props.disabled).toBe(true);
+  expect(buttonNamed("Make available").props.disabled).toBe(true);
   expect(state.create).not.toHaveBeenCalled();
 });
 
@@ -838,7 +988,7 @@ it("lets changed links be forgotten and removes only their managed record", asyn
     });
   });
   await renderPanel();
-  expect(buttonNamed("Unlink")).toBeUndefined();
+  expect(buttonNamed("Remove provider link")).toBeUndefined();
   expect(buttonNamed("Forget record").props.disabled).toBe(false);
   await act(async () => buttonNamed("Forget record").props.onClick());
   expect(state.remove).toHaveBeenCalledWith({
@@ -871,7 +1021,7 @@ it("loads existing links only on demand after remount and unlinks one provider w
     panel.update(<SkillInventoryPanel key="restarted" environmentId={environmentId} />),
   );
   expect(state.inspect).not.toHaveBeenCalled();
-  await act(async () => buttonNamed("Unlink…").props.onClick());
+  await act(async () => buttonNamed("Remove provider link…").props.onClick());
   expect(state.inspect).toHaveBeenCalledOnce();
   expect(state.preview).not.toHaveBeenCalled();
   expect(renderedText()).toContain(options[1]!.request.expectedDestinationPath);
@@ -883,7 +1033,7 @@ it("loads existing links only on demand after remount and unlinks one provider w
       refreshFailed: false,
     },
   });
-  await act(async () => buttonNamed("Unlink").props.onClick());
+  await act(async () => buttonNamed("Remove provider link").props.onClick());
   expect(state.unlink).toHaveBeenCalledWith({
     environmentId,
     input: { links: [options[0]!.request] },
@@ -891,7 +1041,7 @@ it("loads existing links only on demand after remount and unlinks one provider w
   expect(renderedText()).not.toContain(options[0]!.request.expectedDestinationPath);
   expect(renderedText()).toContain(options[1]!.request.expectedDestinationPath);
   expect(renderedText()).toContain("1 link removed. Source files stay in place.");
-  expect(buttonNamed("Unlink all")).toBeUndefined();
+  expect(buttonNamed("Remove all shown links")).toBeUndefined();
   expect(state.inspect).toHaveBeenCalledOnce();
 });
 it("unlinks both providers in one request and keeps failed links available to retry", async () => {
@@ -899,7 +1049,7 @@ it("unlinks both providers in one request and keeps failed links available to re
   const options = existingLinks();
   state.inspect.mockResolvedValue({ _tag: "Success", value: options });
   await renderPanel();
-  await act(async () => buttonNamed("Unlink…").props.onClick());
+  await act(async () => buttonNamed("Remove provider link…").props.onClick());
   state.unlink.mockResolvedValue({
     _tag: "Success",
     value: {
@@ -913,7 +1063,7 @@ it("unlinks both providers in one request and keeps failed links available to re
       refreshFailed: true,
     },
   });
-  await act(async () => buttonNamed("Unlink all").props.onClick());
+  await act(async () => buttonNamed("Remove all shown links").props.onClick());
   expect(state.unlink).toHaveBeenCalledOnce();
   expect(state.unlink).toHaveBeenCalledWith({
     environmentId,
@@ -922,7 +1072,7 @@ it("unlinks both providers in one request and keeps failed links available to re
   expect(renderedText()).toContain("Link changed since preview");
   expect(renderedText()).toContain("Discovery refresh failed");
   expect(renderedText()).toContain(options[1]!.request.expectedDestinationPath);
-  expect(buttonNamed("Unlink").props.disabled).toBe(false);
+  expect(buttonNamed("Remove provider link").props.disabled).toBe(false);
   expect(state.refreshLinks).toHaveBeenCalledOnce();
 });
 it("shows inspection errors without leaving an endless loading state", async () => {
@@ -932,7 +1082,7 @@ it("shows inspection errors without leaving an endless loading state", async () 
     cause: Cause.die("Unknown request tag: j5.skills.links.inspect"),
   });
   await renderPanel();
-  await act(async () => buttonNamed("Unlink…").props.onClick());
+  await act(async () => buttonNamed("Remove provider link…").props.onClick());
   expect(renderedText()).toContain("Update and restart");
   expect(renderedText()).not.toContain("Checking existing links");
   expect(state.unlink).not.toHaveBeenCalled();
@@ -943,8 +1093,11 @@ it("keeps built-in skill rows read-only while showing their metadata and provide
   await renderPanel();
   const table = renderer!.root.findByProps({ "aria-label": "Built-in skill inventory" });
   expect(textContent(table)).toContain("review");
-  expect(textContent(table)).toContain("Enabled");
-  expect(table.findAllByType("button")).toHaveLength(0);
+  expect(textContent(table)).toContain("codex");
+  expect(buttonNamed("Make available to…")).toBeUndefined();
+  expect(buttonNamed("Remove provider link…")).toBeUndefined();
+  expect(buttonNamed("Delete source folder…")).toBeUndefined();
+  expect(textContent(await openDetails())).toContain("Enabled");
   expect(textContent(table)).not.toContain("Link unavailable");
   expect(state.preview).not.toHaveBeenCalled();
   expect(state.inspect).not.toHaveBeenCalled();
@@ -954,9 +1107,7 @@ it("warns with the exact folder, allows cancellation, and deletes only after exp
   linkableSkill();
   await renderPanel();
   expect(state.deletePreview).not.toHaveBeenCalled();
-  await act(async () => buttonNamed("Unlink…").props.onClick());
-  expect(state.deletePreview).not.toHaveBeenCalled();
-  await act(async () => buttonNamed("Delete skill…").props.onClick());
+  await act(async () => buttonNamed("Delete source folder…").props.onClick());
   expect(renderedText()).toContain("/home/.claude/skills/review");
   expect(renderedText()).toContain(
     "permanently deletes this skill folder and every file inside it",
@@ -964,10 +1115,16 @@ it("warns with the exact folder, allows cancellation, and deletes only after exp
   expect(renderedText()).toContain("This cannot be undone");
   expect(state.delete).not.toHaveBeenCalled();
   await act(async () => buttonNamed("Cancel").props.onClick());
-  expect(buttonNamed("Permanently delete")).toBeUndefined();
+  expect(buttonNamed("Permanently delete source folder")).toBeUndefined();
   expect(state.delete).not.toHaveBeenCalled();
-  await act(async () => buttonNamed("Delete skill…").props.onClick());
-  await act(async () => buttonNamed("Permanently delete").props.onClick());
+  await act(async () =>
+    renderer!.root
+      .findByProps({ role: "dialog" })
+      .findAllByType("button")
+      .find((button) => textContent(button) === "Delete source folder…")!
+      .props.onClick(),
+  );
+  await act(async () => buttonNamed("Permanently delete source folder").props.onClick());
   expect(state.delete).toHaveBeenCalledExactlyOnceWith({
     environmentId,
     input: {
@@ -979,6 +1136,19 @@ it("warns with the exact folder, allows cancellation, and deletes only after exp
   expect(renderedText()).toContain("Skill permanently deleted.");
   expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
 });
+it("requires unlinking existing links before offering deletion from the direct action", async () => {
+  linkableSkill();
+  const options = existingLinks();
+  state.inspect.mockResolvedValue({ _tag: "Success", value: options });
+  await renderPanel();
+  await act(async () => buttonNamed("Delete source folder…").props.onClick());
+  expect(renderedText()).toContain("Remove existing provider links before deleting");
+  expect(buttonNamed("Remove all shown links")).toBeDefined();
+  expect(buttonNamed("Permanently delete source folder")).toBeUndefined();
+  expect(state.deletePreview).not.toHaveBeenCalled();
+  expect(state.delete).not.toHaveBeenCalled();
+});
+
 it("keeps deletion unavailable after preview failure", async () => {
   linkableSkill();
   state.deletePreview.mockResolvedValue({
@@ -986,9 +1156,8 @@ it("keeps deletion unavailable after preview failure", async () => {
     cause: Cause.die("Only an original skill folder can be deleted. Use Unlink for links."),
   });
   await renderPanel();
-  await act(async () => buttonNamed("Unlink…").props.onClick());
-  await act(async () => buttonNamed("Delete skill…").props.onClick());
+  await act(async () => buttonNamed("Delete source folder…").props.onClick());
   expect(renderedText()).toContain("Use Unlink for links");
-  expect(buttonNamed("Permanently delete")).toBeUndefined();
+  expect(buttonNamed("Permanently delete source folder")).toBeUndefined();
   expect(state.delete).not.toHaveBeenCalled();
 });

@@ -1,6 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
+import { useConnectedEnvironmentIds } from "../../state/environments";
 import { readParticipantIdentities, readParticipantLabels } from "./archiveFlowClient";
 
 export interface ParticipantIdentities {
@@ -11,7 +12,11 @@ export interface ParticipantIdentities {
 
 const NO_IDENTITIES: ParticipantIdentities = { labels: new Map(), threads: new Map() };
 
-/** One identity read for every J5 surface; unknowns deliberately stay absent. */
+/**
+ * One identity read for every J5 surface; unknowns deliberately stay absent. A read sent before
+ * the environment connects fails, so the read waits for the connection and runs again on each
+ * reconnect: a page load, a secondary environment, or a server restart.
+ */
 export function useParticipantIdentities(
   environmentId: EnvironmentId,
   participantIds: ReadonlyArray<string>,
@@ -19,6 +24,7 @@ export function useParticipantIdentities(
   const idsKey = Array.from(new Set(participantIds)).sort().join("\0");
   // A result answers one environment's ids; another environment's never stands in for it.
   const key = `${environmentId}\n${idsKey}`;
+  const connected = useConnectedEnvironmentIds().includes(environmentId);
   const [result, setResult] = useState({ key: "", identities: NO_IDENTITIES });
   useEffect(() => {
     const ids = idsKey === "" ? [] : idsKey.split("\0");
@@ -26,6 +32,7 @@ export function useParticipantIdentities(
       setResult({ key, identities: NO_IDENTITIES });
       return;
     }
+    if (!connected) return;
     let active = true;
     void readParticipantIdentities(environmentId, ids).then((next) => {
       if (active) setResult({ key, identities: next });
@@ -33,7 +40,7 @@ export function useParticipantIdentities(
     return () => {
       active = false;
     };
-  }, [environmentId, idsKey, key]);
+  }, [connected, environmentId, idsKey, key]);
   return result.key === key ? result.identities : NO_IDENTITIES;
 }
 

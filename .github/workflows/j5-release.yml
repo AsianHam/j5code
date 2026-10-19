@@ -523,7 +523,7 @@ jobs:
           - Command-line server for macOS (Apple silicon, signed and notarized) and Linux x64:
             \`curl -fsSL https://github.com/Jacksondr5/j5code/releases/latest/download/install.sh | sh\`,
             then \`j5\`. \`SHA256SUMS\` covers the archives and the installer.
-          - Upgrading a server installed from npm (0.0.43 or earlier)? See docs/user/migrating-to-release-archives.md.
+          - Upgrading a server installed from npm (0.0.43 or earlier)? See docs/j5/user/migrating-to-release-archives.md.
           - ZIP, blockmaps, and update metadata support desktop updates.
 
           Built from $RELEASE_SHA.

@@ -83,9 +83,9 @@ const SEAMS: ReadonlyArray<Seam> = [
   },
   {
     file: "features/threads/ThreadDetailScreen.tsx",
-    record: "case 45: native playbook board",
-    from: "../../j5/playbooks/PlaybookBoard",
-    reaches: ["<PlaybookBoard"],
+    record: "case 45: native playbook composer control",
+    from: "../../j5/playbooks/PlaybookComposerControl",
+    reaches: ["<PlaybookComposerControl"],
   },
   {
     file: "features/threads/ThreadComposer.tsx",

@@ -3,7 +3,7 @@ import type { PlaybookProgress } from "@t3tools/contracts/j5";
 import { createElement, useSyncExternalStore, type ReactNode } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { PlaybookBoard } from "./PlaybookBoard";
+import { PlaybookComposerControl } from "./PlaybookComposerControl";
 import { PlaybookRunsSection } from "./PlaybookRunsSection";
 
 const state = vi.hoisted(() => ({
@@ -115,7 +115,7 @@ it.each(["thread", "Fleet"] as const)(
     await act(async () => {
       renderer = create(
         surface === "thread"
-          ? createElement(PlaybookBoard, {
+          ? createElement(PlaybookComposerControl, {
               environmentId: EnvironmentId.make("env"),
               threadId: ThreadId.make("thread"),
             })

@@ -102,6 +102,17 @@ export class MigrateDevDbSlotCollisionError extends Schema.TaggedError<MigrateDe
   }
 }
 
+export class MigrateDevDbOrphanedRowsError extends Schema.TaggedError<MigrateDevDbOrphanedRowsError>()(
+  "MigrateDevDbOrphanedRowsError",
+  {
+    references: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `The snapshot copied rows whose parent it left behind: ${this.references.join(", ")}. Copy those rows with their thread, or clear the table.`;
+  }
+}
+
 export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhaseError>()(
   "MigrateDevDbPhaseError",
   {
@@ -230,6 +241,10 @@ const rootIsVisible = (sql: SqlClient.SqlClient) => sql`
  */
 const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath: string) {
   const sql = yield* SqlClient.SqlClient;
+  // Tables copy in sqlite_master order, which lists a rebuilt parent after its children. The
+  // check before commit still catches rows the thread filter orphans. SQLite ignores this
+  // pragma inside a transaction.
+  yield* sql.unsafe("PRAGMA foreign_keys = OFF").unprepared;
   yield* sql`ATTACH DATABASE ${`${NodeURL.pathToFileURL(sourcePath).href}?mode=ro`} AS src`;
   const schema = yield* sql<{ type: string; name: string; sql: string }>`
     SELECT type, name, sql FROM src.sqlite_master
@@ -272,6 +287,14 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
       yield* sql`INSERT INTO main.sqlite_sequence SELECT name, seq FROM src.sqlite_sequence`;
       for (const entry of schema) {
         if (entry.type !== "table") yield* sql.unsafe(entry.sql).unprepared;
+      }
+      const orphans = yield* sql.unsafe<{ table: string; parent: string }>(
+        "PRAGMA main.foreign_key_check",
+      ).unprepared;
+      if (orphans.length > 0) {
+        return yield* new MigrateDevDbOrphanedRowsError({
+          references: [...new Set(orphans.map((row) => `${row.table} -> ${row.parent}`))],
+        });
       }
     }),
   );

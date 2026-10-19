@@ -52,7 +52,7 @@ import { CrewRosterGate } from "../j5/crew/CrewRosterGate";
 import { useCanOperateThread } from "../j5/sharing/access";
 import { sharedMessageTypedText } from "../j5/sharing/sharedTimeline";
 import { expandPlaybookPrompt } from "@t3tools/client-runtime/j5/playbooks";
-import { PlaybookBoard } from "../j5/playbooks/PlaybookBoard";
+import { PlaybookComposerControl } from "../j5/playbooks/PlaybookComposerControl";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import {
@@ -2359,7 +2359,7 @@ export default function ChatView(props: ChatViewProps) {
         title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
         actions: (
           <>
-            {!environmentReconnecting ? (
+            {unavailableConnection.phase !== "connecting" ? (
               <Button
                 size="xs"
                 variant="ghost"
@@ -8054,14 +8054,6 @@ export default function ChatView(props: ChatViewProps) {
           />
         </header>
 
-        {isServerThread && (
-          <PlaybookBoard
-            key={`${activeThread.environmentId}:${activeThread.id}`}
-            environmentId={activeThread.environmentId}
-            threadId={activeThread.id}
-          />
-        )}
-
         <div className="relative flex min-h-0 min-w-0 flex-1">
           <ThreadFindCanvas
             findOptions={{
@@ -8403,6 +8395,15 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               queuedRunsControl={queuedRunsControl}
+                              threadProgressControl={
+                                isServerThread ? (
+                                  <PlaybookComposerControl
+                                    key={`${activeThread.environmentId}:${activeThread.id}`}
+                                    environmentId={activeThread.environmentId}
+                                    threadId={activeThread.id}
+                                  />
+                                ) : null
+                              }
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}

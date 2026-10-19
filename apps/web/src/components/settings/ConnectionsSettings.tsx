@@ -6,6 +6,7 @@ import {
   EllipsisIcon,
   PlusIcon,
   QrCodeIcon,
+  RefreshCwIcon,
   RouteIcon,
   TerminalIcon,
 } from "lucide-react";
@@ -1467,6 +1468,10 @@ function SavedBackendListRow({
   const isConnected = environment.connection.phase === "connected";
   const isRemoving = removingEnvironmentId === environmentId;
   const errorTraceId = environment.connection.traceId;
+  // A failed connection waits for a changed condition, such as a new pairing, so retrying it
+  // would only resend what was refused.
+  const canReconnect = enabled && environment.connection.phase === "reconnecting";
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
     target: "trace ID",
     onCopy: ({ traceId }) => {
@@ -1729,6 +1734,12 @@ function SavedBackendListRow({
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
           />
+          {canReconnect ? (
+            <MenuItem onClick={() => void retryEnvironment(environmentId)}>
+              <RefreshCwIcon />
+              Reconnect now
+            </MenuItem>
+          ) : null}
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
             <RouteIcon />
             {routesOpen ? "Hide routes" : "Routes"}
@@ -3938,11 +3949,8 @@ export function ConnectionsSettings() {
       ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
-      {/* J5: peering between this environment and another the client is connected to. */}
-      <PeerServersSettings
-        primaryEnvironmentId={primaryEnvironmentId}
-        canManage={!isLocalEnvironmentDisabled() && canWriteAccess}
-      />
+      {/* J5: peering between any two environments the client is connected to and manages. */}
+      <PeerServersSettings primaryEnvironmentId={primaryEnvironmentId} />
     </SettingsPageContainer>
   );
 }

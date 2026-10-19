@@ -1,426 +1,515 @@
-import { useGuestEnvironmentIds } from "../sharing/guestAccess";
-import {
-  ensurePlaybookAuthor,
-  playbookAuthorLaunch,
-  playbookStepLabel,
-  playbookWorkspaces,
-} from "@t3tools/client-runtime/j5/playbooks";
 import { useAtomValue } from "@effect/atom-react";
+import { useFocusEffect } from "@react-navigation/native";
+import { playbookStepLabel } from "@t3tools/client-runtime/j5/playbooks";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { memo, useCallback, useMemo, useRef, useState } from "react";
-import { Alert, Platform, Pressable, Share, View } from "react-native";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { PlaybookSource } from "@t3tools/contracts/j5";
+import { useCallback, useState } from "react";
+import { Alert, Modal, Pressable, ScrollView, Share, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
-import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
-import { beginForegroundHandoff } from "../../lib/foreground-handoff";
-import { useServerConfigs } from "../../state/entities";
+import { environmentProjects } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
-import { threadEnvironment } from "../../state/threads";
-import { agentPersonaEnvironment } from "../agents/agentPersonaAtoms";
+import { AgentFolderPickerModal } from "../agents/AgentFolderPickerModal";
+import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 import { j5Environment } from "../state";
-import { preparePlaybookDraft } from "./preparePlaybookDraft";
-import { playbookWorkspaceInputsAtom } from "./workspaceInputs";
+import { PlaybookConversationModal } from "./PlaybookConversationModal";
 
-export const PlaybookLibrarySettingsSection = memo(function PlaybookLibrarySettingsSection() {
-  const navigation = useNavigation();
+export function PlaybookLibrarySettingsSection({
+  environmentId,
+}: {
+  environmentId: EnvironmentId | null;
+}) {
   const { connectedEnvironments } = useRemoteConnectionStatus();
-  const workspaceInputs = useAtomValue(playbookWorkspaceInputsAtom);
-  const guestEnvironmentIds = useGuestEnvironmentIds();
-  const workspaces = useMemo(
-    () =>
-      // A guest is not offered a server's Playbooks (Shared server AC24).
-      playbookWorkspaces(workspaceInputs.projects, workspaceInputs.threads).filter(
-        (entry) => !guestEnvironmentIds.has(entry.environmentId),
-      ),
-    [guestEnvironmentIds, workspaceInputs],
+  const guests = useGuestEnvironmentIds();
+  const environments = connectedEnvironments.filter((entry) => !guests.has(entry.environmentId));
+  const environment = environments.find((entry) => entry.environmentId === environmentId);
+  return environment ? (
+    <PlaybookLibrary
+      key={environment.environmentId}
+      environmentId={environment.environmentId}
+      label={environment.environmentLabel}
+      environments={environments.map((entry) => ({
+        environmentId: entry.environmentId,
+        label: entry.environmentLabel,
+      }))}
+    />
+  ) : (
+    <Text className="p-4 text-muted-foreground">No environment connected.</Text>
   );
-  const [workspaceKey, setWorkspaceKey] = useState("");
-  const [deleting, setDeleting] = useState(false);
-  const [renaming, setRenaming] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<{ name: string; title: string } | null>(null);
-  const workspace = workspaces.find((entry) => entry.key === workspaceKey) ?? workspaces[0];
-  const query = useEnvironmentQuery(
-    workspace
-      ? j5Environment.playbookLibrary({
-          environmentId: workspace.environmentId,
-          input: {
-            projectId: workspace.projectId,
-            ...(workspace.threadId ? { threadId: workspace.threadId } : {}),
-          },
-        })
-      : null,
+}
+
+function PlaybookLibrary({
+  environmentId,
+  label,
+  environments,
+}: {
+  environmentId: EnvironmentId;
+  label: string;
+  environments: ReadonlyArray<{ environmentId: EnvironmentId; label: string }>;
+}) {
+  const projects = useAtomValue(environmentProjects.projectsAtom).filter(
+    (project) => project.environmentId === environmentId,
   );
-  const { refresh } = query;
-  // Creating, renaming and deleting a playbook change the workspace.
-  const canOperate = useAtomValue(
-    j5Environment.deletePlaybook.permissionAtom(workspace?.environmentId ?? null),
-  );
-  const deletePlaybook = useAtomCommand(j5Environment.deletePlaybook, { reportFailure: false });
-  const exportPlaybook = useAtomCommand(j5Environment.exportPlaybook, { reportFailure: false });
-  const renamePlaybook = useAtomCommand(j5Environment.renamePlaybook, { reportFailure: false });
-  const serverConfigs = useServerConfigs();
-  const readCatalog = useAtomQueryRunner(agentPersonaEnvironment.catalog, {
-    reportFailure: false,
-    refresh: true,
-  });
-  const createPersona = useAtomCommand(agentPersonaEnvironment.createAgentPersona, {
-    reportFailure: false,
-  });
-  const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const authorStarting = useRef(false);
-  const authorLaunch = useRef<{
-    workspaceKey: string;
-    target: Parameters<typeof startTurn>[0];
+  const [projectId, setProjectId] = useState<ProjectId | null>(null);
+  const project = projects.find((entry) => entry.id === projectId) ?? null;
+  // A project's .j5/playbooks files join the list and win over a same-named library copy.
+  const scope = project ? { projectId: project.id } : {};
+  const query = useEnvironmentQuery(j5Environment.playbookLibrary({ environmentId, input: scope }));
+  const sources = useEnvironmentQuery(j5Environment.playbookSources({ environmentId, input: {} }));
+  const canOperate = useAtomValue(j5Environment.savePlaybook.permissionAtom(environmentId));
+  const save = useAtomCommand(j5Environment.savePlaybook, { reportFailure: false });
+  const setFolders = useAtomCommand(j5Environment.setPlaybookFolders, { reportFailure: false });
+  const exportDefinition = useAtomCommand(j5Environment.exportPlaybook, { reportFailure: false });
+  const remove = useAtomCommand(j5Environment.deletePlaybook, { reportFailure: false });
+  const rename = useAtomCommand(j5Environment.renamePlaybook, { reportFailure: false });
+  const [picking, setPicking] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [name, setName] = useState("");
+  const [yaml, setYaml] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [conversation, setConversation] = useState<{ name: string | null } | null>(null);
+  const [details, setDetails] = useState<string | null>(null);
+  const [copyTarget, setCopyTarget] = useState<{
+    name: string;
+    destination: EnvironmentId;
+    source: PlaybookSource;
   } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{
+    name: string;
+    title: string;
+    source: PlaybookSource;
+  } | null>(null);
+  const canSaveDestination = useAtomValue(
+    j5Environment.savePlaybook.permissionAtom(copyTarget?.destination ?? environmentId),
+  );
+  const folderPaths = (sources.data?.folders ?? []).flatMap((entry) =>
+    entry.source.kind === "folder" ? [entry.source.path] : [],
+  );
+  const detail = query.data?.playbooks.find((entry) => entry.name === details);
+  const { refresh } = query;
   useFocusEffect(
     useCallback(() => {
       refresh();
     }, [refresh]),
   );
-  function openDraft(prompt: string) {
-    if (!workspace) return;
-    const draftId = preparePlaybookDraft(workspace, prompt);
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTaskDraft",
-      params: {
-        environmentId: workspace.environmentId,
-        projectId: workspace.projectId,
-        title: workspace.title,
-        draftId,
-      },
-    });
-  }
-  async function createPlaybook() {
-    if (!workspace || !query.data || creating || authorStarting.current) return;
-    authorStarting.current = true;
-    setCreating(true);
+  async function act(operation: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
     try {
-      const environmentId = workspace.environmentId;
-      const workspaceKey = JSON.stringify([workspace.key, query.data.workspaceRoot]);
-      if (authorLaunch.current?.workspaceKey !== workspaceKey) {
-        const modelSelection = await ensurePlaybookAuthor({
-          providers: serverConfigs.get(environmentId)?.providers ?? [],
-          readCatalog: async () => {
-            const result = await readCatalog({ environmentId, input: {} });
-            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-            return result.value;
-          },
-          createPersona: async (input) => {
-            const result = await createPersona({ environmentId, input });
-            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-          },
-        });
-        const metadata = makeTurnCommandMetadata();
-        authorLaunch.current = {
-          workspaceKey,
-          target: playbookAuthorLaunch({
-            workspace: { ...workspace, workspaceRoot: query.data.workspaceRoot },
-            modelSelection,
-            commandId: CommandId.make(metadata.commandId),
-            threadId: ThreadId.make(metadata.threadId),
-            messageId: MessageId.make(metadata.messageId),
-            createdAt: metadata.createdAt,
-          }),
-        };
-      }
-      const { target } = authorLaunch.current;
-      const result = await startTurn(target);
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      navigation.navigate("Thread", {
-        environmentId,
-        threadId: target.input.threadId,
-      });
-      authorLaunch.current = null;
+      await operation();
+      query.refresh();
+      sources.refresh();
     } catch (cause) {
-      Alert.alert(
-        "Could not start Playbook Author",
-        cause instanceof Error ? cause.message : "Try again.",
-      );
+      setError(cause instanceof Error ? cause.message : "Playbook action failed.");
     } finally {
-      authorStarting.current = false;
-      setCreating(false);
+      setBusy(false);
     }
   }
-  function confirmDelete(name: string) {
-    if (!workspace || deleting) return;
-    const selected = workspace;
-    Alert.alert("Delete playbook", `Delete ${name}.yaml from ${selected.title}?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () => {
-          setDeleting(true);
-          void (async () => {
-            try {
-              const result = await deletePlaybook({
-                environmentId: selected.environmentId,
-                input: {
-                  projectId: selected.projectId,
-                  ...(selected.threadId ? { threadId: selected.threadId } : {}),
-                  name,
-                },
-              });
-              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-              refresh();
-            } catch (cause) {
-              Alert.alert(
-                "Could not delete playbook",
-                cause instanceof Error ? cause.message : "Try again.",
-              );
-            } finally {
-              setDeleting(false);
-            }
-          })();
-        },
-      },
-    ]);
+  async function changeFolders(folders: string[]) {
+    const result = await setFolders({ environmentId, input: { folders } });
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   }
-  /** Native platforms share a real .yaml file; the web build falls back to sharing the text. */
-  async function sharePlaybook(name: string) {
-    if (!workspace || exporting) return;
-    setExporting(true);
-    try {
-      const result = await exportPlaybook({
-        environmentId: workspace.environmentId,
-        input: {
-          projectId: workspace.projectId,
-          ...(workspace.threadId ? { threadId: workspace.threadId } : {}),
-          name,
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      const { fileName, yaml } = result.value;
-      if (Platform.OS === "web") {
-        await Share.share({ title: fileName, message: yaml });
-      } else {
-        const [FileSystem, Sharing] = await Promise.all([
-          import("expo-file-system/legacy"),
-          import("expo-sharing"),
-        ]);
-        const uri = `${FileSystem.cacheDirectory ?? ""}${encodeURIComponent(fileName)}`;
-        await FileSystem.writeAsStringAsync(uri, yaml);
-        // The share sheet can background the app; keep a pending update from reloading it.
-        const endHandoff = beginForegroundHandoff();
-        try {
-          await Sharing.shareAsync(uri, { mimeType: "application/yaml", dialogTitle: fileName });
-        } finally {
-          endHandoff();
-        }
-      }
-    } catch (cause) {
-      Alert.alert(
-        "Could not export playbook",
-        cause instanceof Error ? cause.message : "Try again.",
-      );
-    } finally {
-      setExporting(false);
-    }
-  }
-  async function submitRename() {
-    if (!workspace || !renameTarget || renaming) return;
-    const title = renameTarget.title.trim();
-    if (!title) return;
-    const current = query.data?.playbooks.find(({ name }) => name === renameTarget.name);
-    if (title === current?.title) {
+  const closeEditor = () => {
+    if (!busy) {
+      setImporting(false);
+      setCopyTarget(null);
       setRenameTarget(null);
-      return;
+      setName("");
+      setYaml("");
+      setError(null);
     }
-    setRenaming(true);
-    try {
-      const result = await renamePlaybook({
-        environmentId: workspace.environmentId,
-        input: {
-          projectId: workspace.projectId,
-          ...(workspace.threadId ? { threadId: workspace.threadId } : {}),
-          name: renameTarget.name,
-          title,
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      setRenameTarget(null);
-      refresh();
-    } catch (cause) {
-      Alert.alert(
-        "Could not rename playbook",
-        cause instanceof Error ? cause.message : "Try again.",
-      );
-    } finally {
-      setRenaming(false);
-    }
-  }
-  const disabled =
-    !workspace || !query.data || !!query.error || deleting || renaming || creating || exporting;
+  };
   return (
-    <View className="gap-4 p-4">
-      <Text className="text-sm text-muted-foreground">
-        Reusable prompts that guide an agent through ordered steps. Create and refine them in a
-        conversation.
-      </Text>
-      <Menu
-        actions={workspaces.map((entry) => ({
-          id: entry.key,
-          title: `${entry.title}${connectedEnvironments.length > 1 ? ` · ${connectedEnvironments.find((env) => env.environmentId === entry.environmentId)?.environmentLabel ?? entry.environmentId}` : ""}`,
-          state: entry.key === workspace?.key ? ("on" as const) : ("off" as const),
-        }))}
-        onPressAction={({ nativeEvent }) => {
-          setRenameTarget(null);
-          setWorkspaceKey(nativeEvent.event);
-        }}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Playbook workspace"
-          className="rounded-lg border border-border p-3"
+    <>
+      <View className="flex-row items-center justify-between gap-3 p-4">
+        {projects.length > 0 ? (
+          <Menu
+            actions={[
+              { id: "", title: "Library only", state: project ? "off" : "on" },
+              ...projects.map((entry) => ({
+                id: entry.id,
+                title: entry.title,
+                state: entry.id === project?.id ? ("on" as const) : ("off" as const),
+              })),
+            ]}
+            onPressAction={({ nativeEvent }) =>
+              setProjectId(nativeEvent.event ? (nativeEvent.event as ProjectId) : null)
+            }
+          >
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Project playbooks"
+              className="flex-1"
+            >
+              <Text className="text-sm text-foreground">{project?.title ?? "Library only"} ▾</Text>
+            </Pressable>
+          </Menu>
+        ) : (
+          <Text className="flex-1 text-sm text-muted-foreground">Available in every project.</Text>
+        )}
+        <Menu
+          actions={[
+            {
+              id: "create",
+              title: "Create playbook",
+              attributes: { disabled: busy || !canOperate },
+            },
+            { id: "import", title: "Import YAML", attributes: { disabled: busy || !canOperate } },
+            {
+              id: "folder",
+              title: "Add source folder",
+              attributes: { disabled: busy || !canOperate || !sources.data },
+            },
+            { id: "refresh", title: "Refresh", attributes: { disabled: busy } },
+          ]}
+          onPressAction={({ nativeEvent }) => {
+            const action = nativeEvent.event;
+            if (action === "create") setConversation({ name: null });
+            else if (action === "import") {
+              setError(null);
+              setImporting(true);
+            } else if (action === "folder") setPicking(true);
+            else {
+              query.refresh();
+              sources.refresh();
+            }
+          }}
         >
-          <Text className="text-foreground">{workspace?.title ?? "No projects available"}</Text>
-        </Pressable>
-      </Menu>
-      {workspace && (
-        <Text className="text-xs text-muted-foreground">
-          {query.data?.workspaceRoot ?? workspace.workspaceRoot}/.j5/playbooks
-        </Text>
-      )}
-      <View className="flex-row gap-3">
-        <Pressable
-          accessibilityRole="button"
-          disabled={disabled || !canOperate}
-          onPress={() => void createPlaybook()}
-          className="rounded-lg border border-border p-3 disabled:opacity-40"
-        >
-          <Text className="text-foreground">Create playbook</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          disabled={!workspace || query.isPending}
-          onPress={refresh}
-          className="rounded-lg border border-border p-3 disabled:opacity-40"
-        >
-          <Text className="text-foreground">Refresh</Text>
-        </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Playbook library actions">
+            <Text className="text-primary">Add / manage</Text>
+          </Pressable>
+        </Menu>
       </View>
-      {query.error && (
-        <Text accessibilityRole="alert" className="text-destructive">
-          {query.error}
+      {project ? (
+        <Text className="px-4 pb-3 text-xs text-muted-foreground">
+          Includes {project.title}'s .j5/playbooks folder. Those override a library playbook with
+          the same name in that project.
         </Text>
-      )}
-      {!workspace && (
-        <Text className="text-muted-foreground">
-          Connect an environment and add a project to create playbooks.
+      ) : null}
+      {error || sources.error || query.error ? (
+        <Text accessibilityRole="alert" className="px-4 pb-3 text-destructive">
+          {error ?? sources.error ?? query.error}
         </Text>
-      )}
-      {query.isPending && !query.data && (
-        <Text className="text-muted-foreground">Loading playbooks…</Text>
-      )}
-      {query.data?.playbooks.length === 0 && (
-        <Text className="text-muted-foreground">
-          No playbooks in this workspace yet. Create one with your agent, then return here and
-          refresh.
-        </Text>
-      )}
-      {query.data?.playbooks.map((playbook) => (
-        <View key={playbook.name} className="gap-2 rounded-lg border border-border p-4">
-          {renameTarget?.name === playbook.name ? (
-            <View className="gap-2">
-              <TextInput
-                accessibilityLabel={`Name for ${playbook.name} playbook`}
-                autoFocus
-                editable={!renaming}
-                value={renameTarget.title}
-                onChangeText={(title) => setRenameTarget({ ...renameTarget, title })}
-                onSubmitEditing={() => void submitRename()}
-              />
-              <View className="flex-row gap-2">
+      ) : null}
+      {query.isPending && !query.data ? <Text className="p-4">Loading playbooks…</Text> : null}
+      {query.data?.playbooks.length === 0 ? (
+        <View className="gap-1 p-4">
+          <Text className="text-foreground">No playbooks yet</Text>
+          <Text className="text-sm text-muted-foreground">
+            Create a repeatable workflow with your agent, or import YAML.
+          </Text>
+        </View>
+      ) : null}
+      {query.data?.playbooks.map((playbook) => {
+        const source = playbook.source ?? { kind: "environment" };
+        return (
+          <View key={playbook.name} className="gap-2 border-t border-border p-4">
+            <View className="flex-row items-center justify-between gap-3">
+              <Text className="flex-1 font-semibold text-foreground">{playbook.title}</Text>
+              <Menu
+                actions={[
+                  {
+                    id: "chat",
+                    title: "Prepare chat",
+                    attributes: { disabled: busy || !!playbook.issue },
+                  },
+                  { id: "steps", title: "View steps", attributes: { disabled: !!playbook.issue } },
+                  {
+                    id: "export",
+                    title: "Export YAML",
+                    attributes: { disabled: busy || !!playbook.issue },
+                  },
+                  {
+                    id: "rename",
+                    title:
+                      source.kind === "folder"
+                        ? "Rename unavailable: edit source folder"
+                        : "Rename",
+                    attributes: {
+                      disabled: busy || !canOperate || source.kind === "folder" || !!playbook.issue,
+                    },
+                  },
+                  ...environments
+                    .filter(
+                      (entry) =>
+                        entry.environmentId !== environmentId || source.kind !== "environment",
+                    )
+                    .map((entry) => ({
+                      id: `copy:${entry.environmentId}`,
+                      title:
+                        entry.environmentId === environmentId
+                          ? "Copy to library"
+                          : `Copy to ${entry.label}`,
+                      attributes: { disabled: busy || !!playbook.issue },
+                    })),
+                  {
+                    id: "delete",
+                    title:
+                      source.kind === "folder"
+                        ? "Delete unavailable: edit source folder"
+                        : "Delete",
+                    attributes: { disabled: busy || !canOperate || source.kind === "folder" },
+                  },
+                ]}
+                onPressAction={({ nativeEvent }) => {
+                  const action = nativeEvent.event;
+                  if (action === "chat") setConversation({ name: playbook.name });
+                  else if (action === "steps") setDetails(playbook.name);
+                  else if (action.startsWith("copy:")) {
+                    const destination = environments.find(
+                      (entry) => `copy:${entry.environmentId}` === action,
+                    );
+                    if (destination) {
+                      setError(null);
+                      setName(playbook.name);
+                      setCopyTarget({
+                        name: playbook.name,
+                        source,
+                        destination: destination.environmentId,
+                      });
+                    }
+                  } else if (action === "rename") {
+                    setError(null);
+                    setRenameTarget({ name: playbook.name, title: playbook.title, source });
+                  } else if (action === "export")
+                    void act(async () => {
+                      const result = await exportDefinition({
+                        environmentId,
+                        input: { ...scope, name: playbook.name, source },
+                      });
+                      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                      await Share.share({
+                        title: result.value.fileName,
+                        message: result.value.yaml,
+                      });
+                    });
+                  else if (action === "delete")
+                    Alert.alert("Delete playbook", `Delete ${playbook.title}?`, [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Delete",
+                        style: "destructive",
+                        onPress: () =>
+                          void act(async () => {
+                            const result = await remove({
+                              environmentId,
+                              input: { ...scope, name: playbook.name, source },
+                            });
+                            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                          }),
+                      },
+                    ]);
+                }}
+              >
                 <Pressable
                   accessibilityRole="button"
-                  disabled={renaming || !canOperate || !renameTarget.title.trim()}
-                  onPress={() => void submitRename()}
-                  className="rounded-lg border border-border px-3 py-2 disabled:opacity-40"
+                  accessibilityLabel={`More actions for ${playbook.title}`}
                 >
-                  <Text className="text-foreground">Save</Text>
+                  <Text className="text-muted-foreground">•••</Text>
+                </Pressable>
+              </Menu>
+            </View>
+            <Text className="text-sm text-muted-foreground">{playbook.description}</Text>
+            <Text className="text-xs text-muted-foreground">
+              {playbook.stepCount} {playbook.stepCount === 1 ? "step" : "steps"}
+              {source.kind === "folder" ? " · From source folder" : ""}
+              {source.kind === "workspace" ? ` · From ${project?.title ?? "project"}` : ""}
+              {playbook.overridesLibrary ? " · Overrides library copy" : ""}
+            </Text>
+            {playbook.issue ? (
+              <Text accessibilityRole="alert" className="text-destructive">
+                {playbook.issue.message}
+              </Text>
+            ) : null}
+            {(playbook.warnings ?? []).map((warning) => (
+              <Text
+                accessibilityRole="alert"
+                key={`${warning.stepId}:${warning.code}`}
+                className="text-warning-foreground"
+              >
+                {warning.message}
+              </Text>
+            ))}
+          </View>
+        );
+      })}
+      {sources.data?.folders
+        .filter((entry) => entry.source.kind === "folder" || entry.issue)
+        .map((entry) => (
+          <View key={entry.path} className="gap-2 border-t border-border p-4">
+            <Text className="text-sm text-muted-foreground">
+              {entry.source.kind === "folder" ? entry.path : "Environment library"}
+            </Text>
+            {entry.issue ? (
+              <Text accessibilityRole="alert" className="text-destructive">
+                {entry.issue.message}
+              </Text>
+            ) : null}
+            {entry.source.kind === "folder" ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={!canOperate || busy}
+                onPress={() =>
+                  void act(() =>
+                    changeFolders(
+                      folderPaths.filter(
+                        (folder) => entry.source.kind !== "folder" || folder !== entry.source.path,
+                      ),
+                    ),
+                  )
+                }
+              >
+                <Text className="text-primary">Remove source</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ))}
+      {picking ? (
+        <AgentFolderPickerModal
+          environmentId={environmentId}
+          environmentLabel={label}
+          onClose={() => setPicking(false)}
+          onSelect={(path) => {
+            setPicking(false);
+            void act(() => changeFolders([...folderPaths, path]));
+          }}
+        />
+      ) : null}
+      {conversation ? (
+        <PlaybookConversationModal
+          environmentId={environmentId}
+          name={conversation.name}
+          projectId={project?.id ?? null}
+          onClose={() => setConversation(null)}
+        />
+      ) : null}
+      {detail ? (
+        <Modal
+          visible
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setDetails(null)}
+        >
+          <SafeAreaView className="flex-1 bg-background">
+            <ScrollView contentContainerClassName="gap-3 p-4">
+              <Text className="text-xl font-semibold text-foreground">{detail.title}</Text>
+              <Text className="text-muted-foreground">{detail.description}</Text>
+              {detail.steps.map((step, index) => (
+                <Text key={step.id}>{playbookStepLabel(step, index)}</Text>
+              ))}
+              <Pressable accessibilityRole="button" onPress={() => setDetails(null)}>
+                <Text className="text-primary">Close</Text>
+              </Pressable>
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+      ) : null}
+      {importing || copyTarget || renameTarget ? (
+        <Modal
+          visible
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={closeEditor}
+        >
+          <SafeAreaView className="flex-1 bg-background">
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="gap-4 p-4">
+              <Text className="text-xl font-semibold text-foreground">
+                {renameTarget
+                  ? "Rename playbook"
+                  : copyTarget
+                    ? "Copy playbook"
+                    : "Import playbook"}
+              </Text>
+              <Text className="text-muted-foreground">
+                Available in every project on the environment.
+              </Text>
+              <TextInput
+                accessibilityLabel={renameTarget ? "Playbook title" : "Playbook name"}
+                placeholder={renameTarget ? "Title" : "release-review"}
+                value={renameTarget ? renameTarget.title : name}
+                onChangeText={(value) =>
+                  renameTarget ? setRenameTarget({ ...renameTarget, title: value }) : setName(value)
+                }
+                editable={!busy}
+                autoCapitalize="none"
+                className="rounded-lg border border-border p-3 text-foreground"
+              />
+              {importing ? (
+                <TextInput
+                  accessibilityLabel="Playbook YAML"
+                  placeholder="Paste YAML"
+                  value={yaml}
+                  onChangeText={setYaml}
+                  editable={!busy}
+                  multiline
+                  className="min-h-48 rounded-lg border border-border p-3 text-foreground"
+                />
+              ) : null}
+              {error ? (
+                <Text accessibilityRole="alert" className="text-destructive">
+                  {error}
+                </Text>
+              ) : null}
+              <View className="flex-row justify-end gap-4">
+                <Pressable accessibilityRole="button" disabled={busy} onPress={closeEditor}>
+                  <Text>Cancel</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
-                  disabled={renaming}
-                  onPress={() => setRenameTarget(null)}
-                  className="rounded-lg border border-border px-3 py-2 disabled:opacity-40"
+                  disabled={
+                    busy ||
+                    !canSaveDestination ||
+                    (renameTarget
+                      ? !renameTarget.title.trim()
+                      : !name.trim() || (importing && !yaml.trim()))
+                  }
+                  onPress={() =>
+                    void act(async () => {
+                      if (renameTarget) {
+                        const result = await rename({
+                          environmentId,
+                          input: { ...scope, ...renameTarget, title: renameTarget.title.trim() },
+                        });
+                        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                        setRenameTarget(null);
+                      } else {
+                        let text = yaml;
+                        if (copyTarget) {
+                          const result = await exportDefinition({
+                            environmentId,
+                            input: { ...scope, name: copyTarget.name, source: copyTarget.source },
+                          });
+                          if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                          text = result.value.yaml;
+                        }
+                        const result = await save({
+                          environmentId: copyTarget?.destination ?? environmentId,
+                          input: { name, yaml: text },
+                        });
+                        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                        setImporting(false);
+                        setCopyTarget(null);
+                        setName("");
+                        setYaml("");
+                      }
+                    })
+                  }
                 >
-                  <Text className="text-foreground">Cancel</Text>
+                  <Text className="text-primary">
+                    {renameTarget ? "Save" : copyTarget ? "Copy" : "Import"}
+                  </Text>
                 </Pressable>
               </View>
-            </View>
-          ) : (
-            <Text className="font-semibold text-foreground">{playbook.title}</Text>
-          )}
-          <Text className="text-xs text-muted-foreground">
-            {playbook.name}.yaml · {playbook.stepCount} steps
-          </Text>
-          <Text className="text-sm text-muted-foreground">{playbook.description}</Text>
-          {playbook.issue ? (
-            <Text accessibilityRole="alert" className="text-destructive">
-              {playbook.issue.message}
-            </Text>
-          ) : (
-            <>
-              {playbook.steps.map((step, index) => (
-                <Text key={step.id} className="text-sm text-foreground">
-                  {playbookStepLabel(step, index)}
-                </Text>
-              ))}
-              {(playbook.warnings ?? []).map((warning) => (
-                <Text
-                  key={`${warning.stepId}:${warning.code}`}
-                  className="text-sm text-warning-foreground"
-                >
-                  {warning.message}
-                </Text>
-              ))}
-            </>
-          )}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Export ${playbook.name} playbook as YAML`}
-            disabled={disabled || !!playbook.issue}
-            onPress={() => void sharePlaybook(playbook.name)}
-            className="self-start rounded-lg border border-border px-3 py-2 disabled:opacity-40"
-          >
-            <Text className="text-foreground">Export YAML</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Rename ${playbook.name} playbook`}
-            disabled={disabled || !canOperate || !!playbook.issue}
-            onPress={() => setRenameTarget({ name: playbook.name, title: playbook.title })}
-            className="self-start rounded-lg border border-border px-3 py-2 disabled:opacity-40"
-          >
-            <Text className="text-foreground">Rename playbook</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            disabled={disabled || !!playbook.issue}
-            onPress={() => openDraft(`Start playbook ${playbook.name}`)}
-            className="self-start rounded-lg border border-border px-3 py-2 disabled:opacity-40"
-          >
-            <Text className="text-foreground">Prepare playbook chat</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Delete ${playbook.name} playbook`}
-            disabled={disabled || !canOperate}
-            onPress={() => confirmDelete(playbook.name)}
-            className="self-start rounded-lg border border-border px-3 py-2 disabled:opacity-40"
-          >
-            <Text className="text-destructive">Delete playbook</Text>
-          </Pressable>
-        </View>
-      ))}
-    </View>
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+      ) : null}
+    </>
   );
-});
+}

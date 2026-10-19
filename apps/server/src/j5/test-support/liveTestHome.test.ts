@@ -115,6 +115,7 @@ it.live(
           model: "claude-haiku-5-5",
           options: [{ id: "effort", value: "low" }],
         },
+        enableProviderUpdateChecks: false,
       });
       // Each persona file must decode as the library decodes it, or Settings shows none at all.
       assert.deepEqual(

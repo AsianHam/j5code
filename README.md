@@ -58,7 +58,7 @@ For using J5 Code:
 - [Remote access from a phone or another machine](./docs/user/remote-access.md)
 - [Running as a background service](./docs/user/background-service.md)
 - [Updating](./docs/user/updating.md)
-- [Personas](./docs/user/personas.md), [playbooks](./docs/user/playbooks.md), and [messages between agents](./docs/user/j5-peer-messages.md)
+- [Personas](./docs/j5/user/personas.md), [playbooks](./docs/j5/user/playbooks.md), and [messages between agents](./docs/j5/user/j5-peer-messages.md)
 - [Everything else](./docs/user), one page per feature
 
 These guides are mostly upstream's and say "T3 Code"; they apply to J5 Code unless they say otherwise.

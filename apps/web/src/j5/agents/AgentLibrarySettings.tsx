@@ -838,7 +838,7 @@ function MemberAgentLibrarySettings() {
           }}
         />
       ) : null}
-      <PlaybookLibrarySettings />
+      <PlaybookLibrarySettings environmentId={effectiveEnvironmentId} />
     </SettingsPageContainer>
   );
 }

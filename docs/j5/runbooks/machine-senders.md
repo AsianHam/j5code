@@ -27,6 +27,8 @@ A machine participant belongs to one project, which never changes, has a server-
    chmod 0600 ~/.config/j5/watchdog.token
    ```
 
+   A mistyped flag fails before the command runs and prints the help text to stdout (see [Exit codes](#exit-codes)), so check the exit status before trusting the file: `… > ~/.config/j5/watchdog.token || exit`. A token file with spaces or more than one line, such as captured help text, makes every verb that sends the token exit 3 `token_malformed`.
+
    Tokens are sessions in the local auth database: they survive server restarts and appear in Settings → Connections under their label. Revoke one with `j5 auth session revoke <session-id>`; `j5 auth session list` shows the id.
 
 ## Sending
@@ -51,15 +53,17 @@ j5 a2a send --to obs-sentinel --message "canary 42" --client-request-id "canary-
 
 Every verb uses the same codes so scripts can branch without parsing text. With `--json`, the single output object carries `ok`, `exit_code`, `error`, and `message`.
 
-| Code | Meaning                                            | What to do                                                 |
-| ---- | -------------------------------------------------- | ---------------------------------------------------------- |
-| 0    | Done                                               |                                                            |
-| 1    | Unexpected failure (a 5xx, an unreadable response) | Look at the message; retry is usually safe                 |
-| 2    | Usage: missing or invalid input                    | Fix the command                                            |
-| 3    | Unauthenticated or wrong token                     | Check `whoami`; mint or revoke tokens                      |
-| 4    | Recipient not found, or an ambiguous display name  | Use `j5 a2a list`; address by id                           |
-| 5    | Refused by policy (archived, a machine, a person)  | Choose a recipient that can receive                        |
-| 6    | Server unreachable within `--timeout-ms` (2 s)     | Queue and retry; the server is down or the origin is wrong |
+| Code | Meaning                                                                          | What to do                                                                                   |
+| ---- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 0    | Done                                                                             |                                                                                              |
+| 1    | Unexpected failure (a 5xx, an unreadable response), or a flag the parser rejects | Look at the message; a server failure is usually safe to retry, a rejected flag needs fixing |
+| 2    | Usage: missing or invalid input                                                  | Fix the command                                                                              |
+| 3    | Unauthenticated, wrong token, or malformed token                                 | Check `whoami`; mint or revoke tokens                                                        |
+| 4    | Recipient not found, or an ambiguous display name                                | Use `j5 a2a list`; address by id                                                             |
+| 5    | Refused by policy (archived, a machine, a person)                                | Choose a recipient that can receive                                                          |
+| 6    | Server unreachable within `--timeout-ms` (2 s)                                   | Queue and retry; the server is down or the origin is wrong                                   |
+
+A flag the command does not take, or a flag value that does not parse, is caught before the command runs. That exits 1, not 2, prints the help text to stdout and the error to stderr, and never prints the `--json` object. Capture output only after checking the exit status. An `--origin` that is not an `http://` or `https://` URL exits 2.
 
 Nothing prompts. When stdin is not a terminal the CLI behaves exactly the same; it never waits on a human.
 

@@ -243,6 +243,7 @@ it.effect("namespaces mutating-tool idempotency and sender identity from authent
       "j5_playbook_next",
       "j5_playbook_read",
       "j5_playbook_reselect",
+      "j5_playbook_save",
       "j5_playbook_start",
       "j5_propose_crew",
       "j5_request_crew_member",

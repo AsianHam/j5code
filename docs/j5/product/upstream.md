@@ -236,7 +236,7 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths and n
 
 **Why:** J5 followed upstream from npm to archives rather than keep npm alone. It publishes from its own repository so it never installs or updates T3 Code, and it renames the service so both can be installed at once.
 
-**Consequences:** only darwin-arm64 and linux-x64 get releases, where upstream ships five platforms, and no reason for that is recorded. Other hosts build from source and get no `j5 update` or service. A real service handover, signing and notarization weren't verified when this shipped. Migration steps are in `docs/user/migrating-to-release-archives.md`. Without the release check, "Update everything" would skip every J5 server, since J5 publishes nothing to npm. Windows releases are wanted (#341).
+**Consequences:** only darwin-arm64 and linux-x64 get releases, where upstream ships five platforms, and no reason for that is recorded. Other hosts build from source and get no `j5 update` or service. A real service handover, signing and notarization weren't verified when this shipped. Migration steps are in `docs/j5/user/migrating-to-release-archives.md`. Without the release check, "Update everything" would skip every J5 server, since J5 publishes nothing to npm. Windows releases are wanted (#341).
 
 **Decided:** Jackson, 2026-09-24 (#3, #3a). Recorded in FORK.md cases 40 and 41.
 
@@ -463,6 +463,18 @@ Recorded in `FORK.md` cases 69 to 73, 78 and 80.
 
 **Decided:** Jackson, 2026-10-17 ([#624](https://github.com/Jacksondr5/j5code/issues/624)). Recorded in FORK.md case 75.
 
+#### D37. A connection that keeps failing can be retried at once
+
+**Upstream:** after a few failed attempts, a client waits longer and longer between tries, up to five minutes. The mobile app offers "Retry now" the whole time. The web and desktop app show Reconnect on the chat view's banner only once the environment is offline or has failed outright, so while it says "reconnecting" there is no way to try again before the timer runs out, other than leaving the window and coming back. Settings › Connections shows the status but has no retry.
+
+**J5:** the banner keeps Reconnect while the environment is reconnecting, and a saved environment's menu in Settings › Connections offers "Reconnect now" while it is reconnecting. A connection that has failed, such as one whose login was refused, doesn't offer it: retrying would only send what was refused again. Both use upstream's own retry, the one the mobile app's button calls.
+
+**Why:** a server that was restarted, or a tunnel that came back, could sit unused for up to five minutes with the app saying it was reconnecting and nothing to press.
+
+**Consequences:** a temporary patch to two upstream files, offered back upstream. **J5 drops this patch** when upstream gives web and desktop a retry while reconnecting, even if its form differs.
+
+**Decided:** Jackson, 2026-10-19. Recorded in FORK.md's temporary patches.
+
 ### Awaiting a decision
 
 These already diverge on `j5/main`, but no human ruling is on record. Each landed as an implementer's call inside a merged PR. The person rules on each one; an approved entry moves up into its section, and a rejected one becomes a fix.
@@ -576,3 +588,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-18 — D33: a Viewer is listed a thread's preview tabs and does not watch them, for now (provisional; [#540](https://github.com/Jacksondr5/j5code/issues/540)).
 - 2026-10-18 — D36: a bare `j5 auth pairing create` makes a link for a device the server asks about, so upstream's desktop app still connects over SSH; `j5 pair` still refuses (provisional, for Jackson to confirm; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
 - 2026-10-19 — D33: T3 Connect's sessions are the first owner's, as they were full access before levels (review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).
+- 2026-10-19 — D37 added: a connection that keeps failing can be retried at once on web and desktop (Jackson).

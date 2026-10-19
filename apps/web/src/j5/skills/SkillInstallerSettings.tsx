@@ -28,6 +28,7 @@ import {
   SettingsUnavailableGroup,
 } from "../../components/settings/settingsLayout";
 import { Button } from "../../components/ui/button";
+import { toastManager } from "../../components/ui/toast";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import {
@@ -158,10 +159,27 @@ function MemberSkillInstallerSettings() {
         </SettingsSection>
       ) : (
         <div key={effectiveEnvironmentId} className="grid min-w-0 gap-6">
-          <SkillCatalogPanel environmentId={effectiveEnvironmentId} />
-          <SettingsSection id="installed-skills" title="Installed" variant="plain">
+          <SettingsSection
+            id="installed-skills"
+            title="Installed"
+            variant="plain"
+            headerAction={
+              // Scroll instead of linking to #skill-catalog: Electron's hash router
+              // would read the fragment as a route and leave Settings.
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() =>
+                  document.getElementById("skill-catalog")?.scrollIntoView({ block: "start" })
+                }
+              >
+                Manage catalog
+              </Button>
+            }
+          >
             <SkillInventoryPanel environmentId={effectiveEnvironmentId} />
           </SettingsSection>
+          <SkillCatalogPanel environmentId={effectiveEnvironmentId} />
         </div>
       )}
     </SettingsPageContainer>
@@ -209,7 +227,10 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
     knownGroups,
   );
 
-  const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState<"save" | "update" | "apply" | null>(null);
+  const busy = operation !== null;
+  const [sourceEditorOpen, setSourceEditorOpen] = useState(false);
+  const [reviewingApply, setReviewingApply] = useState(false);
   const canOperate = useAtomValue(
     skillCatalogEnvironment.applyGroups.permissionAtom(environmentId),
   );
@@ -231,7 +252,8 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
     setApplyFailure(null);
     setNotice(null);
     setSaveError(null);
-  }, [selectionScope]);
+    setReviewingApply(false);
+  }, [selectionScope, selectionScopeRef]);
 
   // Awaited directly (not via the shared fan-out hook): this key is
   // environment-local, and the save must settle before identity resets.
@@ -252,7 +274,7 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
     const trimmed = displayedSource.trim();
     if (!isSourceSaveable(displayedSource, configuredSource)) return;
     const originScope = selectionScope;
-    setBusy(true);
+    setOperation("save");
     setNotice(null);
     setSaveError(null);
     setApplyFailure(null);
@@ -261,18 +283,28 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
         environmentId,
         input: { patch: { skillCatalogSource: trimmed } },
       });
-      if (selectionScopeRef.current !== originScope) return;
+      if (selectionScopeRef.current !== originScope) {
+        // The settings echo can precede the receipt for our own save.
+        if (
+          result._tag === "Success" &&
+          selectionScopeRef.current === catalogScopeFor(environmentId, trimmed)
+        ) {
+          setSourceEditorOpen(false);
+        }
+        return;
+      }
       if (result._tag === "Failure") {
         // The draft stays visible against the old settings; actions stay
         // disabled until the displayed source has matching loaded status.
         setSaveError(messageOf(squashAtomCommandFailure(result)));
         return;
       }
+      setSourceEditorOpen(false);
       // The status query follows the echoed settings. Actions stay disabled
       // until the new source's status arrives.
       status.refresh();
     } finally {
-      setBusy(false);
+      setOperation(null);
     }
   }
 
@@ -280,7 +312,8 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
     if (!catalogReady) return;
     setReplacementPaths(null);
     const originScope = selectionScope;
-    setBusy(true);
+    setOperation("apply");
+    setReviewingApply(false);
     setNotice(null);
     setApplyFailure(null);
     try {
@@ -302,18 +335,20 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
         setLastApply(partial);
       } else {
         setLastApply(result.value);
-        setNotice(summarizeApplyResult(result.value));
+        const message = summarizeApplyResult(result.value);
+        setNotice(message);
+        toastManager.add({ type: "info", title: "Skills", description: message });
       }
       status.refresh();
     } finally {
-      setBusy(false);
+      setOperation(null);
     }
   }
 
   async function updateCheckout() {
     if (!catalogReady) return;
     const originScope = selectionScope;
-    setBusy(true);
+    setOperation("update");
     setNotice(null);
     setApplyFailure(null);
     try {
@@ -326,11 +361,13 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
         const cause = squashAtomCommandFailure(result);
         setApplyFailure({ message: messageOf(cause), partial: null });
       } else {
-        setNotice(`Catalog updated from ${result.value.upstream}.`);
+        const message = `Catalog updated from ${result.value.upstream}. Review the skill groups and choose Apply changes to update installed skills.`;
+        setNotice(message);
+        toastManager.add({ type: "info", title: "Skills", description: message });
       }
       status.refresh();
     } finally {
-      setBusy(false);
+      setOperation(null);
     }
   }
 
@@ -372,254 +409,356 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
       <SettingsSection id="skill-catalog" title="Catalog">
         <SettingsRow
           title="Catalog source"
-          description="Use a Git URL or an absolute path on this environment's machine. Installed skills link to this folder, so keep it in place."
+          description={
+            <span className="break-all">
+              {configuredSource || "Add a catalog to install groups of skills."}
+            </span>
+          }
           control={
-            <Input
-              aria-label="Catalog source"
-              size="sm"
-              value={displayedSource}
-              disabled={busy}
-              placeholder="https://github.com/your-team/skills.git or /path/to/catalog"
-              autoComplete="off"
-              spellCheck={false}
-              font="mono"
-              className="w-full sm:w-80"
-              onChange={(event) => {
-                setDraft(event.target.value);
-                setNotice(null);
-              }}
-            />
+            <>
+              {configuredSource ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={updateDisabled}
+                  title={
+                    upstream === null
+                      ? "This catalog has no Git upstream to update from."
+                      : `Update from ${upstream}.`
+                  }
+                  onClick={() => void updateCheckout()}
+                >
+                  {operation === "update" ? "Updating…" : "Update catalog"}
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || !canOperate}
+                onClick={() => setSourceEditorOpen(true)}
+              >
+                {configuredSource ? "Change source…" : "Add source…"}
+              </Button>
+            </>
           }
         >
-          <div className="flex flex-wrap gap-2 pt-2 pb-3 sm:justify-end">
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                openCommandPalette({
-                  open: "add-project",
-                  sourcePicker: {
-                    environmentId,
-                    onSelect: (source) => {
-                      if (selectionScopeRef.current !== selectionScope) return;
-                      setDraft(source);
+          {sourceEditorOpen ? (
+            <div className="grid gap-3 pt-2 pb-3">
+              <p className="text-xs text-muted-foreground">
+                Choose a Git URL or an absolute folder on this environment. Skills link to this
+                folder, so keep it in place.
+              </p>
+              <Input
+                aria-label="Catalog source"
+                autoFocus
+                size="sm"
+                value={displayedSource}
+                disabled={busy}
+                placeholder="Git URL or /path/to/catalog"
+                autoComplete="off"
+                spellCheck={false}
+                font="mono"
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  setNotice(null);
+                }}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => {
+                    openCommandPalette({
+                      open: "add-project",
+                      sourcePicker: {
+                        environmentId,
+                        onSelect: (source) => {
+                          if (selectionScopeRef.current !== selectionScope) return;
+                          setDraft(source);
+                          setNotice(null);
+                        },
+                      },
+                    });
+                  }}
+                >
+                  Choose source
+                </Button>
+                <Button
+                  size="xs"
+                  disabled={
+                    busy || !canOperate || !isSourceSaveable(displayedSource, configuredSource)
+                  }
+                  onClick={() => void saveSource()}
+                >
+                  {operation === "save" ? "Saving…" : "Save source"}
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    setSourceEditorOpen(false);
+                    setDraft(null);
+                    setSaveError(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                {configuredSource ? (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={
+                      busy || displayedSource === DEFAULT_SERVER_SETTINGS.skillCatalogSource
+                    }
+                    title="Clear the catalog source, then save."
+                    onClick={() => {
+                      setDraft(DEFAULT_SERVER_SETTINGS.skillCatalogSource);
                       setNotice(null);
-                    },
-                  },
-                });
-              }}
-            >
-              Choose source
-            </Button>
-            <Button
-              size="xs"
-              disabled={busy || !isSourceSaveable(displayedSource, configuredSource)}
-              onClick={() => void saveSource()}
-            >
-              {busy ? "Saving…" : "Save source"}
-            </Button>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={busy || displayedSource === DEFAULT_SERVER_SETTINGS.skillCatalogSource}
-              title="Clear the catalog source, then save."
-              onClick={() => {
-                setDraft(DEFAULT_SERVER_SETTINGS.skillCatalogSource);
-                setNotice(null);
-              }}
-            >
-              Clear source
-            </Button>
-          </div>
+                    }}
+                  >
+                    Clear source
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
           {saveError ? (
             <p role="alert" className="pb-3 text-sm text-destructive-foreground">
               {saveError} The previous source is still active.
             </p>
           ) : null}
+          {status.error ? (
+            <div className="grid gap-2 pb-3">
+              <p role="alert" className="text-sm text-destructive-foreground">
+                {status.error}
+              </p>
+              <div>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => status.refresh()}
+                >
+                  {sourceMismatch ? "Reload with current source" : "Retry status"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {configuredSource && status.data === null && !status.error ? (
+            <p className="pb-3 text-sm text-muted-foreground">
+              {status.isPending ? "Loading catalog status…" : "No catalog status yet."}
+            </p>
+          ) : null}
+          {status.data ? (
+            <div className="grid gap-2 pb-3 text-xs text-muted-foreground">
+              {status.data.git.dirty ? (
+                <p className="text-warning">The catalog has local changes.</p>
+              ) : null}
+              {status.data.warnings.map((warning) => (
+                <p key={warning} className="text-warning">
+                  {warning}
+                </p>
+              ))}
+              <details>
+                <summary className="w-fit cursor-pointer">Catalog details</summary>
+                <div className="space-y-1 pt-2 break-words">
+                  <p>Folder: {status.data.catalogDir}</p>
+                  <p>
+                    Git: {upstream ?? "no upstream"} ·{" "}
+                    {status.data.git.dirty ? "local changes" : "no local changes"}
+                  </p>
+                  {status.data.targets.length > 0 ? (
+                    <p>Installs to: {status.data.targets.join(", ")}</p>
+                  ) : null}
+                </div>
+              </details>
+            </div>
+          ) : null}
         </SettingsRow>
-        <SettingsRow
-          title="Catalog status"
-          description="Update a Git-backed catalog before applying its groups."
-          control={
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy || updateDisabled}
-              title={
-                upstream === null
-                  ? "The catalog reports no upstream to update from."
-                  : `Update from ${upstream}.`
-              }
-              onClick={() => void updateCheckout()}
-            >
-              {busy ? "Updating…" : "Update catalog"}
+      </SettingsSection>
+      {configuredSource ? (
+        <SettingsSection
+          title="Skill groups"
+          headerAction={
+            <Button size="xs" disabled={applyDisabled} onClick={() => setReviewingApply(true)}>
+              {operation === "apply" ? "Applying…" : "Apply changes"}
             </Button>
           }
         >
-          <div className="grid gap-2 pt-2 pb-3">
-            {status.error ? (
-              <div className="grid gap-2">
-                <p role="alert" className="text-sm text-destructive-foreground">
-                  {status.error}
-                </p>
-                <div>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => status.refresh()}
-                  >
-                    {sourceMismatch ? "Reload with current source" : "Retry status"}
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            {!configuredSource ? (
-              <p className="text-sm text-muted-foreground">
-                Choose and save a catalog source to get started.
-              </p>
-            ) : null}
-            {configuredSource && status.data === null && !status.error ? (
-              <p className="text-sm text-muted-foreground">
-                {status.isPending ? "Loading catalog status…" : "No catalog status yet."}
-              </p>
-            ) : null}
-            {status.data ? (
-              <>
-                <p className="break-all text-xs text-muted-foreground">
-                  {status.data.catalogDir} · {upstream ?? "no upstream"} ·{" "}
-                  {status.data.git.dirty ? "dirty" : "clean"}
-                  {status.data.targets.length > 0
-                    ? ` · installs to ${status.data.targets.join(", ")}`
-                    : null}
-                </p>
-                {status.data.warnings.map((warning) => (
-                  <p key={warning} className="text-xs text-muted-foreground">
-                    {warning}
-                  </p>
-                ))}
-              </>
-            ) : null}
-          </div>
-        </SettingsRow>
-      </SettingsSection>
-      <SettingsSection
-        title="Skill groups"
-        headerAction={
-          <Button size="xs" disabled={applyDisabled} onClick={() => void applySelected()}>
-            {busy ? "Applying…" : "Apply selected groups"}
-          </Button>
-        }
-      >
-        {status.data?.groups.length ? (
-          status.data.groups.map((group) => (
-            <SettingsRow
-              key={`${selectionScope}:${group.name}`}
-              title={<span className="font-mono">{group.name}</span>}
-              description={group.description}
-              status={`${group.skills.length} skills${group.depends.length > 0 ? ` · needs ${group.depends.join(", ")}` : ""}`}
-              control={
-                <Checkbox
-                  aria-label={`Install ${group.name} group`}
-                  checked={selectedGroups.includes(group.name)}
-                  disabled={applyDisabled}
-                  onCheckedChange={() => toggleGroup(group.name)}
-                />
-              }
-            >
-              <details className="group/skill-group pb-3 text-xs">
-                <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-                  <ChevronRightIcon
-                    aria-hidden
-                    className="size-3.5 shrink-0 group-open/skill-group:rotate-90"
+          {status.data?.groups.length ? (
+            status.data.groups.map((group) => (
+              <SettingsRow
+                key={`${selectionScope}:${group.name}`}
+                title={<span className="font-mono">{group.name}</span>}
+                description={group.description}
+                status={`${group.skills.length} skills${group.depends.length > 0 ? ` · needs ${group.depends.join(", ")}` : ""}`}
+                control={
+                  <Checkbox
+                    aria-label={`Install ${group.name} group`}
+                    checked={selectedGroups.includes(group.name)}
+                    disabled={applyDisabled}
+                    onCheckedChange={() => toggleGroup(group.name)}
                   />
-                  View skills
-                </summary>
-                {group.skills.length > 0 ? (
-                  <ul className="ml-2 grid gap-3 border-l border-border pt-2 pl-4">
-                    {group.skills.map((skill) => (
-                      <li key={skill.name} className="min-w-0 break-words">
-                        <span className="font-mono">{skill.name}</span>
-                        {skill.description ? (
-                          <p className="text-muted-foreground">{skill.description}</p>
-                        ) : null}
-                      </li>
+                }
+              >
+                <details className="group/skill-group pb-3 text-xs">
+                  <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                    <ChevronRightIcon
+                      aria-hidden
+                      className="size-3.5 shrink-0 group-open/skill-group:rotate-90"
+                    />
+                    View skills
+                  </summary>
+                  {group.skills.length > 0 ? (
+                    <ul className="ml-2 grid gap-3 border-l border-border pt-2 pl-4">
+                      {group.skills.map((skill) => (
+                        <li key={skill.name} className="min-w-0 break-words">
+                          <span className="font-mono">{skill.name}</span>
+                          {skill.description ? (
+                            <p className="text-muted-foreground">{skill.description}</p>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="pt-2 pl-6 text-muted-foreground">No skills in this group.</p>
+                  )}
+                </details>
+              </SettingsRow>
+            ))
+          ) : (
+            <SettingsRow
+              title={status.data ? "No groups" : "No groups available"}
+              description={
+                status.data
+                  ? "This catalog defines no groups."
+                  : configuredSource
+                    ? "Groups will appear when catalog status loads."
+                    : "Choose a catalog source to see its groups."
+              }
+            />
+          )}
+          {notice ||
+          applyFailure ||
+          (lastApply && (lastApply.conflicts.length || lastApply.failed.length)) ? (
+            <SettingsRow title="Last action">
+              <div className="grid gap-1 pt-2 pb-3 text-sm">
+                {notice ? (
+                  <p role="status" className="text-muted-foreground">
+                    {notice}
+                  </p>
+                ) : null}
+                {applyFailure ? (
+                  <p role="alert" className="text-destructive-foreground">
+                    {applyFailure.message}
+                    {applyFailure.partial ? ` ${summarizeApplyResult(applyFailure.partial)}` : null}
+                  </p>
+                ) : null}
+                {lastApply && (lastApply.conflicts.length > 0 || lastApply.failed.length > 0) ? (
+                  <>
+                    {lastApply.conflicts.length > 0 ? (
+                      <p role="alert" className="text-destructive-foreground">
+                        The conflicting paths were left unchanged. Review links before replacing
+                        them; they may be used by another environment. Existing files or folders
+                        must be moved manually.
+                      </p>
+                    ) : null}
+                    {replacementOptions.length > 0 ? (
+                      <div>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          disabled={!canReplace}
+                          onClick={() =>
+                            setReplacementPaths(replacementOptions.map((option) => option.linkPath))
+                          }
+                        >
+                          Use this catalog…
+                        </Button>
+                      </div>
+                    ) : null}
+                    {lastApply.conflicts.map((conflict) => (
+                      <p key={`${conflict.skill}${conflict.linkPath}`} className="break-words">
+                        Conflict: {conflict.skill} at {conflict.linkPath} — {conflict.detail}
+                      </p>
                     ))}
-                  </ul>
-                ) : (
-                  <p className="pt-2 pl-6 text-muted-foreground">No skills in this group.</p>
-                )}
-              </details>
+                    {lastApply.failed.map((failed) => (
+                      <p key={failed.linkPath} className="text-destructive-foreground">
+                        Failed: {failed.linkPath} — {failed.error}
+                      </p>
+                    ))}
+                  </>
+                ) : null}
+              </div>
             </SettingsRow>
-          ))
-        ) : (
-          <SettingsRow
-            title={status.data ? "No groups" : "No groups available"}
-            description={
-              status.data
-                ? "This catalog defines no groups."
-                : configuredSource
-                  ? "Groups will appear when catalog status loads."
-                  : "Choose a catalog source to see its groups."
-            }
-          />
-        )}
-        {notice ||
-        applyFailure ||
-        (lastApply && (lastApply.conflicts.length || lastApply.failed.length)) ? (
-          <SettingsRow title="Last action">
-            <div className="grid gap-1 pt-2 pb-3 text-sm">
-              {notice ? (
-                <p role="status" className="text-muted-foreground">
-                  {notice}
+          ) : null}
+        </SettingsSection>
+      ) : null}
+      <Dialog open={reviewingApply && catalogReady} onOpenChange={setReviewingApply}>
+        <DialogPopup className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Apply skill changes</DialogTitle>
+            <DialogDescription>
+              Selected groups and their dependencies will be installed or refreshed. This catalog’s
+              links for unselected groups will be removed. Other sources are kept.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <div className="grid gap-4 text-sm">
+              {[
+                {
+                  title: "Add groups",
+                  groups: selectedGroups.filter(
+                    (name) => !status.data?.selectedGroups.includes(name),
+                  ),
+                },
+                {
+                  title: "Keep and refresh groups",
+                  groups: selectedGroups.filter((name) =>
+                    status.data?.selectedGroups.includes(name),
+                  ),
+                },
+                {
+                  title: "Remove groups",
+                  groups: (status.data?.selectedGroups ?? []).filter(
+                    (name) => !selectedGroups.includes(name),
+                  ),
+                },
+              ]
+                .filter((section) => section.groups.length > 0)
+                .map((section) => (
+                  <div key={section.title}>
+                    <h3 className="font-medium">{section.title}</h3>
+                    <ul className="list-inside list-disc pt-1 text-muted-foreground">
+                      {section.groups.map((name) => (
+                        <li key={name}>{name}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              {selectedGroups.length === 0 ? (
+                <p role="alert">
+                  No groups selected. Applying removes all links owned by this catalog.
                 </p>
               ) : null}
-              {applyFailure ? (
-                <p role="alert" className="text-destructive-foreground">
-                  {applyFailure.message}
-                  {applyFailure.partial ? ` ${summarizeApplyResult(applyFailure.partial)}` : null}
-                </p>
-              ) : null}
-              {lastApply && (lastApply.conflicts.length > 0 || lastApply.failed.length > 0) ? (
-                <>
-                  {lastApply.conflicts.length > 0 ? (
-                    <p role="alert" className="text-destructive-foreground">
-                      The conflicting paths were left unchanged. Review links before replacing them;
-                      they may be used by another environment. Existing files or folders must be
-                      moved manually.
-                    </p>
-                  ) : null}
-                  {replacementOptions.length > 0 ? (
-                    <div>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        disabled={!canReplace}
-                        onClick={() =>
-                          setReplacementPaths(replacementOptions.map((option) => option.linkPath))
-                        }
-                      >
-                        Use this catalog…
-                      </Button>
-                    </div>
-                  ) : null}
-                  {lastApply.conflicts.map((conflict) => (
-                    <p key={`${conflict.skill}${conflict.linkPath}`} className="break-words">
-                      Conflict: {conflict.skill} at {conflict.linkPath} — {conflict.detail}
-                    </p>
-                  ))}
-                  {lastApply.failed.map((failed) => (
-                    <p key={failed.linkPath} className="text-destructive-foreground">
-                      Failed: {failed.linkPath} — {failed.error}
-                    </p>
-                  ))}
-                </>
-              ) : null}
+              <p className="text-xs text-muted-foreground">
+                Existing files and links from other sources will not be replaced without a separate
+                confirmation. Running provider sessions may need restarting.
+              </p>
             </div>
-          </SettingsRow>
-        ) : null}
-      </SettingsSection>
+          </DialogPanel>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReviewingApply(false)}>
+              Cancel
+            </Button>
+            <Button disabled={applyDisabled} onClick={() => void applySelected()}>
+              Confirm changes
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
       <Dialog
         open={replacementPaths !== null && canReplace}
         onOpenChange={(open) => {

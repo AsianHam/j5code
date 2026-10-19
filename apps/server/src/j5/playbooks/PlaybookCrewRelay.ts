@@ -274,7 +274,13 @@ export const makePlaybookCrewRelay = Effect.gen(function* () {
     withCrew(
       input.crewInstanceId,
       Effect.gen(function* () {
-        const { definitionPath } = yield* store.definitionPathFor(input.root, input.name);
+        const { definitionPath } = yield* store.startDefinitionPathFor(
+          input.owner,
+          input.root,
+          input.name,
+          input.key,
+          input.crewInstanceId,
+        );
         const instance = yield* readCrew(input.crewInstanceId);
         const refusal =
           instance === null

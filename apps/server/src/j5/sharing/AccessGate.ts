@@ -330,22 +330,22 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
     projectIcon: projectIconOf,
   },
 
-  // A project as a whole (AC19, AC22): renaming and removing it, its artifacts, its Playbooks and
-  // the skills in its workspace. Editing its scripts needs upstream's environment settings
-  // permission, which only an Owner holds.
+  // A project as a whole (AC19, AC22): renaming and removing it, its artifacts and the skills in
+  // its workspace. Editing its scripts needs upstream's environment settings permission, which
+  // only an Owner holds.
   [WS_METHODS.projectsMutate]: onProject("collaborator"),
   [J5_ARTIFACT_WS_METHODS.listArtifacts]: onProject("viewer"),
   [J5_ARTIFACT_WS_METHODS.subscribeArtifactChanges]: onProject("viewer"),
   [J5_ARTIFACT_WS_METHODS.deleteArtifact]: onProject("collaborator"),
-  [J5_PLAYBOOK_WS_METHODS.readLibrary]: onProject("viewer"),
-  [J5_PLAYBOOK_WS_METHODS.exportPlaybook]: onProject("viewer"),
-  [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: onProject("collaborator"),
-  [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: onProject("collaborator"),
   [J5_SKILL_LINK_WS_METHODS.inspect]: onProject("viewer"),
   [J5_SKILL_LINK_WS_METHODS.preview]: onProject("collaborator"),
   [J5_SKILL_LINK_WS_METHODS.create]: onProject("collaborator"),
   [J5_SKILL_LINK_WS_METHODS.deletePreview]: onProject("collaborator"),
   [J5_SKILL_LINK_WS_METHODS.delete]: onProject("collaborator"),
+  // A thread's Playbook runs are part of the thread. PENDING JACKSON'S RULE: the environment-wide
+  // library (#621) has no project to hold its other methods to, so every one of them, from
+  // reading the library to its change feed, is left out here and refused to a narrowed
+  // connection until he says who reaches it.
   [J5_PLAYBOOK_WS_METHODS.listThreadRuns]: onThread("viewer"),
 
   // The server's own surfaces (AC23), read by someone who holds a level at server scope.

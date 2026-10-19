@@ -1,5 +1,6 @@
 import { SkillCatalogError, type SkillCatalogApplyResult } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { skillChangeFeedback } from "./skillChangeFeedback";
 
 const isSkillCatalogError = Schema.is(Schema.Struct(SkillCatalogError.fields));
 
@@ -20,9 +21,11 @@ export function summarizeApplyResult(
 ): string {
   const counts = `Installed ${result.installed} links, removed ${result.removed}, ${result.unchanged} unchanged.`;
   const blocked = result.conflicts.length;
-  return blocked > 0
-    ? `${blocked} skill ${blocked === 1 ? "link was" : "links were"} blocked by existing files or links. ${counts}`
-    : counts;
+  const summary =
+    blocked > 0
+      ? `${blocked} skill ${blocked === 1 ? "link was" : "links were"} blocked by existing files or links. ${counts}`
+      : counts;
+  return result.installed || result.removed ? skillChangeFeedback(summary) : summary;
 }
 
 /**
