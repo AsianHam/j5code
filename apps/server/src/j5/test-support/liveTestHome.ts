@@ -428,7 +428,12 @@ function writeSettingsAndPersonas(home: string): void {
   NodeFS.writeFileSync(
     NodePath.join(stateDir, "settings.json"),
     `${JSON.stringify(
-      { defaultModelSelection: LIVE_TEST_DEFAULT_MODEL satisfies Pick<ModelSelection, "model"> },
+      {
+        defaultModelSelection: LIVE_TEST_DEFAULT_MODEL satisfies Pick<ModelSelection, "model">,
+        // A provider found behind its latest release raises a toast that covers the top-right
+        // controls of every page until dismissed, and tests click those controls.
+        enableProviderUpdateChecks: false,
+      },
       null,
       2,
     )}\n`,

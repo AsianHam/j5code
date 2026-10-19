@@ -114,12 +114,13 @@ and Browser panel screenshots are saved by the server you are running in.
 A worktree holds one setup at a time. Pass a flag to the first start, or to
 `rebuild` to switch.
 
-| If you need                                     | Add             |
-| ----------------------------------------------- | --------------- |
-| An empty home, so the first-run wizard shows    | `--fresh`       |
-| Two peered servers, named Local and Remote      | `--peer`        |
-| The same, with Remote polling Local             | `--peer --poll` |
-| A base and a head server for before/after shots | `--base <ref>`  |
+| If you need                                     | Add                                  |
+| ----------------------------------------------- | ------------------------------------ |
+| An empty home, so the first-run wizard shows    | `--fresh`                            |
+| Two peered servers, named Local and Remote      | `--peer`                             |
+| The same, with Remote polling Local             | `--peer --poll`                      |
+| A base and a head server for before/after shots | `--base <ref>`                       |
+| The head build opening a home Base wrote        | `upgrade`, in a `--base <ref>` build |
 
 - **After any `rebuild`**, a tab that was open before it can stay on the
   pairing form. Press "Reload app" there.
@@ -132,6 +133,15 @@ A worktree holds one setup at a time. Pass a flag to the first start, or to
   browser" link the script prints to add Remote. After a `rebuild`, remove the
   old Remote from Settings > Connections first: the browser keeps its own list.
 - **`--base <ref>`.** See "PR screenshots".
+- **`upgrade`.** To test a change that acts on old state, make that state on
+  Base, in its tab or with the base checkout's own `guest`
+  (`node .j5code/live-test/base/scripts/j5/setup-agent-live-test.ts guest "<name>"`),
+  then run `upgrade`. Do not write the state into a test database by hand.
+  Base's tabs stay signed in: reload them. Run `upgrade` again to start over
+  from the same old state; before reloading a tab then, clear its cached state
+  with `preview_evaluate`: `indexedDB.deleteDatabase("t3code:connection-runtime")`.
+  After `upgrade`, `guest` adds people to the upgraded server; do not run the
+  base checkout's own script.
 
 ### Live turns
 
@@ -209,7 +219,7 @@ sent through the UI.
 | The turn path, provider adapters, or MCP tools | One turn each on Codex and Claude                        |
 | Stored state, deliveries, or recovery          | `restart` at rest, then use the state                    |
 | Interrupted runs                               | `restart` during a held turn                             |
-| Migrations                                     | A migration rehearsal on a copy, and a `--fresh` run     |
+| Migrations                                     | `upgrade` from the PR's base, and a `--fresh` run        |
 | Startup, onboarding, or settings defaults      | A `--fresh` run                                          |
 | Anything an agent is meant to use              | Ask a real agent in plain words, without naming the tool |
 | Peering or cross-server messages               | A `--peer` run                                           |
