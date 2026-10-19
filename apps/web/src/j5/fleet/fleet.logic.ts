@@ -284,14 +284,6 @@ export function countFleetProjects<
   ).size;
 }
 
-/** Roster alert badge: measured "needs a human" facts only, so nothing here is guessed. */
-export const countFleetAlerts = (projects: ReadonlyArray<FleetLedgerProject>) =>
-  projects.reduce(
-    (count, ledgerProject) =>
-      count + ledgerProject.agents.filter((agent) => agent.openAsks > 0).length,
-    0,
-  );
-
 /**
  * Origin copy for the Roster row; unknown renders as `?` rather than a plausible guess. An
  * outside agent that started the agent is named by the label it signed in with, and by its id

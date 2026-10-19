@@ -1,4 +1,8 @@
-import { createFleetFactsAtom, type FleetFactRow } from "@t3tools/client-runtime/j5/fleetFacts";
+import {
+  createFleetFactsAtom,
+  summarizeFleetProblems,
+  type FleetFactRow,
+} from "@t3tools/client-runtime/j5/fleetFacts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -64,6 +68,28 @@ export const fleetLiveRowsAtom = Atom.make(
 export const fleetLiveAgentAtom = Atom.family((key: string) =>
   Atom.make((get) => get(fleetLiveRowsAtom).get(key) === true),
 );
+
+export const fleetProblemSummaryAtom = Atom.make((get) => {
+  const sources = get(fleetSourcesAtom);
+  const environments = get(fleetEnvironmentLivenessAtom);
+  const summary = summarizeFleetProblems(
+    get(fleetFactsAtom),
+    get(fleetLiveRowsAtom),
+    sources.isReady &&
+      sources.sources.length > 0 &&
+      sources.sources.every(
+        (source) =>
+          environments.get(source.environmentId) === true && source.data?.asOf !== undefined,
+      ),
+  );
+  const previous = Option.getOrUndefined(get.self<typeof summary>());
+  return previous !== undefined &&
+    previous.agentsWithProblems === summary.agentsWithProblems &&
+    previous.unmeasuredAgents === summary.unmeasuredAgents &&
+    previous.incompleteSources === summary.incompleteSources
+    ? previous
+    : summary;
+});
 
 /** Only classification changes rebuild the placement sections; activity and elapsed time do not. */
 export const fleetSeatStatesAtom = Atom.make((get) => {
