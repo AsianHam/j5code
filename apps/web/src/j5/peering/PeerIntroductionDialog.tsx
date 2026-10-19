@@ -65,58 +65,64 @@ interface StepReport {
 }
 
 /**
- * The introduction. Choosing the remote runs a quick check: each server tests
+ * The introduction, between any two servers this client is connected to; the
+ * first is one it manages, defaulting to its own. Choosing the remote runs a quick check: each server tests
  * the direction it would connect in, and each descriptor says how the server is
  * run. The dialog then shows one setup built from what the check found, in
  * plain lines saying how messages travel each way, and asks only what the
  * check could not settle. "Set up differently" opens the manual form. A server
- * too old for poll mode gets only "update J5 there" and Close. A pair this
+ * too old for poll mode gets only "update J5 there" and Close. A pair the first
  * server already records is removed under Peer servers before it is peered
- * again; an old record of this server left on the other one is cleared first.
+ * again; an old record of the first server left on the other one is cleared first.
  */
 export function PeerIntroductionDialog({
   open,
   onOpenChange,
-  primaryEnvironmentId,
+  servers,
+  defaultServerId,
   onPeered,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-  readonly primaryEnvironmentId: EnvironmentId;
-  readonly onPeered: (otherEnvironmentId: EnvironmentId) => void;
+  /** The connected servers this client manages, any of which can be the first of the pair. */
+  readonly servers: ReadonlyArray<EnvironmentId>;
+  readonly defaultServerId: EnvironmentId;
+  readonly onPeered: (first: EnvironmentId, second: EnvironmentId) => void;
 }) {
   const { environments } = useEnvironments();
-  const primary = useEnvironment(primaryEnvironmentId);
+  const [thisServerId, setThisServerId] = useState(defaultServerId);
+  const thisServer = useEnvironment(thisServerId);
   const candidates = useMemo(
     () =>
       environments
-        .filter((environment) => environment.environmentId !== primaryEnvironmentId)
+        .filter((environment) => environment.environmentId !== thisServerId)
         .toSorted((left, right) => left.label.localeCompare(right.label)),
-    [environments, primaryEnvironmentId],
+    [environments, thisServerId],
   );
   const [otherId, setOtherId] = useState<EnvironmentId | null>(null);
   const other = candidates.find((environment) => environment.environmentId === otherId) ?? null;
-  const primaryBaseUrl = useEnvironmentHttpBaseUrl(primaryEnvironmentId);
+  const thisServerBaseUrl = useEnvironmentHttpBaseUrl(thisServerId);
   const otherBaseUrl = useEnvironmentHttpBaseUrl(otherId);
   const otherCanWriteAccess = useAtomValue(j5Environment.addPeer.permissionAtom(otherId));
 
-  const local = useMemo(() => (primary === null ? null : peeringServerOf(primary)), [primary]);
+  const local = useMemo(
+    () => (thisServer === null ? null : peeringServerOf(thisServer)),
+    [thisServer],
+  );
   const remote = useMemo(() => (other === null ? null : peeringServerOf(other)), [other]);
   const otherReady =
     other !== null && other.connection.phase === "connected" && otherCanWriteAccess;
   const bothSupportPoll = local?.supportsPoll === true && remote?.supportsPoll === true;
   // Whether each server supports poll mode is known only once its descriptor is.
   const described =
-    (primary?.serverConfig ?? null) !== null && (other?.serverConfig ?? null) !== null;
+    (thisServer?.serverConfig ?? null) !== null && (other?.serverConfig ?? null) !== null;
 
   // Each server's record of the other. One here is a peering this server still
   // holds: it is removed under Peer servers first. One held only by the other
   // server is a leftover, such as from a removal made on this side only.
   const otherConnected = other !== null && other.connection.phase === "connected";
   // Both are read while the remote is connected, even unmanaged, so a leftover can name where to clear it.
-  const localPeers = useEnvironmentQuery(
-    otherConnected ? peersQueryAtom(primaryEnvironmentId) : null,
-  );
+  const localPeers = useEnvironmentQuery(otherConnected ? peersQueryAtom(thisServerId) : null);
   const remotePeers = useEnvironmentQuery(
     otherConnected && otherId !== null ? peersQueryAtom(otherId) : null,
   );
@@ -127,7 +133,7 @@ export function PeerIntroductionDialog({
   const { heldHere, leftover } =
     herePeers !== null && therePeers !== null
       ? peeringRecords({
-          thisServer: primaryEnvironmentId,
+          thisServer: thisServerId,
           otherServer: otherId ?? "",
           here: herePeers,
           there: therePeers,
@@ -135,7 +141,7 @@ export function PeerIntroductionDialog({
       : { heldHere: false, leftover: false };
   const recordsError =
     localPeers.error !== null
-      ? { server: local?.label ?? primaryEnvironmentId, error: localPeers.error }
+      ? { server: local?.label ?? thisServerId, error: localPeers.error }
       : remotePeers.error !== null
         ? { server: remote?.label ?? otherId, error: remotePeers.error }
         : null;
@@ -158,6 +164,10 @@ export function PeerIntroductionDialog({
     setOriginEdits({});
     setReport(null);
   };
+  const chooseServer = (value: EnvironmentId) => {
+    setThisServerId(value);
+    chooseOther(otherId === value ? null : otherId);
+  };
 
   // The check runs once the remote can be managed, both servers support it, and
   // this server does not already record it.
@@ -169,7 +179,7 @@ export function PeerIntroductionDialog({
     if (checkKey === null || local === null || remote === null) return;
     let cancelled = false;
     void runPeeringCheck(
-      { server: local, clientUrl: primaryBaseUrl },
+      { server: local, clientUrl: thisServerBaseUrl },
       { server: remote, clientUrl: otherBaseUrl },
     ).then((result) => {
       if (!cancelled) setChecked({ key: checkKey, result });
@@ -178,7 +188,7 @@ export function PeerIntroductionDialog({
       cancelled = true;
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Keyed on the pair and its addresses: the server objects are rebuilt on every environment refresh.
-  }, [checkKey, primaryBaseUrl, otherBaseUrl]);
+  }, [checkKey, thisServerBaseUrl, otherBaseUrl]);
   const check = checked !== null && checked.key === checkKey ? checked.result : null;
 
   const recommendation: PeeringRecommendation | null =
@@ -293,7 +303,7 @@ export function PeerIntroductionDialog({
         ]);
       }
       if (ok) {
-        onPeered(remote.environmentId);
+        onPeered(local.environmentId, remote.environmentId);
         onOpenChange(false);
       }
     } finally {
@@ -325,21 +335,37 @@ export function PeerIntroductionDialog({
         <DialogPanel>
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="flex flex-col gap-1.5 text-sm">
-                <span className="font-medium text-foreground">This server</span>
-                <span className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-foreground">
-                  {local?.label ?? primaryEnvironmentId}
-                </span>
-              </div>
               <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
-                Remote server
+                Server
+                <Select
+                  disabled={busy}
+                  value={thisServerId}
+                  onValueChange={(value) => {
+                    if (value !== null) chooseServer(value as EnvironmentId);
+                  }}
+                >
+                  <SelectTrigger className="w-full" aria-label="Server to peer">
+                    <SelectValue>{local?.label ?? thisServerId}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="start" alignItemWithTrigger={false}>
+                    {servers.map((id) => (
+                      <SelectItem key={id} value={id}>
+                        {environments.find((environment) => environment.environmentId === id)
+                          ?.label ?? id}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
+                Peer with
                 <Select
                   disabled={busy}
                   value={otherId ?? undefined}
                   onValueChange={(value) => chooseOther((value as EnvironmentId | null) ?? null)}
                 >
-                  <SelectTrigger className="w-full" aria-label="Remote server to peer with">
-                    <SelectValue>{remote?.label ?? "Choose a remote server"}</SelectValue>
+                  <SelectTrigger className="w-full" aria-label="Server to peer with">
+                    <SelectValue>{remote?.label ?? "Choose a server"}</SelectValue>
                   </SelectTrigger>
                   <SelectPopup align="start" alignItemWithTrigger={false}>
                     {candidates.map((environment) => (
@@ -381,14 +407,14 @@ export function PeerIntroductionDialog({
               </p>
             ) : null}
 
-            {heldHere && remote !== null ? (
+            {heldHere && remote !== null && local !== null ? (
               <p className="text-xs text-muted-foreground">
-                {remote.label} is already a peer of this server. Remove it under Peer servers first,
-                then peer them again.
+                {remote.label} is already a peer of {local.label}. Remove that peering under Peer
+                servers first, then peer them again.
               </p>
             ) : leftover && remote !== null && local !== null ? (
               <p className="text-xs text-muted-foreground">
-                {remote.label} still has an old record of this server.{" "}
+                {remote.label} still has an old record of {local.label}.{" "}
                 {otherReady
                   ? "Peering clears it there first."
                   : `Remove ${local.label} under Peer servers on ${remote.label} first.`}

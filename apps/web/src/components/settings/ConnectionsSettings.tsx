@@ -3938,11 +3938,8 @@ export function ConnectionsSettings() {
       ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
-      {/* J5: peering between this environment and another the client is connected to. */}
-      <PeerServersSettings
-        primaryEnvironmentId={primaryEnvironmentId}
-        canManage={!isLocalEnvironmentDisabled() && canWriteAccess}
-      />
+      {/* J5: peering between any two environments the client is connected to and manages. */}
+      <PeerServersSettings primaryEnvironmentId={primaryEnvironmentId} />
     </SettingsPageContainer>
   );
 }
