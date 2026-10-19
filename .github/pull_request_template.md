@@ -15,9 +15,9 @@
 ## Live testing
 
 <!-- What was tested on a real server, from the tester's report (see the j5-live-test skill):
-     the verdict and the commit tested; what was not exercised live, and why;
+     the verdict; the commit tested, the head, and what changed between them and why it
+     was or was not re-tested; what was not exercised live, and why;
      anything a person needs to test by hand, with exact steps.
-     Name the report artifact, for example `test-reports/<branch>.md`.
      Delete this section if nothing in the PR can be live-tested. -->
 
 ## Upstream impact

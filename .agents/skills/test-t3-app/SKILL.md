@@ -39,9 +39,10 @@ a subagent left running in the background; it is not a browser fault.
   and pass the returned `tabId` on every later call.
 - **Pair.** Navigate to the complete startup pairing URL once with
   `preview_navigate`, then `preview_wait_for` the locator
-  `[data-testid="composer-editor"]`: navigate returns while the splash screen
-  still shows. If the token was consumed or expired, mint a fresh one with
-  the `pair` command the setup script printed, or with
+  `[data-testid="composer-editor"]` with `timeoutMs: 60000`: navigate returns
+  while the splash screen still shows, and a cold dev server can take longer
+  than the default 15 seconds. If the token was consumed or expired, mint a
+  fresh one with the `pair` command the setup script printed, or with
   `node apps/server/src/bin.ts pair` for a plain dev server. Keep using the
   same tab.
 - **Wait.** A URL changes before its page does, and the composer shows before
