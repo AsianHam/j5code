@@ -58,6 +58,8 @@ const participantIds = (ids: ReadonlyArray<string>) =>
       () => new J5ActionError({ code: "invalid_request", message: "A participant id is invalid." }),
     ),
   );
+/** An id that is not one names nobody, so it stays unknown rather than failing the ids beside it. */
+const isParticipantId = Schema.is(ParticipantId);
 const optionalPerson = (personId: string | undefined) =>
   personId === undefined || personId.length === 0
     ? Effect.succeed(undefined)
@@ -102,13 +104,9 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
         .preArchiveFacts(input.threadId)
         .pipe(Effect.catch(failed("Pre-archive fact lookup failed."))),
     [METHODS.readParticipantIdentities]: (input: ParticipantIdentitiesRequest) =>
-      participantIds(input.participantIds).pipe(
-        Effect.flatMap((ids) =>
-          reads
-            .participantIdentities({ participantIds: ids })
-            .pipe(Effect.catch(failed("Client read failed."))),
-        ),
-      ),
+      reads
+        .participantIdentities({ participantIds: input.participantIds.filter(isParticipantId) })
+        .pipe(Effect.catch(failed("Client read failed."))),
     [METHODS.listPeers]: () => peers.list.pipe(Effect.catch(failed("Listing peers failed."))),
     [METHODS.subscribeReadChanges]: () => changes.changes,
   };
