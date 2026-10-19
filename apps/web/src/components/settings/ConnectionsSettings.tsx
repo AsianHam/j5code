@@ -6,6 +6,7 @@ import {
   EllipsisIcon,
   PlusIcon,
   QrCodeIcon,
+  RefreshCwIcon,
   RouteIcon,
   TerminalIcon,
 } from "lucide-react";
@@ -1467,6 +1468,10 @@ function SavedBackendListRow({
   const isConnected = environment.connection.phase === "connected";
   const isRemoving = removingEnvironmentId === environmentId;
   const errorTraceId = environment.connection.traceId;
+  const canReconnect =
+    enabled &&
+    (environment.connection.phase === "reconnecting" || environment.connection.phase === "error");
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
     target: "trace ID",
     onCopy: ({ traceId }) => {
@@ -1729,6 +1734,12 @@ function SavedBackendListRow({
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
           />
+          {canReconnect ? (
+            <MenuItem onClick={() => void retryEnvironment(environmentId)}>
+              <RefreshCwIcon />
+              Reconnect now
+            </MenuItem>
+          ) : null}
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
             <RouteIcon />
             {routesOpen ? "Hide routes" : "Routes"}

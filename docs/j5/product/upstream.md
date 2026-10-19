@@ -461,6 +461,18 @@ Recorded in `FORK.md` cases 69 to 73, and in the case the shared conversation's 
 
 **Decided:** Jackson, 2026-10-17 ([#624](https://github.com/Jacksondr5/j5code/issues/624)). Recorded in FORK.md case 75.
 
+#### D37. A connection that keeps failing can be retried at once
+
+**Upstream:** after a few failed attempts, a client waits longer and longer between tries, up to five minutes. The mobile app offers "Retry now" the whole time. The web and desktop app show Reconnect on the chat view's banner only once the environment is offline or has failed outright, so while it says "reconnecting" there is no way to try again before the timer runs out, other than leaving the window and coming back. Settings › Connections shows the status but has no retry.
+
+**J5:** the banner keeps Reconnect while the environment is reconnecting, and a saved environment's menu in Settings › Connections offers "Reconnect now" while it is reconnecting or has failed. Both use upstream's own retry, the one the mobile app's button calls.
+
+**Why:** a server that was restarted, or a tunnel that came back, could sit unused for up to five minutes with the app saying it was reconnecting and nothing to press.
+
+**Consequences:** a temporary patch to two upstream files, offered back upstream. **J5 drops this patch** when upstream gives web and desktop a retry while reconnecting, even if its form differs.
+
+**Decided:** Jackson, 2026-10-19. Recorded in FORK.md's temporary patches.
+
 ### Awaiting a decision
 
 These already diverge on `j5/main`, but no human ruling is on record. Each landed as an implementer's call inside a merged PR. The person rules on each one; an approved entry moves up into its section, and a rejected one becomes a fix.
@@ -570,3 +582,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-17 — D35 added: a client says what is new after it updates (Jackson, [#624](https://github.com/Jacksondr5/j5code/issues/624)).
 - 2026-10-17 — D33 rewritten for the people model: a person's scope and level decide what a connection reaches, a device holds exactly its level's permissions and renews its session when the level changes, and a link is J5's own token. What D33 described of the build is now defined in [People and access](features/people-and-access.md) (Jackson, 2026-10-16 and 2026-10-17; [#608](https://github.com/Jacksondr5/j5code/issues/608)). D36 added: `j5 pair` names the person a device is for (Jackson, 2026-10-16).
 - 2026-10-17 — the advance onto upstream's nightly `v0.1.1-nightly.20261017.3238`: D1 takes upstream's third `delegate_task` rule, a child's own worktree; D2 admits three new tools; D4 holds a delivery after a failed worktree setup and is re-checked; D6 re-checked; D19 adds the agents' systemd names and `j5code://` prompt links (#633 for a forwarding page); D20's release check reaches "Update everything"; D28 has one server per home; D33's sockets close when a session is revoked, and upstream's merge of its standard and administrative permissions (pingdotgg/t3code#20432) leaves the level mapping unchanged, since it names each level's permissions; D36's upstream default is every permission (Jackson's decisions of that day for D2, D4 and D19; the rest follow upstream).
+- 2026-10-19 — D37 added: a connection that keeps failing can be retried at once on web and desktop (Jackson).
