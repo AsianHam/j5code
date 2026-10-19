@@ -159,25 +159,27 @@ it.layer(accessLayer)("PairingIntents", (it) => {
     }),
   );
 
-  it.effect("binds the startup link's and the desktop app's devices to the first owner", () =>
-    Effect.gen(function* () {
-      const intents = yield* PairingIntents;
-      const people = yield* PersonAccess.PersonAccess;
-      const sessions = yield* SessionStore.SessionStore;
-      const owner = yield* people.firstOwner;
-      for (const subject of ["administrative-bootstrap", "desktop-bootstrap"]) {
-        const issued = yield* intents.issueSession({
-          grant: { subject, scopes: LEVEL_PERMISSIONS.owner },
-          credential: `credential-${subject}`,
-          issue: sessions.issue({ subject, scopes: LEVEL_PERMISSIONS.owner }),
-        });
-        const devices = yield* people.listDevices(owner.personId);
-        assert.isTrue(
-          devices.some((device) => device.sessionId === issued.sessionId),
-          subject,
-        );
-      }
-    }),
+  it.effect(
+    "binds the startup link's, the desktop app's and T3 Connect's devices to the first owner",
+    () =>
+      Effect.gen(function* () {
+        const intents = yield* PairingIntents;
+        const people = yield* PersonAccess.PersonAccess;
+        const sessions = yield* SessionStore.SessionStore;
+        const owner = yield* people.firstOwner;
+        for (const subject of ["administrative-bootstrap", "desktop-bootstrap", "cloud-connect"]) {
+          const issued = yield* intents.issueSession({
+            grant: { subject, scopes: LEVEL_PERMISSIONS.owner },
+            credential: `credential-${subject}`,
+            issue: sessions.issue({ subject, scopes: LEVEL_PERMISSIONS.owner }),
+          });
+          const devices = yield* people.listDevices(owner.personId);
+          assert.isTrue(
+            devices.some((device) => device.sessionId === issued.sessionId),
+            subject,
+          );
+        }
+      }),
   );
 
   it.effect("pairs nothing from a J5 link's credential whose person is gone", () =>

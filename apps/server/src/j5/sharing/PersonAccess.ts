@@ -47,13 +47,17 @@ export const isServiceSubject = (subject: string) =>
 
 /**
  * Sessions that are the first owner's by how they were issued: the link the server prints when
- * it starts, the desktop app on its own machine, and the development credential (AC2). The first
- * two are bound to the first owner as they are issued (`PairingIntents`); the subject decides for
- * the development credential, which upstream never stores, and for a session from before.
+ * it starts, the desktop app on its own machine, T3 Connect, and the development credential
+ * (AC2). Upstream mints Connect's credential only for the cloud account the server was linked
+ * to, which is the server's own; J5 does not know which person linked it, so it is the first
+ * owner's. The first three are bound to the first owner as they are issued (`PairingIntents`);
+ * the subject decides for the development credential, which upstream never stores, and for a
+ * session from before.
  */
 export const FIRST_OWNER_SUBJECTS: ReadonlySet<string> = new Set([
   "administrative-bootstrap",
   "desktop-bootstrap",
+  "cloud-connect",
   "reusable-dev-token",
   "reusable-dev-token-child",
 ]);

@@ -42,7 +42,8 @@ it.layer(accessLayer)("PersonAccess", (it) => {
         }
 
         // The startup link's and the desktop app's sessions are the first owner's (AC2).
-        for (const subject of ["administrative-bootstrap", "desktop-bootstrap"]) {
+        // T3 Connect's included: upstream mints it only for the server's linked cloud account.
+        for (const subject of ["administrative-bootstrap", "desktop-bootstrap", "cloud-connect"]) {
           const reach = yield* people.sessionReach(sessionOf(`session:${subject}`, subject));
           assert.strictEqual(reach.kind, "person");
           if (reach.kind === "person") {
@@ -57,8 +58,8 @@ it.layer(accessLayer)("PersonAccess", (it) => {
           assert.strictEqual(reach.kind, "service");
         }
 
-        // A Connections link made before its creator was recorded, or T3 Connect's, is no one's.
-        const unknown = yield* people.sessionReach(sessionOf("session:cloud", "cloud-connect"));
+        // A Connections link made before its creator was recorded is no one's.
+        const unknown = yield* people.sessionReach(sessionOf("session:link", "one-time-token"));
         assert.strictEqual(unknown.kind, "unknown");
         assert.isFalse(PersonAccess.isWide(unknown));
       }),

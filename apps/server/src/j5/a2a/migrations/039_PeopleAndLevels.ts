@@ -7,8 +7,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 //
 // `j5_a2a_person_level` replaces the guest's grant. A grant on a project or thread becomes a level
 // at the same scope, View as Viewer and Collaborate as Collaborator; the line a member wrote when
-// sharing goes, as the definitions retired it. The server's own operator, `is_local_operator`, is
-// the first owner and holds Owner at server scope; nothing lowers or removes it.
+// sharing goes, as the definitions retired it. Every member holds Owner at server scope. The
+// server's own operator, `is_local_operator`, is the first owner; nothing lowers or removes it.
+// Any other member is a person migration 006 found in the ledger from before people were
+// recorded: they had an inbox and agents could address them, and as Owners they still do.
 //
 // Every live session upstream holds that no guest was paired with belongs to the first owner
 // (AC7). Its permissions as they stand become its ceiling, which a new session for it never
@@ -56,13 +58,13 @@ export default Effect.gen(function* () {
     SELECT person_id FROM j5_a2a_human_person WHERE is_local_operator = 1
   `;
   const firstOwner = operators[0]?.person_id;
-  if (firstOwner !== undefined) {
-    yield* sql`
-      INSERT INTO j5_a2a_person_level
-        (person_id, scope_kind, scope_id, level, created_at, updated_at)
-      VALUES (${firstOwner}, 'server', '', 'owner', ${now}, ${now})
-    `;
-  }
+  yield* sql`
+    INSERT INTO j5_a2a_person_level
+      (person_id, scope_kind, scope_id, level, created_at, updated_at)
+    SELECT person_id, 'server', '', 'owner', ${now}, ${now}
+    FROM j5_a2a_human_person
+    WHERE kind = 'member'
+  `;
 
   yield* sql`
     INSERT INTO j5_a2a_person_level

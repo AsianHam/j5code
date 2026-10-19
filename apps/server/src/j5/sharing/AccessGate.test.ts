@@ -10,6 +10,7 @@ import {
   J5_CLIENT_READ_WS_METHODS,
   LEVEL_PERMISSIONS,
 } from "@t3tools/contracts/j5";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -234,10 +235,10 @@ it.layer(testLayer)("access gate", (it) => {
   it.effect("lets a device no one claimed do no more than connect and say whose it is", () =>
     Effect.gen(function* () {
       const anywhere = yield* thread("thread:rpc-unknown");
-      const issued = yield* device(null, LEVEL_PERMISSIONS.owner, { subject: "cloud-connect" });
+      const issued = yield* device(null, LEVEL_PERMISSIONS.owner, { subject: "one-time-token" });
       const session: Signed = {
         sessionId: issued.sessionId,
-        subject: "cloud-connect",
+        subject: "one-time-token",
         method: "browser-session-cookie",
         scopes: LEVEL_PERMISSIONS.owner,
       };
@@ -403,15 +404,17 @@ it.layer(testLayer)("access gate", (it) => {
         [{ scope: { kind: "thread", threadId: mine }, level: "viewer" }],
         LEVEL_PERMISSIONS.viewer,
       );
+      // The feed is open, its first check passed, before the level goes.
+      const open = yield* Deferred.make<void>();
       const feed = yield* Effect.forkChild(
         call(
           session,
           ORCHESTRATION_V2_WS_METHODS.subscribeThread,
           { threadId: mine },
-          Effect.never,
+          Deferred.succeed(open, undefined).pipe(Effect.andThen(Effect.never)),
         ),
       );
-      yield* Effect.yieldNow;
+      yield* Deferred.await(open);
       yield* people.removeLevel({
         personId: viewer.personId,
         scope: { kind: "thread", threadId: mine },

@@ -59,7 +59,7 @@ const MEMBER = session("session:member", "administrative-bootstrap");
 /** A Viewer's device, once `guest` has recorded whose it is. */
 const GUEST = session("session:guest", "one-time-token");
 /** A device no one has claimed: no person was ever recorded for it. */
-const STRAY = session("session:stray", "cloud-connect");
+const STRAY = session("session:stray", "one-time-token");
 const SESSIONS: Record<string, EnvironmentAuth.AuthenticatedSession> = {
   member: MEMBER,
   guest: GUEST,
@@ -1072,6 +1072,55 @@ live(
       (yield* owner.scheduledTasks(Effect.succeed(list))).tasks.length,
       list.tasks.length,
     );
+  }).pipe(Effect.scoped),
+);
+
+live(
+  "gives a task's webhook only to someone who writes where the task is at home",
+  Effect.gen(function* () {
+    const access = yield* PersonAccess.PersonAccess;
+    const written = yield* project("project:written");
+    const watched = yield* project("project:watched");
+    yield* write("thread.created", { id: "thread:watched-written", projectId: watched });
+    yield* write("thread.created", { id: "thread:watched-only", projectId: watched });
+    const personId = yield* guest({ kind: "project", projectId: watched });
+    yield* access.setLevel({
+      personId,
+      scope: { kind: "project", projectId: written },
+      level: "collaborator",
+    });
+    yield* access.setLevel({
+      personId,
+      scope: { kind: "thread", threadId: ThreadId.make("thread:watched-written") },
+      level: "collaborator",
+    });
+    const task = (id: string, projectId: ProjectId, threadId: string | null) =>
+      ({
+        id,
+        projectId,
+        threadId: threadId === null ? null : ThreadId.make(threadId),
+        webhook: { url: `https://host/hook/${id}` },
+      }) as unknown as ScheduledTaskListResult["tasks"][number];
+    const list: ScheduledTaskListResult = {
+      tasks: [
+        task("task:written-project", written, null),
+        task("task:watched-project", watched, null),
+        task("task:watched-written-thread", watched, "thread:watched-written"),
+        task("task:watched-only-thread", watched, "thread:watched-only"),
+      ],
+    };
+    const withWebhook = (result: ScheduledTaskListResult) =>
+      Object.fromEntries(result.tasks.map((entry) => [entry.id, entry.webhook !== undefined]));
+    const expected = {
+      "task:written-project": true,
+      "task:watched-project": false,
+      "task:watched-written-thread": true,
+      "task:watched-only-thread": false,
+    };
+    const view = yield* GuestView.connectionView(GUEST);
+    assert.deepStrictEqual(withWebhook(yield* view.scheduledTasks(Effect.succeed(list))), expected);
+    const streamed = yield* Stream.runCollect(view.scheduledTasksStream(Stream.make(list)));
+    assert.deepStrictEqual(streamed.map(withWebhook), [expected]);
   }).pipe(Effect.scoped),
 );
 

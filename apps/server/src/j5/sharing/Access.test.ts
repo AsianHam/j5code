@@ -5,6 +5,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
@@ -185,6 +186,18 @@ it.layer(accessLayer)("Access", (it) => {
     }),
   );
 
+  it.effect("tells a subscriber every change of a burst, however many", () =>
+    Effect.gen(function* () {
+      const access = yield* Access;
+      const priya = yield* person("Priya in a burst");
+      const told = yield* access.subscribe;
+      for (let index = 0; index < 300; index += 1) {
+        yield* access.rename({ personId: priya.personId, displayName: `Priya ${index}` });
+      }
+      assert.strictEqual((yield* PubSub.takeAll(told)).length, 300);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("leaves MCP clients already issued alone when an Owner is lowered", () =>
     Effect.gen(function* () {
       const access = yield* Access;
@@ -209,7 +222,7 @@ it.layer(accessLayer)("Access", (it) => {
         const { renewToken } = yield* renewal;
         const owner = yield* people.firstOwner;
         const tablet = yield* device(null, [AuthOrchestrationReadScope], {
-          subject: "cloud-connect",
+          subject: "one-time-token",
         });
         assert.strictEqual((yield* people.sessionReach(tablet.identity)).kind, "unknown");
 
@@ -224,7 +237,7 @@ it.layer(accessLayer)("Access", (it) => {
 
         // A new name makes a person at server scope at the level the device's permissions suggest.
         const kiosk = yield* device(null, LEVEL_PERMISSIONS.collaborator, {
-          subject: "cloud-connect",
+          subject: "one-time-token",
         });
         const created = yield* access.claimDevice(
           { ...kiosk.identity, scopes: kiosk.scopes },
@@ -318,7 +331,9 @@ const hooked: Array<string> = [];
 it.effect("runs the write hook for a claimed device, a rename and a removal", () =>
   Effect.gen(function* () {
     const access = yield* Access;
-    const kiosk = yield* device(null, LEVEL_PERMISSIONS.collaborator, { subject: "cloud-connect" });
+    const kiosk = yield* device(null, LEVEL_PERMISSIONS.collaborator, {
+      subject: "one-time-token",
+    });
     const created = yield* access.claimDevice(
       { ...kiosk.identity, scopes: kiosk.scopes },
       { kind: "new", displayName: "Hooked kiosk" },

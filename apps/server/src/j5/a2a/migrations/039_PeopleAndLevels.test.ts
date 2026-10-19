@@ -42,6 +42,8 @@ it.effect("moves people, grants, devices and links onto levels", () =>
       ) VALUES (${id}, ${operator}, ${AT}, ${kind}, ${name}, ${name.toLowerCase()})
     `;
     yield* person("human:owner", 1, "member", "Jackson");
+    // A person migration 006 found in the ledger, a member with an inbox.
+    yield* person("human:member", 0, "member", "Maria");
     yield* person("human:viewer", 0, "guest", "Priya");
     yield* person("human:collaborator", 0, "guest", "Sam");
     const grant = (id: string, kind: string, target: string, level: string) => sql`
@@ -111,6 +113,7 @@ it.effect("moves people, grants, devices and links onto levels", () =>
           scope_id: "project:website",
           level: "collaborator",
         },
+        { person_id: "human:member", scope_kind: "server", scope_id: "", level: "owner" },
         { person_id: "human:owner", scope_kind: "server", scope_id: "", level: "owner" },
         {
           person_id: "human:viewer",
@@ -153,6 +156,7 @@ it.effect("moves people, grants, devices and links onto levels", () =>
       yield* sql`SELECT person_id, display_name FROM j5_a2a_human_person ORDER BY person_id`,
       [
         { person_id: "human:collaborator", display_name: "Sam" },
+        { person_id: "human:member", display_name: "Maria" },
         { person_id: "human:owner", display_name: "Jackson" },
         { person_id: "human:viewer", display_name: "Priya" },
       ],

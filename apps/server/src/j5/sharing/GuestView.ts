@@ -359,26 +359,27 @@ const narrowedView = (
   const filter = makeShellFilter(access, reach, !writes);
   const personId = reachPersonId(reach);
   /**
-   * A task bound to a thread is at home there; any other is its project's (AC21, AC22). A
-   * Viewer is not given a task's webhook address, which would let them start it. A task that
-   * cannot be checked is left out.
+   * A task bound to a thread is at home there; any other is its project's (AC21, AC22). A task's
+   * webhook address starts it, so it is given only to someone who writes where the task is at
+   * home, whatever they write elsewhere. A task that cannot be checked is left out.
    */
   const reachableTasks = (result: ScheduledTaskListResult) =>
-    Effect.filter(result.tasks, (task) =>
+    Effect.forEach(result.tasks, (task) =>
       personId === null
-        ? Effect.succeed(false)
+        ? Effect.succeed([])
         : (task.threadId === null
             ? access.projectLevel(personId, task.projectId)
             : access.threadLevel(personId, task.threadId)
           ).pipe(
-            Effect.map((level) => level !== null),
-            Effect.orElseSucceed(() => false),
+            Effect.map((level) => {
+              if (level === null) return [];
+              if (levelReaches(level, "collaborator")) return [task];
+              const { webhook: _webhook, ...shown } = task;
+              return [shown];
+            }),
+            Effect.orElseSucceed(() => []),
           ),
-    ).pipe(
-      Effect.map((tasks) => ({
-        tasks: writes ? tasks : tasks.map(({ webhook: _webhook, ...task }) => task),
-      })),
-    );
+    ).pipe(Effect.map((tasks) => ({ tasks: tasks.flat() })));
   return {
     scheduledTasks: (list) => list.pipe(Effect.flatMap(reachableTasks)),
     scheduledTasksStream: (stream) => stream.pipe(Stream.mapEffect(reachableTasks)),

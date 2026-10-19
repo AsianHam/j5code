@@ -231,7 +231,9 @@ const make = Effect.gen(function* () {
       onNone: () => Effect.void,
       onSome: (hook) => hook.beforeChange?.(personId) ?? Effect.void,
     });
-  const changes = yield* Effect.acquireRelease(PubSub.sliding<AccessChange>(256), (pubsub) =>
+  // Unbounded: a subscriber withdraws a person's queued messages and ends their asks from what it
+  // is told, so a change dropped in a burst would leave them standing. Changes are made by hand.
+  const changes = yield* Effect.acquireRelease(PubSub.unbounded<AccessChange>(), (pubsub) =>
     PubSub.shutdown(pubsub),
   );
   const tell = (change: AccessChange) => PubSub.publish(changes, change);
