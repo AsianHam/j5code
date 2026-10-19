@@ -89,7 +89,7 @@ export const PlaybookStepDelivery = Schema.Struct({
 });
 export type PlaybookStepDelivery = typeof PlaybookStepDelivery.Type;
 
-/** The board receives titles, never the other steps' prompt bodies. */
+/** The progress bar receives titles, never the other steps' prompt bodies. */
 export const PlaybookProgress = Schema.Struct({
   ...PlaybookRun.fields,
   title: Schema.String,

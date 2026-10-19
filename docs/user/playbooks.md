@@ -1,9 +1,10 @@
 # Playbooks
 
 Playbooks give an agent an ordered sequence of prompts. The agent does the work
-in its existing thread and decides when to advance. The thread's phase board
-shows the current step and whether the run is active, completed, or cancelled.
-Earlier steps describe position, not a guarantee that their work passed validation.
+in its existing thread and decides when to advance. The progress bar above the
+chat box shows the current stage and whether the run is active, completed, or
+cancelled. A checked stage means the agent moved past it, not that its work was
+verified.
 
 Open **Settings → Personas → Playbooks** and select a project or thread worktree to see
 its definitions and steps. Playbook Author runs on Codex in the selected workspace. It helps shape the steps,
@@ -72,7 +73,10 @@ progress unchanged; restore the file or ask the agent to cancel the run.
 
 Ask the agent to go back when you want to revisit a phase. Going back changes its
 position, not your files or previous work. Progress survives context compaction and
-provider restarts. Select an earlier run in the thread to inspect its status.
+provider restarts. Expand the playbook above the chat box to see its stages or
+select an earlier run. The stage list checks off stages before the current one,
+and checks every stage when the playbook completes. Going back reopens stages
+from that position onward. The counter shows completed stages.
 
 Each run belongs to one thread. Deleting that thread cancels its active run, so
 you can remove the playbook file. Archiving a thread leaves its run available when
