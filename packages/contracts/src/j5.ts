@@ -3,9 +3,12 @@ import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import { Rpc, RpcGroup } from "effect/rpc";
 export * from "./j5/actionError.ts";
+export * from "./j5/fleet.ts";
 export * from "./j5/peerPoll.ts";
 export * from "./j5/playbook.ts";
 export * from "./j5/sharing.ts";
+
+import { FleetAgentFacts } from "./j5/fleet.ts";
 
 import { ModelSelection } from "./modelSelection.ts";
 import {
@@ -376,6 +379,8 @@ export const FleetAgent = Schema.Struct({
   ),
   /** Open Exchanges this agent owes a reply on. */
   openAsks: Schema.Number,
+  /** Absent on older environments; clients must show unknown, never healthy. */
+  facts: Schema.optionalKey(FleetAgentFacts),
 });
 export type FleetAgent = typeof FleetAgent.Type;
 /** One project's agents and Crews. `title` is the server's, for a project the client cannot find. */
@@ -389,7 +394,10 @@ export type FleetProject = typeof FleetProject.Type;
 /** The rail badge reads the live roster only; the Fleet page asks for retired Crews as well. */
 export const FleetReadRequest = Schema.Struct({ includeRetired: Schema.optional(Schema.Boolean) });
 export type FleetReadRequest = typeof FleetReadRequest.Type;
-export const FleetResponse = Schema.Struct({ projects: Schema.Array(FleetProject) });
+export const FleetResponse = Schema.Struct({
+  projects: Schema.Array(FleetProject),
+  asOf: Schema.optionalKey(Schema.String),
+});
 export type FleetResponse = typeof FleetResponse.Type;
 
 /** A person stopping a Crew from the app: every running seat is interrupted, nothing is retired. */

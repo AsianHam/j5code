@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as J5Contracts from "@t3tools/contracts/j5";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -7,6 +8,9 @@ import { AgentCrewInstanceService, type AgentCrewInstance } from "./AgentCrewIns
 import { A2ALedger } from "./LedgerService.ts";
 import { ParticipantPlacementService } from "./PlacementService.ts";
 import { LedgerProjectId, isOutsideAgentParticipantId } from "./contracts.ts";
+import { listRegisteredHumanPersonNames } from "./HumanPersonRegistry.ts";
+import { clientReadBatches } from "./clientReadBatches.ts";
+import { readFleetLedgerFacts } from "./fleetFacts.ts";
 import { outsideAgentNameRows } from "./outsideAgentNames.ts";
 import type { ParticipantPlacementView } from "./placementContracts.ts";
 
@@ -23,6 +27,7 @@ export const projectFleetProject = (input: {
   readonly participants: ReadonlyArray<ParticipantPlacementView>;
   readonly crews: ReadonlyArray<AgentCrewInstance>;
   readonly openAsks: ReadonlyMap<string, number>;
+  readonly facts?: ReadonlyMap<string, J5Contracts.FleetAgentFacts>;
   /** Each live Crew's active playbook run, by Crew id. */
   readonly playbookRuns?: ReadonlyMap<string, J5Contracts.FleetCrew["playbookRun"]>;
   /** The label of each outside agent that spawned one of the participants, by its id. */
@@ -62,6 +67,9 @@ export const projectFleetProject = (input: {
             placementParentId: crew.captainParticipantId,
             crew: seatByParticipant.get(member.participantId) ?? null,
             openAsks: 0,
+            ...(input.facts === undefined
+              ? {}
+              : { facts: { asks: { owed: [], awaited: [] }, problems: [] } }),
           })),
   );
   return {
@@ -97,6 +105,9 @@ export const projectFleetProject = (input: {
           : {}),
         crew: seatByParticipant.get(row.participantId) ?? null,
         openAsks: input.openAsks.get(row.participantId) ?? 0,
+        ...(input.facts?.has(row.participantId)
+          ? { facts: input.facts.get(row.participantId)! }
+          : {}),
       })),
       ...unrecordedSeats,
     ],
@@ -130,8 +141,7 @@ export const projectFleetProject = (input: {
 
 /**
  * The Roster read (SB6): every project with its active agents, placement parents, Crew seats,
- * and the count of open asks each agent owes. Status and last activity come from the client's
- * thread state, so this read carries only what the ledger knows. Unknowns stay unknown.
+ * and open Exchanges and delivery alarms. Runtime facts stay on the live shell stream.
  */
 export const makeFleetRead = Effect.gen(function* () {
   const ledger = yield* A2ALedger;
@@ -143,20 +153,39 @@ export const makeFleetRead = Effect.gen(function* () {
     Effect.gen(function* () {
       const projects = yield* ledger.listProjectLedgers();
       const result: Array<FleetResponse["projects"][number]> = [];
+      const participantsByProject = new Map<string, ReadonlyArray<ParticipantPlacementView>>();
+      const names = yield* listRegisteredHumanPersonNames(sql);
       for (const project of projects) {
         const participants = yield* placements.listParticipants(project.id);
+        participantsByProject.set(project.id, participants);
+        for (const row of participants) {
+          if ("displayName" in row.participant && typeof row.participant.displayName === "string")
+            names.set(row.participantId, row.participant.displayName);
+        }
+      }
+      const agents = [...participantsByProject.values()]
+        .flat()
+        .filter((row) => row.threadId !== null);
+      const threadIds = [
+        ...new Set(agents.flatMap((row) => (row.threadId === null ? [] : [row.threadId]))),
+      ];
+      const threadNames = new Map<string, string>();
+      for (const batch of clientReadBatches(threadIds)) {
+        const titles = yield* sql<{ readonly thread_id: string; readonly title: string }>`
+          SELECT thread_id, title FROM orchestration_v2_projection_threads
+          WHERE thread_id IN ${sql.in(batch)}
+        `;
+        for (const row of titles) threadNames.set(row.thread_id, row.title);
+      }
+      for (const row of agents) {
+        const title = row.threadId === null ? undefined : threadNames.get(row.threadId);
+        if (title !== undefined) names.set(row.participantId, title);
+      }
+      for (const project of projects) {
+        const participants = participantsByProject.get(project.id)!;
         const agentIds = participants
           .filter((row) => row.participant.kind === "agent")
           .map((row) => row.participantId);
-        const openAsks = new Map<string, number>();
-        if (agentIds.length > 0) {
-          const rows = yield* sql<{ readonly receiver_id: string; readonly count: number }>`
-          SELECT receiver_id, COUNT(*) AS count FROM j5_a2a_exchange
-          WHERE status = 'open' AND receiver_id IN ${sql.in([...agentIds])}
-          GROUP BY receiver_id
-        `;
-          for (const row of rows) openAsks.set(row.receiver_id, Number(row.count));
-        }
         const outsideSpawnerIds = [
           ...new Set(
             participants.flatMap((row) =>
@@ -170,9 +199,30 @@ export const makeFleetRead = Effect.gen(function* () {
         const outsideAgentNames = new Map(
           (outsideSpawnerIds.length === 0
             ? []
-            : yield* outsideAgentNameRows(sql, outsideSpawnerIds)
+            : yield* Effect.forEach(clientReadBatches(outsideSpawnerIds), (batch) =>
+                outsideAgentNameRows(sql, batch),
+              ).pipe(Effect.map((batches) => batches.flat()))
           ).map((row) => [row.participant_id, row.display_name] as const),
         );
+        const ledgerFacts = yield* readFleetLedgerFacts(
+          sql,
+          project.id,
+          agentIds,
+          (id) => names.get(id) ?? outsideAgentNames.get(id) ?? null,
+        );
+        const facts = new Map(
+          agentIds.map((id) => [
+            id,
+            {
+              asks: {
+                owed: ledgerFacts.owed.get(id) ?? [],
+                awaited: ledgerFacts.awaited.get(id) ?? [],
+              },
+              problems: ledgerFacts.problems.get(id) ?? [],
+            },
+          ]),
+        );
+        const openAsks = new Map(agentIds.map((id) => [id, ledgerFacts.owed.get(id)?.length ?? 0]));
         // Retired Crews carry rosters and briefs; only the page that shows them pays for them.
         const projectCrews = (yield* crews.listForProject(project.id)).filter(
           (crew) => includeRetired || crew.archivedAt === null,
@@ -187,11 +237,15 @@ export const makeFleetRead = Effect.gen(function* () {
             participants,
             crews: projectCrews,
             openAsks,
+            facts,
             playbookRuns,
             outsideAgentNames,
           }),
         );
       }
-      return { projects: result } satisfies FleetResponse;
+      return {
+        projects: result,
+        asOf: DateTime.formatIso(yield* DateTime.now),
+      } satisfies FleetResponse;
     });
 });

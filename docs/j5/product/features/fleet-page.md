@@ -75,7 +75,7 @@ The Fleet page is **not** the inbox: it never demands a reply. It is **not** a p
 
 ### The four facts
 
-15. Status shows the runtime's own fact: Working, Waiting, Approval, Input or Failed; "Waiting to start · Nm" takes precedence while a run has been requested and not dispatched; "Idle since ⟨time⟩" appears only when nothing is active and no background work remains.
+15. Status shows the runtime's own fact: Working, Waiting, Approval, Input or Failed; "Waiting to start · Nm" takes precedence while a run has been requested and not dispatched and no other run is in progress; a follow-up queued behind an active run keeps that active run's status. "Idle since ⟨time⟩" appears only when nothing is active and no background work holds completion; a non-holding command such as a dev server does not prevent Idle.
 16. Read and snooze bookkeeping (upstream's Woke and Done) is not a status and does not appear.
 17. Silence notices are not shown on the page; the age of an open ask is the visible fact.
 18. Open asks show two counts, "Owes N" for open asks the agent must answer and "Awaiting N" for open asks it is waiting on, with a hover list of counterparty, intent and age; a follow-up joined to an open Exchange counts once.
@@ -84,7 +84,7 @@ The Fleet page is **not** the inbox: it never demands a reply. It is **not** a p
 
 ### Problems and the badge
 
-21. A row's measured problems are a failed latest run, a delivery alarm, and a run that has waited past the dispatch threshold; the row lists every one it has.
+21. A row's measured problems are a failed latest run, a delivery alarm, and a requested run that has waited past the dispatch threshold with no other run in progress; the row lists every one it has.
 22. A delivery alarm is shown on the sender's row as "Delivery failed · to ⟨receiver⟩ · ⟨time⟩ · ⟨reason⟩" and stays while the fact is true; it is never inferred repaired ([agent-to-agent communication](../a2a/index.md)).
 23. The badge counts agents that have at least one measured problem across every project the page reads; an agent counts once however many problems it has, unknowns never count, and the badge never counts open asks to the person or silence notices.
 24. A delivery alarm counts toward the badge only while the Exchange it belongs to is open; an alarm on a plain message is shown on the row and never counted; a failed delivery of a platform-authored notice is neither shown nor counted.
