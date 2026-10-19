@@ -96,7 +96,7 @@ or `--tailscale-serve`.
 
 A server installed from npm (`@jacksondr5/j5code` 0.0.43 or earlier) cannot
 update itself to a release archive: **Update server** fails because no newer npm
-version exists. Follow [Migrating to release archives](./migrating-to-release-archives.md)
+version exists. Follow [Migrating to release archives](../j5/user/migrating-to-release-archives.md)
 on that machine once; later updates work from the app and with `j5 update` again.
 
 Occasionally an update changes how the background service starts, and **Update

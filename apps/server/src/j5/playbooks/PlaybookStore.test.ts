@@ -581,9 +581,10 @@ it.effect(
         );
       }
       assert.deepStrictEqual((yield* store.listForThread(owner)).runs, []);
-      assert.deepStrictEqual(yield* store.discover(path.join(workspaceRoot, "empty-workspace")), {
-        playbooks: [],
-      });
+      assert.deepStrictEqual(
+        (yield* store.discover(path.join(workspaceRoot, "empty-workspace"))).playbooks,
+        [],
+      );
       assert.equal(
         (yield* Effect.flip(store.start(owner, workspaceRoot, "../demo", "outside"))).code,
         "invalid_name",
@@ -1195,7 +1196,10 @@ it.effect("reads a definition without personas exactly as before, with no warnin
       { id: "review", title: "Step review" },
     ]);
     const read = yield* store.read(workspaceRoot, "demo.yaml");
-    assert.deepStrictEqual(read, { name: "demo", ...definition(), warnings: [] });
+    const { source, digest, ...definitionRead } = read;
+    assert.deepStrictEqual(definitionRead, { name: "demo", ...definition(), warnings: [] });
+    assert.deepStrictEqual(source, { kind: "workspace" });
+    assert.match(digest ?? "", /^[a-f0-9]{64}$/);
     assert.isFalse(read.steps.some((step) => "persona" in step));
   }).pipe(Effect.scoped, Effect.provide(MemoryLayer)),
 );
@@ -1372,4 +1376,279 @@ it.effect(
       // A file changed on disk is said by whoever watches it.
       assert.equal(yield* moved(store.definitionsChanged), 1);
     }).pipe(Effect.scoped, Effect.provide(MemoryLayer)),
+);
+
+it.effect(
+  "saves an environment playbook across unrelated projects and worktrees without workspace copies",
+  () =>
+    Effect.gen(function* () {
+      const { store, workspaceRoot, fs, path } = yield* makeFixture;
+      const { stateDir } = yield* ServerConfig;
+      const yaml = `# Keep this comment\n${stringify(definition())}`;
+      assert.deepStrictEqual(yield* store.saveDefinition({ name: "shared", yaml }), {
+        name: "shared",
+        saved: true,
+      });
+      for (const root of [
+        workspaceRoot,
+        path.join(workspaceRoot, "other-project"),
+        path.join(workspaceRoot, "worktree"),
+      ]) {
+        const discovered = yield* store.discover(root);
+        assert.equal(
+          discovered.playbooks.find((entry) => entry.name === "shared")?.source.kind,
+          "environment",
+        );
+        assert.equal((yield* store.read(root, "shared")).title, "Test playbook");
+        assert.isFalse(yield* fs.exists(path.join(root, ".j5/playbooks/shared.yaml")));
+      }
+      assert.equal(
+        (yield* store.exportDefinition("", "shared", { kind: "environment" })).yaml,
+        yaml,
+      );
+      const run = yield* store.start(owner, workspaceRoot, "shared", "start-shared");
+      assert.equal(run.definitionPath, path.join(stateDir, "playbooks/shared.yaml"));
+      assert.deepStrictEqual(yield* store.activeDefinitionDirectories(), [
+        path.join(stateDir, "playbooks"),
+      ]);
+      assert.equal(
+        (yield* Effect.flip(store.removeDefinition("", "shared", { kind: "environment" }))).code,
+        "in_use",
+      );
+    }).pipe(Effect.scoped, Effect.provide(CatalogLayer)),
+);
+
+it.effect(
+  "keeps environment run retries pinned when a workspace override appears, including legacy start receipts",
+  () =>
+    Effect.gen(function* () {
+      const { store, workspaceRoot, write, fs, path } = yield* makeFixture;
+      yield* store.saveDefinition({ name: "shared", yaml: stringify(definition()) });
+      const run = yield* store.start(owner, workspaceRoot, "shared", "retry-shared");
+      yield* write("shared", { ...definition(), title: "Workspace override" });
+      assert.equal((yield* store.read(workspaceRoot, "shared")).title, "Workspace override");
+      const replayed = yield* store.start(owner, workspaceRoot, "shared", "retry-shared");
+      assert.equal(replayed.runId, run.runId);
+      assert.equal(replayed.definitionPath, run.definitionPath);
+      assert.isTrue(replayed.replayed);
+      assert.equal(replayed.title, "Test playbook");
+      assert.equal(
+        (yield* Effect.flip(store.start(owner, workspaceRoot, "demo", "retry-shared"))).code,
+        "request_conflict",
+      );
+      // Existing workspace starts use the unchanged path-based receipt shape too.
+      const legacy = yield* store.start(otherOwner, workspaceRoot, "demo", "legacy");
+      yield* fs.remove(path.join(workspaceRoot, ".j5/playbooks/demo.yaml"));
+      yield* store.saveDefinition({ name: "demo", yaml: stringify(definition(["new"])) });
+      const legacyReplay = yield* store.start(otherOwner, workspaceRoot, "demo", "legacy");
+      assert.equal(legacyReplay.definitionPath, legacy.definitionPath);
+      assert.isNotNull(legacyReplay.issue);
+    }).pipe(Effect.scoped, Effect.provide(CatalogLayer)),
+);
+
+it.effect(
+  "keeps workspace overrides authoritative and management actions on their selected source",
+  () =>
+    Effect.gen(function* () {
+      const { store, workspaceRoot, filename, fs } = yield* makeFixture;
+      yield* store.saveDefinition({
+        name: "demo",
+        yaml: stringify({ ...definition(), title: "Shared demo" }),
+      });
+      const listed = (yield* store.discover(workspaceRoot)).playbooks.find(
+        (entry) => entry.name === "demo",
+      );
+      assert.isTrue(listed?.overridesLibrary);
+      yield* store.renameDefinition(workspaceRoot, "demo", "Renamed environment", {
+        kind: "environment",
+      });
+      assert.equal((yield* store.read(workspaceRoot, "demo")).title, "Test playbook");
+      assert.include(
+        (yield* store.exportDefinition(workspaceRoot, "demo", { kind: "environment" })).yaml,
+        "Renamed environment",
+      );
+      yield* fs.writeFileString(filename("demo"), "broken: [");
+      assert.equal(
+        (yield* Effect.flip(store.read(workspaceRoot, "demo"))).code,
+        "invalid_definition",
+      );
+      yield* fs.remove(filename("demo"));
+      yield* fs.symlink(`${filename("demo")}.missing`, filename("demo"));
+      assert.equal((yield* Effect.flip(store.read(workspaceRoot, "demo"))).code, "not_found");
+      assert.equal(
+        (yield* store.discover(workspaceRoot)).playbooks.find((entry) => entry.name === "demo")
+          ?.issue?.code,
+        "invalid_definition",
+      );
+      yield* store.removeDefinition("", "demo", { kind: "environment" });
+      assert.include(yield* fs.readDirectory(`${workspaceRoot}/.j5/playbooks`), "demo.yaml");
+    }).pipe(Effect.scoped, Effect.provide(CatalogLayer)),
+);
+
+it.effect(
+  "reads configured folders, reports ambiguous names, and retains pinned runs after a source is removed",
+  () =>
+    Effect.gen(function* () {
+      const { store, workspaceRoot, fs, path, write } = yield* makeFixture;
+      const { stateDir } = yield* ServerConfig;
+      const folder = path.join(stateDir, "external");
+      yield* fs.makeDirectory(folder);
+      yield* fs.writeFileString(path.join(folder, "shared.yaml"), stringify(definition()));
+      const alias = path.join(stateDir, "external-alias");
+      yield* fs.symlink(folder, alias);
+      yield* store.setFolders({ folders: ["external", folder, alias] });
+      assert.equal((yield* store.sources()).folders.length, 2);
+      const run = yield* store.start(owner, workspaceRoot, "shared", "folder-run");
+      assert.equal(run.definitionPath, path.join(folder, "shared.yaml"));
+      assert.equal(
+        (yield* Effect.flip(
+          store.removeDefinition("", "shared", { kind: "folder", path: "external" }),
+        )).code,
+        "read_only",
+      );
+      yield* fs.makeDirectory(path.join(stateDir, "playbooks"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(stateDir, "playbooks/shared.yaml"),
+        stringify(definition()),
+      );
+      assert.equal(
+        (yield* Effect.flip(store.read(workspaceRoot, "shared"))).code,
+        "duplicate_name",
+      );
+      assert.equal(
+        (yield* store.discover(workspaceRoot)).playbooks.find((entry) => entry.name === "shared")
+          ?.issue?.code,
+        "duplicate_name",
+      );
+      assert.equal((yield* store.read(workspaceRoot, "demo")).title, "Test playbook");
+      yield* write("shared", { ...definition(), title: "Local" });
+      assert.equal((yield* store.read(workspaceRoot, "shared")).title, "Local");
+      yield* store.setFolders({ folders: [] });
+      assert.equal(
+        (yield* store.current(owner, run.runId)).definitionPath,
+        path.join(folder, "shared.yaml"),
+      );
+      assert.isNull((yield* store.current(owner, run.runId)).issue);
+      assert.equal(
+        (yield* store.start(owner, workspaceRoot, "shared", "folder-run")).runId,
+        run.runId,
+      );
+      assert.equal(
+        (yield* Effect.flip(
+          store.exportDefinition("", "shared", { kind: "folder", path: "external" }),
+        )).code,
+        "source_not_found",
+      );
+      assert.isTrue(yield* fs.exists(path.join(folder, "shared.yaml")));
+    }).pipe(Effect.scoped, Effect.provide(CatalogLayer)),
+);
+
+it.effect(
+  "shows missing folders and malformed config while keeping workspace playbooks usable",
+  () =>
+    Effect.gen(function* () {
+      const { store, workspaceRoot, fs, path } = yield* makeFixture;
+      const { stateDir } = yield* ServerConfig;
+      yield* store.saveDefinition({ name: "shared", yaml: stringify(definition()) });
+      const folder = path.join(stateDir, "missing-later");
+      yield* fs.makeDirectory(folder);
+      yield* store.setFolders({ folders: [folder] });
+      yield* fs.remove(folder, { recursive: true });
+      assert.equal(
+        (yield* store.sources()).folders.find((entry) => entry.source.kind === "folder")?.issue
+          ?.code,
+        "source_unavailable",
+      );
+      assert.equal(
+        (yield* Effect.flip(store.read(workspaceRoot, "shared"))).code,
+        "source_unavailable",
+      );
+      assert.equal((yield* store.read(workspaceRoot, "demo")).title, "Test playbook");
+      yield* fs.writeFileString(path.join(stateDir, "playbooks.json"), "bad json");
+      const listed = yield* store.discover(workspaceRoot);
+      assert.equal(listed.playbooks.find((entry) => entry.name === "demo")?.issue, null);
+      assert.isTrue(listed.sources.some((entry) => entry.issue?.code === "invalid_configuration"));
+      assert.equal(
+        (yield* Effect.flip(store.read(workspaceRoot, "shared"))).code,
+        "invalid_configuration",
+      );
+    }).pipe(Effect.scoped, Effect.provide(CatalogLayer)),
+);
+
+it.effect("edits an environment playbook only with the digest of the version that was read", () =>
+  Effect.gen(function* () {
+    const { store, workspaceRoot } = yield* makeFixture;
+    yield* store.saveDefinition({ name: "shared", yaml: stringify(definition()) });
+    const read = yield* store.read(workspaceRoot, "shared");
+    assert.deepStrictEqual(read.source, { kind: "environment" });
+    const edited = stringify(definition(["first", "added"]));
+    assert.deepStrictEqual(
+      yield* store.saveDefinition({ name: "shared", yaml: edited, expectedDigest: read.digest! }),
+      { name: "shared", saved: true },
+    );
+    assert.deepStrictEqual(
+      (yield* store.read(workspaceRoot, "shared")).steps.map((step) => step.id),
+      ["first", "added"],
+    );
+    // The digest now names an older version, so a second edit from the same read is refused.
+    assert.equal(
+      (yield* Effect.flip(
+        store.saveDefinition({
+          name: "shared",
+          yaml: stringify(definition(["other"])),
+          expectedDigest: read.digest!,
+        }),
+      )).code,
+      "stale_digest",
+    );
+    // A workspace playbook is edited in its file, never through the library.
+    const local = yield* store.read(workspaceRoot, "demo");
+    assert.deepStrictEqual(local.source, { kind: "workspace" });
+    assert.equal(
+      (yield* Effect.flip(
+        store.saveDefinition({ name: "demo", yaml: edited, expectedDigest: local.digest! }),
+      )).code,
+      "not_found",
+    );
+  }).pipe(Effect.scoped, Effect.provide(CatalogLayer)),
+);
+
+it.effect(
+  "validates environment saves, preserves exact retries, and never replaces an existing definition",
+  () =>
+    Effect.gen(function* () {
+      const { store, fs, path } = yield* makeFixture;
+      const { stateDir } = yield* ServerConfig;
+      const yaml = stringify(definition());
+      yield* store.saveDefinition({ name: "shared", yaml });
+      assert.deepStrictEqual(yield* store.saveDefinition({ name: "shared", yaml }), {
+        name: "shared",
+        saved: false,
+      });
+      assert.equal(
+        (yield* Effect.flip(
+          store.saveDefinition({ name: "shared", yaml: stringify(definition(["changed"])) }),
+        )).code,
+        "already_exists",
+      );
+      for (const value of [
+        "invalid: [",
+        stringify(definition(["duplicate", "duplicate"])),
+        `#${"é".repeat(PLAYBOOK_MAX_BYTES)}\n${yaml}`,
+      ]) {
+        assert.equal(
+          (yield* Effect.flip(store.saveDefinition({ name: "invalid", yaml: value }))).code,
+          "invalid_definition",
+        );
+      }
+      assert.equal(
+        (yield* Effect.flip(store.saveDefinition({ name: "../escape", yaml }))).code,
+        "invalid_name",
+      );
+      assert.equal(yield* fs.readFileString(path.join(stateDir, "playbooks/shared.yaml")), yaml);
+      assert.isFalse(yield* fs.exists(path.join(stateDir, "playbooks/invalid.yaml")));
+      // Recreating the store reloads the same library files.
+      const restarted = yield* makePlaybookStore;
+      assert.equal((yield* restarted.read("", "shared")).title, "Test playbook");
+    }).pipe(Effect.scoped, Effect.provide(CatalogLayer)),
 );

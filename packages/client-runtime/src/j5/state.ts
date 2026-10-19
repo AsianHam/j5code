@@ -124,15 +124,16 @@ export function createJ5EnvironmentAtoms<R, E>(
     (...keys: ReadonlyArray<J5ReadRevisionKey>) =>
     (target: { readonly environmentId: EnvironmentId }) =>
       readRevisions(JSON.stringify([target.environmentId, ...keys]));
+  const playbookChanges = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "j5:playbook-changes",
+    tag: J5_PLAYBOOK_WS_METHODS.subscribeChanges,
+    idleTtlMs: 0,
+  });
   return {
     readChanges,
     /** A `refreshTrigger` for a read made elsewhere that one of the server's revisions covers. */
     rereadOn,
-    playbookChanges: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "j5:playbook-changes",
-      tag: J5_PLAYBOOK_WS_METHODS.subscribeChanges,
-      idleTtlMs: 0,
-    }),
+    playbookChanges,
     playbookRuns: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "j5:playbook-runs",
       tag: J5_PLAYBOOK_WS_METHODS.listRuns,
@@ -142,9 +143,29 @@ export function createJ5EnvironmentAtoms<R, E>(
     playbookLibrary: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "j5:playbook-library",
       tag: J5_PLAYBOOK_WS_METHODS.readLibrary,
+      refreshTrigger: (target) =>
+        playbookChanges({ environmentId: target.environmentId, input: {} }),
       execute: (input) => j5Read(J5_PLAYBOOK_WS_METHODS.readLibrary, input),
       staleTimeMs: 0,
     }),
+    playbookSources: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "j5:playbook-sources",
+      tag: J5_PLAYBOOK_WS_METHODS.readSources,
+      refreshTrigger: (target) =>
+        playbookChanges({ environmentId: target.environmentId, input: {} }),
+      execute: (input) => j5Read(J5_PLAYBOOK_WS_METHODS.readSources, input),
+      staleTimeMs: 0,
+    }),
+    savePlaybook: createJ5ActionCommand(
+      runtime,
+      "j5:save-playbook",
+      J5_PLAYBOOK_WS_METHODS.savePlaybook,
+    ),
+    setPlaybookFolders: createJ5ActionCommand(
+      runtime,
+      "j5:playbook-folders",
+      J5_PLAYBOOK_WS_METHODS.setFolders,
+    ),
     deletePlaybook: createJ5ActionCommand(
       runtime,
       "j5:delete-playbook",

@@ -2,6 +2,9 @@ import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "@t3to
 import {
   J5_PLAYBOOK_WS_METHODS,
   type PlaybookDeleteRequest,
+  type PlaybookError,
+  type PlaybookSaveRequest,
+  type PlaybookFoldersInput,
   type PlaybookExportRequest,
   type PlaybookLibraryRequest,
   type PlaybookRenameRequest,
@@ -13,6 +16,9 @@ import { playbookError, type PlaybookStore } from "./PlaybookStore.ts";
 import { makeWorkspacePlaybooks } from "./WorkspacePlaybooks.ts";
 
 export const PLAYBOOK_RPC_SCOPES = {
+  [J5_PLAYBOOK_WS_METHODS.savePlaybook]: AuthOrchestrationOperateScope,
+  [J5_PLAYBOOK_WS_METHODS.setFolders]: AuthOrchestrationOperateScope,
+  [J5_PLAYBOOK_WS_METHODS.readSources]: AuthOrchestrationReadScope,
   [J5_PLAYBOOK_WS_METHODS.subscribeChanges]: AuthOrchestrationReadScope,
   [J5_PLAYBOOK_WS_METHODS.readLibrary]: AuthOrchestrationReadScope,
   [J5_PLAYBOOK_WS_METHODS.listThreadRuns]: AuthOrchestrationReadScope,
@@ -21,6 +27,11 @@ export const PLAYBOOK_RPC_SCOPES = {
   [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: AuthOrchestrationOperateScope,
   [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: AuthOrchestrationOperateScope,
 } as const;
+
+const failedSave = (error: PlaybookError) =>
+  error.code === "operation_failed"
+    ? failed("The playbook library operation failed.")(error)
+    : Effect.fail(error);
 
 const failed = (message: string) => (cause: unknown) =>
   Effect.logError(message, { cause }).pipe(
@@ -32,12 +43,20 @@ const failed = (message: string) => (cause: unknown) =>
  * and read, export, delete and rename definitions in the workspace a request names.
  */
 export const makePlaybookRpcHandlers = Effect.fn("makePlaybookRpcHandlers")(function* (options: {
-  readonly store: Pick<PlaybookStore["Service"], "changes" | "listForThread" | "listAll"> &
+  readonly store: Pick<
+    PlaybookStore["Service"],
+    "changes" | "listForThread" | "listAll" | "saveDefinition" | "setFolders" | "sources"
+  > &
     Parameters<typeof makeWorkspacePlaybooks>[0];
 }) {
   const { store } = options;
   const workspace = yield* makeWorkspacePlaybooks(store);
   return {
+    [J5_PLAYBOOK_WS_METHODS.savePlaybook]: (input: PlaybookSaveRequest) =>
+      store.saveDefinition(input).pipe(Effect.catch(failedSave)),
+    [J5_PLAYBOOK_WS_METHODS.setFolders]: (input: PlaybookFoldersInput) =>
+      store.setFolders(input).pipe(Effect.catch(failedSave)),
+    [J5_PLAYBOOK_WS_METHODS.readSources]: () => store.sources().pipe(Effect.catch(failedSave)),
     [J5_PLAYBOOK_WS_METHODS.subscribeChanges]: () => store.changes,
     [J5_PLAYBOOK_WS_METHODS.readLibrary]: (input: PlaybookLibraryRequest) =>
       workspace.library(input),

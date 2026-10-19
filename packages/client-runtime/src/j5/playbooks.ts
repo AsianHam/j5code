@@ -6,6 +6,8 @@ import {
 } from "@t3tools/contracts/j5";
 import type {
   AgentPersonaCreateInput,
+  AgentPersonaDefinitionView,
+  AgentPersonaEditInput,
   CommandId,
   MessageId,
   ModelSelection,
@@ -17,16 +19,17 @@ import {
   PLAYBOOK_MENTION_PREFIX,
   playbookMentionReplacement,
 } from "@t3tools/shared/j5/agentMention";
+import { LEGACY_PLAYBOOK_AUTHOR_INSTRUCTIONS } from "./playbookAuthorLegacy.ts";
 import { defaultAgentPersonaModelRoute } from "./agentPersonas.ts";
 import type { StartThreadTurnInput } from "../operations/commands.ts";
 import type { EnvironmentProject, EnvironmentThreadShell } from "../state/shell.ts";
 
 export const PLAYBOOK_AUTHOR_ID = "playbook-author";
-export const PLAYBOOK_AUTHOR_INSTRUCTIONS = `You are Playbook Author. Help the user turn a repeatable task into a small, clear agent-led playbook in this thread's workspace.
+export const PLAYBOOK_AUTHOR_INSTRUCTIONS = `You are Playbook Author. Help the user turn a repeatable task into a small, clear agent-led playbook shared across this environment.
 
 1. Start by asking what the playbook should accomplish. Clarify the desired result, inputs, constraints, and evidence of success one focused question at a time. Use details already provided instead of asking again.
-2. Inspect existing .j5/playbooks definitions and relevant workspace guidance. Propose the smallest useful sequence of steps, then write or refine the definition once the user's intent is clear. Ask before replacing an unrelated existing definition; preserve stable step IDs when editing.
-3. Save .j5/playbooks/<name>.yaml relative to this thread's workspace. The name must be lowercase letters, digits, and hyphens, starting with a letter, such as release-review; put the human-readable name in title. Use YAML 1.2 with title, description, and steps. Each step has a unique stable id, a title, and a non-empty prompt. A step may add persona, the id of the persona that should do it; call j5_list_personas before writing one, and leave it off steps the user doesn't assign. Use 1–${PLAYBOOK_MAX_STEPS} steps, no YAML aliases, and at most ${PLAYBOOK_MAX_BYTES / 1024} KiB. For example:
+2. Inspect existing definitions with j5_playbook_list and j5_playbook_read, and relevant workspace guidance. Propose the smallest useful sequence of steps, then write or refine the definition once the user's intent is clear. Ask before replacing an unrelated existing definition; preserve stable step IDs when editing.
+3. By default save the finished YAML with j5_playbook_save({name, yaml}) to the environment library. It becomes available across all projects and worktrees on this environment. To edit an environment library playbook, pass the digest from j5_playbook_read as expectedDigest. Only when the user explicitly chooses This workspace only, write .j5/playbooks/<name>.yaml relative to this thread's workspace; edit a workspace playbook in that file. A workspace playbook overrides a same-named library playbook in that workspace. Do not write directly outside the workspace sandbox. If the save tool cannot run, show the YAML and explain the save failure; do not claim the playbook is shared. The name must be lowercase letters, digits, and hyphens, starting with a letter, such as release-review; put the human-readable name in title. Use YAML 1.2 with title, description, and steps. Each step has a unique stable id, a title, and a non-empty prompt. A step may add persona, the id of the persona that should do it; call j5_list_personas before writing one, and leave it off steps the user doesn't assign. Use 1–${PLAYBOOK_MAX_STEPS} steps, no YAML aliases, and at most ${PLAYBOOK_MAX_BYTES / 1024} KiB. For example:
 
 title: Review a change
 description: Inspect a change and report evidence.
@@ -40,8 +43,8 @@ steps:
     prompt: Summarize findings, checks performed, and remaining uncertainty.
 
 Each prompt tells the same agent what work to do, what evidence to retain, and when to advance.
-4. Call j5_playbook_list in this thread after writing. Fix reported issues and repeat until the named definition is listed without an issue. Tell the user about any warnings, such as a persona that is missing or turned off. If the tool is unavailable, state that runtime validation is still unverified.
-5. Report the file path, purpose, and steps. Explain that the user can inspect it in Settings → Personas and send /playbook <name> when ready to run it.
+4. Call j5_playbook_list in this thread after writing. Fix issues in the definition you are authoring and repeat until it is listed without an issue. If a same-named workspace playbook is listed instead, explain that it overrides the library copy here; do not modify an unrelated local file. A successful environment save receipt confirms publication. Tell the user about any warnings, such as a persona that is missing or turned off. If the tool is unavailable, state that runtime validation is still unverified.
+5. Report the playbook name, saved destination, purpose, and steps. Say Environment library or the workspace file path; do not invent an absolute server path. Explain that the user can inspect it in Settings → Personas and send /playbook <name> when ready to run it.
 
 Stay within authoring and validation. Start a run only when the user explicitly asks. Make changes needed for the playbook; leave unrelated workspace files alone.`;
 
@@ -50,6 +53,8 @@ export async function ensurePlaybookAuthor(input: {
   providers: ReadonlyArray<ServerProvider>;
   readCatalog: () => Promise<OrchestrationV2AgentPersonaCatalog>;
   createPersona: (definition: AgentPersonaCreateInput) => Promise<unknown>;
+  readDefinition?: (personaId: string) => Promise<AgentPersonaDefinitionView>;
+  editPersona?: (input: AgentPersonaEditInput) => Promise<unknown>;
 }) {
   const findAuthor = async () =>
     (await input.readCatalog()).personas.find(({ personaId }) => personaId === PLAYBOOK_AUTHOR_ID);
@@ -87,6 +92,22 @@ export async function ensurePlaybookAuthor(input: {
     throw new Error(
       "Playbook Author needs Workspace write authority to save YAML. Update it in Settings → Personas for this environment.",
     );
+  // Saved authors predate environment libraries. Update only the exact stock instructions,
+  // using the existing digest guard so a concurrent human edit is never overwritten.
+  if (persona.editable && input.readDefinition && input.editPersona) {
+    const definition = await input.readDefinition(PLAYBOOK_AUTHOR_ID);
+    if (definition.instructions === LEGACY_PLAYBOOK_AUTHOR_INSTRUCTIONS) {
+      await input.editPersona({
+        personaId: persona.personaId,
+        expectedDigest: persona.editable.definitionDigest,
+        displayName: definition.displayName,
+        description: definition.description,
+        instructions: PLAYBOOK_AUTHOR_INSTRUCTIONS,
+        authorityPolicy: "workspace-write",
+        modelRoute: definition.modelRoute,
+      });
+    }
+  }
   return persona.availability.resolvedModelSelection;
 }
 
@@ -109,7 +130,7 @@ export function playbookAuthorLaunch(input: {
       message: {
         messageId,
         role: "user",
-        text: "Help me create a playbook in this workspace. Start by asking what I want it to accomplish.",
+        text: "Help me create a playbook, available across all projects and worktrees in this environment. Save the final YAML with j5_playbook_save. Start by asking what I want it to accomplish.",
         attachments: [],
       },
       modelSelection,
@@ -172,43 +193,6 @@ export function playbookWorkspaces(
         branch: thread.branch,
       })),
   ]);
-}
-
-type PlaybookWorkspaceInputs = {
-  projects: Parameters<typeof playbookWorkspaces>[0];
-  threads: Parameters<typeof playbookWorkspaces>[1];
-};
-
-/** Ignore shell activity unless a workspace's identity or location changes. */
-export function samePlaybookWorkspaceInputs(
-  a: PlaybookWorkspaceInputs,
-  b: PlaybookWorkspaceInputs,
-) {
-  return (
-    a.projects.length === b.projects.length &&
-    a.threads.length === b.threads.length &&
-    a.projects.every((project, index) => {
-      const previous = b.projects[index];
-      return (
-        project.environmentId === previous?.environmentId &&
-        project.id === previous.id &&
-        project.title === previous.title &&
-        project.workspaceRoot === previous.workspaceRoot
-      );
-    }) &&
-    a.threads.every((thread, index) => {
-      const previous = b.threads[index];
-      return (
-        thread.environmentId === previous?.environmentId &&
-        thread.id === previous.id &&
-        thread.projectId === previous.projectId &&
-        thread.title === previous.title &&
-        thread.worktreePath === previous.worktreePath &&
-        thread.branch === previous.branch &&
-        thread.deletedAt === previous.deletedAt
-      );
-    })
-  );
 }
 
 /**

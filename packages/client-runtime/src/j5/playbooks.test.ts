@@ -1,3 +1,5 @@
+import { LEGACY_PLAYBOOK_AUTHOR_INSTRUCTIONS } from "./playbookAuthorLegacy.ts";
+import type { AgentPersonaEditInput } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   AgentPersonaCreateInput,
@@ -12,7 +14,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Atom, AtomRegistry } from "effect/reactivity";
 import { PlaybookError, type PlaybookProgress } from "@t3tools/contracts/j5";
 import {
   ensurePlaybookAuthor,
@@ -30,7 +31,6 @@ import {
   selectedPlaybookRun,
   sortPlaybookRuns,
   playbookWorkspaces,
-  samePlaybookWorkspaceInputs,
 } from "./playbooks.ts";
 
 const author: OrchestrationV2AgentPersonaCatalogEntry = {
@@ -125,9 +125,67 @@ describe("Playbook Author launch", () => {
         },
       },
       message: {
-        text: "Help me create a playbook in this workspace. Start by asking what I want it to accomplish.",
+        text: expect.stringContaining("across all projects"),
       },
     });
+  });
+  it("always authors a shared definition through the save tool", () => {
+    const target = playbookAuthorLaunch({ ...launch, workspace });
+    expect(target.input.message.text).toContain("j5_playbook_save");
+    expect(target.input.message.text).not.toContain(".j5/playbooks");
+  });
+});
+
+describe("saved Playbook Author instructions", () => {
+  it.each([true, false])("updates only unchanged stock instructions (stock=%s)", async (stock) => {
+    const original = stock
+      ? LEGACY_PLAYBOOK_AUTHOR_INSTRUCTIONS
+      : `${LEGACY_PLAYBOOK_AUTHOR_INSTRUCTIONS}\nMy custom rule.`;
+    let instructions = original;
+    const modelRoute = decodePersonaCreate({
+      id: "playbook-author",
+      displayName: "Author",
+      description: "Author",
+      instructions: original,
+      authorityPolicy: "workspace-write",
+      modelRoute: [
+        { driver: "codex", model: "my-model", reasoningEffort: "high" },
+        { driver: "codex", model: "my-model", reasoningEffort: "high" },
+      ],
+    }).modelRoute;
+    const edits: AgentPersonaEditInput[] = [];
+    const input: Parameters<typeof ensurePlaybookAuthor>[0] = {
+      providers: [],
+      readCatalog: async () => ({
+        personas: [{ ...author, editable: { definitionDigest: "a".repeat(64), modelRoute } }],
+      }),
+      createPersona: async () => {
+        throw new Error("must not recreate saved author");
+      },
+      readDefinition: async () => ({
+        id: "playbook-author",
+        version: 1,
+        displayName: author.displayName,
+        description: author.description,
+        instructions,
+        authority: { defaultPolicy: "workspace-write", allowedPolicies: ["workspace-write"] },
+        modelRoute,
+      }),
+      editPersona: async (edit) => {
+        edits.push(edit);
+        instructions = edit.instructions;
+      },
+    };
+    await ensurePlaybookAuthor(input);
+    await ensurePlaybookAuthor(input);
+    expect(edits).toHaveLength(stock ? 1 : 0);
+    if (stock)
+      expect(edits[0]).toMatchObject({
+        expectedDigest: "a".repeat(64),
+        displayName: author.displayName,
+        modelRoute,
+      });
+    else expect(instructions).toBe(original);
   });
 });
 
@@ -246,7 +304,7 @@ describe("Playbook Author installation", () => {
   });
 });
 
-it("keeps project and worktree libraries scoped when two environments share IDs", () => {
+it("keeps conversation destinations scoped when two environments share IDs", () => {
   const projects = ["alpha", "bravo"].map((name) => ({
     environmentId: EnvironmentId.make(name),
     id: ProjectId.make("same-project"),
@@ -281,41 +339,6 @@ it("keeps project and worktree libraries scoped when two environments share IDs"
     { environmentId: "bravo", threadId: null, workspaceRoot: "/bravo/main" },
     { environmentId: "bravo", threadId: "same-thread", workspaceRoot: "/bravo/feature" },
   ]);
-});
-
-it("keeps workspace inputs stable for thread activity and updates them for worktree changes", () => {
-  const project = {
-    environmentId: EnvironmentId.make("local"),
-    id: ProjectId.make("project"),
-    title: "Project",
-    workspaceRoot: "/project",
-  };
-  const thread = {
-    environmentId: project.environmentId,
-    projectId: project.id,
-    id: ThreadId.make("thread"),
-    title: "Task",
-    worktreePath: "/project/task",
-    branch: "task",
-    deletedAt: null,
-    updatedAt: "before",
-  };
-  const source = Atom.make({ projects: [project], threads: [thread] });
-  const selected = Atom.make((get) => get(source)).pipe(
-    Atom.withEquality(samePlaybookWorkspaceInputs),
-  );
-  const registry = AtomRegistry.make();
-  const dispose = registry.mount(selected);
-  try {
-    const before = registry.get(selected);
-    registry.set(source, { projects: [project], threads: [{ ...thread, updatedAt: "after" }] });
-    expect(registry.get(selected)).toBe(before);
-    registry.set(source, { projects: [project], threads: [{ ...thread, title: "Renamed" }] });
-    expect(registry.get(selected)).not.toBe(before);
-  } finally {
-    dispose();
-    registry.dispose();
-  }
 });
 
 it.each([

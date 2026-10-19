@@ -3,6 +3,8 @@ import {
   PlaybookError,
   PlaybookReadResponse,
   PlaybookStepResponse,
+  PlaybookSaveRequest,
+  PlaybookSaveResponse,
 } from "@t3tools/contracts/j5";
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -14,6 +16,7 @@ import { ThreadManagementService } from "../../orchestration-v2/ThreadManagement
 import { ProjectService } from "../../project/ProjectService.ts";
 import { PlaybookCrewRelay } from "./PlaybookCrewRelay.ts";
 import { PlaybookStore, playbookError, type PlaybookMutation } from "./PlaybookStore.ts";
+import { readCaller } from "../../mcp/threadAccess.ts";
 import { playbookWorkspaceRoot } from "./workspace.ts";
 
 const Text = Schema.String.check(Schema.isNonEmpty());
@@ -47,9 +50,18 @@ const mutationDescription =
   " Reuse client_request_id only to retry this exact operation; use a fresh ID for each new action. Active-run retries return current live progress without moving again. After completion or cancellation, only start and finish retries are retained.";
 
 export const playbookTools = [
+  Tool.make("j5_playbook_save", {
+    description:
+      "Save a playbook YAML definition to this environment's library, available across all its projects and worktrees. This writes application data. Use for creation unless the user explicitly requests workspace-only storage. To edit a library playbook, pass the digest j5_playbook_read returned as expectedDigest; the save is refused if the file changed since. Without it, existing names are never overwritten. Identical content is a safe retry. Workspace playbooks are edited in their .j5/playbooks file instead. Report a save failure instead of claiming a workspace draft is shared.",
+    parameters: PlaybookSaveRequest,
+    success: PlaybookSaveResponse,
+    failure: Failure,
+    failureMode: "return",
+    dependencies,
+  }),
   Tool.make("j5_playbook_list", {
     description:
-      "Discover live YAML playbooks in your thread workspace's .j5/playbooks directory, with each step's persona. Invalid files include actionable errors; non-blocking warnings name steps whose persona is missing or turned off.",
+      "Discover live YAML playbooks from this environment's libraries and your thread workspace's .j5/playbooks directory, with each step's persona. Invalid files include actionable errors; non-blocking warnings name steps whose persona is missing or turned off.",
     success: PlaybookDiscovery,
     failure: Failure,
     failureMode: "return",
@@ -57,7 +69,7 @@ export const playbookTools = [
   }).annotate(Tool.Readonly, true),
   Tool.make("j5_playbook_read", {
     description:
-      "Read a playbook's live definition, with every step's prompt and persona, without starting a run. Pass the same name as j5_playbook_start. warnings name steps whose persona is missing or turned off; they never block starting.",
+      "Read a playbook's live definition, with every step's prompt and persona, its source, and the digest an edit through j5_playbook_save needs, without starting a run. Pass the same name as j5_playbook_start. warnings name steps whose persona is missing or turned off; they never block starting.",
     parameters: Read,
     success: PlaybookReadResponse,
     failure: Failure,
@@ -147,6 +159,25 @@ const readsPlaybooks = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R
   );
 
 export const playbookHandlers = {
+  j5_playbook_save: runsPlaybook((input: typeof PlaybookSaveRequest.Type) =>
+    Effect.gen(function* () {
+      yield* ownerScope;
+      const caller = yield* readCaller();
+      const assignment = caller.caller?.agentPersonaAssignment;
+      if (
+        caller.limits.interactionMode === "plan" ||
+        (assignment &&
+          assignment.runtimeModeOverride !== "full-access" &&
+          assignment.authorityPolicy !== "workspace-write" &&
+          assignment.authorityPolicy !== "full-access")
+      )
+        return yield* playbookError(
+          "capability_denied",
+          "This agent's runtime policy cannot save playbook definitions. Use Save YAML in Settings or a writing agent.",
+        );
+      return yield* (yield* PlaybookStore).saveDefinition(input);
+    }),
+  ),
   j5_playbook_list: readsPlaybooks(() =>
     Effect.gen(function* () {
       const { root } = yield* workspace;

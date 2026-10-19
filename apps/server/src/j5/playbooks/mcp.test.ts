@@ -6,6 +6,7 @@ import {
   EventId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -87,112 +88,126 @@ const sample = (title: string) => ({
   ],
 });
 
-const fixture = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "j5-playbook-mcp-" });
-  const projectRoot = path.join(directory, "project");
-  const worktree = path.join(directory, "worktree");
-  for (const [root, title] of [
-    [projectRoot, "Project playbook"],
-    [worktree, "Worktree playbook"],
-  ] as const) {
-    yield* fs.makeDirectory(path.join(root, ".j5/playbooks"), { recursive: true });
-    yield* fs.writeFileString(path.join(root, ".j5/playbooks/demo.yaml"), stringify(sample(title)));
-  }
-  yield* runJ5A2AMigrations();
-  yield* seedPlaybookOwners([owner, rootOwner]);
-  const store = yield* makePlaybookStore;
-  const services = Layer.mergeAll(
-    Layer.succeed(PlaybookStore, store),
-    Layer.mock(ThreadManagementService)({
-      // The access gate reads the calling thread before each tool.
-      getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
-      getThreadProjection: (threadId) =>
-        Effect.succeed(
-          emptyProjection({
-            id: EventId.make(`created:${threadId}`),
-            type: "thread.created",
-            threadId,
-            occurredAt: DateTime.makeUnsafe(createdAt),
-            payload: {
-              id: threadId,
-              projectId,
-              createdBy: "user",
-              creationSource: "web",
-              title: "Playbook test",
-              providerInstanceId: ProviderInstanceId.make("codex"),
-              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              branch: null,
-              worktreePath: threadId === owner ? worktree : null,
-              activeProviderThreadId: null,
-              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-              forkedFrom: null,
-              createdAt: DateTime.makeUnsafe(createdAt),
-              updatedAt: DateTime.makeUnsafe(createdAt),
-              archivedAt: null,
-              settledOverride: null,
-              settledAt: null,
-              snoozedUntil: null,
-              snoozedAt: null,
-              lastVisitedAt: null,
-              deletedAt: null,
-            },
-          }),
-        ),
-    }),
-    Layer.mock(ProjectService)({
-      getById: () =>
-        Effect.succeed(
-          Option.some({
-            id: projectId,
-            title: "Project",
-            workspaceRoot: projectRoot,
-            defaultModelSelection: null,
-            scripts: [],
-            createdAt,
-            updatedAt: createdAt,
-            deletedAt: null,
-          }),
-        ),
-    }),
-    Layer.mock(OrchestratorV2)({}),
-    Layer.mock(OrchestratorMcpService)({}),
-    Layer.mock(A2ADeliveryWorker)({}),
-    Layer.mock(A2AHomeRegistrar)({}),
-    Layer.mock(A2ALedger)({}),
-    Layer.mock(ParticipantPlacementService)({}),
-    Layer.mock(A2ASendService)({}),
-    Layer.mock(SpawnCompositionService)({}),
-    Layer.mock(ArchiveAgentService)({}),
-    Layer.mock(ThreadRegistration)({}),
-    NodeServices.layer,
-  );
-  const dependencies = playbookCrewRelayLayer.pipe(
-    Layer.provideMerge(agentCrewInstanceLayer),
-    Layer.provideMerge(services),
-  );
-  const toolkit = yield* J5Toolkit.pipe(
-    Effect.provide(J5ToolkitHandlersLive.pipe(Layer.provide(dependencies))),
-  );
-  const call = <Name extends PlaybookToolName>(
-    name: Name,
-    input: Tool.Parameters<(typeof J5Toolkit.tools)[Name]>,
-    scope = scopeFor(),
-  ) =>
-    toolkit
-      .handle(name, input)
-      .pipe(
-        Stream.unwrap,
-        Stream.run(Sink.last()),
-        Effect.flatMap(Effect.fromOption),
-        Effect.provide(dependencies),
-        Effect.provideService(McpInvocationContext, scope),
+const makeFixture = (
+  shell: (threadId: ThreadId) => ReturnType<typeof liveThreadShell> = liveThreadShell,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "j5-playbook-mcp-" });
+    const projectRoot = path.join(directory, "project");
+    const worktree = path.join(directory, "worktree");
+    for (const [root, title] of [
+      [projectRoot, "Project playbook"],
+      [worktree, "Worktree playbook"],
+    ] as const) {
+      yield* fs.makeDirectory(path.join(root, ".j5/playbooks"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(root, ".j5/playbooks/demo.yaml"),
+        stringify(sample(title)),
       );
-  return { call, fs, path, worktree, projectRoot };
-});
+    }
+    yield* runJ5A2AMigrations();
+    yield* seedPlaybookOwners([owner, rootOwner]);
+    const store = yield* makePlaybookStore;
+    const services = Layer.mergeAll(
+      Layer.succeed(PlaybookStore, store),
+      Layer.mock(ThreadManagementService)({
+        // The access gate reads the calling thread before each tool.
+        getThreadShell: (threadId) => Effect.succeed(shell(threadId)),
+        getThreadProjection: (threadId) =>
+          Effect.succeed(
+            emptyProjection({
+              id: EventId.make(`created:${threadId}`),
+              type: "thread.created",
+              threadId,
+              occurredAt: DateTime.makeUnsafe(createdAt),
+              payload: {
+                id: threadId,
+                projectId,
+                createdBy: "user",
+                creationSource: "web",
+                title: "Playbook test",
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                modelSelection: {
+                  instanceId: ProviderInstanceId.make("codex"),
+                  model: "test-model",
+                },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: threadId === owner ? worktree : null,
+                activeProviderThreadId: null,
+                lineage: {
+                  parentThreadId: null,
+                  relationshipToParent: null,
+                  rootThreadId: threadId,
+                },
+                forkedFrom: null,
+                createdAt: DateTime.makeUnsafe(createdAt),
+                updatedAt: DateTime.makeUnsafe(createdAt),
+                archivedAt: null,
+                settledOverride: null,
+                settledAt: null,
+                snoozedUntil: null,
+                snoozedAt: null,
+                lastVisitedAt: null,
+                deletedAt: null,
+              },
+            }),
+          ),
+      }),
+      Layer.mock(ProjectService)({
+        getById: () =>
+          Effect.succeed(
+            Option.some({
+              id: projectId,
+              title: "Project",
+              workspaceRoot: projectRoot,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt,
+              updatedAt: createdAt,
+              deletedAt: null,
+            }),
+          ),
+      }),
+      Layer.mock(OrchestratorV2)({}),
+      Layer.mock(OrchestratorMcpService)({}),
+      Layer.mock(A2ADeliveryWorker)({}),
+      Layer.mock(A2AHomeRegistrar)({}),
+      Layer.mock(A2ALedger)({}),
+      Layer.mock(ParticipantPlacementService)({}),
+      Layer.mock(A2ASendService)({}),
+      Layer.mock(SpawnCompositionService)({}),
+      Layer.mock(ArchiveAgentService)({}),
+      Layer.mock(ThreadRegistration)({}),
+      NodeServices.layer,
+    );
+    const dependencies = playbookCrewRelayLayer.pipe(
+      Layer.provideMerge(agentCrewInstanceLayer),
+      Layer.provideMerge(services),
+    );
+    const toolkit = yield* J5Toolkit.pipe(
+      Effect.provide(J5ToolkitHandlersLive.pipe(Layer.provide(dependencies))),
+    );
+    const call = <Name extends PlaybookToolName>(
+      name: Name,
+      input: Tool.Parameters<(typeof J5Toolkit.tools)[Name]>,
+      scope = scopeFor(),
+    ) =>
+      toolkit
+        .handle(name, input)
+        .pipe(
+          Stream.unwrap,
+          Stream.run(Sink.last()),
+          Effect.flatMap(Effect.fromOption),
+          Effect.provide(dependencies),
+          Effect.provideService(McpInvocationContext, scope),
+        );
+    return { call, fs, path, worktree, projectRoot };
+  });
+const fixture = makeFixture();
 const TestLayer = Layer.mergeAll(
   NodeSqliteClient.layer({ filename: ":memory:" }),
   NodeServices.layer,
@@ -427,6 +442,113 @@ it.effect("reads step personas and warnings through the toolkit and still starts
     Effect.scoped,
     Effect.provide(
       ServerConfig.layerTest(process.cwd(), { prefix: "j5-playbook-mcp-personas-" }).pipe(
+        Layer.provideMerge(TestLayer),
+      ),
+    ),
+  ),
+);
+
+it.effect(
+  "saves a shared playbook through the real MCP tool and reads it from root and worktree callers",
+  () =>
+    Effect.gen(function* () {
+      const { call, fs, path, projectRoot, worktree } = yield* fixture;
+      const saved = yield* call("j5_playbook_save", {
+        name: "shared",
+        yaml: stringify(sample("Shared playbook")),
+      });
+      assert.isFalse(saved.isFailure);
+      for (const scope of [scopeFor(), scopeFor(rootOwner)]) {
+        const read = yield* decodeRead(
+          (yield* call("j5_playbook_read", { name: "shared" }, scope)).result,
+        );
+        assert.equal(read.title, "Shared playbook");
+        const listing = yield* decodeListed((yield* call("j5_playbook_list", {}, scope)).result);
+        assert.equal(
+          listing.playbooks.find((entry) => entry.name === "shared")?.source?.kind,
+          "environment",
+        );
+      }
+      assert.isFalse(yield* fs.exists(path.join(projectRoot, ".j5/playbooks/shared.yaml")));
+      assert.isFalse(yield* fs.exists(path.join(worktree, ".j5/playbooks/shared.yaml")));
+      const denied = yield* call(
+        "j5_playbook_save",
+        { name: "denied", yaml: stringify(sample("Denied")) },
+        { ...scopeFor(), capabilities: new Set() },
+      );
+      assert.isTrue(denied.isFailure);
+      assert.equal((yield* decodeFailureCode(denied.result)).code, "capability_denied");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "j5-playbook-mcp-save-" }).pipe(
+          Layer.provideMerge(TestLayer),
+        ),
+      ),
+    ),
+);
+
+it.effect("refuses definition writes from plan-mode and read-only persona callers", () =>
+  Effect.gen(function* () {
+    const { fs, path } = yield* fixture;
+    const { stateDir } = yield* ServerConfig;
+    const plan = yield* makeFixture((threadId) => ({
+      ...liveThreadShell(threadId),
+      interactionMode: "plan",
+    }));
+    const denied = yield* plan.call("j5_playbook_save", {
+      name: "denied",
+      yaml: stringify(sample("Denied")),
+    });
+    assert.isTrue(denied.isFailure);
+    assert.equal((yield* decodeFailureCode(denied.result)).code, "capability_denied");
+    const readOnly = yield* makeFixture((threadId) => ({
+      ...liveThreadShell(threadId),
+      agentPersonaAssignment: {
+        personaId: "reader",
+        definitionVersion: 1,
+        authorityPolicy: "read-only",
+        resolvedRoute: "primary",
+        resolvedDriver: ProviderDriverKind.make("codex"),
+        resolvedModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "test-model",
+        },
+      },
+    }));
+    assert.isTrue(
+      (yield* readOnly.call("j5_playbook_save", {
+        name: "denied",
+        yaml: stringify(sample("Denied")),
+      })).isFailure,
+    );
+    assert.isFalse(yield* fs.exists(path.join(stateDir, "playbooks/denied.yaml")));
+    const writer = yield* makeFixture((threadId) => ({
+      ...liveThreadShell(threadId),
+      runtimeMode: "auto-accept-edits",
+      agentPersonaAssignment: {
+        personaId: "playbook-author",
+        definitionVersion: 1,
+        authorityPolicy: "workspace-write",
+        resolvedRoute: "primary",
+        resolvedDriver: ProviderDriverKind.make("codex"),
+        resolvedModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "test-model",
+        },
+      },
+    }));
+    assert.isFalse(
+      (yield* writer.call("j5_playbook_save", {
+        name: "authored",
+        yaml: stringify(sample("Authored")),
+      })).isFailure,
+    );
+    assert.isTrue(yield* fs.exists(path.join(stateDir, "playbooks/authored.yaml")));
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "j5-playbook-mcp-write-policy-" }).pipe(
         Layer.provideMerge(TestLayer),
       ),
     ),

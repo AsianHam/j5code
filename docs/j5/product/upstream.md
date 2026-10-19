@@ -236,7 +236,7 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths and n
 
 **Why:** J5 followed upstream from npm to archives rather than keep npm alone. It publishes from its own repository so it never installs or updates T3 Code, and it renames the service so both can be installed at once.
 
-**Consequences:** only darwin-arm64 and linux-x64 get releases, where upstream ships five platforms, and no reason for that is recorded. Other hosts build from source and get no `j5 update` or service. A real service handover, signing and notarization weren't verified when this shipped. Migration steps are in `docs/user/migrating-to-release-archives.md`. Without the release check, "Update everything" would skip every J5 server, since J5 publishes nothing to npm. Windows releases are wanted (#341).
+**Consequences:** only darwin-arm64 and linux-x64 get releases, where upstream ships five platforms, and no reason for that is recorded. Other hosts build from source and get no `j5 update` or service. A real service handover, signing and notarization weren't verified when this shipped. Migration steps are in `docs/j5/user/migrating-to-release-archives.md`. Without the release check, "Update everything" would skip every J5 server, since J5 publishes nothing to npm. Windows releases are wanted (#341).
 
 **Decided:** Jackson, 2026-09-24 (#3, #3a). Recorded in FORK.md cases 40 and 41.
 

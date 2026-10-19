@@ -67,6 +67,7 @@ it("publishes the ratified single-target lifecycle contracts fail-closed", () =>
     "j5_playbook_next",
     "j5_playbook_read",
     "j5_playbook_reselect",
+    "j5_playbook_save",
     "j5_playbook_start",
     "j5_send_message",
     "j5_list_personas",
