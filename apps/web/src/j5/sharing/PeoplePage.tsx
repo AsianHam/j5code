@@ -225,7 +225,7 @@ function OwnedServerPeople({
           <span className="flex items-center gap-2">
             {picker}
             {people.data === null ? null : (
-              <span className="text-xs text-muted-foreground">
+              <span className="text-xs whitespace-nowrap text-muted-foreground">
                 {everyone.length} {everyone.length === 1 ? "person" : "people"}
               </span>
             )}
