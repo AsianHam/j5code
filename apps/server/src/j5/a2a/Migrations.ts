@@ -43,6 +43,7 @@ import Migration0039 from "./migrations/039_PeopleAndLevels.ts";
 import Migration0040 from "./migrations/040_Links.ts";
 import Migration0041 from "./migrations/041_SharedConversation.ts";
 import Migration0042 from "./migrations/042_EveryoneHereAsks.ts";
+import Migration0043 from "./migrations/043_TaskSchedulers.ts";
 
 export const J5_A2A_MIGRATIONS_TABLE = "j5_a2a_migrations";
 
@@ -96,6 +97,7 @@ export const migrationEntries = [
   [40, "Links", Migration0040],
   [41, "SharedConversation", Migration0041],
   [42, "EveryoneHereAsks", Migration0042],
+  [43, "TaskSchedulers", Migration0043],
 ] as const;
 
 const makeMigrationLoader = (throughId?: number) =>

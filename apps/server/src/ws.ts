@@ -30,6 +30,7 @@ import {
   AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
   type ScheduledTaskListResult,
+  type ScheduledTaskUpsertInput,
   AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
@@ -3133,6 +3134,8 @@ const layerWsRpc = (
           j5Commands
             .admitLaunch(input)
             .pipe(Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.launchThread])),
+        [WS_METHODS.scheduledTasksUpsert]: (input: ScheduledTaskUpsertInput) =>
+          j5Commands.upsertScheduledTask(input, handlers[WS_METHODS.scheduledTasksUpsert]),
       };
     }),
   );

@@ -5,11 +5,15 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ThreadLaunchInput,
   type ProjectId,
+  ScheduledTaskError,
+  type ScheduledTaskMutationResult,
+  type ScheduledTaskUpsertInput,
   type ThreadId,
   authScopeRequiredResponse,
 } from "@t3tools/contracts";
 import { type PersonLevel, levelReaches } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import type { CrewSeatArchiveGuard } from "../a2a/crewSeatArchiveGuard.ts";
 import {
@@ -20,6 +24,7 @@ import {
   isWide,
   reachPersonId,
 } from "./PersonAccess.ts";
+import { recordScheduler, storedPrompt } from "./scheduledRuns.ts";
 import { SharedConversation } from "./SharedConversation.ts";
 
 /**
@@ -148,6 +153,15 @@ export interface CommandAdmission {
   readonly admitLaunch: (
     input: OrchestrationV2ThreadLaunchInput,
   ) => Effect.Effect<OrchestrationV2ThreadLaunchInput, EnvironmentAuthorizationError>;
+  /**
+   * A person's save of a scheduled task, with who scheduled it recorded: whoever creates it, and
+   * whoever changes its prompt (`scheduledRuns`). `ws.ts` wraps upstream's upsert with this
+   * (FORK.md case 78).
+   */
+  readonly upsertScheduledTask: <E, R>(
+    input: ScheduledTaskUpsertInput,
+    upsert: (input: ScheduledTaskUpsertInput) => Effect.Effect<ScheduledTaskMutationResult, E, R>,
+  ) => Effect.Effect<ScheduledTaskMutationResult, E | ScheduledTaskError, R>;
 }
 
 /**
@@ -158,8 +172,13 @@ export interface CommandAdmission {
 export const makeCommandAdmission = (
   crewSeatArchiveGuard: CrewSeatArchiveGuard,
   session: SessionIdentity,
-): Effect.Effect<CommandAdmission, never, PersonAccess | SharedConversation> =>
+): Effect.Effect<
+  CommandAdmission,
+  never,
+  PersonAccess | SharedConversation | SqlClient.SqlClient
+> =>
   Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
     const access = yield* PersonAccess;
     const conversation = yield* SharedConversation;
     const reach = yield* access.sessionReach(session).pipe(
@@ -250,5 +269,41 @@ export const makeCommandAdmission = (
       return yield* conversation.admitLaunch(person, input);
     });
 
-    return { admit, admitLaunch };
+    const upsertScheduledTask: CommandAdmission["upsertScheduledTask"] = (input, upsert) => {
+      if (person === null) return upsert(input);
+      // The task the save addresses, as upstream's service resolves it; a new one has no prompt.
+      const taskId =
+        input.id ??
+        (input.commandId === undefined ? undefined : `scheduled-task:${input.commandId}`);
+      // Recorded after upstream saves, so a failure to record is told to the person: the task is
+      // saved, and its runs name no one until its prompt is saved again.
+      const notRecorded = (cause: unknown) =>
+        Effect.logError("J5 could not record who scheduled a task", { cause }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ScheduledTaskError({
+                message:
+                  "The task was saved, but who scheduled it could not be recorded. Save it again.",
+              }),
+            ),
+          ),
+        );
+      return Effect.gen(function* () {
+        const before =
+          taskId === undefined
+            ? null
+            : yield* storedPrompt(taskId).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+                Effect.catch(notRecorded),
+              );
+        const saved = yield* upsert(input);
+        yield* recordScheduler(person, saved.task, before).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.catch(notRecorded),
+        );
+        return saved;
+      });
+    };
+
+    return { admit, admitLaunch, upsertScheduledTask };
   });

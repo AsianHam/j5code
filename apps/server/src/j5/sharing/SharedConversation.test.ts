@@ -176,7 +176,7 @@ it.effect(
       assert.include(text, "Who can write: Jackson (owner), Priya (collaborator).");
       assert.include(
         text,
-        "was typed before this thread was shared, when only Jackson (owner) could write here.",
+        "was sent before this thread was shared, when only Jackson (owner) could write here.",
       );
       assert.include(text, "an Owner's word settles it");
       assert.isTrue(
@@ -315,7 +315,7 @@ it.effect("a thread started in a project already shared is shared from its first
     const text = admitted.initialMessage!.text;
     assert.include(text, "Who can write: Jackson (owner), Priya (collaborator).");
     // A new thread has no messages from before.
-    assert.include(text, "One with none came from a scheduled task.\n");
+    assert.include(text, "such as one an agent set up.\n");
     assert.isTrue(afterNote(text).startsWith("[Message from Jackson (owner)]\n\nStart."));
     // In another project no one else writes to, a launch goes on as sent.
     const elsewhere = {

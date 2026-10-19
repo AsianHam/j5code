@@ -160,7 +160,7 @@ it.effect(
       )!;
       assert.include(
         carried.note,
-        "was typed before this thread was shared, when only Jackson (owner) could write here.",
+        "was sent before this thread was shared, when only Jackson (owner) could write here.",
       );
       assert.strictEqual(
         yield* storedText(threadId, carrier.messageId),
