@@ -291,6 +291,9 @@ const spawnHarness = (input: {
                       (projection) =>
                         ({
                           ...projection.thread,
+                          providerInstanceId: invocation.thread.providerInstanceId,
+                          archivedAt: null,
+                          deletedAt: null,
                           activeRunId: "run:caller",
                         }) as never,
                     ),
@@ -1026,6 +1029,7 @@ it.effect("binds a client_request_id to its first workspace type, across a resta
         client_request_id: "bound",
       });
       assert.isTrue(halfDone.isFailure);
+      assert.include(message(halfDone), "visible orphan");
       assert.lengthOf(yield* Ref.get(first.commands), 1);
     }).pipe(Effect.provide(first.layer));
 
@@ -1074,7 +1078,16 @@ it.effect("binds a client_request_id to its first workspace type, across a resta
   }),
 );
 
-it.effect("a second start on one key while the first is in flight is refused, not queued", () =>
+it.effect.each([
+  {
+    mismatched: false,
+    name: "concurrent identical requests retain the in-flight guard and create only one agent",
+  },
+  {
+    mismatched: true,
+    name: "concurrent different requests on one key refuse the loser and create only the winner",
+  },
+])("$name", ({ mismatched }) =>
   Effect.gen(function* () {
     const createsEntered = yield* Ref.make(0);
     const createEntered = yield* Deferred.make<void>();
@@ -1101,7 +1114,11 @@ it.effect("a second start on one key while the first is in flight is refused, no
       // The first start is in flight, stopped inside its create.
       yield* Deferred.await(createEntered);
       const loser = yield* harness
-        .call({ ...spawnArgs, workspace: { type: "shared" }, client_request_id: "raced" })
+        .call({
+          ...spawnArgs,
+          workspace: mismatched ? { type: "shared" } : { type: "worktree", base_ref: "j5/main" },
+          client_request_id: "raced",
+        })
         .pipe(Effect.forkChild);
       // The second start returns while the first still holds its create; without the guard it
       // would reach a create of its own instead, which ends this race the other way.
@@ -1115,7 +1132,7 @@ it.effect("a second start on one key while the first is in flight is refused, no
         assert.isTrue(second.result.isFailure);
         assert.include(
           (second.result.result as { readonly message: string }).message,
-          "different request",
+          mismatched ? "different request" : "already in progress",
         );
       }
 
@@ -1312,8 +1329,18 @@ it.effect(
             client_request_id: phase,
           };
           yield* Ref.set(harness[phase], true);
-          assert.isTrue((yield* harness.call(args)).isFailure);
+          const failed = yield* harness.call(args);
+          assert.isTrue(failed.isFailure);
+          assert.include(
+            message(failed),
+            phase === "failCreate"
+              ? "could not be created"
+              : phase === "failFacts"
+                ? "visible orphan"
+                : "brief did not start",
+          );
           const before = yield* Ref.get(harness.commands);
+          assert.lengthOf(before, phase === "failCreate" ? 0 : 1);
           for (const change of [
             { brief: "changed" },
             { title: "changed" },
@@ -1374,7 +1401,10 @@ it.effect(
           client_request_id: "same-defaults",
         };
         yield* Ref.set(harness.failFacts, true);
-        assert.isTrue((yield* harness.call(args)).isFailure);
+        const failed = yield* harness.call(args);
+        assert.isTrue(failed.isFailure);
+        assert.include(message(failed), "visible orphan");
+        assert.lengthOf(yield* Ref.get(harness.commands), 1);
         yield* Ref.set(harness.failFacts, false);
         yield* Ref.set(liveCaller, {
           ...callerThread(invocation.thread.threadId),
@@ -1444,10 +1474,22 @@ it.effect(
           const delayed = yield* harness
             .call(args)
             .pipe(Effect.forkChild({ startImmediately: true }));
-          yield* Deferred.await(held);
+          yield* Effect.raceFirst(
+            Deferred.await(held),
+            Fiber.join(delayed).pipe(
+              Effect.flatMap((result) =>
+                Effect.die(
+                  new Error(`Delayed call returned before reaching the gate: ${message(result)}`),
+                ),
+              ),
+            ),
+          );
           yield* Ref.set(liveCaller, callerThread(invocation.thread.threadId, childMode));
           yield* Ref.set(harness.failBrief, true);
-          assert.isTrue((yield* harness.call(args)).isFailure);
+          const failed = yield* harness.call(args);
+          assert.isTrue(failed.isFailure);
+          assert.include(message(failed), "brief did not start");
+          assert.lengthOf(yield* Ref.get(harness.commands), 1);
           yield* Ref.set(harness.failBrief, false);
           yield* Ref.set(liveCaller, callerThread(invocation.thread.threadId, originalMode));
           yield* Deferred.succeed(release, undefined);
@@ -1459,11 +1501,11 @@ it.effect(
           );
           assert.deepStrictEqual(
             creates.map((command) => command.runtimeMode),
-            [childMode, childMode],
+            childMode === "full-access" ? [childMode] : [childMode, childMode],
           );
           assert.deepStrictEqual(
             creates.map((command) => command.worktreePath),
-            [scratchFolder, scratchFolder],
+            childMode === "full-access" ? [scratchFolder] : [scratchFolder, scratchFolder],
           );
           assert.equal(yield* Ref.get(harness.folderClaims), 1);
         }).pipe(Effect.provide(harness.layer));
@@ -1493,7 +1535,10 @@ it.effect("an outside agent's narrowed approved level still caps an identical re
         client_request_id: "outside-narrowed",
       };
       yield* Ref.set(harness.failBrief, true);
-      assert.isTrue((yield* harness.call(args)).isFailure);
+      const failed = yield* harness.call(args);
+      assert.isTrue(failed.isFailure);
+      assert.include(message(failed), "brief did not start");
+      assert.lengthOf(yield* Ref.get(harness.commands), 1);
       yield* Ref.set(harness.failBrief, false);
       access = "approval-required";
       const replay = yield* harness.call(args);

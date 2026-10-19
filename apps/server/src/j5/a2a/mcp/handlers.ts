@@ -1008,16 +1008,14 @@ const handlers = {
       const stableInput = { providerSessionId: spawner.requestNamespace, requestKey };
       const threadId = spawnThreadId(stableInput);
       const threadManagement = yield* ThreadManagementService;
+      const spawnReadFailure = (error: { readonly message: string }) =>
+        stateError(
+          `Peer Agent thread ${threadId} could not be read: ${error.message}`,
+          "Retry j5_spawn_agent with the same client_request_id once it is readable.",
+        );
       const existing = yield* threadManagement
         .getThreadShell(threadId)
-        .pipe(
-          Effect.mapError((error) =>
-            stateError(
-              `Peer Agent thread ${threadId} could not be read: ${error.message}`,
-              "Retry j5_spawn_agent with the same client_request_id once it is readable.",
-            ),
-          ),
-        );
+        .pipe(Effect.mapError(spawnReadFailure));
       const workspaceRequest =
         input.workspace.type === "worktree"
           ? { ...input.workspace, start_from_origin: input.workspace.start_from_origin ?? false }
@@ -1215,7 +1213,15 @@ const handlers = {
             // start: an earlier attempt may have created it since the read above.
             const current = yield* threadManagement
               .getThreadShell(threadId)
-              .pipe(Effect.mapError(replayFailure));
+              .pipe(Effect.mapError(spawnReadFailure));
+            if (current !== null && (personaId === undefined || outside !== undefined)) {
+              const exceeded = exceededDispatchModeLimit((yield* loadCaller()).limits, current);
+              if (exceeded !== undefined)
+                return yield* stateError(
+                  `Peer Agent ${participantIdForThread(threadId)} has modes broader than yours is now.`,
+                  "Ask the user to start that agent, or use a fresh client_request_id.",
+                );
+            }
             const sharedCheckout =
               current !== null
                 ? current
@@ -1273,17 +1279,6 @@ const handlers = {
                   ),
                 ),
               );
-            if (personaId === undefined || outside !== undefined) {
-              const exceeded = exceededDispatchModeLimit(
-                (yield* loadCaller()).limits,
-                child.thread,
-              );
-              if (exceeded !== undefined)
-                return yield* stateError(
-                  `Peer Agent ${participantIdForThread(threadId)} has modes broader than yours is now.`,
-                  "Ask the user to start that agent, or use a fresh client_request_id.",
-                );
-            }
             const facts = yield* (yield* SpawnCompositionService)
               .recordFacts({
                 homeCommandId: spawnHomeCommandId(stableInput),
