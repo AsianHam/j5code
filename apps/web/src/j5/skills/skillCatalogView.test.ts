@@ -21,7 +21,7 @@ describe("skill catalog view helpers", () => {
 
   it("summarizes apply counts", () => {
     expect(summarizeApplyResult({ installed: 3, removed: 1, unchanged: 5, conflicts: [] })).toBe(
-      "Installed 3 links, removed 1, 5 unchanged.",
+      "Installed 3 links, removed 1, 5 unchanged. For running agents, use “Restart agent session” in the command palette to pick up these changes.",
     );
   });
 
@@ -34,8 +34,17 @@ describe("skill catalog view helpers", () => {
         conflicts: [{ skill: "explain", linkPath: "/skills/explain", detail: "Existing link" }],
       }),
     ).toBe(
-      `1 skill link was blocked by existing files or links. Installed ${installed} links, removed 0, 1 unchanged.`,
+      `1 skill link was blocked by existing files or links. Installed ${installed} links, removed 0, 1 unchanged.${installed > 0 ? " For running agents, use “Restart agent session” in the command palette to pick up these changes." : ""}`,
     );
+  });
+
+  it("gives restart guidance for removals but not an unchanged selection", () => {
+    expect(
+      summarizeApplyResult({ installed: 0, removed: 2, unchanged: 0, conflicts: [] }),
+    ).toContain("Restart agent session");
+    expect(
+      summarizeApplyResult({ installed: 0, removed: 0, unchanged: 3, conflicts: [] }),
+    ).not.toContain("Restart agent session");
   });
 
   it("extracts partial results only from skill catalog errors", () => {

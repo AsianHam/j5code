@@ -7,6 +7,7 @@ import { SkillCatalogPanel } from "./SkillInstallerSettings";
 import { openCommandPalette } from "../../commandPaletteBus";
 
 const state = vi.hoisted(() => ({
+  notify: vi.fn(),
   configuredSource: "/catalog/A",
   status: {
     data: null as unknown,
@@ -139,6 +140,8 @@ vi.mock("../../components/ui/checkbox", () => ({
   ),
 }));
 
+vi.mock("../../components/ui/toast", () => ({ toastManager: { add: state.notify } }));
+
 vi.mock("../../components/ui/button", () => ({
   Button: ({
     children,
@@ -199,6 +202,14 @@ async function renderPanel(): Promise<ReactTestRenderer> {
   await act(async () => {
     renderer = create(<SkillCatalogPanel environmentId={environmentId} />);
   });
+  if (state.canOperate) {
+    await act(async () =>
+      buttonByText(
+        renderer!,
+        state.configuredSource ? "Change source…" : "Add source…",
+      ).props.onClick(),
+    );
+  }
   return renderer!;
 }
 
@@ -217,7 +228,7 @@ function sourceInput(renderer: ReactTestRenderer) {
 
 function buttonByText(renderer: ReactTestRenderer, text: string) {
   const buttons = renderer.root.findAll((node) => node.type === "button");
-  const found = buttons.find((button) =>
+  const found = buttons.findLast((button) =>
     (Array.isArray(button.props.children)
       ? button.props.children.join("")
       : String(button.props.children ?? "")
@@ -228,7 +239,12 @@ function buttonByText(renderer: ReactTestRenderer, text: string) {
 }
 
 function applyButton(renderer: ReactTestRenderer) {
-  return buttonByText(renderer, "Apply selected groups");
+  return buttonByText(renderer, "Apply changes");
+}
+
+async function applyChanges(renderer: ReactTestRenderer) {
+  await act(async () => applyButton(renderer).props.onClick());
+  await act(async () => buttonByText(renderer, "Confirm changes").props.onClick());
 }
 
 function updateButton(renderer: ReactTestRenderer) {
@@ -249,6 +265,7 @@ function allParagraphText(renderer: ReactTestRenderer): string {
 describe("SkillCatalogPanel source identity", () => {
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    state.notify.mockReset();
     state.configuredSource = "/catalog/A";
     state.status.data = null;
     state.status.error = null;
@@ -288,7 +305,7 @@ describe("SkillCatalogPanel source identity", () => {
       },
     });
     const renderer = await renderPanel();
-    await act(async () => applyButton(renderer).props.onClick());
+    await applyChanges(renderer);
     return renderer;
   }
   it("previews both targets and replaces only selected links after confirmation", async () => {
@@ -391,6 +408,27 @@ describe("SkillCatalogPanel source identity", () => {
     },
   );
 
+  it("closes the source editor when acknowledged settings arrive before the save receipt", async () => {
+    setStatusLoaded("/catalog/A");
+    const renderer = await renderPanel();
+    let finish!: (result: unknown) => void;
+    state.persistImpl = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    await act(async () =>
+      sourceInput(renderer).props.onChange({ target: { value: "/catalog/B" } }),
+    );
+    await act(async () => buttonByText(renderer, "Save source").props.onClick());
+    state.configuredSource = "/catalog/B";
+    setStatusLoaded("/catalog/B");
+    await rerender(renderer);
+    await act(async () => finish({ _tag: "Success" }));
+    expect(renderer.root.findAllByProps({ "aria-label": "Catalog source" })).toHaveLength(0);
+    expect(applyButton(renderer).props.disabled).toBe(false);
+    await act(async () => renderer.unmount());
+  });
+
   it("ignores a picker result after another client changes the catalog source", async () => {
     setStatusLoaded("/catalog/A");
     const renderer = await renderPanel();
@@ -423,9 +461,7 @@ describe("SkillCatalogPanel source identity", () => {
     expect(sourceInput(renderer).props.value).toBe("/catalog/A");
     expect(applyButton(renderer).props.disabled).toBe(false);
 
-    await act(async () => {
-      await applyButton(renderer).props.onClick();
-    });
+    await applyChanges(renderer);
     expect(state.applyCalls.at(-1)).toMatchObject({
       input: { expectedSource: "/catalog/A" },
     });
@@ -442,9 +478,7 @@ describe("SkillCatalogPanel source identity", () => {
     setStatusLoaded("/catalog/B");
     await rerender(renderer);
     expect(applyButton(renderer).props.disabled).toBe(false);
-    await act(async () => {
-      await applyButton(renderer).props.onClick();
-    });
+    await applyChanges(renderer);
     expect(state.applyCalls.at(-1)).toMatchObject({
       input: { expectedSource: "/catalog/B" },
     });
@@ -460,10 +494,81 @@ describe("SkillCatalogPanel source identity", () => {
 
     await act(async () => group.props.onChange({ target: { checked: false } }));
     await act(async () => applyButton(renderer).props.onClick());
+    expect(state.applyCalls).toHaveLength(0);
+    expect(JSON.stringify(renderer.toJSON())).toContain("Remove groups");
+    expect(allParagraphText(renderer)).toContain("No groups selected");
+    await act(async () => buttonByText(renderer, "Cancel").props.onClick());
+    expect(state.applyCalls).toHaveLength(0);
+    await applyChanges(renderer);
 
     expect(state.applyCalls.at(-1)).toMatchObject({ input: { groups: [] } });
     await act(async () => renderer.unmount());
   });
+
+  it("dismisses a pending apply review when another client changes the catalog", async () => {
+    setStatusLoaded("/catalog/A");
+    const renderer = await renderPanel();
+    await act(async () => applyButton(renderer).props.onClick());
+    expect(renderer.root.findAllByProps({ role: "dialog" })).toHaveLength(1);
+    state.configuredSource = "/catalog/B";
+    state.status.isPending = true;
+    await rerender(renderer);
+    setStatusLoaded("/catalog/B");
+    await rerender(renderer);
+    expect(renderer.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
+    expect(state.applyCalls).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it.each(["save", "update", "apply"] as const)(
+    "shows progress only for the active %s operation",
+    async (operation) => {
+      setStatusLoaded("/catalog/A");
+      const renderer = await renderPanel();
+      let finish!: (result: unknown) => void;
+      const pending = () =>
+        new Promise<unknown>((resolve) => {
+          finish = resolve;
+        });
+      if (operation === "save") {
+        state.persistImpl = pending;
+        await act(async () =>
+          sourceInput(renderer).props.onChange({ target: { value: "/catalog/B" } }),
+        );
+        await act(async () => buttonByText(renderer, "Save source").props.onClick());
+      } else if (operation === "update") {
+        state.updateImpl = pending;
+        await act(async () => updateButton(renderer).props.onClick());
+      } else {
+        state.applyImpl = pending;
+        await applyChanges(renderer);
+      }
+      const progress = renderer.root
+        .findAllByType("button")
+        .map((button) => String(button.props.children))
+        .filter((label) => ["Saving…", "Updating…", "Applying…"].includes(label));
+      expect(progress).toEqual([
+        operation === "save" ? "Saving…" : operation === "update" ? "Updating…" : "Applying…",
+      ]);
+      await act(async () =>
+        finish({
+          _tag: "Success",
+          value:
+            operation === "apply"
+              ? {
+                  selectedGroups: ["core"],
+                  installed: 0,
+                  removed: 0,
+                  unchanged: 0,
+                  conflicts: [],
+                  failed: [],
+                }
+              : { upstream: "origin/main" },
+        }),
+      );
+      await act(async () => renderer.unmount());
+    },
+  );
 
   it("discards late apply results after the catalog identity changes", async () => {
     state.configuredSource = "/catalog/A";
@@ -477,7 +582,7 @@ describe("SkillCatalogPanel source identity", () => {
       new Promise<unknown>((resolve) => {
         resolveApply = resolve;
       });
-    applyButton(renderer).props.onClick();
+    await applyChanges(renderer);
     await act(async () => {});
     expect(state.applyCalls.at(-1)).toMatchObject({
       input: { expectedSource: "/catalog/A" },
@@ -510,9 +615,7 @@ describe("SkillCatalogPanel source identity", () => {
     expect(sourceInput(renderer).props.value).toBe("/catalog/B");
     expect(allParagraphText(renderer)).not.toContain("Installed 7 links");
     expect(applyButton(renderer).props.disabled).toBe(false);
-    await act(async () => {
-      await applyButton(renderer).props.onClick();
-    });
+    await applyChanges(renderer);
     expect(state.applyCalls.at(-1)).toMatchObject({
       input: { expectedSource: "/catalog/B" },
     });

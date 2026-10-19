@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildSkillInventory,
   filterSkillInventory,
+  inventoryColumnProviders,
   missingSkillLabel,
   skillDiscoveryState,
   skillOrigin,
@@ -185,5 +186,35 @@ describe("skill inventory", () => {
       skillDiscoveryState({ ...global, status: "ready", skillDiscoveryError: "Probe failed" }),
     ).toBe("failed");
     expect(skillDiscoveryState({ ...global, enabled: false })).toBe("not-checked");
+  });
+
+  it("keeps empty Codex and Claude columns only while the instance is on and installed", () => {
+    const withSkills = provider("with-skills");
+    const emptyOn = provider("empty-on", []);
+    const emptyOff = { ...provider("empty-off", []), enabled: false };
+    const emptyMissing = { ...provider("empty-missing", []), installed: false };
+    const offWithCache = { ...provider("off-cached"), enabled: false };
+    const emptyOther = {
+      ...provider("empty-other", []),
+      driver: ProviderDriverKind.make("cursor"),
+    };
+    const providers = [withSkills, emptyOn, emptyOff, emptyMissing, offWithCache, emptyOther];
+
+    expect(
+      inventoryColumnProviders(providers, buildSkillInventory(providers)).map((p) => p.instanceId),
+    ).toEqual(["with-skills", "empty-on", "off-cached"]);
+  });
+
+  it("keeps only on and installed Codex and Claude columns when nothing reports skills", () => {
+    const emptyOn = provider("empty-on", []);
+    const emptyOff = { ...provider("empty-off", []), enabled: false };
+    const emptyMissing = { ...provider("empty-missing", []), installed: false };
+    const emptyOther = {
+      ...provider("empty-other", []),
+      driver: ProviderDriverKind.make("cursor"),
+    };
+    const providers = [emptyOn, emptyOff, emptyMissing, emptyOther];
+
+    expect(inventoryColumnProviders(providers, []).map((p) => p.instanceId)).toEqual(["empty-on"]);
   });
 });
