@@ -11,11 +11,12 @@ import {
 } from "./contracts.ts";
 
 /**
- * The notices a sender gets when a message to a peer server will not arrive:
- * the server refused it, or the peer was removed while it waited. Each message
- * gets one notice. A refused ask's notice also says its Exchange has ended,
- * and the Exchange is dropped as refused; an open Exchange with a removed peer
- * is dropped with a drop notice. Either way the party here owes nothing.
+ * The notices a sender gets when a message will not arrive: its delivery
+ * alarmed, a peer server refused it, or the peer was removed while it waited.
+ * Each message gets one notice. A refused ask's notice also says its Exchange
+ * has ended, and the Exchange is dropped as refused; an open Exchange with a
+ * removed peer is dropped with a drop notice. An alarmed ask's Exchange stays
+ * open: an alarm is the sender's fact to act on, not a decision by the receiver.
  *
  * A notice is platform-authored, so nothing a peer server wrote goes into one
  * raw: a refusal code it is known to send is told in this server's own words,
@@ -52,21 +53,43 @@ export const peerRefusalReason = (input: {
     case "landing_refused":
       return `${input.serverName} refused the steer or restart: the recipient runs with broader permissions than you do. Send it again without mode, as an ordinary message.`;
   }
-  const flat = input.message
+  return `${input.serverName} said: "${oneLine(input.message)}"`;
+};
+
+/** Text a notice quotes but did not write, on one line and bounded. */
+const oneLine = (text: string) => {
+  const flat = text
     .replace(/[\s\p{Cc}\p{Cf}]+/gu, " ")
     .replaceAll('"', "'")
     .trim();
-  const quoted =
-    flat.length > PEER_REASON_MAX_CHARS ? `${flat.slice(0, PEER_REASON_MAX_CHARS - 1)}…` : flat;
-  return `${input.serverName} said: "${quoted}"`;
+  return flat.length > PEER_REASON_MAX_CHARS
+    ? `${flat.slice(0, PEER_REASON_MAX_CHARS - 1)}…`
+    : flat;
 };
+
+/** Why a delivery alarmed, completing "… was not delivered: …". */
+export const deliveryAlarmReason = (input: {
+  /** Set when the receiver is on a peer server sent to directly. */
+  readonly serverName?: string;
+  readonly attempts: number;
+  /** What the last attempt failed with. */
+  readonly error: string;
+}) =>
+  `${
+    input.serverName === undefined
+      ? `delivery failed ${input.attempts} times`
+      : `this server could not reach ${input.serverName} in ${input.attempts} attempts`
+  }, and it will not be tried again. The last attempt failed with: "${oneLine(input.error)}"`;
 
 export const formatNotDeliveredNotice = (input: {
   readonly receiverId: string;
-  readonly serverName: string;
+  /** Set when the receiver is on a peer server. */
+  readonly serverName?: string;
   readonly reason: string;
   /** Set for an ask: the Exchange it opened has ended. */
   readonly exchangeId?: string;
+  /** Set for an alarmed ask: the Exchange it opened is still open. */
+  readonly openExchangeId?: string;
   /** The peer may already hold it: handed to a poller, or attempted directly. */
   readonly mayHaveArrived?: boolean;
 }) =>
@@ -74,12 +97,18 @@ export const formatNotDeliveredNotice = (input: {
     input.mayHaveArrived === true
       ? "[Cross-agent messaging system notice: message may not have been delivered]"
       : "[Cross-agent messaging system notice: message not delivered]",
-    `Your message to ${input.receiverId} on ${input.serverName} ${input.mayHaveArrived === true ? "may not have been delivered" : "was not delivered"}: ${input.reason}`,
+    `Your message to ${input.receiverId}${input.serverName === undefined ? "" : ` on ${input.serverName}`} ${input.mayHaveArrived === true ? "may not have been delivered" : "was not delivered"}: ${input.reason}`,
     ...(input.exchangeId === undefined
       ? []
       : [
           "The exchange is closed; nothing is owed and nothing will answer it.",
           `Facts: exchangeId=${input.exchangeId}; replyRequired=false; retryAllowed=false; replacementRequired=false.`,
+        ]),
+    ...(input.openExchangeId === undefined
+      ? []
+      : [
+          `Exchange ${input.openExchangeId} is still open; if the ask did arrive, its reply still comes on it. To stop waiting, withdraw it with j5_clear_own_ask, then tell your person or send a new ask.`,
+          `Facts: exchangeId=${input.openExchangeId}; exchangeOpen=true; retryScheduled=false.`,
         ]),
     "This is a platform-authored notice, not a peer reply.",
   ].join("\n\n");
@@ -118,10 +147,11 @@ export const notDeliveredNoticeMessageId = (message: UndeliveredMessage) =>
 /** A not-delivered notice to the message's sender, in the sender's project. */
 export const notDeliveredNoticeEvent = (input: {
   readonly message: UndeliveredMessage;
-  readonly serverName: string;
+  readonly serverName?: string;
   readonly reason: string;
   readonly createdAt: string;
   readonly mayHaveArrived?: boolean;
+  readonly openExchangeId?: string;
 }): CommEvent => {
   const key = notDeliveredKey(input.message);
   return {
@@ -134,9 +164,10 @@ export const notDeliveredNoticeEvent = (input: {
       messageId: notDeliveredNoticeMessageId(input.message),
       text: formatNotDeliveredNotice({
         receiverId: input.message.receiver_id,
-        serverName: input.serverName,
+        ...(input.serverName === undefined ? {} : { serverName: input.serverName }),
         reason: input.reason,
         ...(input.mayHaveArrived === true ? { mayHaveArrived: true } : {}),
+        ...(input.openExchangeId === undefined ? {} : { openExchangeId: input.openExchangeId }),
       }),
       originProjectId: LedgerProjectId.make(input.message.project_id),
       receiverProjectId: LedgerProjectId.make(input.message.project_id),

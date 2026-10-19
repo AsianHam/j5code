@@ -47,6 +47,7 @@ import {
 import { A2ALedgerTransactionWriter, A2ALedger, type A2ALedgerError } from "./LedgerService.ts";
 import {
   canBeNotified,
+  deliveryAlarmReason,
   type DroppedExchange,
   formatNotDeliveredNotice,
   notDeliveredNoticeEvent,
@@ -196,6 +197,16 @@ const refusalOf = (cause: Cause.Cause<A2ADeliveryAttemptError>): PeerRefusal | u
   return error._tag === "Some" && isRefusedError(error.value)
     ? { code: error.value.code, message: error.value.refusal }
     : undefined;
+};
+
+const isTransportError = Schema.is(A2ADeliveryTransportError);
+
+/** What an attempt failed with, in the innermost failure's own words: the transport wraps it. */
+const failureMessage = (cause: Cause.Cause<A2ADeliveryAttemptError>) => {
+  const found = Cause.findErrorOption(cause);
+  let failure: unknown = found._tag === "Some" ? found.value : Cause.squash(cause);
+  while (isTransportError(failure)) failure = failure.cause;
+  return failure instanceof Error ? failure.message : String(failure);
 };
 
 const backoffMs = (attempt: number) =>
@@ -454,7 +465,11 @@ const makeLayer = (daemon: boolean) =>
               // sender retired since cannot take that back, as with a receipt.
               if (yield* deliveryUnavailable(row, refusal !== undefined)) return null;
               const told =
-                refusal === undefined ? [] : yield* refusalNotices(row, refusal, failedAt);
+                refusal !== undefined
+                  ? yield* refusalNotices(row, refusal, failedAt)
+                  : alarmed
+                    ? yield* alarmNotices(row, attempt, cause, failedAt)
+                    : [];
               return yield* writer.appendEventsInTransaction({
                 commandId: commandId("failed", messageId, attempt),
                 projectId: LedgerProjectId.make(row.project_id),
@@ -505,12 +520,7 @@ const makeLayer = (daemon: boolean) =>
         createdAt: string,
       ) {
         if (row.receiver_environment_id === null) return [];
-        const serverName =
-          reportedLabel(
-            (yield* sql<{ readonly label: string }>`
-              SELECT label FROM j5_a2a_peer WHERE environment_id = ${row.receiver_environment_id}
-            `)[0]?.label,
-          ) ?? row.receiver_environment_id;
+        const serverName = yield* peerServerName(row.receiver_environment_id);
         const reason = peerRefusalReason({ serverName, ...refusal });
         if (row.exchange_role === "ask" && row.exchange_id !== null) {
           const exchange = (yield* sql<DroppedExchange>`
@@ -540,6 +550,68 @@ const makeLayer = (daemon: boolean) =>
         }
         if (!canBeNotified(row.sender_id)) return [];
         return [notDeliveredNoticeEvent({ message: row, serverName, reason, createdAt })];
+      });
+
+      /**
+       * What the sender is told of an alarm: one notice that the message may not
+       * have been delivered, naming the receiver and what the last attempt failed
+       * with. It may have: a peer server's answer can be lost, and a steer can be
+       * acknowledged after the wait for it timed out. So an alarmed ask's Exchange
+       * stays open (a2a AC12), and the alarm stays a problem until the sender
+       * withdraws it. A sender on a peer server is not told, as
+       * with a removed queued message, and nobody is told of a platform notice's alarm.
+       */
+      const alarmNotices = Effect.fn("j5.a2a.delivery.alarmNotices")(function* (
+        row: DeliveryRow,
+        attempts: number,
+        cause: Cause.Cause<A2ADeliveryAttemptError>,
+        createdAt: string,
+      ) {
+        if (
+          row.envelope_channel !== "peer" ||
+          row.origin_environment_id !== null ||
+          !canBeNotified(row.sender_id)
+        ) {
+          return [];
+        }
+        const serverName =
+          row.receiver_environment_id === null
+            ? undefined
+            : yield* peerServerName(row.receiver_environment_id);
+        const openExchangeId =
+          row.exchange_role === "ask" && row.exchange_id !== null
+            ? (yield* sql<{ readonly exchange_id: string }>`
+                SELECT exchange_id FROM j5_a2a_exchange
+                WHERE project_id = ${row.project_id} AND exchange_id = ${row.exchange_id}
+                  AND status = 'open'
+              `)[0]?.exchange_id
+            : undefined;
+        return [
+          notDeliveredNoticeEvent({
+            message: row,
+            ...(serverName === undefined ? {} : { serverName }),
+            mayHaveArrived: true,
+            reason: deliveryAlarmReason({
+              ...(serverName === undefined ? {} : { serverName }),
+              attempts,
+              error: failureMessage(cause),
+            }),
+            ...(openExchangeId === undefined ? {} : { openExchangeId }),
+            createdAt,
+          }),
+        ];
+      });
+
+      const peerServerName = Effect.fn("j5.a2a.delivery.peerServerName")(function* (
+        environmentId: string,
+      ) {
+        return (
+          reportedLabel(
+            (yield* sql<{ readonly label: string }>`
+              SELECT label FROM j5_a2a_peer WHERE environment_id = ${environmentId}
+            `)[0]?.label,
+          ) ?? environmentId
+        );
       });
 
       const deliveryUnavailable = Effect.fn("j5.a2a.delivery.unavailable")(function* (

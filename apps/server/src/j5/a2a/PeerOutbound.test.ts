@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -303,9 +303,9 @@ type TransportReply = {
   readonly headers?: Record<string, string>;
 };
 
-/** One reply for every request, or one per request in order. */
+/** One reply for every request, or one per request in order; "unreachable" is a refused connection. */
 const makeTransportLayer = (
-  replies: TransportReply | Array<TransportReply>,
+  replies: TransportReply | "unreachable" | Array<TransportReply>,
   posted: Array<PostedRequest>,
   lastErrors: Array<string | null> = [],
 ) => {
@@ -319,7 +319,7 @@ const makeTransportLayer = (
   const http = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         const body =
           request.body._tag === "Uint8Array"
             ? decodeJson(new TextDecoder().decode(request.body.body))
@@ -331,16 +331,29 @@ const makeTransportLayer = (
           protocol: request.headers["x-j5-peer-protocol"],
         });
         const reply = Array.isArray(replies) ? replies.shift()! : replies;
-        return HttpClientResponse.fromWeb(
-          request,
-          new Response(encodeJson(reply.body), {
-            status: reply.status,
-            headers: {
-              "content-type": "application/json",
-              "x-j5-peer-protocol": String(PEER_PROTOCOL_VERSION),
-              ...reply.headers,
-            },
-          }),
+        if (reply === "unreachable") {
+          return Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                request,
+                cause: new Error("connect ECONNREFUSED"),
+                description: "connect ECONNREFUSED",
+              }),
+            }),
+          );
+        }
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(encodeJson(reply.body), {
+              status: reply.status,
+              headers: {
+                "content-type": "application/json",
+                "x-j5-peer-protocol": String(PEER_PROTOCOL_VERSION),
+                ...reply.headers,
+              },
+            }),
+          ),
         );
       }),
     ),
@@ -628,6 +641,86 @@ it.effect("records that the peer ended the peering when it rejects this server's
       ),
     );
   }),
+);
+
+/** Three attempts to a peer server that refuses every connection: the third alarms. */
+const deliverUntilAlarmed = Effect.fn("test.j5.a2a.peer.outbound.untilAlarmed")(function* () {
+  const worker = yield* A2ADeliveryWorker;
+  assert.equal((yield* worker.runOnce)?.state, "retry_scheduled");
+  yield* TestClock.adjust("250 millis");
+  assert.equal((yield* worker.runOnce)?.state, "retry_scheduled");
+  yield* TestClock.adjust("500 millis");
+  assert.equal((yield* worker.runOnce)?.state, "alarmed");
+});
+
+const lifecycleNotices = Effect.fn("test.j5.a2a.peer.outbound.lifecycleNotices")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{ readonly receiver_id: string; readonly message_text: string }>`
+    SELECT receiver_id, message_text FROM j5_a2a_delivery
+    WHERE envelope_channel = 'lifecycle_notice'
+  `;
+});
+
+it.effect("tells the sender of a plain message once when the peer server can't be reached", () =>
+  Effect.gen(function* () {
+    const posted: Array<PostedRequest> = [];
+    yield* Effect.gen(function* () {
+      yield* seedLocal();
+      yield* (yield* A2ASendService).send({
+        commandId: CommCommandId.make("command:peer-outbound:unreachable-plain"),
+        senderThreadId: billing.threadId,
+        to: remoteSupport,
+        message: "FYI: the incident is closed.",
+        acceptedAt: timestamp,
+      });
+      yield* deliverUntilAlarmed();
+      const notices = yield* lifecycleNotices();
+      assert.equal(notices.length, 1, "one notice, at the alarm");
+      assert.equal(notices[0]!.receiver_id, billing.id);
+      assert.include(
+        notices[0]!.message_text,
+        `Your message to ${remoteSupport} on Home may not have been delivered: this server could not reach Home in 3 attempts, and it will not be tried again.`,
+      );
+      assert.include(notices[0]!.message_text, "ECONNREFUSED", "it says what the attempt hit");
+      assert.notInclude(notices[0]!.message_text, "xchange", "a plain message has no Exchange");
+      assert.equal(posted.length, 3);
+    }).pipe(Effect.provide(makeTransportLayer("unreachable", posted)));
+  }),
+);
+
+it.effect(
+  "tells the asker once when the peer server can't be reached, and keeps its Exchange open",
+  () =>
+    Effect.gen(function* () {
+      const posted: Array<PostedRequest> = [];
+      yield* Effect.gen(function* () {
+        const { sent } = yield* crossingAsk();
+        yield* deliverUntilAlarmed();
+        const sql = yield* SqlClient.SqlClient;
+        const [exchange] = yield* sql<{ readonly status: string }>`
+          SELECT status FROM j5_a2a_exchange WHERE exchange_id = ${sent.exchangeId}
+        `;
+        // The peer may hold the ask and answer it; only the asker withdraws it.
+        assert.equal(exchange?.status, "open");
+        const dropped = yield* sql`SELECT 1 FROM j5_a2a_comm_event WHERE kind = 'exchange.dropped'`;
+        assert.equal(dropped.length, 0);
+        const notices = yield* lifecycleNotices();
+        assert.equal(notices.length, 1);
+        assert.equal(notices[0]!.receiver_id, billing.id);
+        assert.include(
+          notices[0]!.message_text,
+          `Your message to ${remoteSupport} on Home may not have been delivered: this server could not reach Home in 3 attempts`,
+        );
+        assert.include(
+          notices[0]!.message_text,
+          `Exchange ${sent.exchangeId} is still open; if the ask did arrive, its reply still comes on it. To stop waiting, withdraw it with j5_clear_own_ask`,
+        );
+        assert.include(
+          notices[0]!.message_text,
+          `Facts: exchangeId=${sent.exchangeId}; exchangeOpen=true; retryScheduled=false.`,
+        );
+      }).pipe(Effect.provide(makeTransportLayer("unreachable", posted)));
+    }),
 );
 
 it.effect("tells the sender of a plain message the peer refused, naming the server and why", () =>
