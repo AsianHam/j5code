@@ -1468,9 +1468,9 @@ function SavedBackendListRow({
   const isConnected = environment.connection.phase === "connected";
   const isRemoving = removingEnvironmentId === environmentId;
   const errorTraceId = environment.connection.traceId;
-  const canReconnect =
-    enabled &&
-    (environment.connection.phase === "reconnecting" || environment.connection.phase === "error");
+  // A failed connection waits for a changed condition, such as a new pairing, so retrying it
+  // would only resend what was refused.
+  const canReconnect = enabled && environment.connection.phase === "reconnecting";
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
     target: "trace ID",

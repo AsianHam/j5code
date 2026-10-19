@@ -465,7 +465,7 @@ Recorded in `FORK.md` cases 69 to 73, and in the case the shared conversation's 
 
 **Upstream:** after a few failed attempts, a client waits longer and longer between tries, up to five minutes. The mobile app offers "Retry now" the whole time. The web and desktop app show Reconnect on the chat view's banner only once the environment is offline or has failed outright, so while it says "reconnecting" there is no way to try again before the timer runs out, other than leaving the window and coming back. Settings › Connections shows the status but has no retry.
 
-**J5:** the banner keeps Reconnect while the environment is reconnecting, and a saved environment's menu in Settings › Connections offers "Reconnect now" while it is reconnecting or has failed. Both use upstream's own retry, the one the mobile app's button calls.
+**J5:** the banner keeps Reconnect while the environment is reconnecting, and a saved environment's menu in Settings › Connections offers "Reconnect now" while it is reconnecting. A connection that has failed, such as one whose login was refused, doesn't offer it: retrying would only send what was refused again. Both use upstream's own retry, the one the mobile app's button calls.
 
 **Why:** a server that was restarted, or a tunnel that came back, could sit unused for up to five minutes with the app saying it was reconnecting and nothing to press.
 
