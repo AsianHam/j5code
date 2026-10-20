@@ -144,8 +144,8 @@ For authorized mobile verification, a missing or outdated native client is a bui
 Most code changes do not need a documentation change. Agents can read the code.
 
 - **J5's docs live under `docs/j5/`.** [How the J5 docs are organized](docs/j5/process/docs.md) says what goes where. Feature definitions in `docs/j5/product/` are rewritten, never appended to.
-- **User docs** (`docs/user/`) help users accomplish tasks. Give each major feature a concise section explaining what it does, how to start, and anything unintuitive. A settings path is useful; descriptions of visible buttons, icons, layouts, animations, or every UI state are not. Keep them in the shipped product's voice, without implementation details or contributor tooling.
-- **Upstream's internal docs** (`docs/internals/`, `docs/operations/`) are upstream's. J5 doesn't edit them; J5's own go under `docs/j5/`.
+- **User docs** help users accomplish tasks. Give each major feature a concise section explaining what it does, how to start, and anything unintuitive. A settings path is useful; descriptions of visible buttons, icons, layouts, animations, or every UI state are not. Keep them in the shipped product's voice, without implementation details or contributor tooling. J5's go in `docs/j5/user/`; `docs/user/` is upstream's.
+- **Upstream's docs** (`docs/user/`, `docs/internals/`, `docs/operations/`) are upstream's. J5 doesn't add files there or edit its internal docs; J5's own go under `docs/j5/`.
 - Do not document every feature, enumerate fields or methods, narrate control flow, maintain file catalogs, or append PR summaries. Types, tests, and code already record the implementation.
 - Keep a local implementation explanation in a nearby code comment. Link to the relevant source instead of copying it.
 - When a documented decision or constraint changes, rewrite or remove the affected text. Do not append another account of the new behavior.

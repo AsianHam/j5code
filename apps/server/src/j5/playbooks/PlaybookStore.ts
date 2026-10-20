@@ -1,17 +1,20 @@
 import { ThreadId } from "@t3tools/contracts";
 import {
-  PlaybookDefinition,
   PlaybookError,
   PLAYBOOK_RUNS_PAGE_SIZE,
   PLAYBOOK_MAX_BYTES,
   PLAYBOOK_NAME_PATTERN,
   suggestPlaybookName,
+  type PlaybookDefinition,
   type PlaybookReadResponse,
   type PlaybookRun,
   type PlaybookRunsRequest,
   type PlaybookStep,
   type PlaybookStepResponse,
   type PlaybookWarning,
+  type PlaybookSource,
+  type PlaybookSaveRequest,
+  type PlaybookFoldersInput,
 } from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -25,7 +28,14 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SqlClient from "effect/sql/SqlClient";
-import { parseDocument } from "yaml";
+import { makePlaybookLibrary, selectPlaybookSource } from "./PlaybookLibrary.ts";
+import {
+  decodePlaybookDocument,
+  playbookDigest,
+  playbookError,
+  storageError,
+} from "./definition.ts";
+export { playbookError } from "./definition.ts";
 
 import { makeAgentPersonaLibrary, personaCatalogProblem } from "../agents/agentPersonaLibrary.ts";
 import { durationMsBetween, j5AnalyticsRecorder } from "../analytics/recorder.ts";
@@ -43,20 +53,9 @@ const invalidNameIssue = (file: string) => {
       : `Rename ${file} using lowercase letters, digits, and hyphens.`,
   );
 };
-const decodeDefinition = Schema.decodeUnknownEffect(PlaybookDefinition);
-
-export const playbookError = (
-  code: string,
-  message: string,
-  availableStepIds: ReadonlyArray<string> = [],
-) => new PlaybookError({ code, message, availableStepIds });
-const storageError = (error: unknown) =>
-  isPlaybookError(error)
-    ? error
-    : playbookError("operation_failed", error instanceof Error ? error.message : String(error));
-const encodeRequest = Schema.encodeSync(
-  Schema.fromJsonString(Schema.Array(Schema.NullOr(Schema.String))),
-);
+const Request = Schema.fromJsonString(Schema.Array(Schema.NullOr(Schema.String)));
+const encodeRequest = Schema.encodeSync(Request);
+const decodeRequest = Schema.decodeUnknownEffect(Request);
 type NamedStep = PlaybookStep & { readonly persona: string };
 const namedSteps = (steps: ReadonlyArray<PlaybookStep>) =>
   steps.filter((step): step is NamedStep => step.persona !== undefined);
@@ -152,6 +151,7 @@ export const makePlaybookStore = Effect.gen(function* () {
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const personas = yield* makeAgentPersonaLibrary;
+  const library = yield* makePlaybookLibrary;
   const revision = yield* SubscriptionRef.make(0);
   const bumpRevision = SubscriptionRef.update(revision, (value) => value + 1);
   const notifyChange = (result: PlaybookStepResponse) =>
@@ -168,7 +168,10 @@ export const makePlaybookStore = Effect.gen(function* () {
       const realRoot = yield* fs.realPath(root);
       const realFile = yield* fs.realPath(definitionPath);
       const relative = path.relative(realRoot, realFile);
-      if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      if (
+        path.basename(path.dirname(path.dirname(definitionPath))) === ".j5" &&
+        (relative.startsWith("..") || path.isAbsolute(relative))
+      ) {
         return yield* playbookError(
           "invalid_path",
           "Playbook definitions must remain inside the thread workspace.",
@@ -181,23 +184,23 @@ export const makePlaybookStore = Effect.gen(function* () {
           `Use a YAML file no larger than ${PLAYBOOK_MAX_BYTES / 1024} KiB.`,
         );
       }
-      const text = yield* fs.readFileString(realFile);
-      const { document, raw } = yield* Effect.try(() => {
-        const document = parseDocument(text, { version: "1.2", uniqueKeys: true });
-        const issue = document.errors[0] ?? document.warnings[0];
-        if (issue) throw issue;
-        return { document, raw: document.toJS({ maxAliasCount: 0 }) as unknown };
-      });
-      const definition = yield* decodeDefinition(raw);
-      const ids = definition.steps.map((step) => step.id);
-      if (new Set(ids).size !== ids.length) {
+      const realDirectory = yield* fs.realPath(path.dirname(definitionPath));
+      if (path.dirname(realFile) !== realDirectory)
         return yield* playbookError(
-          "invalid_definition",
-          "Every playbook step must have a unique stable ID.",
-          ids,
+          "invalid_path",
+          "Playbook files must stay inside their source folder.",
         );
-      }
-      return { definition, document, text };
+      const text = yield* fs.readFileString(realFile);
+      return yield* decodePlaybookDocument(text).pipe(
+        Effect.mapError((error) =>
+          playbookError(
+            error.code,
+            _unreadable ??
+              `Cannot read the live playbook. Restore or fix its YAML and retry; cancellation remains available. ${error.message}`,
+            error.availableStepIds,
+          ),
+        ),
+      );
     },
     (effect, _definitionPath: string, unreadable?: string) =>
       Effect.mapError(effect, (error) =>
@@ -353,69 +356,102 @@ export const makePlaybookStore = Effect.gen(function* () {
     );
   };
 
-  const discover = Effect.fn("PlaybookStore.discover")(function* (workspaceRoot: string) {
-    const directory = path.join(workspaceRoot, ".j5/playbooks");
-    if (!(yield* fs.exists(directory))) return { playbooks: [] };
-    const names = (yield* fs.readDirectory(directory))
-      .filter((name) => name.endsWith(".yaml") && PLAYBOOK_FILE_STEM.test(name.slice(0, -5)))
-      .sort();
-    // One catalog read per listing, shared by every file that names a persona.
+  const discover = Effect.fn("PlaybookStore.discover")(function* (
+    workspaceRoot: string,
+    selectedSource?: PlaybookSource,
+  ) {
+    const sources = yield* library.sources(workspaceRoot);
+    const selected =
+      selectedSource === undefined
+        ? sources
+        : sources.filter(
+            (entry) =>
+              entry.source.kind === selectedSource.kind &&
+              (entry.source.kind !== "folder" ||
+                (selectedSource.kind === "folder" && entry.source.path === selectedSource.path)),
+          );
+    const names = [...new Set(selected.flatMap((entry) => entry.names))].sort();
     const catalog = yield* Effect.cached(personas.catalog());
-    const playbooks = yield* Effect.forEach(names, (file) =>
-      readDefinition(path.join(directory, file)).pipe(
-        Effect.flatMap((definition) =>
-          personaWarnings(definition.steps, catalog).pipe(
-            Effect.map((warnings) => ({
-              name: file.slice(0, -5),
-              title: definition.title,
-              description: definition.description,
-              stepCount: definition.steps.length,
-              steps: definition.steps.map(stepSummary),
-              issue: PLAYBOOK_NAME_PATTERN.test(file.slice(0, -5))
-                ? (null as PlaybookError | null)
-                : invalidNameIssue(file),
-              warnings,
-            })),
+    const playbooks = yield* Effect.forEach(names, (name) =>
+      Effect.gen(function* () {
+        const selection = selectPlaybookSource(selected, name, selectedSource !== undefined);
+        const source = selection.entry!;
+        const base = { name, source: source.source, overridesLibrary: selection.overridesLibrary };
+        const issue = selection.issue;
+        const read =
+          issue === null
+            ? readDefinition(path.join(source.path, `${name}.yaml`))
+            : Effect.fail(issue);
+        return yield* read.pipe(
+          Effect.flatMap((definition) =>
+            personaWarnings(definition.steps, catalog).pipe(
+              Effect.map((warnings) => ({
+                ...base,
+                title: definition.title,
+                description: definition.description,
+                stepCount: definition.steps.length,
+                steps: definition.steps.map(stepSummary),
+                issue: PLAYBOOK_NAME_PATTERN.test(name) ? null : invalidNameIssue(`${name}.yaml`),
+                warnings,
+              })),
+            ),
           ),
-        ),
-        Effect.catch((issue) =>
-          Effect.succeed({
-            name: file.slice(0, -5),
-            title: file,
-            description: "",
-            stepCount: 0,
-            steps: [],
-            issue,
-            warnings: [],
-          }),
-        ),
-      ),
+          Effect.catch((issue) =>
+            Effect.succeed({
+              ...base,
+              title: `${name}.yaml`,
+              description: "",
+              stepCount: 0,
+              steps: [],
+              issue,
+              warnings: [],
+            }),
+          ),
+        );
+      }),
     );
-    return { playbooks };
+    return {
+      playbooks,
+      sources: sources.map(({ source, path, issue }) => ({ source, path, issue })),
+    };
   }, Effect.mapError(storageError));
 
-  /** The definition file for a name as j5_playbook_start accepts it; a trailing .yaml is allowed. */
-  const definitionPathFor = Effect.fn("PlaybookStore.definitionPathFor")(function* (
+  const definitionPathFor = library.resolve;
+
+  /** Resolve retries against their original receipt before consulting a changed catalog. */
+  const startDefinitionPathFor = Effect.fn("PlaybookStore.startDefinitionPathFor")(function* (
+    owner: ThreadId,
     workspaceRoot: string,
     name: string,
+    key: string,
+    crewInstanceId?: string,
   ) {
-    const stem = name.endsWith(".yaml") ? name.slice(0, -5) : name;
-    if (!PLAYBOOK_NAME_PATTERN.test(stem))
-      return yield* playbookError(
-        "invalid_name",
-        "Pass a playbook name from j5_playbook_list: lowercase letters, digits, and hyphens, without directories or spaces.",
-      );
-    return { stem, definitionPath: path.resolve(workspaceRoot, ".j5/playbooks", `${stem}.yaml`) };
-  });
+    const rows = yield* sql<{
+      request_json: string;
+    }>`SELECT request_json FROM j5_playbook_request WHERE owner_thread_id = ${owner} AND request_id = ${key}`;
+    if (rows[0]) {
+      const request = yield* decodeRequest(rows[0].request_json);
+      const recordedPath = request[1];
+      if (
+        request[0] !== "start" ||
+        !recordedPath ||
+        path.basename(recordedPath, ".yaml") !== name.replace(/\.yaml$/, "") ||
+        (request[2] ?? null) !== (crewInstanceId ?? null)
+      )
+        return yield* playbookError(
+          "request_conflict",
+          "This client_request_id belongs to a different operation. Use a new key for a new operation.",
+        );
+      return { definitionPath: recordedPath };
+    }
+    return yield* definitionPathFor(workspaceRoot, name);
+  }, Effect.mapError(storageError));
 
   /** Reads a live definition without touching run state: no permit, no SQL, no revision bump. */
   const readPath = Effect.fn("PlaybookStore.readPath")(function* (definitionPath: string) {
     const stem = path.basename(definitionPath, ".yaml");
     if (!(yield* fs.exists(definitionPath)))
-      return yield* playbookError(
-        "not_found",
-        `No playbook named ${stem} in this workspace. Use j5_playbook_list.`,
-      );
+      return yield* playbookError("not_found", `No playbook named ${stem}. Use j5_playbook_list.`);
     const definition = yield* readDefinition(definitionPath);
     return {
       name: stem,
@@ -426,24 +462,35 @@ export const makePlaybookStore = Effect.gen(function* () {
     } satisfies PlaybookReadResponse;
   }, Effect.mapError(storageError));
   const read = Effect.fn("PlaybookStore.read")(function* (workspaceRoot: string, name: string) {
-    return yield* readPath((yield* definitionPathFor(workspaceRoot, name)).definitionPath);
+    const { definitionPath, source } = yield* definitionPathFor(workspaceRoot, name);
+    const response = yield* readPath(definitionPath);
+    const digest = playbookDigest(yield* fs.readFileString(definitionPath));
+    return { ...response, source, digest } satisfies PlaybookReadResponse;
   }, Effect.mapError(storageError));
 
   const removeDefinition = Effect.fn("PlaybookStore.removeDefinition")(function* (
     workspaceRoot: string,
     name: string,
+    source: PlaybookSource = { kind: "workspace" },
   ) {
+    if (source.kind === "folder")
+      return yield* playbookError(
+        "read_only",
+        "Edit this playbook in its source folder or copy it to the environment library.",
+      );
     if (!PLAYBOOK_FILE_STEM.test(name))
       return yield* playbookError("invalid_name", "Choose a playbook in this workspace.");
-    const directory = path.resolve(workspaceRoot, ".j5/playbooks");
+    const directory = yield* library.directoryFor(workspaceRoot, source);
     const filename = path.join(directory, `${name}.yaml`);
     return yield* Effect.gen(function* () {
       if (!(yield* fs.exists(filename)))
         return yield* playbookError("not_found", "This playbook no longer exists.");
-      const realRoot = yield* fs.realPath(workspaceRoot);
+      const realRoot = yield* fs.realPath(
+        source.kind === "workspace" ? workspaceRoot : path.dirname(directory),
+      );
       const realDirectory = yield* fs.realPath(directory);
       const relative = path.relative(realRoot, realDirectory);
-      if (relative !== path.join(".j5", "playbooks"))
+      if (relative !== (source.kind === "workspace" ? path.join(".j5", "playbooks") : "playbooks"))
         return yield* playbookError("invalid_path", "Playbooks must stay inside the workspace.");
       const info = yield* fs.stat(filename);
       if (info.type !== "File")
@@ -467,10 +514,11 @@ export const makePlaybookStore = Effect.gen(function* () {
   const exportDefinition = Effect.fn("PlaybookStore.exportDefinition")(function* (
     workspaceRoot: string,
     name: string,
+    source: PlaybookSource = { kind: "workspace" },
   ) {
     if (!PLAYBOOK_NAME_PATTERN.test(name))
       return yield* playbookError("invalid_name", "Choose a playbook in this workspace.");
-    const filename = path.resolve(workspaceRoot, ".j5/playbooks", `${name}.yaml`);
+    const filename = (yield* library.resolve(workspaceRoot, name, source)).definitionPath;
     if (!(yield* fs.exists(filename)))
       return yield* playbookError("not_found", "This playbook no longer exists.");
     // Export the validated source text (less any BOM): re-rendering can grow the file past the import limit.
@@ -485,12 +533,18 @@ export const makePlaybookStore = Effect.gen(function* () {
     workspaceRoot: string,
     name: string,
     title: string,
+    source: PlaybookSource = { kind: "workspace" },
   ) {
+    if (source.kind === "folder")
+      return yield* playbookError(
+        "read_only",
+        "Edit this playbook in its source folder or copy it to the environment library.",
+      );
     if (!PLAYBOOK_NAME_PATTERN.test(name))
       return yield* playbookError("invalid_name", "Choose a playbook in this workspace.");
     const nextTitle = title.trim();
     if (!nextTitle) return yield* playbookError("invalid_title", "Enter a name for the playbook.");
-    const filename = path.resolve(workspaceRoot, ".j5/playbooks", `${name}.yaml`);
+    const filename = (yield* library.resolve(workspaceRoot, name, source)).definitionPath;
     return yield* Effect.gen(function* () {
       if (!(yield* fs.exists(filename)))
         return yield* playbookError("not_found", "This playbook no longer exists.");
@@ -511,7 +565,13 @@ export const makePlaybookStore = Effect.gen(function* () {
     key: string,
     options: { readonly crewInstanceId?: string } = {},
   ) {
-    const { definitionPath } = yield* definitionPathFor(workspaceRoot, name);
+    const { definitionPath } = yield* startDefinitionPathFor(
+      owner,
+      workspaceRoot,
+      name,
+      key,
+      options.crewInstanceId,
+    );
     const crewInstanceId = options.crewInstanceId ?? null;
     // A thread run keeps the original request shape, so receipts stored before Crew links replay.
     const request = encodeRequest(
@@ -848,6 +908,17 @@ export const makePlaybookStore = Effect.gen(function* () {
      * its views read again. `PlaybookDefinitionWatch` calls it for the directories it watches.
      */
     definitionsChanged: bumpRevision,
+    sources: () =>
+      library.sources(undefined).pipe(
+        Effect.map((folders) => ({
+          folders: folders.map(({ source, path, issue }) => ({ source, path, issue })),
+        })),
+      ),
+    saveDefinition: (input: PlaybookSaveRequest) =>
+      library.save(input).pipe(permit.withPermits(1), Effect.tap(bumpRevision)),
+    setFolders: (input: PlaybookFoldersInput) =>
+      library.setFolders(input).pipe(permit.withPermits(1), Effect.tap(bumpRevision)),
+    startDefinitionPathFor,
     activeDefinitionDirectories,
     discover,
     definitionPathFor,

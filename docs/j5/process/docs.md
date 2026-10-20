@@ -15,6 +15,8 @@ Every document under `docs/j5/` is one of four kinds. The kind decides where the
 
 `process/` (this directory) holds the rules for working in the repository and is cited for those rules only; a process rule is valid until it is changed.
 
+`user/` holds the user guides for J5's features, written for the people using J5 in the shipped product's voice. They follow the user-docs rules in `AGENTS.md`, carry no frontmatter, and are never cited as a definition.
+
 **Plans, research, and build status don't live here.** They live in GitHub issues and pull requests, which are current where a committed plan goes stale. A merged PR, and the code itself, is the record of what was built.
 
 ## Lifetime is the point

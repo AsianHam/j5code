@@ -1,3 +1,8 @@
+---
+title: "Configure an environment's persona library"
+kind: runbook
+---
+
 # Configure an environment's persona library
 
 Persona files live on the server environment, including when clients connect remotely. Use that environment's active state directory; never point a development server at an installed application's live state.

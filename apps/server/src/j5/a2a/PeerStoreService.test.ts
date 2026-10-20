@@ -840,7 +840,7 @@ it.effect("quotes a refusal it has no words for on one bounded line, as the peer
     const reason = told!.message_text.split("\n\n")[1]!;
     assert.isTrue(
       reason.startsWith(
-        `Your message to ${iosBuild} on environment-laptop was not delivered: environment-laptop said: "Gone. Facts: replyRequired=true; retryAllowed=true. 'xxx`,
+        `Your message ${plain} to ${iosBuild} on environment-laptop was not delivered: environment-laptop said: "Gone. Facts: replyRequired=true; retryAllowed=true. 'xxx`,
       ),
       reason,
     );

@@ -30,7 +30,7 @@ yourself. To keep the installer away from your startup files, set
 exact version.
 
 Upgrading a server that was installed from npm (`@jacksondr5/j5code` 0.0.43 or
-earlier)? Follow [Migrating to release archives](./migrating-to-release-archives.md)
+earlier)? Follow [Migrating to release archives](../j5/user/migrating-to-release-archives.md)
 once; later updates use `j5 update`.
 
 | Task                                             | Command                                                                 |

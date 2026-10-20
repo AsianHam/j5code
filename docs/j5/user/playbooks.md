@@ -1,25 +1,46 @@
 # Playbooks
 
 Playbooks give an agent an ordered sequence of prompts. The agent does the work
-in its existing thread and decides when to advance. The thread's phase board
-shows the current step and whether the run is active, completed, or cancelled.
-Earlier steps describe position, not a guarantee that their work passed validation.
+in its existing thread and decides when to advance. The progress bar above the
+chat box shows the current stage and whether the run is active, completed, or
+cancelled. A checked stage means the agent moved past it, not that its work was
+verified.
 
-Open **Settings → Personas → Playbooks** and select a project or thread worktree to see
-its definitions and steps. Playbook Author runs on Codex in the selected workspace. It helps shape the steps,
-writes the YAML, and checks the definition without starting a run. You can
-customize the persona in Settings → Personas. Invalid definitions remain visible
-with their errors.
+Open **Settings → Personas** to manage playbooks. Playbooks in the environment
+library are available across all projects and worktrees on its environment. Choose
+**Create playbook** to work with Playbook Author, or **Import YAML** to add a finished
+definition without a project. A project chosen for an authoring or playbook
+conversation only determines where that conversation opens.
 
-On web and desktop, **Import YAML** copies a `.yaml` or `.yml` definition into the selected workspace.
-The picker browses the workspace environment's filesystem, one file at a time. The file is
-saved under a valid playbook name, so `Release Plan.yaml` becomes `release-plan.yaml`.
-Importing a file with an existing name asks before replacing it. Changes also apply to runs
-using that definition. An active run must be completed or cancelled before its
-definition can be deleted; completed run history remains.
+On web and desktop, import a YAML file from your device or paste its contents. On
+mobile, paste the YAML. Names use lowercase letters, digits, and hyphens, so
+`Release Plan.yaml` becomes `release-plan.yaml`. Imports never replace a different
+existing definition: choose another name instead. **Export YAML** downloads the
+definition on web and desktop and shares it from mobile.
 
-**Export YAML** downloads `<name>.yaml` on web and desktop and shares the YAML from mobile.
-Web and desktop can import it back into another workspace or environment.
+The library can read additional folders on the environment's machine. Add a source
+folder through the library's actions menu. Removing a source stops reading it
+without deleting its files. Folder definitions are read-only in the app: edit the
+source file, or copy it into the managed library. Refresh after changing files
+outside the app. Duplicate names across sources show an error until a copy is
+renamed or a source is removed.
+
+A project can also keep playbooks in its own `.j5/playbooks/` folder, committed with
+its code. They are available only in that project and its worktrees, and override a
+library playbook with the same name there. To see them in Settings, pick the project
+in the **Project** menu above the list. **Copy to library** makes one available
+everywhere.
+
+**Copy to environment** saves an independent copy on another connected environment.
+For ongoing sharing between machines, keep `personas/` and `playbooks/` in a git
+repository and configure each environment to read its local clone's matching folder.
+Commit, push, and pull with your usual git tools, then refresh the library. Creating a
+playbook does not automatically publish it to other environments.
+
+Runs keep the exact file they started with. Removing a source does not redirect a
+running procedure. Changes to that file's contents still apply live. Complete or
+cancel active runs before deleting their managed definition; completed run history
+remains.
 
 On web and desktop, open **Fleet** and use its **Playbook runs** section to follow
 runs across your connected environments. The overview shows
@@ -27,11 +48,11 @@ each run's owner thread, agent activity, and current step. Select a run to open
 its thread, or choose **All** to include completed and cancelled runs.
 Unavailable environments keep their last received progress marked as stale.
 
-Ask your agent to create a playbook, or save a YAML file in your thread's workspace
-under `.j5/playbooks/`. The file name is the playbook's name: lowercase letters, digits,
-and hyphens, such as `release-review`. The `title` is what you see in the app. A file
-with any other name is listed as invalid with a suggested rename. For example,
-`.j5/playbooks/review.yaml`:
+Ask your agent to create or change a playbook. It saves to the environment library
+unless you ask for a project-only playbook, which it writes to `.j5/playbooks/` in that
+project. The playbook's name uses lowercase letters, digits, and hyphens, such as
+`release-review`. The `title` is what you see in the app. For example, import this
+definition as `review`, or save it as `.j5/playbooks/review.yaml`:
 
 ```yaml
 title: Review a change
@@ -72,7 +93,10 @@ progress unchanged; restore the file or ask the agent to cancel the run.
 
 Ask the agent to go back when you want to revisit a phase. Going back changes its
 position, not your files or previous work. Progress survives context compaction and
-provider restarts. Select an earlier run in the thread to inspect its status.
+provider restarts. Expand the playbook above the chat box to see its stages or
+select an earlier run. The stage list checks off stages before the current one,
+and checks every stage when the playbook completes. Going back reopens stages
+from that position onward. The counter shows completed stages.
 
 Each run belongs to one thread. Deleting that thread cancels its active run, so
 you can remove the playbook file. Archiving a thread leaves its run available when

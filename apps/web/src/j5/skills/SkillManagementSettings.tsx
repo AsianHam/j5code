@@ -8,23 +8,33 @@ import type {
 import { skillLinkUnavailableReason } from "@t3tools/shared/j5/skillInventory";
 import { skillLinkEnvironment } from "./skillLinkAtoms";
 import { SkillLinksPanel, type SkillLinkSelection } from "./SkillLinksPanel";
-import { ChevronRightIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  CircleDashedIcon,
+  CircleHelpIcon,
+  MinusIcon,
+  MoreHorizontalIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { Input } from "../../components/ui/input";
+import { SettingsGroup } from "../../components/settings/SettingsGroup";
+import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../../components/ui/table";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../../components/ui/dialog";
 import { useOptionalSettingsScope } from "../../components/settings/SettingsScopeContext";
 import {
   Select,
@@ -41,6 +51,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   buildSkillInventory,
   filterSkillInventory,
+  inventoryColumnProviders,
   missingSkillLabel,
   SKILL_ORIGINS,
   skillDiscoveryState,
@@ -97,12 +108,8 @@ export function SkillInventoryPanel({ environmentId }: { readonly environmentId:
     useOptionalSettingsScope()?.scope,
     environmentId,
   );
-  const [projectId, setProjectId] = useState<string | null>(null);
-  const project =
-    lockedProject ??
-    (projectId === ""
-      ? undefined
-      : (projects.find((entry) => entry.id === projectId) ?? projects[0]));
+  const [projectId, setProjectId] = useState("");
+  const project = lockedProject ?? projects.find((entry) => entry.id === projectId);
   // Make the primitive explicit so React Compiler preserves the inventory memoization.
   const cwd = project ? String(project.workspaceRoot) : undefined;
   const providers =
@@ -123,6 +130,7 @@ export function SkillInventoryPanel({ environmentId }: { readonly environmentId:
   const [query, setQuery] = useState("");
   const [linkSelection, setLinkSelection] = useState<SkillLinkSelection | null>(null);
   const [collapsedOrigins, setCollapsedOrigins] = useState<ReadonlySet<SkillOrigin>>(new Set());
+  const [detailsKey, setDetailsKey] = useState<string | null>(null);
   const connected = environment?.connection.phase === "connected";
   const canOperate = useAtomValue(skillLinkEnvironment.create.permissionAtom(environmentId));
   const refresh = useAtomCommand(serverEnvironment.refreshProviders, { reportFailure: false });
@@ -177,14 +185,10 @@ export function SkillInventoryPanel({ environmentId }: { readonly environmentId:
     [providers, cwd, catalogSource],
   );
   const visibleRows = filterSkillInventory(rows, query, selectedProvider?.instanceId);
-  // Search should not change the columns, and refresh still includes empty providers.
+  const details = visibleRows.find((row) => row.key === detailsKey);
   const displayedProviders = useMemo(
     () =>
-      selectedProvider || rows.length === 0
-        ? selectedProviders
-        : selectedProviders.filter((provider) =>
-            rows.some((row) => row.records.has(provider.instanceId)),
-          ),
+      selectedProvider ? selectedProviders : inventoryColumnProviders(selectedProviders, rows),
     [selectedProvider, selectedProviders, rows],
   );
   const providerDetails = useMemo(
@@ -250,340 +254,350 @@ export function SkillInventoryPanel({ environmentId }: { readonly environmentId:
   }
 
   return (
-    <div className="grid min-w-0 gap-3">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="grid gap-2 text-sm">
-          Project
-          <Select
-            value={project?.id ?? ""}
-            disabled={lockedProject !== null}
-            onValueChange={(value) => {
-              setProjectId(value ?? "");
-              setLinkSelection(null);
-            }}
-          >
-            <SelectTrigger aria-label="Skill inventory project">
-              <SelectValue>{project?.title ?? "Environment only"}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup>
-              <SelectItem value="">Environment only</SelectItem>
-              {projects.map((entry) => (
-                <SelectItem key={entry.id} value={entry.id}>
-                  {entry.title}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        </label>
-        <label className="grid gap-2 text-sm">
-          Provider
-          <Select
-            value={selectedProvider?.instanceId ?? ""}
-            onValueChange={(value) =>
-              setFilter(
-                providerOptions.find((provider) => provider.instanceId === value)?.instanceId,
-              )
+    <div className="grid min-w-0 gap-4">
+      <SettingsGroup>
+        {!lockedProject ? (
+          <SettingsRow
+            title="Project"
+            description="Include skills from this workspace."
+            control={
+              <Select
+                value={project?.id ?? ""}
+                onValueChange={(value) => {
+                  setProjectId(value ?? "");
+                  setLinkSelection(null);
+                  setDetailsKey(null);
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Skill inventory project">
+                  <SelectValue>{project?.title ?? "Environment only"}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="">Environment only</SelectItem>
+                  {projects.map((entry) => (
+                    <SelectItem key={entry.id} value={entry.id}>
+                      {entry.title}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
             }
-          >
-            <SelectTrigger aria-label="Skill inventory provider">
-              <SelectValue>
-                {selectedProvider?.displayName ?? selectedProvider?.instanceId ?? "All providers"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup>
-              <SelectItem value="">All providers</SelectItem>
-              {providerOptions.map((provider) => (
-                <SelectItem key={provider.instanceId} value={provider.instanceId}>
-                  {provider.displayName ?? provider.instanceId} ({provider.instanceId})
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        </label>
-      </div>
-      <div className="flex gap-2">
-        <Input
-          aria-label="Search skill inventory"
-          placeholder="Search names, descriptions, paths, or plugin IDs"
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            if (event.target.value.trim()) setCollapsedOrigins(new Set());
-          }}
+          />
+        ) : null}
+        <SettingsRow
+          title="Provider"
+          control={
+            <Select
+              value={selectedProvider?.instanceId ?? ""}
+              onValueChange={(value) => {
+                setFilter(
+                  providerOptions.find((provider) => provider.instanceId === value)?.instanceId,
+                );
+                setDetailsKey(null);
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Skill inventory provider">
+                <SelectValue>
+                  {selectedProvider?.displayName ?? selectedProvider?.instanceId ?? "All providers"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="">All providers</SelectItem>
+                {providerOptions.map((provider) => (
+                  <SelectItem key={provider.instanceId} value={provider.instanceId}>
+                    {providerLabel(provider, providerOptions)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
         />
+      </SettingsGroup>
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <Input
+            size="sm"
+            aria-label="Search skill inventory"
+            placeholder="Search skills…"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              if (event.target.value.trim()) setCollapsedOrigins(new Set());
+            }}
+          />
+        </div>
         <Button
-          variant="outline"
+          size="xs"
+          variant="ghost"
           disabled={!connected || refreshing || providers.length === 0}
           onClick={() => void refreshInventory()}
         >
           {refreshing ? "Refreshing…" : "Refresh"}
         </Button>
       </div>
-      <div className="grid gap-1 text-xs text-muted-foreground" role="status">
+      <div className="grid gap-1 px-3 text-xs text-muted-foreground sm:px-4" role="status">
         {!connected ? <p>Environment disconnected. Cached results may be stale.</p> : null}
         {displayedProviders.map((provider) => {
-          const { state, driver, label, checkedAt } = providerDetails.get(provider.instanceId)!;
-          return (
-            <p key={provider.instanceId} className="flex min-w-0 items-center gap-1.5">
-              <ProviderInstanceIcon
-                driverKind={driver}
-                displayName={label}
-                iconClassName="size-3"
-              />
-              <span>
-                {label}:{" "}
-                {state === "checked"
-                  ? `Checked ${checkedAt}`
-                  : `${missingSkillLabel(state)}. Cached results may be stale.`}
-              </span>
+          const { state, label } = providerDetails.get(provider.instanceId)!;
+          return state !== "checked" ? (
+            <p key={provider.instanceId} className="text-warning">
+              {label}: {missingSkillLabel(state)}. Cached results may be stale.
             </p>
-          );
+          ) : null;
         })}
+        <details>
+          <summary className="w-fit cursor-pointer">
+            {visibleRows.length} skill locations · Discovery details
+          </summary>
+          <div className="grid gap-1 pt-2">
+            {displayedProviders.map((provider) => {
+              const { state, label, checkedAt } = providerDetails.get(provider.instanceId)!;
+              return (
+                <p key={provider.instanceId}>
+                  {label}: {state === "checked" ? `Checked ${checkedAt}` : missingSkillLabel(state)}
+                </p>
+              );
+            })}
+          </div>
+        </details>
       </div>
-      <div
-        aria-label="Skill status legend"
-        className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground"
-      >
-        <Badge size="sm" variant="success">
-          Enabled
-        </Badge>
-        <span>·</span>
-        <Badge size="sm" variant="secondary">
-          Disabled
-        </Badge>
-        <span>· Not detected ·</span>
-        <Badge size="sm" variant="warning">
-          Not checked / Refresh failed (stale)
-        </Badge>
-      </div>
-      <p className="text-sm text-muted-foreground">{visibleRows.length} skill locations</p>
-      {visibleRows.length ? (
-        <div className="grid min-w-0 gap-4">
-          {SKILL_ORIGINS.map((origin) => {
-            const group = visibleRows.filter((row) => row.origin === origin);
-            if (!group.length) return null;
-            return (
-              <div
-                key={origin}
-                className="min-w-0 overflow-hidden rounded-xl border border-border/60 bg-card/40"
-              >
-                <Collapsible
-                  open={!collapsedOrigins.has(origin)}
-                  onOpenChange={(open) => {
-                    setCollapsedOrigins((previous) => {
-                      const next = new Set(previous);
-                      if (open) next.delete(origin);
-                      else next.add(origin);
-                      return next;
-                    });
-                  }}
+      {SKILL_ORIGINS.map((origin) => {
+        const group = visibleRows.filter((row) => row.origin === origin);
+        if (!group.length) return null;
+        return (
+          <Collapsible
+            key={origin}
+            open={!collapsedOrigins.has(origin)}
+            onOpenChange={(open) => {
+              setCollapsedOrigins((previous) => {
+                const next = new Set(previous);
+                if (open) next.delete(origin);
+                else next.add(origin);
+                return next;
+              });
+            }}
+          >
+            <SettingsSection
+              title={`${origin} (${group.length})`}
+              variant="plain"
+              headerAction={
+                <CollapsibleTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`${collapsedOrigins.has(origin) ? "Expand" : "Collapse"} ${origin} skills`}
+                    />
+                  }
                 >
-                  <h3>
-                    <CollapsibleTrigger className="group flex min-h-11 w-full items-center gap-2 bg-muted/40 px-3 py-2 text-left text-sm font-medium hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-                      <ChevronRightIcon
-                        aria-hidden
-                        className="size-4 shrink-0 text-muted-foreground group-data-panel-open:rotate-90"
-                      />
-                      <span className="flex-1">{origin}</span>
-                      <span className="text-xs font-normal tabular-nums text-muted-foreground">
-                        {group.length}
-                        <span className="sr-only"> skill locations</span>
-                      </span>
-                    </CollapsibleTrigger>
-                  </h3>
-                  <p className="bg-muted/40 pr-3 pb-3 pl-9 text-xs leading-relaxed text-muted-foreground">
-                    {SKILL_ORIGIN_DESCRIPTIONS[origin]}
-                  </p>
-                  <CollapsiblePanel>
-                    <div className="border-t border-border/60">
-                      <Table
-                        aria-label={`${origin} skill inventory`}
-                        className="min-w-160 table-fixed"
-                      >
-                        <colgroup>
-                          <col className="w-[40%]" />
-                          {displayedProviders.map((provider) => (
-                            <col key={provider.instanceId} />
-                          ))}
-                        </colgroup>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Skill</TableHead>
-                            {displayedProviders.map((provider) => {
-                              const { driver, label } = providerDetails.get(provider.instanceId)!;
-                              return (
-                                <TableHead key={provider.instanceId}>
-                                  <Tooltip>
+                  <ChevronRightIcon
+                    className={collapsedOrigins.has(origin) ? "size-3.5" : "size-3.5 rotate-90"}
+                  />
+                </CollapsibleTrigger>
+              }
+            >
+              <CollapsiblePanel>
+                <SettingsGroup role="list" aria-label={`${origin} skill inventory`}>
+                  {group.map((row) => {
+                    const selectedRecords = displayedProviders.flatMap((provider) =>
+                      (row.records.get(provider.instanceId) ?? []).map((skill) => ({
+                        provider,
+                        skill,
+                      })),
+                    );
+                    const first = selectedRecords[0]!.skill;
+                    const name = first.displayName ?? first.name;
+                    const canLink = !skillLinkUnavailableReason(row.origin);
+                    const selectAction = (action: SkillLinkSelection["action"]) =>
+                      setLinkSelection({
+                        action,
+                        source: {
+                          instanceId: selectedRecords[0]!.provider.instanceId,
+                          path: first.path,
+                          name: first.name,
+                        },
+                        origin: row.origin,
+                      });
+                    return (
+                      <SettingsRow
+                        key={row.key}
+                        role="listitem"
+                        title={name}
+                        description={
+                          <span className="line-clamp-2">
+                            {first.shortDescription ?? first.description}
+                          </span>
+                        }
+                        status={
+                          <div className="flex flex-wrap gap-x-3 gap-y-1">
+                            {displayedProviders.flatMap((provider) => {
+                              const { state, driver, label } = providerDetails.get(
+                                provider.instanceId,
+                              )!;
+                              const records = row.records.get(provider.instanceId);
+                              return (records ?? [undefined]).map((skill) => {
+                                const status =
+                                  state !== "checked"
+                                    ? skill
+                                      ? "Unknown · Stale"
+                                      : "Unknown"
+                                    : skill
+                                      ? skill.enabled
+                                        ? "Enabled"
+                                        : "Disabled"
+                                      : "Not detected";
+                                const StatusIcon =
+                                  state !== "checked"
+                                    ? CircleHelpIcon
+                                    : skill
+                                      ? skill.enabled
+                                        ? CheckIcon
+                                        : MinusIcon
+                                      : CircleDashedIcon;
+                                const statusLabel = `${label}: ${skill?.name ?? name} · ${status}`;
+                                return (
+                                  <Tooltip
+                                    key={JSON.stringify([
+                                      provider.instanceId,
+                                      skill?.path,
+                                      skill?.name,
+                                      skill?.pluginId,
+                                    ])}
+                                  >
                                     <TooltipTrigger
                                       render={
                                         <span
+                                          role="img"
                                           tabIndex={0}
-                                          className="flex min-w-0 items-center gap-1"
-                                        />
-                                      }
-                                    >
-                                      <ProviderInstanceIcon
-                                        driverKind={driver}
-                                        displayName={label}
-                                        iconClassName="size-3"
-                                      />
-                                      <span className="truncate">{label}</span>
-                                    </TooltipTrigger>
-                                    <TooltipPopup>{label}</TooltipPopup>
-                                  </Tooltip>
-                                </TableHead>
-                              );
-                            })}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {group.map((row) => {
-                            const selectedRecords = displayedProviders.flatMap((provider) =>
-                              (row.records.get(provider.instanceId) ?? []).map((skill) => ({
-                                provider,
-                                skill,
-                              })),
-                            );
-                            const first = selectedRecords[0]!.skill;
-                            return (
-                              <TableRow key={row.key}>
-                                <TableCell className="min-w-0">
-                                  <Tooltip>
-                                    <TooltipTrigger
-                                      render={
-                                        <span
-                                          tabIndex={0}
-                                          className="flex min-w-0 items-center gap-2"
-                                        />
-                                      }
-                                    >
-                                      <span className="max-w-full shrink-0 truncate font-medium">
-                                        {first.displayName ?? first.name}
-                                      </span>
-                                      <span className="truncate text-muted-foreground">
-                                        {first.description ?? first.shortDescription}
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipPopup className="max-w-md whitespace-normal break-words">
-                                      <SkillRecordDetails skill={first} />
-                                    </TooltipPopup>
-                                  </Tooltip>
-                                  {!skillLinkUnavailableReason(row.origin) ? (
-                                    <div className="flex flex-wrap gap-1">
-                                      {(["link", "unlink"] as const).map((action) => (
-                                        <Button
-                                          key={action}
-                                          variant="ghost"
-                                          size="sm"
-                                          disabled={!connected || !canOperate}
-                                          onClick={() =>
-                                            setLinkSelection({
-                                              action,
-                                              source: {
-                                                instanceId: selectedRecords[0]!.provider.instanceId,
-                                                path: first.path,
-                                                name: first.name,
-                                              },
-                                              origin: row.origin,
-                                            })
-                                          }
+                                          className="inline-flex items-center gap-1.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                                          aria-label={statusLabel}
                                         >
-                                          {action === "link" ? "Link…" : "Unlink…"}
-                                        </Button>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                </TableCell>
-                                {displayedProviders.map((provider) => {
-                                  const records = row.records.get(provider.instanceId);
-                                  const { state, label } = providerDetails.get(
-                                    provider.instanceId,
-                                  )!;
-                                  return (
-                                    <TableCell key={provider.instanceId}>
-                                      {records ? (
-                                        <div className="grid min-w-0 grid-cols-1 justify-items-start gap-1">
-                                          {records.map((skill) => {
-                                            const status =
-                                              state === "checked"
-                                                ? skill.enabled
-                                                  ? "Enabled"
-                                                  : "Disabled"
-                                                : `${missingSkillLabel(state)} · Stale`;
-                                            return (
-                                              <Tooltip
-                                                key={JSON.stringify([
-                                                  skill.path,
-                                                  skill.name,
-                                                  skill.pluginId,
-                                                ])}
-                                              >
-                                                <TooltipTrigger
-                                                  render={
-                                                    <span
-                                                      tabIndex={0}
-                                                      className="max-w-full"
-                                                      aria-label={`${label}: ${skill.name} · ${status}`}
-                                                    />
-                                                  }
-                                                >
-                                                  <Badge
-                                                    size="sm"
-                                                    variant={
-                                                      state !== "checked"
-                                                        ? "warning"
-                                                        : skill.enabled
-                                                          ? "success"
-                                                          : "secondary"
-                                                    }
-                                                    className="max-w-full"
-                                                  >
-                                                    <span className="truncate">{status}</span>
-                                                  </Badge>
-                                                </TooltipTrigger>
-                                                <TooltipPopup className="max-w-md whitespace-normal break-words">
-                                                  <p className="font-medium">
-                                                    {label}: {status}
-                                                  </p>
-                                                  <SkillRecordDetails skill={skill} />
-                                                </TooltipPopup>
-                                              </Tooltip>
-                                            );
-                                          })}
-                                        </div>
-                                      ) : (
-                                        <Tooltip>
-                                          <TooltipTrigger
-                                            render={
-                                              <span
-                                                tabIndex={0}
-                                                className="block truncate text-muted-foreground"
-                                              />
+                                          <ProviderInstanceIcon
+                                            driverKind={driver}
+                                            displayName={label}
+                                            iconClassName="size-3"
+                                          />
+                                          <span>{label}</span>
+                                          <Badge
+                                            size="sm"
+                                            variant={
+                                              state !== "checked"
+                                                ? "warning"
+                                                : skill?.enabled
+                                                  ? "success"
+                                                  : "secondary"
                                             }
                                           >
-                                            {missingSkillLabel(state)}
-                                          </TooltipTrigger>
-                                          <TooltipPopup>
-                                            {label}: {missingSkillLabel(state)}
-                                          </TooltipPopup>
-                                        </Tooltip>
-                                      )}
-                                    </TableCell>
-                                  );
-                                })}
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </CollapsiblePanel>
-                </Collapsible>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
+                                            <StatusIcon aria-hidden="true" />
+                                          </Badge>
+                                        </span>
+                                      }
+                                    />
+                                    <TooltipPopup>{statusLabel}</TooltipPopup>
+                                  </Tooltip>
+                                );
+                              });
+                            })}
+                          </div>
+                        }
+                        control={
+                          <Menu>
+                            <MenuTrigger
+                              aria-label={`More actions for ${name}`}
+                              render={<Button variant="ghost" size="icon-sm" />}
+                            >
+                              <MoreHorizontalIcon className="size-4" />
+                            </MenuTrigger>
+                            <MenuPopup align="end">
+                              <MenuItem onClick={() => setDetailsKey(row.key)}>Details</MenuItem>
+                              {canLink ? (
+                                <>
+                                  <MenuItem
+                                    disabled={!connected || !canOperate}
+                                    onClick={() => selectAction("link")}
+                                  >
+                                    Make available to…
+                                  </MenuItem>
+                                  <MenuItem
+                                    disabled={!connected || !canOperate}
+                                    onClick={() => selectAction("unlink")}
+                                  >
+                                    Remove provider link…
+                                  </MenuItem>
+                                </>
+                              ) : null}
+                              {row.origin === "Personal" || row.origin === "Project" ? (
+                                <>
+                                  <MenuSeparator />
+                                  <MenuItem
+                                    variant="destructive"
+                                    disabled={!connected || !canOperate}
+                                    onClick={() => selectAction("delete")}
+                                  >
+                                    Delete source folder…
+                                  </MenuItem>
+                                </>
+                              ) : null}
+                            </MenuPopup>
+                          </Menu>
+                        }
+                      />
+                    );
+                  })}
+                </SettingsGroup>
+              </CollapsiblePanel>
+            </SettingsSection>
+          </Collapsible>
+        );
+      })}
+      <Dialog
+        open={details !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setDetailsKey(null);
+        }}
+      >
+        <DialogPopup className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Skill details</DialogTitle>
+            <DialogDescription>
+              {details ? SKILL_ORIGIN_DESCRIPTIONS[details.origin] : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <div className="grid gap-4 text-sm break-words">
+              {details
+                ? displayedProviders.map((provider) => {
+                    const { state, label } = providerDetails.get(provider.instanceId)!;
+                    const records = details.records.get(provider.instanceId);
+                    return (
+                      <div key={provider.instanceId} className="grid gap-2">
+                        <h3 className="font-medium">
+                          {label}
+                          {state !== "checked" ? ` · ${missingSkillLabel(state)} · Stale` : ""}
+                        </h3>
+                        {records ? (
+                          records.map((skill) => (
+                            <SkillRecordDetails
+                              key={JSON.stringify([skill.path, skill.name, skill.pluginId])}
+                              skill={skill}
+                            />
+                          ))
+                        ) : (
+                          <p>{missingSkillLabel(state)}</p>
+                        )}
+                      </div>
+                    );
+                  })
+                : null}
+              {details && skillLinkUnavailableReason(details.origin) ? (
+                <p className="text-muted-foreground">
+                  {skillLinkUnavailableReason(details.origin)}
+                </p>
+              ) : null}
+            </div>
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
       <SkillLinksPanel
         environmentId={environmentId}
         connected={connected}
@@ -593,9 +607,12 @@ export function SkillInventoryPanel({ environmentId }: { readonly environmentId:
         onClose={() => setLinkSelection(null)}
       />
       {!visibleRows.length ? (
-        <p className="text-sm text-muted-foreground">
-          No skills reported for this selection. Discovery status is shown above.
-        </p>
+        <SettingsGroup>
+          <SettingsRow
+            title="No skills reported for this selection"
+            description="Try another search or refresh discovery."
+          />
+        </SettingsGroup>
       ) : null}
     </div>
   );

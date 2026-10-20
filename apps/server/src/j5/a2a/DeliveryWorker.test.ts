@@ -120,7 +120,10 @@ const join = Effect.fn("test.j5.a2a.delivery.join")(function* (
   });
 });
 
-const seedSend = Effect.fn("test.j5.a2a.delivery.seedSend")(function* (crossProject: boolean) {
+const seedSend = Effect.fn("test.j5.a2a.delivery.seedSend")(function* (
+  crossProject: boolean,
+  ask = false,
+) {
   yield* runMigrations();
   yield* runJ5A2AMigrations();
   const ledgerService = yield* A2ALedger;
@@ -141,6 +144,7 @@ const seedSend = Effect.fn("test.j5.a2a.delivery.seedSend")(function* (crossProj
     senderThreadId: sender.threadId,
     to: receiver.id,
     message: "Delivery crash-window probe",
+    ...(ask ? { expectReply: true, intent: "delivery probe" } : {}),
     acceptedAt: timestamp,
   });
   return { senderProjectId, receiverProjectId, sent };
@@ -488,7 +492,76 @@ it.effect("startup reconciliation drains a persisted cross-project half-write af
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("forces repeated delivery failure into a visible alarm", () =>
+it.effect.each([false, true])(
+  "forces repeated delivery failure into a visible alarm, told to its sender once (ask: %s)",
+  (ask) =>
+    Effect.gen(function* () {
+      const failure = new A2ADeliveryTransportError({
+        operation: "forced failure",
+        cause: "recipient unavailable",
+      });
+      const transport: A2ADeliveryTransportShape = {
+        deliverAgent: () => Effect.fail(failure),
+        cancelAgent: () => Effect.succeed("cancelled" as const),
+        deliverPeer: () => Effect.die("peer delivery is not under test"),
+        deliverHuman: () => Effect.fail(failure),
+      };
+      yield* Effect.gen(function* () {
+        const { sent } = yield* seedSend(false, ask);
+        const worker = yield* A2ADeliveryWorker;
+        const sql = yield* SqlClient.SqlClient;
+        assert.equal((yield* worker.runOnce)?.state, "retry_scheduled");
+        yield* TestClock.adjust("250 millis");
+        assert.equal((yield* worker.runOnce)?.state, "retry_scheduled");
+        yield* TestClock.adjust("500 millis");
+        const alarm = yield* worker.runOnce;
+        assert.equal(alarm?.state, "alarmed");
+        assert.equal(alarm?.attempt, 3);
+        const alarms = yield* worker.listAlarms;
+        assert.lengthOf(alarms, 1);
+        assert.equal(alarms[0]?.messageId, alarm?.messageId);
+        assert.include(alarms[0]?.lastError ?? "", "recipient unavailable");
+
+        const notices = yield* sql<{ readonly receiver_id: string; readonly message_text: string }>`
+          SELECT receiver_id, message_text FROM j5_a2a_delivery
+          WHERE envelope_channel = 'lifecycle_notice'
+        `;
+        assert.equal(notices.length, 1);
+        assert.equal(notices[0]!.receiver_id, sender.id);
+        assert.include(
+          notices[0]!.message_text,
+          `${ask ? `Your ask "delivery probe" (message ${sent.messageId})` : `Your message ${sent.messageId}`} to ${receiver.id} may not have been delivered: delivery failed 3 times, and it will not be tried again. The last attempt failed with: "recipient unavailable"`,
+        );
+        const exchanges = yield* sql<{ readonly status: string }>`
+          SELECT status FROM j5_a2a_exchange
+        `;
+        if (ask) {
+          assert.deepStrictEqual(exchanges, [{ status: "open" }], "only the asker withdraws it");
+          assert.include(
+            notices[0]!.message_text,
+            `Exchange ${sent.exchangeId} is still open; if the ask did arrive, its reply still comes on it. To stop waiting, withdraw it with j5_clear_own_ask`,
+          );
+        } else {
+          assert.lengthOf(exchanges, 0);
+          assert.notInclude(notices[0]!.message_text, "xchange");
+        }
+
+        // The notice fails to land the same way and alarms in turn; nobody is told of that.
+        assert.equal((yield* worker.runOnce)?.state, "retry_scheduled");
+        yield* TestClock.adjust("250 millis");
+        assert.equal((yield* worker.runOnce)?.state, "retry_scheduled");
+        yield* TestClock.adjust("500 millis");
+        assert.equal((yield* worker.runOnce)?.state, "alarmed");
+        assert.lengthOf(yield* worker.listAlarms, 2);
+        const after = yield* sql`
+          SELECT 1 FROM j5_a2a_delivery WHERE envelope_channel = 'lifecycle_notice'
+        `;
+        assert.equal(after.length, 1, "an alarmed notice tells nobody");
+      }).pipe(Effect.provide(makeTestLayer(transport)));
+    }),
+);
+
+it.effect("tells nobody when a message from a peer server alarms on its local delivery", () =>
   Effect.gen(function* () {
     const failure = new A2ADeliveryTransportError({
       operation: "forced failure",
@@ -501,19 +574,27 @@ it.effect("forces repeated delivery failure into a visible alarm", () =>
       deliverHuman: () => Effect.fail(failure),
     };
     yield* Effect.gen(function* () {
-      yield* seedSend(false);
+      const { sent } = yield* seedSend(false);
+      const sql = yield* SqlClient.SqlClient;
+      // As a message a peer server handed over: its sender is on that server.
+      yield* sql`
+        UPDATE j5_a2a_delivery SET origin_environment_id = 'environment-peer'
+        WHERE message_id = ${sent.messageId}
+      `;
       const worker = yield* A2ADeliveryWorker;
       assert.equal((yield* worker.runOnce)?.state, "retry_scheduled");
       yield* TestClock.adjust("250 millis");
       assert.equal((yield* worker.runOnce)?.state, "retry_scheduled");
       yield* TestClock.adjust("500 millis");
-      const alarm = yield* worker.runOnce;
-      assert.equal(alarm?.state, "alarmed");
-      assert.equal(alarm?.attempt, 3);
-      const alarms = yield* worker.listAlarms;
-      assert.lengthOf(alarms, 1);
-      assert.equal(alarms[0]?.messageId, alarm?.messageId);
-      assert.include(alarms[0]?.lastError ?? "", "recipient unavailable");
+      assert.equal((yield* worker.runOnce)?.state, "alarmed");
+      const notices = yield* sql`
+        SELECT 1 FROM j5_a2a_delivery WHERE envelope_channel = 'lifecycle_notice'
+      `;
+      assert.equal(
+        notices.length,
+        0,
+        "a peer server accepts a platform notice only for an Exchange",
+      );
     }).pipe(Effect.provide(makeTestLayer(transport)));
   }),
 );

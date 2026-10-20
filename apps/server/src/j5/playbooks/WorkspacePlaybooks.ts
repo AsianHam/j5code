@@ -13,8 +13,8 @@ import { playbookError, type PlaybookStore } from "./PlaybookStore.ts";
 import { resolvePlaybookWorkspaceRoot } from "./workspaceRoot.ts";
 
 /**
- * The playbook definitions of the workspace a request names: the project's root, or the thread's
- * worktree. Every method resolves that workspace first and refuses one that is gone or belongs
+ * The effective playbooks for a project/worktree, or an explicitly selected environment source.
+ * Workspace requests resolve the project and thread first and refuses one that is gone or belongs
  * to another project. A refusal keeps the store's words. A storage failure carries the
  * underlying error's text, which can name a path on the server, so it is logged here and told
  * to the client in the method's general words.
@@ -63,19 +63,21 @@ export const makeWorkspacePlaybooks = Effect.fn("makeWorkspacePlaybooks")(functi
     /** Every definition in the workspace, valid or not, with the workspace's root. */
     library: (input: PlaybookLibraryRequest) =>
       inWorkspace(input, "Reading the playbook library failed.", (root) =>
-        store.discover(root).pipe(Effect.map((library) => ({ workspaceRoot: root, ...library }))),
+        store
+          .discover(root, input.source)
+          .pipe(Effect.map((library) => ({ workspaceRoot: root, ...library }))),
       ),
     exportDefinition: (input: PlaybookExportRequest) =>
       inWorkspace(input, "Exporting the playbook failed.", (root) =>
-        store.exportDefinition(root, input.name),
+        store.exportDefinition(root, input.name, input.source),
       ),
     removeDefinition: (input: PlaybookDeleteRequest) =>
       inWorkspace(input, "Deleting the playbook failed.", (root) =>
-        store.removeDefinition(root, input.name),
+        store.removeDefinition(root, input.name, input.source),
       ),
     renameDefinition: (input: PlaybookRenameRequest) =>
       inWorkspace(input, "Renaming the playbook failed.", (root) =>
-        store.renameDefinition(root, input.name, input.title),
+        store.renameDefinition(root, input.name, input.title, input.source),
       ),
   };
 });

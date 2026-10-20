@@ -230,7 +230,7 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
 - Mobile builds use the J5-owned Expo project `@jacksondr5/j5-code`, defined in
   `scripts/lib/j5-branding.ts`. `apps/mobile/eas.json` targets Apple team `46A73QH3S8`
   and App Store Connect app `6809314460`; preserve these fork destinations during pin advances.
-  See [iOS distribution](docs/operations/j5-mobile-distribution.md).
+  See [iOS distribution](docs/j5/runbooks/mobile-distribution.md).
 - Clerk and relay remain optional and use the upstream `T3CODE_*` / `EXPO_PUBLIC_*`
   configuration names. No J5 relay or sign-in endpoints are provisioned by the build setup.
 - Product usage telemetry reports to J5's own PostHog project (US region): the default

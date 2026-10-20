@@ -16,8 +16,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Command, Flag } from "effect/cli";
 
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
-import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
+import { migrationManifest } from "../src/persistence/Migrations.ts";
 import { neutraliseCopiedDatabase } from "../src/j5/persistence/neutraliseCopiedDatabase.ts";
+import { runJ5CompatibleUpstreamMigrations } from "../src/j5/persistence/UpstreamMigrationCompatibility.ts";
+import {
+  J5_A2A_MIGRATIONS_TABLE,
+  migrationEntries,
+  runJ5A2AMigrations,
+} from "../src/j5/a2a/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
@@ -419,12 +425,15 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
   };
 });
 
-const verifyMigrationSlots = Effect.fn("verifyMigrationSlots")(function* () {
+const verifyMigrationSlots = Effect.fn("verifyMigrationSlots")(function* (
+  table: string,
+  manifest: ReadonlyArray<readonly [number, string, ...Array<unknown>]>,
+) {
   const sql = yield* SqlClient.SqlClient;
   const applied = yield* sql<{ migration_id: number; name: string }>`
-    SELECT migration_id, name FROM effect_sql_migrations`;
+    SELECT migration_id, name FROM ${sql(table)}`;
   const appliedById = new Map(applied.map((row) => [Number(row.migration_id), row.name]));
-  for (const [slot, codeName] of migrationManifest) {
+  for (const [slot, codeName] of manifest) {
     const appliedName = appliedById.get(slot);
     if (appliedName !== undefined && appliedName !== codeName) {
       return yield* new MigrateDevDbSlotCollisionError({ slot, codeName, appliedName });
@@ -507,7 +516,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
       );
 
   yield* removeDatabaseFiles(snapshotPath);
-  const { executedMigrations, pruned } = yield* Effect.gen(function* () {
+  const { executedMigrations, executedJ5Migrations, pruned } = yield* Effect.gen(function* () {
     yield* Console.log(`Copying visible threads from ${sourcePath} (read-only)...`);
     yield* copySourceSlice(sourcePath).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
@@ -521,7 +530,9 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
       const sql = yield* SqlClient.SqlClient;
       // Mirror server boot (persistence/Sqlite.ts).
       yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
-      return yield* runMigrations();
+      // J5: the server's two runners, so the stand-down below meets the checkout's J5 schema.
+      const upstream = yield* runJ5CompatibleUpstreamMigrations();
+      return { upstream, j5: yield* runJ5A2AMigrations() };
     }).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
       wrapPhase("migrate", snapshotPath),
@@ -530,7 +541,10 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     // Verify while the snapshot is still the only thing touched: a slot
     // collision must abort before the old worktree db gets replaced with a
     // schema whose colliding migration was silently skipped.
-    yield* verifyMigrationSlots().pipe(
+    yield* Effect.all([
+      verifyMigrationSlots("effect_sql_migrations", migrationManifest),
+      verifyMigrationSlots(J5_A2A_MIGRATIONS_TABLE, migrationEntries),
+    ]).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
       Effect.catchTags({
         SqlError: (cause) =>
@@ -568,7 +582,11 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
       wrapPhase("compact", databasePath),
     );
-    return { executedMigrations: executed, pruned: result };
+    return {
+      executedMigrations: executed.upstream,
+      executedJ5Migrations: executed.j5,
+      pruned: result,
+    };
   }).pipe(Effect.ensuring(removeDatabaseFiles(snapshotPath)));
   yield* fs.chmod(databasePath, 0o600);
 
@@ -589,6 +607,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     projects: pruned.projects,
     eventCount: pruned.eventCount,
     executedMigrations: executedMigrations.map(([id, name]) => `${id}_${name}`),
+    executedJ5Migrations: executedJ5Migrations.map(([id, name]) => `${id}_${name}`),
   };
 });
 
@@ -641,6 +660,11 @@ export const migrateDevDbCommand = Command.make(
         result.executedMigrations.length === 0
           ? "  Migrations: already current (no new migrations in this checkout)"
           : `  Migrations applied: ${result.executedMigrations.join(", ")}`,
+      );
+      yield* Console.log(
+        result.executedJ5Migrations.length === 0
+          ? "  J5 migrations: already current (no new J5 migrations in this checkout)"
+          : `  J5 migrations applied: ${result.executedJ5Migrations.join(", ")}`,
       );
     }),
 ).pipe(

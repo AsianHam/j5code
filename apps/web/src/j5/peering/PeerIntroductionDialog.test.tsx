@@ -133,7 +133,8 @@ const dialog = () => (
   <PeerIntroductionDialog
     open
     onOpenChange={() => {}}
-    primaryEnvironmentId={LOCAL}
+    servers={[LOCAL, REMOTE]}
+    defaultServerId={LOCAL}
     onPeered={() => {}}
   />
 );
@@ -152,7 +153,7 @@ const chooseRemote = async () => {
   await act(async () => {
     renderer = create(dialog());
   });
-  await act(async () => renderer!.root.findByType(Select).props.onValueChange(REMOTE));
+  await act(async () => renderer!.root.findAllByType(Select)[1]!.props.onValueChange(REMOTE));
 };
 const clickPeer = async () => {
   await act(async () => button("Peer").props.onClick());
@@ -201,6 +202,21 @@ describe("peering over a leftover record", () => {
     expect(button("Peer").props.disabled).toBe(true);
     await clickPeer();
     nothingWritten();
+  });
+});
+
+describe("peering from a server that is not this client's own", () => {
+  it("clears the old record the other server holds of the chosen one", async () => {
+    state.peers = { [LOCAL]: [{ environmentId: REMOTE }] };
+    await act(async () => {
+      renderer = create(dialog());
+    });
+    await act(async () => renderer!.root.findAllByType(Select)[0]!.props.onValueChange(REMOTE));
+    await act(async () => renderer!.root.findAllByType(Select)[1]!.props.onValueChange(LOCAL));
+    await clickPeer();
+
+    expect(removePeer).toHaveBeenCalledWith(LOCAL, REMOTE);
+    expect(addPeer).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -32,6 +32,8 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_SKILL_LINK_WS_METHODS.unlink]: AuthOrchestrationOperateScope,
   [J5_SKILL_LINK_WS_METHODS.delete]: AuthOrchestrationOperateScope,
 
+  [J5_PLAYBOOK_WS_METHODS.savePlaybook]: AuthOrchestrationOperateScope,
+  [J5_PLAYBOOK_WS_METHODS.setFolders]: AuthOrchestrationOperateScope,
   [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: AuthOrchestrationOperateScope,
   [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: AuthOrchestrationOperateScope,
   [J5_ARTIFACT_WS_METHODS.deleteArtifact]: AuthOrchestrationOperateScope,

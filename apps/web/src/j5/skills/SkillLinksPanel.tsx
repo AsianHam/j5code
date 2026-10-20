@@ -12,7 +12,11 @@ import type {
 } from "@t3tools/contracts";
 import type { SkillOrigin } from "@t3tools/shared/j5/skillInventory";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { MoreHorizontalIcon } from "lucide-react";
+import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
 import { Button } from "../../components/ui/button";
+import { toastManager } from "../../components/ui/toast";
 import {
   Dialog,
   DialogDescription,
@@ -32,6 +36,7 @@ import {
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { skillLinkEnvironment } from "./skillLinkAtoms";
+import { skillChangeFeedback } from "./skillChangeFeedback";
 
 function messageOf(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -42,7 +47,7 @@ function messageOf(error: unknown) {
 export type SkillLinkSelection = {
   readonly source: SkillLinkRequest["source"];
   readonly origin: SkillOrigin;
-  readonly action: "link" | "unlink";
+  readonly action: "link" | "unlink" | "delete";
 };
 type Props = {
   readonly environmentId: EnvironmentId;
@@ -65,8 +70,15 @@ export function SkillLinksPanel(props: Props) {
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
   const [message, setMessage] = useState("");
+  function showResult(message: string) {
+    setMessage(message);
+    toastManager.add({ type: "info", title: "Skills", description: message });
+  }
   async function unlink(id: string, forget = false) {
     if (running.current) return;
+    const changesAvailability = links.data?.some(
+      (link) => link.id === id && (link.status === "linked" || link.status === "broken"),
+    );
     running.current = true;
     setBusy(true);
     try {
@@ -74,9 +86,11 @@ export function SkillLinksPanel(props: Props) {
         environmentId: props.environmentId,
         input: { id, ...(forget ? { forget: true } : {}) },
       });
-      setMessage(
+      showResult(
         result._tag === "Success"
-          ? result.value.message
+          ? result.value.action === "removed" && changesAvailability
+            ? skillChangeFeedback(result.value.message)
+            : result.value.message
           : messageOf(squashAtomCommandFailure(result)),
       );
       links.refresh();
@@ -87,13 +101,13 @@ export function SkillLinksPanel(props: Props) {
   }
   return (
     <>
-      {props.selection?.action === "unlink" ? (
+      {props.selection && props.selection.action !== "link" ? (
         <UnlinkSkillDialog
           key={JSON.stringify([props.selection, props.projectId])}
           {...props}
           selection={props.selection}
           onUnlinked={(message) => {
-            setMessage(message);
+            showResult(message);
             links.refresh();
           }}
         />
@@ -103,81 +117,94 @@ export function SkillLinksPanel(props: Props) {
           {...props}
           selection={props.selection}
           onLinked={(message) => {
-            setMessage(message);
+            showResult(message);
             links.refresh();
             props.onClose();
           }}
         />
       ) : null}
-      <div className="grid gap-2 rounded-xl border border-border/60 p-3">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-medium">Managed links</h3>
+      <SettingsSection
+        title="Managed links"
+        headerAction={
           <Button
             variant="ghost"
-            size="sm"
+            size="xs"
             disabled={!props.connected || busy || links.isPending}
             onClick={() => links.refresh()}
           >
             Refresh links
           </Button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Links created here remain available after restarting. Use Unlink on a skill in the
-          inventory to remove existing links from either provider or both. Source files stay in
-          place.
-        </p>
+        }
+      >
         {message ? (
-          <p role="status" className="text-sm">
-            {message}
-          </p>
+          <SettingsRow title="Last action" status={<p role="status">{message}</p>} />
         ) : null}
         {links.error ? (
-          <p role="alert" className="text-sm text-destructive-foreground">
-            {messageOf(links.error)}
-          </p>
+          <SettingsRow
+            title="Links unavailable"
+            status={
+              <p role="alert" className="text-destructive-foreground">
+                {messageOf(links.error)}
+              </p>
+            }
+          />
         ) : null}
         {links.data?.map((link) => (
-          <div
+          <SettingsRow
             key={link.id}
-            className="flex min-w-0 items-start justify-between gap-3 border-t pt-2 text-xs"
-          >
-            <div className="min-w-0 space-y-1 break-words">
-              <p className="font-medium">
-                {link.skillName} ·{" "}
-                {props.providers.find((provider) => provider.instanceId === link.targetInstanceId)
-                  ?.displayName ?? link.targetInstanceId}{" "}
-                · {link.scope === "user" ? "User" : "Project"}
-              </p>
-              <p>{link.destinationPath}</p>
-              <p>Source: {link.sourcePath}</p>
-              <p>
-                {link.status === "linked"
-                  ? "Link created"
-                  : link.status === "broken"
+            title={link.skillName}
+            description={`${props.providers.find((provider) => provider.instanceId === link.targetInstanceId)?.displayName ?? link.targetInstanceId} · ${link.scope === "user" ? "User" : "Project"}`}
+            status={
+              link.status !== "linked" ? (
+                <p className="text-warning">
+                  {link.status === "broken"
                     ? "Broken link: source or SKILL.md is unavailable. You can still unlink it."
                     : link.status === "missing"
                       ? "Link is missing. Remove its managed record."
                       : "Destination was changed or replaced. Forget its record without changing any files."}
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy || !props.connected || !canOperate}
-              onClick={() => void unlink(link.id, link.status === "changed")}
-            >
-              {link.status === "changed"
-                ? "Forget record"
-                : link.status === "missing"
-                  ? "Remove record"
-                  : "Unlink"}
-            </Button>
-          </div>
+                </p>
+              ) : undefined
+            }
+            control={
+              <Menu>
+                <MenuTrigger
+                  aria-label={`More actions for ${link.skillName} link`}
+                  render={<Button variant="ghost" size="icon-sm" />}
+                >
+                  <MoreHorizontalIcon className="size-4" />
+                </MenuTrigger>
+                <MenuPopup align="end">
+                  <MenuItem
+                    disabled={busy || !props.connected || !canOperate}
+                    onClick={() => void unlink(link.id, link.status === "changed")}
+                  >
+                    {link.status === "changed"
+                      ? "Forget record"
+                      : link.status === "missing"
+                        ? "Remove record"
+                        : "Remove provider link"}
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            }
+          >
+            <details className="pb-3 text-xs text-muted-foreground">
+              <summary className="w-fit cursor-pointer">Link details</summary>
+              <div className="space-y-1 pt-2 break-words">
+                <p>Destination: {link.destinationPath}</p>
+                <p>Source: {link.sourcePath}</p>
+              </div>
+            </details>
+          </SettingsRow>
         ))}
+        {links.isPending && !links.data ? <SettingsRow title="Loading links…" /> : null}
         {links.data?.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No managed links yet.</p>
+          <SettingsRow
+            title="No managed links yet"
+            description="Links created here will appear here."
+          />
         ) : null}
-      </div>
+      </SettingsSection>
     </>
   );
 }
@@ -253,7 +280,12 @@ export function LinkSkillDialog(
           expectedDestinationPath: checked.destinationPath,
         },
       });
-      if (response._tag === "Success") props.onLinked(response.value.message);
+      if (response._tag === "Success")
+        props.onLinked(
+          response.value.action === "created"
+            ? skillChangeFeedback(response.value.message)
+            : response.value.message,
+        );
       else {
         setError({ request, message: messageOf(squashAtomCommandFailure(response)) });
         setResult(null);
@@ -272,10 +304,10 @@ export function LinkSkillDialog(
     >
       <DialogPopup className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Link skill</DialogTitle>
+          <DialogTitle>Make skill available</DialogTitle>
           <DialogDescription>
-            Link {props.selection.source.name} with a provider in this environment by sharing the
-            entire skill folder. Edits are shared.
+            Make {props.selection.source.name} available to a provider by linking its source folder.
+            Edits to that folder are shared.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -380,7 +412,7 @@ export function LinkSkillDialog(
             disabled={busy || !props.connected || !checked || checked.status === "conflict"}
             onClick={() => void link()}
           >
-            {busy ? "Linking…" : "Link skill"}
+            {busy ? "Making available…" : "Make available"}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -428,18 +460,36 @@ function UnlinkSkillDialog(
   useEffect(() => {
     let active = true;
     if (request)
-      void inspect({ environmentId: props.environmentId, input: request }).then((result) => {
+      void inspect({ environmentId: props.environmentId, input: request }).then(async (result) => {
         if (!active) return;
         setInspection({
           request,
           options: result._tag === "Success" ? result.value : null,
           errors: result._tag === "Success" ? [] : [messageOf(squashAtomCommandFailure(result))],
         });
+        if (
+          props.selection.action === "delete" &&
+          result._tag === "Success" &&
+          result.value.length === 0
+        ) {
+          const preview = await previewDeletion({
+            environmentId: props.environmentId,
+            input: request,
+          });
+          if (!active) return;
+          if (preview._tag === "Success") setDeletion({ request, preview: preview.value });
+          else
+            setInspection((previous) =>
+              previous
+                ? { ...previous, errors: [messageOf(squashAtomCommandFailure(preview))] }
+                : previous,
+            );
+        }
       });
     return () => {
       active = false;
     };
-  }, [inspect, props.environmentId, request]);
+  }, [inspect, props.environmentId, props.selection.action, previewDeletion, request]);
 
   async function remove(selected: ReadonlyArray<ExistingSkillLink>) {
     if (running.current || !request) return;
@@ -472,7 +522,8 @@ function UnlinkSkillDialog(
             }
           : previous,
       );
-      const summary = `${removed.size} ${removed.size === 1 ? "link" : "links"} removed. Source files stay in place.${result.value.refreshFailed ? " Discovery refresh failed; retry Refresh." : " Running sessions may need refreshing or restarting."}`;
+      const counts = `${removed.size} ${removed.size === 1 ? "link" : "links"} removed. Source files stay in place.${result.value.refreshFailed ? " Discovery refresh failed; retry Refresh." : ""}`;
+      const summary = removed.size > 0 ? skillChangeFeedback(counts) : counts;
       setMessage(summary);
       props.onUnlinked(summary);
     } finally {
@@ -511,7 +562,7 @@ function UnlinkSkillDialog(
         input: { ...request, ...checkedDeletion },
       });
       if (result._tag === "Success") {
-        props.onUnlinked(result.value.message);
+        props.onUnlinked(skillChangeFeedback(result.value.message));
         props.onClose();
       } else {
         setDeletion(null);
@@ -537,12 +588,17 @@ function UnlinkSkillDialog(
       <DialogPopup className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>
-            {checkedDeletion ? "Delete" : "Unlink"} {props.selection.source.name}
+            {checkedDeletion || props.selection.action === "delete"
+              ? "Delete source folder:"
+              : "Remove provider links:"}{" "}
+            {props.selection.source.name}
           </DialogTitle>
           <DialogDescription>
             {checkedDeletion
               ? "Permanently delete the original skill and its files."
-              : "Remove a provider link or all links shown here, including links created elsewhere. Source files stay in place. Providers sharing a destination are unlinked together."}
+              : props.selection.action === "delete"
+                ? "Remove existing provider links before deleting the source folder. Providers sharing a destination are unlinked together."
+                : "Remove a provider link or all links shown here, including links created elsewhere. This keeps the source folder and its files. Providers sharing a destination are unlinked together."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -573,10 +629,10 @@ function UnlinkSkillDialog(
                       variant="outline"
                       size="sm"
                       disabled={busy || !props.connected}
-                      aria-label={`Unlink ${option.label}`}
+                      aria-label={`Remove provider link ${option.label}`}
                       onClick={() => void remove([option])}
                     >
-                      Unlink
+                      Remove provider link
                     </Button>
                   </div>
                 ))}
@@ -598,7 +654,7 @@ function UnlinkSkillDialog(
                           disabled={busy || !props.connected}
                           onClick={() => void prepareDeletion()}
                         >
-                          {busy ? "Checking…" : "Delete skill…"}
+                          {busy ? "Checking…" : "Delete source folder…"}
                         </Button>
                       </>
                     ) : null}
@@ -628,11 +684,11 @@ function UnlinkSkillDialog(
               disabled={busy || !props.connected}
               onClick={() => void permanentlyDelete()}
             >
-              {busy ? "Deleting…" : "Permanently delete"}
+              {busy ? "Deleting…" : "Permanently delete source folder"}
             </Button>
           ) : options && options.length > 1 ? (
             <Button disabled={busy || !props.connected} onClick={() => void remove(options)}>
-              {busy ? "Unlinking…" : "Unlink all"}
+              {busy ? "Removing links…" : "Remove all shown links"}
             </Button>
           ) : null}
         </DialogFooter>

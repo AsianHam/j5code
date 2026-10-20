@@ -1,30 +1,22 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigate } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  ensurePlaybookAuthor,
-  playbookAuthorLaunch,
-  playbookStepLabel,
-  playbookWorkspaces,
-  samePlaybookWorkspaceInputs,
-} from "@t3tools/client-runtime/j5/playbooks";
+import { playbookStepLabel } from "@t3tools/client-runtime/j5/playbooks";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { CommandId } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
-import {
-  DownloadIcon,
-  MoreHorizontalIcon,
-  PencilIcon,
-  PlusIcon,
-  RefreshCwIcon,
-  Trash2Icon,
-} from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { PLAYBOOK_MAX_BYTES, type PlaybookSource } from "@t3tools/contracts/j5";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { MoreHorizontalIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
-import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 import { Button } from "../../components/ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import {
   Select,
   SelectItem,
@@ -32,576 +24,704 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
+import { Textarea } from "../../components/ui/textarea";
+
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+  MenuSub,
+  MenuSubTrigger,
+  MenuSubPopup,
+} from "../../components/ui/menu";
 import { toastManager } from "../../components/ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
-import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import { newMessageId, newThreadId, randomUUID } from "../../lib/utils";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { useServerConfigs } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
-import { useOptionalSettingsScope } from "../../components/settings/SettingsScopeContext";
-import { isProjectInSettingsScope } from "../settingsScopeEnvironment.logic";
-import { environmentProjects, projectEnvironment } from "../../state/projects";
+import { environmentProjects } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
-import { waitForAtomValue } from "../../state/waitForAtomValue";
-import { buildThreadRouteParams } from "../../threadRoutes";
 import { AgentFolderPickerDialog } from "../agents/AgentFolderPickerDialog";
-import { agentPersonaEnvironment } from "../agents/agentPersonaAtoms";
+import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 import { j5Environment } from "../state";
 import { playbookImportName } from "./importPlaybookFile";
-import { openPlaybookDraft } from "./openPlaybookDraft";
+import { PlaybookConversationDialog } from "./PlaybookConversationDialog";
 
-const workspaceInputsAtom = Atom.make((get) => ({
-  projects: get(environmentProjects.projectsAtom),
-  threads: get(environmentThreadShells.threadShellsAtom).filter(
-    (thread) => thread.deletedAt === null && thread.worktreePath !== null,
-  ),
-}));
-const playbookWorkspaceInputsAtom = Atom.withEquality(
-  workspaceInputsAtom,
-  samePlaybookWorkspaceInputs,
-).pipe(Atom.withLabel("j5-playbook-workspace-inputs"));
+/** Shares the Personas page's environment selection; a selected project adds its own playbooks. */
+export function PlaybookLibrarySettings({
+  environmentId,
+}: {
+  environmentId: EnvironmentId | null;
+}) {
+  const { environments: connected } = useEnvironments();
+  const guests = useGuestEnvironmentIds();
+  const environments = connected.filter((entry) => !guests.has(entry.environmentId));
+  const environment = environments.find((entry) => entry.environmentId === environmentId);
+  return environment ? (
+    <PlaybookLibrary
+      key={environment.environmentId}
+      environmentId={environment.environmentId}
+      label={environment.label}
+      environments={environments}
+    />
+  ) : (
+    <SettingsSection title="Playbooks" id="playbooks">
+      <SettingsRow title="No environment connected" />
+    </SettingsSection>
+  );
+}
 
-export function PlaybookLibrarySettings() {
-  const { environments } = useEnvironments();
-  const workspaceInputs = useAtomValue(playbookWorkspaceInputsAtom);
-  const guestEnvironmentIds = useGuestEnvironmentIds();
-  // The settings scope sentence narrows the workspaces and, when it names no
-  // environment, the representative environment's workspace comes first.
-  const settings = useOptionalSettingsScope();
-  const settingsScope = settings?.scope;
-  const representativeEnvironmentId = settings?.environment?.environmentId;
-  const workspaces = useMemo(
-    () =>
-      playbookWorkspaces(workspaceInputs.projects, workspaceInputs.threads).filter(
-        (entry) =>
-          // A guest is not offered a server's Playbooks (Shared server AC24).
-          !guestEnvironmentIds.has(entry.environmentId) &&
-          (settingsScope === undefined ||
-            isProjectInSettingsScope(settingsScope, entry.environmentId, entry.projectId)),
-      ),
-    [guestEnvironmentIds, settingsScope, workspaceInputs],
+function PlaybookLibrary({
+  environmentId,
+  label,
+  environments,
+}: {
+  environmentId: EnvironmentId;
+  label: string;
+  environments: ReadonlyArray<{ environmentId: EnvironmentId; label: string }>;
+}) {
+  const projects = useAtomValue(environmentProjects.projectsAtom).filter(
+    (project) => project.environmentId === environmentId,
   );
-  const [workspaceKey, setWorkspaceKey] = useState("");
-  const workspace =
-    workspaces.find((entry) => entry.key === workspaceKey) ??
-    workspaces.find((entry) => entry.environmentId === representativeEnvironmentId) ??
-    workspaces[0];
-  const workspaceItems = workspaces.map((entry) => ({
-    value: entry.key,
-    label:
-      entry.title +
-      (environments.length > 1
-        ? ` · ${environments.find((env) => env.environmentId === entry.environmentId)?.label ?? entry.environmentId}`
-        : ""),
-  }));
-  const query = useEnvironmentQuery(
-    workspace
-      ? j5Environment.playbookLibrary({
-          environmentId: workspace.environmentId,
-          input: {
-            projectId: workspace.projectId,
-            ...(workspace.threadId ? { threadId: workspace.threadId } : {}),
-          },
-        })
-      : null,
+  const [projectId, setProjectId] = useState<ProjectId | null>(null);
+  const project = projects.find((entry) => entry.id === projectId) ?? null;
+  // A project's .j5/playbooks files join the list and win over a same-named library copy.
+  const scope = project ? { projectId: project.id } : {};
+  const query = useEnvironmentQuery(j5Environment.playbookLibrary({ environmentId, input: scope }));
+  const sources = useEnvironmentQuery(j5Environment.playbookSources({ environmentId, input: {} }));
+  const canOperate = useAtomValue(j5Environment.savePlaybook.permissionAtom(environmentId));
+  const save = useAtomCommand(j5Environment.savePlaybook, { reportFailure: false });
+  const setFolders = useAtomCommand(j5Environment.setPlaybookFolders, { reportFailure: false });
+  const exportDefinition = useAtomCommand(j5Environment.exportPlaybook, { reportFailure: false });
+  const rename = useAtomCommand(j5Environment.renamePlaybook, { reportFailure: false });
+  const remove = useAtomCommand(j5Environment.deletePlaybook, { reportFailure: false });
+  const [picking, setPicking] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [name, setName] = useState("");
+  const [yaml, setYaml] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [conversation, setConversation] = useState<{ name: string | null } | null>(null);
+  const [details, setDetails] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{
+    name: string;
+    title: string;
+    source: PlaybookSource;
+  } | null>(null);
+  const [copyTarget, setCopyTarget] = useState<{
+    name: string;
+    targetName: string;
+    source: PlaybookSource;
+    destination: EnvironmentId;
+  } | null>(null);
+  const folderPaths = (sources.data?.folders ?? []).flatMap((entry) =>
+    entry.source.kind === "folder" ? [entry.source.path] : [],
   );
+  const detail = query.data?.playbooks.find((entry) => entry.name === details);
   const { refresh } = query;
-  // Creating, importing, renaming and deleting a playbook change the workspace.
-  const canOperate = useAtomValue(
-    j5Environment.deletePlaybook.permissionAtom(workspace?.environmentId ?? null),
-  );
-  const libraryPath = workspace
-    ? `${query.data?.workspaceRoot ?? workspace.workspaceRoot}/.j5/playbooks`
-    : null;
   useEffect(() => {
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
   }, [refresh]);
-  const openThread = useNewThreadHandler();
-  const navigate = useNavigate();
-  const serverConfigs = useServerConfigs();
-  const readCatalog = useAtomQueryRunner(agentPersonaEnvironment.catalog, {
-    reportFailure: false,
-    refresh: true,
-  });
-  const createPersona = useAtomCommand(agentPersonaEnvironment.createAgentPersona, {
-    reportFailure: false,
-  });
-  const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const authorStarting = useRef(false);
-  const authorLaunch = useRef<{
-    workspaceKey: string;
-    target: Parameters<typeof startTurn>[0];
-  } | null>(null);
-  const [picking, setPicking] = useState(false);
-  const readFile = useAtomQueryRunner(projectEnvironment.readFile, {
-    reportFailure: false,
-    refresh: true,
-  });
-  const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
-  const deletePlaybook = useAtomCommand(j5Environment.deletePlaybook, { reportFailure: false });
-  const exportPlaybook = useAtomCommand(j5Environment.exportPlaybook, { reportFailure: false });
-  const renamePlaybook = useAtomCommand(j5Environment.renamePlaybook, { reportFailure: false });
-  const [renameTarget, setRenameTarget] = useState<{ name: string; title: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function createPlaybook() {
-    if (!workspace || !query.data || busy || authorStarting.current) return;
-    authorStarting.current = true;
+  async function act(operation: () => Promise<void>) {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const { environmentId } = workspace;
-      const workspaceKey = JSON.stringify([workspace.key, query.data.workspaceRoot]);
-      // Retain the command on failure: retrying a lost reply must reopen the same thread.
-      if (authorLaunch.current?.workspaceKey !== workspaceKey) {
-        const modelSelection = await ensurePlaybookAuthor({
-          providers: serverConfigs.get(environmentId)?.providers ?? [],
-          readCatalog: async () => {
-            const result = await readCatalog({ environmentId, input: {} });
-            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-            return result.value;
-          },
-          createPersona: async (input) => {
-            const result = await createPersona({ environmentId, input });
-            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-          },
-        });
-        const createdAt = new Date().toISOString();
-        authorLaunch.current = {
-          workspaceKey,
-          target: playbookAuthorLaunch({
-            workspace: { ...workspace, workspaceRoot: query.data.workspaceRoot },
-            modelSelection,
-            commandId: CommandId.make(randomUUID()),
-            threadId: newThreadId(),
-            messageId: newMessageId(),
-            createdAt,
-          }),
-        };
-      }
-      const { target } = authorLaunch.current;
-      const result = await startTurn(target);
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      const threadRef = scopeThreadRef(environmentId, target.input.threadId);
-      const visible = await waitForAtomValue({
-        registry: appAtomRegistry,
-        atom: environmentThreadShells.threadShellAtom(threadRef),
-        predicate: (thread) => thread !== null,
-        timeoutMs: 5_000,
-      });
-      if (!visible)
-        throw new Error(
-          "The authoring thread was created but has not synced yet. Choose Create playbook again to reopen it.",
-        );
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(threadRef),
-      });
-      authorLaunch.current = null;
+      await operation();
+      query.refresh();
+      sources.refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not start Playbook Author.");
-    } finally {
-      authorStarting.current = false;
-      setBusy(false);
-    }
-  }
-  /** Copies a YAML file from the environment's machine into the workspace's playbook library. */
-  async function importFile(path: string) {
-    if (!workspace || !query.data || busy) return;
-    setBusy(true);
-    setError(null);
-    const { environmentId } = workspace;
-    const cwd = query.data.workspaceRoot;
-    try {
-      // An absolute path reads the host file wherever it lives.
-      const read = await readFile({ environmentId, input: { cwd, relativePath: path } });
-      if (read._tag === "Failure") throw squashAtomCommandFailure(read);
-      const name = playbookImportName(path, read.value.byteLength);
-      if (
-        query.data.playbooks.some((playbook) => playbook.name === name) &&
-        !window.confirm(`Replace ${name}.yaml?`)
-      )
-        return;
-      const result = await writeFile({
-        environmentId,
-        input: {
-          cwd,
-          relativePath: `.j5/playbooks/${name}.yaml`,
-          contents: read.value.contents,
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not import playbook YAML files.");
-    } finally {
-      refresh();
-      setBusy(false);
-    }
-  }
-  async function removePlaybook(name: string) {
-    if (!workspace || !query.data || query.error || busy) return;
-    if (!window.confirm(`Delete ${name}.yaml from ${workspace.title}?`)) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await deletePlaybook({
-        environmentId: workspace.environmentId,
-        input: {
-          projectId: workspace.projectId,
-          ...(workspace.threadId ? { threadId: workspace.threadId } : {}),
-          name,
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not delete playbook.");
+      setError(cause instanceof Error ? cause.message : "Playbook action failed.");
     } finally {
       setBusy(false);
     }
   }
-  async function downloadPlaybook(name: string) {
-    if (!workspace || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await exportPlaybook({
-        environmentId: workspace.environmentId,
-        input: {
-          projectId: workspace.projectId,
-          ...(workspace.threadId ? { threadId: workspace.threadId } : {}),
-          name,
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      const { fileName, yaml } = result.value;
-      const url = URL.createObjectURL(new Blob([yaml], { type: "application/yaml" }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = fileName;
-      anchor.click();
-      // Revoking synchronously can abort the download in some browsers.
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-      toastManager.add({ type: "success", title: `Exported ${fileName}` });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not export playbook.");
-    } finally {
-      setBusy(false);
-    }
+  async function changeFolders(folders: string[]) {
+    const result = await setFolders({ environmentId, input: { folders } });
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   }
-  async function submitRename() {
-    if (!workspace || !renameTarget || busy) return;
-    const title = renameTarget.title.trim();
-    if (!title) return;
-    if (title === query.data?.playbooks.find(({ name }) => name === renameTarget.name)?.title) {
-      setRenameTarget(null);
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await renamePlaybook({
-        environmentId: workspace.environmentId,
-        input: {
-          projectId: workspace.projectId,
-          ...(workspace.threadId ? { threadId: workspace.threadId } : {}),
-          name: renameTarget.name,
-          title,
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      setRenameTarget(null);
-      refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not rename playbook.");
-    } finally {
-      setBusy(false);
-    }
+  async function copy(target: NonNullable<typeof copyTarget>) {
+    const exported = await exportDefinition({
+      environmentId,
+      input: { ...scope, name: target.name, source: target.source },
+    });
+    if (exported._tag === "Failure") throw squashAtomCommandFailure(exported);
+    const result = await save({
+      environmentId: target.destination,
+      input: { name: target.targetName.trim(), yaml: exported.value.yaml },
+    });
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    toastManager.add({
+      type: "success",
+      title: "Playbook copied",
+      description: "Available across the destination environment. Copies remain independent.",
+    });
+    setCopyTarget(null);
   }
-  async function openDraft(prompt: string) {
-    if (!workspace || busy) return;
-    setBusy(true);
+  const startCopy = (name: string, source: PlaybookSource, destination: EnvironmentId) => {
     setError(null);
-    try {
-      if ((await openPlaybookDraft(workspace, prompt, openThread)) === "preserved")
-        toastManager.add({
-          type: "info",
-          title: "Draft preserved",
-          description:
-            "Your existing text or attachments are still here. Finish or clear this draft, then choose the playbook action again.",
-        });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not open a conversation.");
-    } finally {
-      setBusy(false);
-    }
-  }
+    setCopyTarget({ name, targetName: name, source, destination });
+  };
   return (
     <>
-      {picking && workspace ? (
-        <AgentFolderPickerDialog
-          environmentId={workspace.environmentId}
-          environmentLabel={
-            environments.find((env) => env.environmentId === workspace.environmentId)?.label ??
-            "this environment"
-          }
-          mode="file"
-          title="Import a playbook file"
-          confirmLabel="Import"
-          onClose={() => setPicking(false)}
-          onSelect={(path) => {
-            setPicking(false);
-            void importFile(path);
-          }}
-        />
-      ) : null}
       <SettingsSection
         title="Playbooks"
         id="playbooks"
         headerAction={
-          <div className="flex flex-wrap items-center justify-end gap-1">
+          <div className="flex items-center gap-1">
             <Button
               size="xs"
               variant="ghost-muted"
-              disabled={!workspace || busy || !canOperate || !query.data || !!query.error}
-              onClick={() => void createPlaybook()}
+              disabled={!canOperate || busy}
+              onClick={() => setConversation({ name: null })}
             >
-              <PlusIcon aria-hidden="true" className="size-3" />
+              <PlusIcon className="size-3" />
               Create playbook
             </Button>
             <Button
               size="xs"
               variant="ghost-muted"
-              disabled={!workspace || busy || !canOperate || !query.data || !!query.error}
-              onClick={() => setPicking(true)}
+              disabled={!canOperate || busy}
+              onClick={() => {
+                setError(null);
+                setImporting(true);
+              }}
             >
               Import YAML
             </Button>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    aria-label="Refresh playbooks"
-                    disabled={!workspace || busy || query.isPending}
-                    onClick={refresh}
-                  >
-                    <RefreshCwIcon aria-hidden="true" className="size-3.5" />
-                  </Button>
-                }
-              />
-              <TooltipPopup>Refresh playbooks</TooltipPopup>
-            </Tooltip>
+            <Menu>
+              <MenuTrigger
+                aria-label="Playbook library actions"
+                render={<Button size="icon-xs" variant="ghost-muted" />}
+              >
+                <MoreHorizontalIcon className="size-3.5" />
+              </MenuTrigger>
+              <MenuPopup align="end">
+                <MenuItem
+                  disabled={busy || query.isPending}
+                  onClick={() => {
+                    query.refresh();
+                    sources.refresh();
+                  }}
+                >
+                  <RefreshCwIcon />
+                  Refresh
+                </MenuItem>
+                <MenuItem
+                  disabled={!canOperate || busy || !sources.data}
+                  onClick={() => setPicking(true)}
+                >
+                  Add source folder
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
           </div>
         }
       >
-        <SettingsRow
-          title="Workspace"
-          description={
-            libraryPath && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span
-                      tabIndex={0}
-                      className="block truncate rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    />
-                  }
-                >
-                  {libraryPath}
-                </TooltipTrigger>
-                <TooltipPopup className="max-w-sm break-all">{libraryPath}</TooltipPopup>
-              </Tooltip>
-            )
-          }
-          control={
-            <Select
-              items={workspaceItems}
-              value={workspace?.key ?? null}
-              disabled={busy || !workspace}
-              onValueChange={(value) => {
-                if (value === null) return;
-                setRenameTarget(null);
-                setWorkspaceKey(value);
-                setError(null);
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Playbook workspace">
-                <SelectValue placeholder="No projects available" />
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {workspaceItems.map((entry) => (
-                  <SelectItem key={entry.value} value={entry.value}>
-                    {entry.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        {(error || query.error) && !renameTarget && (
+        {projects.length > 0 ? (
           <SettingsRow
-            title={query.error ? "Playbooks unavailable" : "Playbook action failed"}
+            title="Project"
+            description="Also show a project's own playbooks from its .j5/playbooks folder. They override a library playbook with the same name in that project."
+            control={
+              <Select
+                items={[
+                  { value: "", label: "Library only" },
+                  ...projects.map((entry) => ({ value: entry.id, label: entry.title })),
+                ]}
+                value={project?.id ?? ""}
+                onValueChange={(value) => setProjectId(value ? (value as ProjectId) : null)}
+              >
+                <SelectTrigger aria-label="Project playbooks" className="w-40" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="">Library only</SelectItem>
+                  {projects.map((entry) => (
+                    <SelectItem key={entry.id} value={entry.id}>
+                      {entry.title}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        ) : null}
+        {(error && !importing && !renameTarget && !copyTarget) || query.error || sources.error ? (
+          <SettingsRow
+            title="Playbooks unavailable"
             status={
               <p role="alert" className="text-destructive">
-                {error ?? query.error}
+                {error ?? query.error ?? sources.error}
               </p>
             }
           />
-        )}
-        {!workspace && (
+        ) : null}
+        {query.isPending && !query.data ? (
+          <SettingsRow title="Loading playbooks…" role="status" />
+        ) : null}
+        {query.data?.playbooks.length === 0 ? (
           <SettingsRow
-            title="No workspace available"
-            description="Connect an environment and add a project to create playbooks."
+            title="No playbooks yet"
+            description="Create a repeatable workflow with your agent, or import a YAML file."
           />
-        )}
-        {query.isPending && !query.data && <SettingsRow title="Loading playbooks…" role="status" />}
-        {query.data?.playbooks.length === 0 && (
-          <SettingsRow
-            title="No playbooks in this workspace yet"
-            description="Playbooks guide an agent through ordered steps. Import a YAML file or create one with your agent."
-          />
-        )}
-        {query.data?.playbooks.map((playbook) => (
-          <SettingsRow
-            key={playbook.name}
-            title={playbook.title}
-            description={playbook.description}
-            status={
-              <div className="space-y-1">
-                <span className="block">{playbook.name}.yaml</span>
-                {playbook.issue ? (
-                  <p role="status" className="text-destructive">
-                    {playbook.issue.message}
-                  </p>
-                ) : (
-                  <>
-                    <ol
-                      className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
-                      aria-label={`${playbook.title} steps`}
+        ) : null}
+        {query.data?.playbooks.map((playbook) => {
+          const source = playbook.source ?? { kind: "environment" };
+          return (
+            <SettingsRow
+              key={playbook.name}
+              title={playbook.title}
+              description={playbook.description}
+              status={
+                <>
+                  <span>
+                    {playbook.stepCount} {playbook.stepCount === 1 ? "step" : "steps"}
+                    {source.kind === "folder" ? " · From source folder" : ""}
+                    {source.kind === "workspace" ? ` · From ${project?.title ?? "project"}` : ""}
+                    {playbook.overridesLibrary ? " · Overrides library copy" : ""}
+                  </span>
+                  {playbook.issue ? (
+                    <p role="alert" className="text-destructive">
+                      {playbook.issue.message}
+                    </p>
+                  ) : null}
+                  {(playbook.warnings ?? []).map((warning) => (
+                    <p
+                      role="status"
+                      key={`${warning.stepId}:${warning.code}`}
+                      className="text-warning"
                     >
-                      {playbook.steps.map((step, index) => (
-                        <li key={step.id} className="min-w-0 break-words">
-                          {playbookStepLabel(step, index)}
-                        </li>
-                      ))}
-                    </ol>
-                    {(playbook.warnings ?? []).map((warning) => (
-                      <p
-                        key={`${warning.stepId}:${warning.code}`}
-                        role="status"
-                        className="text-xs text-warning"
-                      >
-                        {warning.message}
-                      </p>
-                    ))}
-                  </>
-                )}
-              </div>
-            }
-            control={
-              <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy || !!query.error || !!playbook.issue}
-                  onClick={() => void openDraft(`Start playbook ${playbook.name}`)}
-                >
-                  Prepare chat
-                </Button>
-                <Menu>
-                  <MenuTrigger
-                    disabled={busy || !!query.error}
-                    aria-label={`More actions for ${playbook.title}`}
-                    render={<Button variant="ghost" size="icon-sm" />}
-                  >
-                    <MoreHorizontalIcon className="size-4" />
-                  </MenuTrigger>
-                  <MenuPopup align="end">
-                    <MenuItem
-                      disabled={busy || !!query.error || !!playbook.issue}
-                      onClick={() => void downloadPlaybook(playbook.name)}
-                    >
-                      <DownloadIcon />
-                      Export YAML
-                    </MenuItem>
-                    <MenuItem
-                      disabled={busy || !canOperate || !!query.error || !!playbook.issue}
-                      onClick={() => {
-                        setError(null);
-                        setRenameTarget({ name: playbook.name, title: playbook.title });
-                      }}
-                    >
-                      <PencilIcon />
-                      Rename
-                    </MenuItem>
-                    <MenuSeparator />
-                    <MenuItem
-                      variant="destructive"
-                      disabled={busy || !canOperate || !!query.error}
-                      onClick={() => void removePlaybook(playbook.name)}
-                    >
-                      <Trash2Icon />
-                      Delete
-                    </MenuItem>
-                  </MenuPopup>
-                </Menu>
-              </>
-            }
-          >
-            {renameTarget?.name === playbook.name ? (
-              <div className="space-y-3 py-2">
-                <form
-                  className="flex max-w-xl flex-wrap items-center gap-2"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void submitRename();
-                  }}
-                >
-                  <Input
-                    nativeInput
-                    autoFocus
-                    size="sm"
-                    className="min-w-0 flex-1 basis-40"
-                    aria-label={`Name for ${playbook.name} playbook`}
-                    value={renameTarget.title}
-                    disabled={busy}
-                    onChange={(event) =>
-                      setRenameTarget({ ...renameTarget, title: event.currentTarget.value })
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") setRenameTarget(null);
-                    }}
-                  />
-                  <Button size="sm" type="submit" disabled={busy || !renameTarget.title.trim()}>
-                    Save
-                  </Button>
+                      {warning.message}
+                    </p>
+                  ))}
+                </>
+              }
+              control={
+                <>
                   <Button
                     size="sm"
-                    type="button"
                     variant="outline"
-                    disabled={busy}
-                    onClick={() => setRenameTarget(null)}
+                    disabled={busy || !!playbook.issue}
+                    onClick={() => setConversation({ name: playbook.name })}
                   >
-                    Cancel
+                    Prepare chat
                   </Button>
-                </form>
-                {error || query.error ? (
-                  <p role="alert" className="text-sm text-destructive">
-                    {error ?? query.error}
+                  <Menu>
+                    <MenuTrigger
+                      disabled={busy}
+                      aria-label={`More actions for ${playbook.title}`}
+                      render={<Button size="icon-sm" variant="ghost" />}
+                    >
+                      <MoreHorizontalIcon className="size-4" />
+                    </MenuTrigger>
+                    <MenuPopup align="end">
+                      <MenuItem
+                        disabled={!!playbook.issue}
+                        onClick={() => setDetails(playbook.name)}
+                      >
+                        View steps
+                      </MenuItem>
+                      <MenuItem
+                        disabled={!!playbook.issue}
+                        onClick={() =>
+                          void act(async () => {
+                            const result = await exportDefinition({
+                              environmentId,
+                              input: { ...scope, name: playbook.name, source },
+                            });
+                            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                            const url = URL.createObjectURL(
+                              new Blob([result.value.yaml], { type: "application/yaml" }),
+                            );
+                            const anchor = document.createElement("a");
+                            anchor.href = url;
+                            anchor.download = result.value.fileName;
+                            anchor.click();
+                            setTimeout(() => URL.revokeObjectURL(url), 30_000);
+                          })
+                        }
+                      >
+                        Export YAML
+                      </MenuItem>
+                      <MenuItem
+                        disabled={!canOperate || source.kind === "folder" || !!playbook.issue}
+                        onClick={() => {
+                          setError(null);
+                          setRenameTarget({ name: playbook.name, title: playbook.title, source });
+                        }}
+                      >
+                        {source.kind === "folder"
+                          ? "Rename unavailable: edit source folder"
+                          : "Rename"}
+                      </MenuItem>
+                      {source.kind !== "environment" ? (
+                        <MenuItem
+                          disabled={!canOperate || !!playbook.issue}
+                          onClick={() => startCopy(playbook.name, source, environmentId)}
+                        >
+                          Copy to library
+                        </MenuItem>
+                      ) : null}
+                      {environments.length > 1 ? (
+                        <MenuSub>
+                          <MenuSubTrigger disabled={!!playbook.issue}>
+                            Copy to environment
+                          </MenuSubTrigger>
+                          <MenuSubPopup>
+                            {environments
+                              .filter((entry) => entry.environmentId !== environmentId)
+                              .map((entry) => (
+                                <MenuItem
+                                  key={entry.environmentId}
+                                  onClick={() =>
+                                    startCopy(playbook.name, source, entry.environmentId)
+                                  }
+                                >
+                                  {entry.label}
+                                </MenuItem>
+                              ))}
+                          </MenuSubPopup>
+                        </MenuSub>
+                      ) : null}
+                      <MenuSeparator />
+                      <MenuItem
+                        variant="destructive"
+                        disabled={!canOperate || source.kind === "folder"}
+                        onClick={() => {
+                          if (window.confirm(`Delete ${playbook.title}?`))
+                            void act(async () => {
+                              const result = await remove({
+                                environmentId,
+                                input: { ...scope, name: playbook.name, source },
+                              });
+                              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                            });
+                        }}
+                      >
+                        {source.kind === "folder"
+                          ? "Delete unavailable: edit source folder"
+                          : "Delete"}
+                      </MenuItem>
+                    </MenuPopup>
+                  </Menu>
+                </>
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+      {(sources.data?.folders ?? []).some(
+        (entry) => entry.source.kind === "folder" || entry.issue,
+      ) ? (
+        <SettingsSection title="Playbook sources">
+          {sources.data?.folders
+            .filter((entry) => entry.source.kind === "folder" || entry.issue)
+            .map((entry) => (
+              <SettingsRow
+                key={entry.path}
+                title={entry.source.kind === "folder" ? entry.path : "Environment library"}
+                status={
+                  entry.issue ? (
+                    <p role="alert" className="text-destructive">
+                      {entry.issue.message}
+                    </p>
+                  ) : (
+                    "Read-only source"
+                  )
+                }
+                control={
+                  entry.source.kind === "folder" ? (
+                    <Menu>
+                      <MenuTrigger
+                        aria-label={`Actions for source ${entry.path}`}
+                        render={<Button size="icon-sm" variant="ghost" />}
+                      >
+                        <MoreHorizontalIcon className="size-4" />
+                      </MenuTrigger>
+                      <MenuPopup align="end">
+                        <MenuItem
+                          disabled={!canOperate || busy}
+                          onClick={() =>
+                            void act(() =>
+                              changeFolders(
+                                folderPaths.filter(
+                                  (folder) =>
+                                    entry.source.kind !== "folder" || folder !== entry.source.path,
+                                ),
+                              ),
+                            )
+                          }
+                        >
+                          Remove source
+                        </MenuItem>
+                      </MenuPopup>
+                    </Menu>
+                  ) : undefined
+                }
+              />
+            ))}
+        </SettingsSection>
+      ) : null}
+      {picking ? (
+        <AgentFolderPickerDialog
+          environmentId={environmentId}
+          environmentLabel={label}
+          title="Add playbook source folder"
+          confirmLabel="Add folder"
+          onClose={() => setPicking(false)}
+          onSelect={(path) => {
+            setPicking(false);
+            void act(() => changeFolders([...folderPaths, path]));
+          }}
+        />
+      ) : null}
+      {conversation ? (
+        <PlaybookConversationDialog
+          environmentId={environmentId}
+          name={conversation.name}
+          projectId={project?.id ?? null}
+          onClose={() => setConversation(null)}
+        />
+      ) : null}
+      {detail ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setDetails(null);
+          }}
+        >
+          <DialogPopup>
+            <DialogHeader>
+              <DialogTitle>{detail.title}</DialogTitle>
+              <DialogDescription>{detail.description}</DialogDescription>
+            </DialogHeader>
+            <DialogPanel>
+              <ol className="space-y-2 text-sm">
+                {detail.steps.map((step, index) => (
+                  <li key={step.id}>{playbookStepLabel(step, index)}</li>
+                ))}
+              </ol>
+            </DialogPanel>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDetails(null)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogPopup>
+        </Dialog>
+      ) : null}
+      {renameTarget ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !busy) setRenameTarget(null);
+          }}
+        >
+          <DialogPopup>
+            <form
+              className="flex min-h-0 flex-col"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void act(async () => {
+                  const result = await rename({
+                    environmentId,
+                    input: { ...scope, ...renameTarget, title: renameTarget.title.trim() },
+                  });
+                  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                  setRenameTarget(null);
+                });
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle>Rename playbook</DialogTitle>
+              </DialogHeader>
+              <DialogPanel>
+                <Input
+                  autoFocus
+                  aria-label="Playbook title"
+                  value={renameTarget.title}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setRenameTarget({ ...renameTarget, title: event.currentTarget.value })
+                  }
+                />
+                {error ? (
+                  <p role="alert" className="mt-3 text-sm text-destructive">
+                    {error}
                   </p>
                 ) : null}
-              </div>
-            ) : null}
-          </SettingsRow>
-        ))}
-      </SettingsSection>
+              </DialogPanel>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setRenameTarget(null)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={busy || !renameTarget.title.trim()}>
+                  Save
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogPopup>
+        </Dialog>
+      ) : null}
+      {copyTarget ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !busy) setCopyTarget(null);
+          }}
+        >
+          <DialogPopup>
+            <form
+              className="flex min-h-0 flex-col"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void act(() => copy(copyTarget));
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle>Copy playbook</DialogTitle>
+                <DialogDescription>
+                  Name the copy. It will be available in every project on{" "}
+                  {environments.find((entry) => entry.environmentId === copyTarget.destination)
+                    ?.label ?? label}
+                  .
+                </DialogDescription>
+              </DialogHeader>
+              <DialogPanel>
+                <Input
+                  autoFocus
+                  aria-label="Name for the copied playbook"
+                  value={copyTarget.targetName}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setCopyTarget({ ...copyTarget, targetName: event.currentTarget.value })
+                  }
+                />
+                {error ? (
+                  <p role="alert" className="mt-3 text-sm text-destructive">
+                    {error}
+                  </p>
+                ) : null}
+              </DialogPanel>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setCopyTarget(null)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={busy || !copyTarget.targetName.trim()}>
+                  Copy
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogPopup>
+        </Dialog>
+      ) : null}
+      {importing ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !busy) setImporting(false);
+          }}
+        >
+          <DialogPopup>
+            <form
+              className="flex min-h-0 flex-col"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void act(async () => {
+                  const result = await save({ environmentId, input: { name, yaml } });
+                  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                  setImporting(false);
+                  setName("");
+                  setYaml("");
+                });
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle>Import playbook</DialogTitle>
+                <DialogDescription>
+                  Choose a YAML file or paste a definition. It will be available in every project on
+                  this environment.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogPanel>
+                <Input
+                  type="file"
+                  accept=".yaml,.yml"
+                  aria-label="Playbook file"
+                  disabled={busy}
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0];
+                    if (file)
+                      void act(async () => {
+                        const nextName = playbookImportName(file.name, file.size);
+                        const text = await file.text();
+                        if (new TextEncoder().encode(text).byteLength > PLAYBOOK_MAX_BYTES)
+                          throw new Error("Playbook is too large.");
+                        setName(nextName);
+                        setYaml(text);
+                      });
+                  }}
+                />
+                <div className="space-y-2">
+                  <label htmlFor="playbook-import-name" className="text-sm">
+                    Name
+                  </label>
+                  <Input
+                    id="playbook-import-name"
+                    placeholder="release-review"
+                    value={name}
+                    disabled={busy}
+                    onChange={(event) => setName(event.currentTarget.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="playbook-import-yaml" className="text-sm">
+                    YAML
+                  </label>
+                  <Textarea
+                    id="playbook-import-yaml"
+                    value={yaml}
+                    disabled={busy}
+                    onChange={(event) => setYaml(event.currentTarget.value)}
+                  />
+                </div>
+                {error ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {error}
+                  </p>
+                ) : null}
+              </DialogPanel>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setImporting(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={busy || !canOperate || !name.trim() || !yaml.trim()}
+                >
+                  Import
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogPopup>
+        </Dialog>
+      ) : null}
     </>
   );
 }

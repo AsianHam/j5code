@@ -1,3 +1,4 @@
+import { ServerConfig } from "../../config.ts";
 import { seedPlaybookOwners } from "./testFixtures.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -174,6 +175,7 @@ const fixture = Effect.gen(function* () {
     };
   });
   return {
+    handlers,
     exportPlaybook,
     deletePlaybook,
     renamePlaybook,
@@ -523,6 +525,9 @@ it.effect("tells a storage failure in the action's general words, never the stor
     );
     const handlers = yield* handlersFor({
       changes: store.changes,
+      sources: () => refused,
+      saveDefinition: () => refused,
+      setFolders: () => refused,
       discover: () => refused,
       listForThread: () => refused,
       listAll: () => refused,
@@ -563,4 +568,53 @@ it.effect("tells a storage failure in the action's general words, never the stor
       message: "Reading playbook runs failed.",
     });
   }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+);
+
+it.effect("manages the environment library over RPC without a project", () =>
+  Effect.gen(function* () {
+    const { handlers, store } = yield* fixture;
+    const save = J5_PLAYBOOK_WS_METHODS.savePlaybook;
+    assert.equal(PLAYBOOK_RPC_SCOPES[save], AuthOrchestrationOperateScope);
+    assert.equal(
+      PLAYBOOK_RPC_SCOPES[J5_PLAYBOOK_WS_METHODS.setFolders],
+      AuthOrchestrationOperateScope,
+    );
+    assert.equal(
+      PLAYBOOK_RPC_SCOPES[J5_PLAYBOOK_WS_METHODS.readSources],
+      AuthOrchestrationReadScope,
+    );
+    const yaml = stringify(definition("Shared library"));
+    yield* handlers[save]({ name: "shared", yaml });
+    const library = yield* handlers[J5_PLAYBOOK_WS_METHODS.readLibrary]({
+      source: { kind: "environment" },
+    });
+    assert.equal(library.workspaceRoot, "");
+    assert.equal(library.playbooks[0]?.title, "Shared library");
+    assert.equal(
+      (yield* handlers[J5_PLAYBOOK_WS_METHODS.exportPlaybook]({
+        name: "shared",
+        source: { kind: "environment" },
+      })).yaml,
+      yaml,
+    );
+    yield* handlers[J5_PLAYBOOK_WS_METHODS.renamePlaybook]({
+      name: "shared",
+      title: "Renamed shared library",
+      source: { kind: "environment" },
+    });
+    assert.equal((yield* store.read("", "shared")).title, "Renamed shared library");
+    yield* handlers[J5_PLAYBOOK_WS_METHODS.deletePlaybook]({
+      name: "shared",
+      source: { kind: "environment" },
+    });
+    assert.equal((yield* handlers[J5_PLAYBOOK_WS_METHODS.readLibrary]({})).playbooks.length, 0);
+    assert.equal((yield* handlers[J5_PLAYBOOK_WS_METHODS.readSources]()).folders.length, 1);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "j5-playbook-rpc-library-" }).pipe(
+        Layer.provideMerge(TestLayer),
+      ),
+    ),
+  ),
 );

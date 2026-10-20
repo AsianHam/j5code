@@ -803,7 +803,7 @@ function MemberAgentLibrarySettingsScreen() {
           </SettingsSection>
         ) : null}
         <SettingsSection title="Playbooks">
-          <PlaybookLibrarySettingsSection />
+          <PlaybookLibrarySettingsSection environmentId={effectiveEnvironmentId} />
         </SettingsSection>
       </ScrollView>
       {notification ? (

@@ -5,7 +5,7 @@ import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { useNavigation } from "@react-navigation/native";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
-import { PlaybookBoard } from "../../j5/playbooks/PlaybookBoard";
+import { PlaybookComposerControl } from "../../j5/playbooks/PlaybookComposerControl";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
@@ -1038,11 +1038,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   return (
     <View className="flex-1">
-      <PlaybookBoard
-        key={selectedThreadKey}
-        environmentId={props.environmentId}
-        threadId={props.selectedThread.id}
-      />
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {showContent ? (
         <View
@@ -1192,6 +1187,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   }}
                 />
                 <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                  {!props.activePendingApproval && !props.activePendingUserInput && (
+                    <PlaybookComposerControl
+                      key={selectedThreadKey}
+                      environmentId={props.environmentId}
+                      threadId={props.selectedThread.id}
+                    />
+                  )}
                   {props.queuedRunEdit !== null ? (
                     <Animated.View
                       className="shrink-0"

@@ -29,6 +29,9 @@ export const J5_PLAYBOOK_WS_METHODS = {
   exportPlaybook: "j5.playbooks.export",
   deletePlaybook: "j5.playbooks.delete",
   renamePlaybook: "j5.playbooks.rename",
+  savePlaybook: "j5.playbooks.save",
+  readSources: "j5.playbooks.readSources",
+  setFolders: "j5.playbooks.setFolders",
 } as const;
 
 const Text = Schema.String.check(Schema.isPattern(/\S/));
@@ -49,6 +52,27 @@ export const PlaybookDefinition = Schema.Struct({
   ),
 });
 export type PlaybookDefinition = typeof PlaybookDefinition.Type;
+
+/** A management target; folder sources are read-only in the app. */
+export const PlaybookSource = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("workspace") }),
+  Schema.Struct({ kind: Schema.Literal("environment") }),
+  Schema.Struct({ kind: Schema.Literal("folder"), path: Text }),
+]);
+export type PlaybookSource = typeof PlaybookSource.Type;
+export const PlaybookFoldersInput = Schema.Struct({
+  folders: Schema.Array(Text.check(Schema.isMaxLength(4096))).check(Schema.isMaxLength(32)),
+});
+export type PlaybookFoldersInput = typeof PlaybookFoldersInput.Type;
+const PlaybookDigest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
+export const PlaybookSaveRequest = Schema.Struct({
+  name: Text,
+  yaml: Schema.String,
+  /** Replaces an existing environment-library definition only while it still has this digest. */
+  expectedDigest: Schema.optionalKey(PlaybookDigest),
+});
+export type PlaybookSaveRequest = typeof PlaybookSaveRequest.Type;
+export const PlaybookSaveResponse = Schema.Struct({ name: Text, saved: Schema.Boolean });
 
 /** Advisory findings about a valid definition; unlike `issue`, they never block starting. */
 export const PlaybookWarning = Schema.Struct({
@@ -89,7 +113,7 @@ export const PlaybookStepDelivery = Schema.Struct({
 });
 export type PlaybookStepDelivery = typeof PlaybookStepDelivery.Type;
 
-/** The board receives titles, never the other steps' prompt bodies. */
+/** The progress bar receives titles, never the other steps' prompt bodies. */
 export const PlaybookProgress = Schema.Struct({
   ...PlaybookRun.fields,
   title: Schema.String,
@@ -108,10 +132,22 @@ export const PlaybookStepResponse = Schema.Struct({
   delivery: Schema.optionalKey(Schema.NullOr(PlaybookStepDelivery)),
 });
 export type PlaybookStepResponse = typeof PlaybookStepResponse.Type;
+export const PlaybookSources = Schema.Struct({
+  folders: Schema.Array(
+    Schema.Struct({
+      source: PlaybookSource,
+      path: Schema.String,
+      issue: Schema.NullOr(PlaybookError),
+    }),
+  ),
+});
 export const PlaybookDiscovery = Schema.Struct({
+  sources: Schema.optionalKey(PlaybookSources.fields.folders),
   playbooks: Schema.Array(
     Schema.Struct({
       name: Text,
+      source: Schema.optionalKey(PlaybookSource),
+      overridesLibrary: Schema.optionalKey(Schema.Boolean),
       title: Schema.String,
       description: Schema.String,
       stepCount: Schema.Int,
@@ -131,6 +167,9 @@ export const PlaybookReadResponse = Schema.Struct({
   description: Text,
   steps: Schema.Array(PlaybookStep),
   warnings: Schema.Array(PlaybookWarning),
+  /** Where the definition lives, and its content digest for an edit through j5_playbook_save. */
+  source: Schema.optionalKey(PlaybookSource),
+  digest: Schema.optionalKey(PlaybookDigest),
 });
 export type PlaybookReadResponse = typeof PlaybookReadResponse.Type;
 export const ThreadPlaybooksRequest = Schema.Struct({ threadId: ThreadId });
@@ -146,8 +185,9 @@ export const PlaybookRunsResponse = Schema.Struct({
   total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export const PlaybookLibraryRequest = Schema.Struct({
-  projectId: ProjectId,
+  projectId: Schema.optionalKey(ProjectId),
   threadId: Schema.optionalKey(ThreadId),
+  source: Schema.optionalKey(PlaybookSource),
 });
 export type PlaybookLibraryRequest = typeof PlaybookLibraryRequest.Type;
 export const PlaybookLibraryResponse = Schema.Struct({
@@ -176,6 +216,21 @@ export const PlaybookExportResponse = Schema.Struct({ fileName: Text, yaml: Sche
 export type PlaybookExportResponse = typeof PlaybookExportResponse.Type;
 
 export const J5PlaybookRpcGroup = RpcGroup.make(
+  Rpc.make(J5_PLAYBOOK_WS_METHODS.savePlaybook, {
+    payload: PlaybookSaveRequest,
+    success: PlaybookSaveResponse,
+    error: Schema.Union([PlaybookError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(J5_PLAYBOOK_WS_METHODS.readSources, {
+    payload: Schema.Struct({}),
+    success: PlaybookSources,
+    error: Schema.Union([PlaybookError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(J5_PLAYBOOK_WS_METHODS.setFolders, {
+    payload: PlaybookFoldersInput,
+    success: Schema.Void,
+    error: Schema.Union([PlaybookError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(J5_PLAYBOOK_WS_METHODS.subscribeChanges, {
     payload: Schema.Struct({}),
     success: Schema.Int,

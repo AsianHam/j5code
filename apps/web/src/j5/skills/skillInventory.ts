@@ -87,6 +87,25 @@ export function filterSkillInventory(
   });
 }
 
+/**
+ * The provider columns the unfiltered inventory shows. A Codex or Claude
+ * instance that is on stays visible with no skills, so a missing record reads
+ * differently from unknown discovery; an instance that is off or not installed
+ * shows only while it has cached rows.
+ */
+export function inventoryColumnProviders(
+  providers: ReadonlyArray<ServerProvider>,
+  rows: ReadonlyArray<SkillInventoryRow>,
+): ReadonlyArray<ServerProvider> {
+  return providers.filter(
+    (provider) =>
+      ((provider.driver === "codex" || provider.driver === "claudeAgent") &&
+        provider.enabled &&
+        provider.installed) ||
+      rows.some((row) => row.records.has(provider.instanceId)),
+  );
+}
+
 export function missingSkillLabel(state: SkillDiscoveryState): string {
   return state === "checked"
     ? "Not detected"

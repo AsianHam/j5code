@@ -6,6 +6,9 @@ export interface J5RuntimePolicy {
   readonly approvalPolicy?: unknown;
 }
 
+/** Definition writes have their own server-side policy check, unlike progress-only tools. */
+export const J5_DEFINITION_WRITE_TOOLS: ReadonlyArray<string> = ["j5_playbook_save"];
+
 /**
  * The t3-code tools Codex and Claude pre-approve so the roster gate stays the only human step there.
  * Harnesses gate every MCP tool that is not annotated read-only behind an approval prompt, and a
@@ -24,6 +27,7 @@ export interface J5RuntimePolicy {
  * J5Toolkit.
  */
 export const J5_PREAPPROVED_TOOLS: ReadonlyArray<string> = [
+  ...J5_DEFINITION_WRITE_TOOLS,
   "j5_send_message",
   "j5_list_participants",
   "j5_spawn_agent",

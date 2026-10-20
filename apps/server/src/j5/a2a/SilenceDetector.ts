@@ -195,12 +195,16 @@ export const REMOVED_NOTICE_TYPE = "queued-message-removed" as const;
 const REMOVED_NOTICE_EXCERPT_LENGTH = 200;
 
 /** Told to the sender of a queued message that was taken out of the receiver's queue unread. */
-export const removedNoticeMessage = (subjectId: ParticipantId, text: string): string => {
+export const removedNoticeMessage = (
+  subjectId: ParticipantId,
+  messageId: string,
+  text: string,
+): string => {
   const excerpt =
     text.length > REMOVED_NOTICE_EXCERPT_LENGTH
       ? `${text.slice(0, REMOVED_NOTICE_EXCERPT_LENGTH)}…`
       : text;
-  return `Your message to ${subjectId} was removed from its queue before it ran, so ${subjectId} never read it. Send it again if it still matters. The message began: ${excerpt}`;
+  return `Your message ${messageId} to ${subjectId} was removed from its queue before it ran, so ${subjectId} never read it. Send it again if it still matters. The message began: ${excerpt}`;
 };
 
 const noticeMessage = (payload: SilenceNoticePayload, exchangeId: ExchangeId): string => {
@@ -541,7 +545,7 @@ const makeLayer = (daemon: boolean) =>
                 messageId: LedgerMessageId.make(`message:j5:a2a:removed:${identity}`),
                 text: formatSilenceNoticeEnvelope({
                   noticeType: REMOVED_NOTICE_TYPE,
-                  message: removedNoticeMessage(subjectId, row.message_text),
+                  message: removedNoticeMessage(subjectId, row.message_id, row.message_text),
                 }),
                 originProjectId: LedgerProjectId.make(row.project_id),
                 receiverProjectId: LedgerProjectId.make(row.project_id),
