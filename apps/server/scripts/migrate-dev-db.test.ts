@@ -6,6 +6,11 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../src/persistence/Migrations.ts";
+import {
+  J5_A2A_MIGRATIONS_TABLE,
+  migrationEntries,
+  runJ5A2AMigrations,
+} from "../src/j5/a2a/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrateDevDb } from "./migrate-dev-db.ts";
 
@@ -194,6 +199,37 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
+  it.effect("runs J5's migrations before standing down J5 state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-j5-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-j5-dest-" });
+      const source = yield* createFixtureSource(sourceDir);
+      // A live install a migration behind: its Crews table predates retired_with_captain (22),
+      // a column the stand-down writes.
+      yield* withDatabase(source, runJ5A2AMigrations({ toMigrationInclusive: 21 }));
+
+      const result = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+        { sharedHome: sourceDir },
+      );
+
+      assert.deepStrictEqual(
+        result.executedJ5Migrations,
+        migrationEntries.filter(([id]) => id > 21).map(([id, name]) => `${id}_${name}`),
+      );
+      const [latest] = yield* withDatabase(
+        result.databasePath,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ id: number }>`
+            SELECT MAX(migration_id) AS id FROM ${sql(J5_A2A_MIGRATIONS_TABLE)}`;
+        }),
+      );
+      assert.equal(latest?.id, migrationEntries.at(-1)?.[0]);
+    }),
+  );
+
   it.effect("copies a child table that sqlite_master lists before its parent", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -288,6 +324,35 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       if (error._tag === "MigrateDevDbSlotCollisionError") {
         assert.equal(error.slot, 1);
         assert.equal(error.appliedName, "SomebodyElsesMigration");
+      }
+    }),
+  );
+
+  it.effect("fails loudly on a J5 migration slot collision", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-j5-slot-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "migrate-dev-db-j5-slot-dest-",
+      });
+      const source = yield* createFixtureSource(sourceDir);
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* runJ5A2AMigrations();
+          yield* sql`UPDATE ${sql(J5_A2A_MIGRATIONS_TABLE)}
+            SET name = 'SomebodyElsesMigration' WHERE migration_id = 1`;
+        }),
+      );
+
+      const error = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+        { sharedHome: sourceDir },
+      ).pipe(Effect.flip);
+      assert.equal(error._tag, "MigrateDevDbSlotCollisionError");
+      if (error._tag === "MigrateDevDbSlotCollisionError") {
+        assert.equal(error.codeName, "EpicCommunicationLedger");
       }
     }),
   );

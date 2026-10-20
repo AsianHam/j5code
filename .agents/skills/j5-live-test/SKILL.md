@@ -214,15 +214,15 @@ A claim without one of those three labels counts as not verified.
 Always: the change's own flow, including the way back out, and one real turn
 sent through the UI.
 
-| When the change touches                        | Also run                                                 |
-| ---------------------------------------------- | -------------------------------------------------------- |
-| The turn path, provider adapters, or MCP tools | One turn each on Codex and Claude                        |
-| Stored state, deliveries, or recovery          | `restart` at rest, then use the state                    |
-| Interrupted runs                               | `restart` during a held turn                             |
-| Migrations                                     | `upgrade` from the PR's base, and a `--fresh` run        |
-| Startup, onboarding, or settings defaults      | A `--fresh` run                                          |
-| Anything an agent is meant to use              | Ask a real agent in plain words, without naming the tool |
-| Peering or cross-server messages               | A `--peer` run                                           |
+| When the change touches                        | Also run                                                                                                                                                                                     |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The turn path, provider adapters, or MCP tools | One turn each on Codex and Claude                                                                                                                                                            |
+| Stored state, deliveries, or recovery          | `restart` at rest, then use the state                                                                                                                                                        |
+| Interrupted runs                               | `restart` during a held turn                                                                                                                                                                 |
+| Migrations                                     | `upgrade` from the PR's base, and a `--fresh` run. When a migration converts existing rows, also run it on a copy of real data with `vp run migrate-dev-db`, and check the rows it converted |
+| Startup, onboarding, or settings defaults      | A `--fresh` run                                                                                                                                                                              |
+| Anything an agent is meant to use              | Ask a real agent in plain words, without naming the tool                                                                                                                                     |
+| Peering or cross-server messages               | A `--peer` run                                                                                                                                                                               |
 
 ## PR screenshots
 
