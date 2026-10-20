@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import type { SqlError } from "effect/sql/SqlError";
 
 import {
   McpInvocationContext,
@@ -27,7 +28,11 @@ import {
   loadCaller,
 } from "../../../mcp/threadAccess.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
-import { claimPendingAttachments } from "../../../orchestration-v2/AttachmentClaims.ts";
+import {
+  AttachmentClaimError,
+  claimPendingAttachments,
+  validateAttachmentLimits,
+} from "../../../orchestration-v2/AttachmentClaims.ts";
 import {
   type DispatchModes,
   exceededDispatchModeLimit,
@@ -79,7 +84,7 @@ import {
   actsAsThreadCaller,
 } from "./outsideAgent.ts";
 import { SpawnCompositionService } from "../SpawnCompositionService.ts";
-import { RequestReplayService } from "../RequestReplayService.ts";
+import { type RequestReplayConflictError, RequestReplayService } from "../RequestReplayService.ts";
 import {
   SpawnWorkspaceService,
   namedBaseRefs,
@@ -1036,12 +1041,36 @@ const handlers = {
         workspace: workspaceRequest,
       };
       const replayService = yield* RequestReplayService;
-      const replayFailure = (error: { readonly message: string }) =>
-        stateError(error.message, "Inspect the original target before starting new work.");
+      const replayFailure = (error: SqlError | RequestReplayConflictError) =>
+        error._tag === "RequestReplayConflictError"
+          ? stateError(error.message, "Inspect the original target before starting new work.")
+          : stateError(
+              `The spawn's client_request_id could not be checked: ${error.message}`,
+              "Retry j5_spawn_agent with the same client_request_id.",
+            );
       // A generated key can never be retried, so it has nothing to bind.
       const replayable = input.client_request_id !== undefined;
       if (replayable)
         yield* replayService.check(threadId, request).pipe(Effect.mapError(replayFailure));
+      // What the request alone decides about its attachments is refused before the key is bound,
+      // so a corrected list can be retried under the same client_request_id.
+      if (input.attachments !== undefined) {
+        const attachments = input.attachments;
+        yield* resolveAttachmentReferences(attachments, []).pipe(
+          Effect.flatMap(validateAttachmentLimits),
+          Effect.andThen(
+            new Set(attachments.map((attachment) => attachment.id)).size === attachments.length
+              ? Effect.void
+              : new AttachmentClaimError({ message: "Duplicate attachment ids are not allowed." }),
+          ),
+          Effect.mapError((error) =>
+            stateError(
+              `Peer Agent was not created: ${error.message}`,
+              "Retry j5_spawn_agent with corrected attachments; the same client_request_id still works.",
+            ),
+          ),
+        );
+      }
       const selected = existing?.modelSelection ?? (yield* selectSpawnModel(scope, input));
       const personaId = input.persona;
       const persona =

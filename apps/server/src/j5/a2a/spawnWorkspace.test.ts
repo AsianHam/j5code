@@ -27,6 +27,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
+import { SqlError, UnknownError } from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 
 import { McpInvocationContext, type McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
@@ -938,6 +939,78 @@ it.effect("claims the brief's attachments into the new agent's thread", () =>
         ),
         new Uint8Array([1, 2, 3]),
       );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect(
+  "refuses invalid attachments before binding, so the same key takes a corrected list",
+  () =>
+    Effect.gen(function* () {
+      const { layer, call, commands } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+      });
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const attachment = {
+          type: "image" as const,
+          id: ChatAttachmentId.make(createPendingAttachmentId()!),
+          name: "screen.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+        };
+        yield* fs.writeFile(
+          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
+          new Uint8Array([1, 2, 3]),
+        );
+        const args = {
+          ...spawnArgs,
+          workspace: { type: "shared" as const },
+          client_request_id: "duplicate-attachments",
+        };
+        const duplicated = yield* call({ ...args, attachments: [attachment, attachment] });
+        assert.isTrue(duplicated.isFailure);
+        assert.include(message(duplicated), "Duplicate attachment ids");
+        assert.lengthOf(yield* Ref.get(commands), 0, "nothing is created");
+
+        const corrected = yield* call({ ...args, attachments: [attachment] });
+        assert.isFalse(corrected.isFailure);
+        const brief = (yield* Ref.get(commands)).find(
+          (command) => command.type === "message.dispatch",
+        );
+        assert.lengthOf(brief?.type === "message.dispatch" ? brief.attachments : [], 1);
+
+        const changed = yield* call(args);
+        assert.isTrue(changed.isFailure);
+        assert.include(message(changed), "different request");
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("tells a caller to retry the same key when the replay store cannot be read", () =>
+  Effect.gen(function* () {
+    const unreadable = Effect.fail(
+      new SqlError({ reason: new UnknownError({ cause: new Error("disk I/O error") }) }),
+    );
+    const replay = Layer.succeed(
+      RequestReplayService,
+      RequestReplayService.of({ check: () => unreadable, bind: () => unreadable }),
+    );
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      replay,
+    });
+    yield* Effect.gen(function* () {
+      const failed = yield* call({
+        ...spawnArgs,
+        workspace: { type: "shared" },
+        client_request_id: "storage-down",
+      });
+      assert.isTrue(failed.isFailure);
+      assert.include(message(failed), "Retry j5_spawn_agent with the same client_request_id");
+      assert.notInclude(message(failed), "Inspect the original target");
+      assert.lengthOf(yield* Ref.get(commands), 0);
     }).pipe(Effect.provide(layer));
   }),
 );
