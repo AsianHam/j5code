@@ -31,6 +31,26 @@ opens it confirms or types their name.
 To add your own phone or laptop, type your own name under **Add a person** and open the link on that
 device.
 
+## Pairing a device from the terminal
+
+On the server's machine, `j5 pair` makes a link for a named person:
+
+```bash
+j5 pair --person "<name>"
+```
+
+A name already on the server makes a link that pairs one more device as that person, at their
+level. A name nobody has adds that person, and then needs `--level viewer`, `collaborator` or
+`owner`; add `--project <id>` or `--thread <id>` to give them a project or a thread rather than the
+whole server. Owner is for the whole server only. The command says which it did. Add `--tailscale`
+to pair through your tailnet, as for any pairing link.
+
+`--scope` narrows what the device may do, within the person's level. Without it, the device holds
+what the person's level allows.
+
+`j5 auth pairing create` without `--person` makes a link for a device the server does not know yet.
+Whoever opens it is asked who they are before they can use anything.
+
 ## People
 
 **Settings → People** lists everyone on a server you own, with their levels and devices, and the

@@ -45,10 +45,10 @@ address:
 j5 serve --host <private-ip>
 ```
 
-If a server is already running, generate a fresh link without restarting it, naming the person it is for:
+If a server is already running, generate a fresh link without restarting it:
 
 ```bash
-j5 pair --person "<name>"
+j5 pair
 ```
 
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
@@ -133,7 +133,7 @@ j5 serve --tailscale-serve
 For an already-running server:
 
 ```bash
-j5 pair --tailscale --person "<name>"
+j5 pair --tailscale
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
@@ -251,14 +251,13 @@ expires.
 To choose a token's permissions, pass `--scope` once for each scope you want:
 
 ```sh
-npx t3 pair --person "<name>" --scope orchestration:read --scope relay:read
+npx t3 pair --scope orchestration:read --scope relay:read
 ```
 
 The selected scopes replace the default permissions. The same option works with
 `npx t3 auth pairing create` and `npx t3 auth session issue`; each command's
-`--help` lists the available scopes. Without `--scope`, a pairing link for a person gets
-their level's permissions, and other pairing tokens and issued bearer sessions
-get every permission, including managing access and T3 Connect.
+`--help` lists the available scopes. Without `--scope`, pairing tokens and issued
+bearer sessions get every permission, including managing access and T3 Connect.
 A terminal or a full-access agent on the host can reach those as well, so a
 client that should not manage access also needs to go without `terminal:operate`
 and `orchestration:operate`.
