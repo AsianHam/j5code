@@ -1,14 +1,16 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { Navigate } from "@tanstack/react-router";
 import { ScrollTextIcon } from "lucide-react";
 import { type ComponentType, type ReactNode, useMemo } from "react";
 
+import { SettingsPageContainer } from "../../components/settings/settingsLayout";
 import type { SettingsPath } from "../../components/settings/settingsSearch";
-import { useOwnedEnvironmentIds, useOwnerSomewhere } from "./access";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../../components/ui/empty";
+import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
+import { useOwnedEnvironmentIds, useOwnerSomewhere, useWritesSomewhere } from "./access";
 import {
-  FIRST_PAGE_FOR_EVERYONE,
   LICENSES_PATH,
   PAGES_FOR_EVERYONE,
+  ownerOnlySettingsNotice,
   settingsNavItems,
   settingsPageShown,
 } from "./settingsAccess.logic";
@@ -45,8 +47,9 @@ export function useShownSettingsSearchItems<Item extends { readonly to: string }
 }
 
 /**
- * Sends someone who owns no connected server from a page that is not theirs to the first one
- * that is (AC29), so an address typed or kept from before shows nothing it should not.
+ * Shows someone who owns no connected server a notice in place of a page that is not theirs
+ * (AC29), so a link to it, such as a thread's "Manage scheduled tasks", or an address kept from
+ * before shows nothing it should not and still lands somewhere.
  */
 export function SettingsPageGate({
   pathname,
@@ -56,12 +59,30 @@ export function SettingsPageGate({
   readonly children: ReactNode;
 }) {
   const ownerSomewhere = useOwnerSomewhere();
-  // Only an answer sends someone away: an Owner reloading one of their pages keeps it, and a
+  // Only an answer replaces a page: an Owner reloading one of their pages keeps it, and a
   // server still being asked holds no page back. The server refuses what is not theirs to read.
   if (ownerSomewhere !== false || settingsPageShown({ path: pathname, ownerSomewhere })) {
     return children;
   }
-  return <Navigate to={FIRST_PAGE_FOR_EVERYONE} replace />;
+  return <OwnerOnlySettingsNotice />;
+}
+
+function OwnerOnlySettingsNotice() {
+  const primary = useEnvironment(usePrimaryEnvironmentId());
+  const notice = ownerOnlySettingsNotice({
+    serverName: primary?.label ?? null,
+    writesSomewhere: useWritesSomewhere(),
+  });
+  return (
+    <SettingsPageContainer>
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>{notice.title}</EmptyTitle>
+          <EmptyDescription>{notice.body}</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    </SettingsPageContainer>
+  );
 }
 
 /**

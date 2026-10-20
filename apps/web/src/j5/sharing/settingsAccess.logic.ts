@@ -12,9 +12,6 @@ export const PAGES_FOR_EVERYONE: ReadonlySet<string> = new Set([
 
 export const LICENSES_PATH = "/settings/open-source-licenses";
 
-/** Where Settings opens for someone who owns no connected server. */
-export const FIRST_PAGE_FOR_EVERYONE = "/settings/appearance";
-
 /**
  * Whether the person owns a connected server, or `"loading"` until that is known: the catalog has
  * not been read, it lists no server yet, or no server has said they own it while one is still
@@ -50,4 +47,21 @@ export function settingsNavItems<Item extends { readonly to: string }>(
 ): ReadonlyArray<Item> {
   if (ownerSomewhere) return items;
   return [...items.filter((item) => PAGES_FOR_EVERYONE.has(item.to)), licenses];
+}
+
+/**
+ * What an Owner-only Settings page says, in its place, to someone who reaches it by a link or its
+ * address and owns no connected server. Someone who writes nowhere has no agent to ask.
+ */
+export function ownerOnlySettingsNotice(input: {
+  readonly serverName: string | null;
+  readonly writesSomewhere: boolean;
+}): { readonly title: string; readonly body: string } {
+  const server = input.serverName ?? "this server";
+  return {
+    title: "Coming soon",
+    body: input.writesSomewhere
+      ? `Only an Owner of ${server} can change this here for now. Ask an Owner, or ask an agent on a thread you can write to.`
+      : `Only an Owner of ${server} can change this here for now. Ask an Owner.`,
+  };
 }

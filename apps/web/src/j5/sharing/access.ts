@@ -13,7 +13,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { PersonLevel } from "@t3tools/contracts/j5";
+import { levelReaches, type PersonLevel } from "@t3tools/contracts/j5";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -199,6 +199,27 @@ const ownerSomewhereAtom = Atom.make((get) => {
     }),
   });
 }).pipe(Atom.withLabel("j5:access:owner-somewhere"));
+
+// Writes to something: a Collaborator's or Owner's level anywhere, or a session that is no
+// person's. Before a server has answered nothing is assumed.
+const writesSomewhereAtom = Atom.make((get) => {
+  for (const id of get(environmentCatalog.catalogValueAtom).entries.keys()) {
+    const access = get(j5Sharing.connectionAccess(id));
+    if (access?.kind === "service") return true;
+    if (
+      access?.kind === "person" &&
+      access.levels.some((held) => levelReaches(held.level, "collaborator"))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}).pipe(Atom.withLabel("j5:access:writes-somewhere"));
+
+/** Whether the person can write to anything on a connected server, so has an agent to ask. */
+export function useWritesSomewhere(): boolean {
+  return useAtomValue(writesSomewhereAtom);
+}
 
 /** Whether the person owns a connected server, or `"loading"`; see `ownerSomewhereState`. */
 export function useOwnerSomewhere(): boolean | "loading" {

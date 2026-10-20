@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ownerSomewhereState, settingsNavItems, settingsPageShown } from "./settingsAccess.logic";
+import {
+  ownerOnlySettingsNotice,
+  ownerSomewhereState,
+  settingsNavItems,
+  settingsPageShown,
+} from "./settingsAccess.logic";
 
 const UPSTREAM = [
   { to: "/settings/general" },
@@ -48,5 +53,26 @@ describe("whether the person owns a connected server", () => {
 
   it("waits while the catalog lists no server yet, as it does before the client's own is added", () => {
     expect(ownerSomewhereState({ catalogReady: true, answers: [] })).toBe("loading");
+  });
+});
+
+describe("an Owner's Settings page, reached by someone who owns no server", () => {
+  it("names the server and says who to ask", () => {
+    expect(ownerOnlySettingsNotice({ serverName: "openclaw", writesSomewhere: true })).toEqual({
+      title: "Coming soon",
+      body: "Only an Owner of openclaw can change this here for now. Ask an Owner, or ask an agent on a thread you can write to.",
+    });
+  });
+
+  it("does not send someone who writes nowhere to an agent", () => {
+    expect(ownerOnlySettingsNotice({ serverName: "openclaw", writesSomewhere: false }).body).toBe(
+      "Only an Owner of openclaw can change this here for now. Ask an Owner.",
+    );
+  });
+
+  it("says this server when the server has no name to show", () => {
+    expect(ownerOnlySettingsNotice({ serverName: null, writesSomewhere: false }).body).toBe(
+      "Only an Owner of this server can change this here for now. Ask an Owner.",
+    );
   });
 });

@@ -136,12 +136,12 @@ function SettingsContentLayout() {
         </WorkspacePageHeader>
 
         <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
-          <SettingsScopeBoundary pathname={location.pathname}>
-            {/* J5 (case 72): a page that is not this person's sends them to one that is. */}
-            <SettingsPageGate pathname={location.pathname}>
+          {/* J5 (case 72): a page that is not this person's shows a notice in its place. */}
+          <SettingsPageGate pathname={location.pathname}>
+            <SettingsScopeBoundary pathname={location.pathname}>
               <Outlet />
-            </SettingsPageGate>
-          </SettingsScopeBoundary>
+            </SettingsScopeBoundary>
+          </SettingsPageGate>
         </div>
       </div>
     </SidebarInset>
