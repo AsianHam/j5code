@@ -3,6 +3,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthProvidersManageScope,
+  AuthSettingsWriteScope,
 } from "../auth.ts";
 import { J5_CLIENT_ACTION_WS_METHODS } from "../j5.ts";
 import { J5_AGENT_PERSONA_WS_METHODS } from "./agentPersona.ts";
@@ -38,10 +39,11 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_SKILL_LINK_WS_METHODS.unlink]: AuthOrchestrationOperateScope,
   [J5_SKILL_LINK_WS_METHODS.delete]: AuthOrchestrationOperateScope,
 
-  [J5_PLAYBOOK_WS_METHODS.savePlaybook]: AuthOrchestrationOperateScope,
-  [J5_PLAYBOOK_WS_METHODS.setFolders]: AuthOrchestrationOperateScope,
-  [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: AuthOrchestrationOperateScope,
-  [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: AuthOrchestrationOperateScope,
+  // The server's library is changed by its Owners only.
+  [J5_PLAYBOOK_WS_METHODS.savePlaybook]: AuthSettingsWriteScope,
+  [J5_PLAYBOOK_WS_METHODS.setFolders]: AuthSettingsWriteScope,
+  [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: AuthSettingsWriteScope,
+  [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: AuthSettingsWriteScope,
   [J5_ARTIFACT_WS_METHODS.deleteArtifact]: AuthOrchestrationOperateScope,
 
   [J5_CLIENT_ACTION_WS_METHODS.resolveCrewProposal]: AuthOrchestrationOperateScope,

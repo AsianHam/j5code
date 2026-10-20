@@ -4,6 +4,7 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   CLIENT_GUARDED_RPC_SCOPES,
   J5_AGENT_PERSONA_WS_METHODS,
   J5_ARTIFACT_WS_METHODS,
@@ -70,6 +71,7 @@ const UNGUARDED_QUERIES = [
   J5_SKILL_LINK_WS_METHODS.list,
   J5_SKILL_LINK_WS_METHODS.inspect,
   J5_SKILL_LINK_WS_METHODS.deletePreview,
+  J5_PLAYBOOK_WS_METHODS.readSources,
 ] as const satisfies ReadonlyArray<keyof typeof J5_RPC_SCOPES>;
 const group = WsRpcGroup.omit(
   ...[...WsRpcGroup.requests.keys()].filter(
@@ -355,7 +357,11 @@ describe("J5 client action RPC scopes", () => {
     }
     // The allowlist names only methods it is needed for.
     for (const method of UNGUARDED_QUERIES) {
-      assert.equal(J5_RPC_SCOPES[method], AuthOrchestrationOperateScope, method);
+      assert.include(
+        [AuthOrchestrationOperateScope, AuthSettingsWriteScope],
+        J5_RPC_SCOPES[method],
+        method,
+      );
     }
     // The preview only reads, so a read-only session sees the roster it cannot approve.
     assert.equal(J5_RPC_SCOPES[ACTIONS.previewCrewProposal], AuthOrchestrationReadScope);
@@ -387,7 +393,9 @@ describe("J5 client action RPC scopes", () => {
                 tag: "EnvironmentAuthorizationError",
                 requiredPermission: method.startsWith("j5.peers.")
                   ? AuthAccessWriteScope
-                  : AuthOrchestrationOperateScope,
+                  : method.startsWith("j5.playbooks.")
+                    ? AuthSettingsWriteScope
+                    : AuthOrchestrationOperateScope,
               },
           method,
         );

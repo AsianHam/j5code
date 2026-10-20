@@ -342,11 +342,14 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [J5_SKILL_LINK_WS_METHODS.create]: onProject("collaborator"),
   [J5_SKILL_LINK_WS_METHODS.deletePreview]: onProject("collaborator"),
   [J5_SKILL_LINK_WS_METHODS.delete]: onProject("collaborator"),
-  // A thread's Playbook runs are part of the thread. PENDING JACKSON'S RULE: the environment-wide
-  // library (#621) has no project to hold its other methods to, so every one of them, from
-  // reading the library to its change feed, is left out here and refused to a narrowed
-  // connection until he says who reaches it.
+  // The Playbook library is the server's (AC20): anyone who writes somewhere uses it, and a
+  // thread's runs are part of the thread. Every run on the server is a server-scope read.
+  // Changing the library, or reading its folders, is an Owner's, so those are left out.
+  [J5_PLAYBOOK_WS_METHODS.readLibrary]: collaborator,
+  [J5_PLAYBOOK_WS_METHODS.exportPlaybook]: collaborator,
+  [J5_PLAYBOOK_WS_METHODS.subscribeChanges]: collaborator,
   [J5_PLAYBOOK_WS_METHODS.listThreadRuns]: onThread("viewer"),
+  [J5_PLAYBOOK_WS_METHODS.listRuns]: serverHome,
 
   // The server's own surfaces (AC23), read by someone who holds a level at server scope.
   [J5_CLIENT_READ_WS_METHODS.readFleet]: serverHome,

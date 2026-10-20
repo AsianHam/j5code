@@ -2,8 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   AuthAccessWriteScope,
-  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
 } from "../auth.ts";
 import { CLIENT_GUARDED_RPC_SCOPES, clientRpcRequiredScopes } from "../clientRpcPermissions.ts";
 import { J5_CLIENT_ACTION_WS_METHODS } from "../j5.ts";
@@ -30,7 +30,7 @@ describe("J5 client RPC permissions", () => {
       expect(clientRpcRequiredScopes(method, undefined), method).toEqual([scope]);
     }
     expect(CLIENT_GUARDED_RPC_SCOPES[J5_PLAYBOOK_WS_METHODS.deletePlaybook]).toBe(
-      AuthOrchestrationOperateScope,
+      AuthSettingsWriteScope,
     );
     expect(CLIENT_GUARDED_RPC_SCOPES[J5_CLIENT_ACTION_WS_METHODS.addPeer]).toBe(
       AuthAccessWriteScope,

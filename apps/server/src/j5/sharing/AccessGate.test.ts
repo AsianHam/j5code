@@ -8,6 +8,7 @@ import {
 import {
   J5_ACCESS_WS_METHODS,
   J5_CLIENT_READ_WS_METHODS,
+  J5_PLAYBOOK_WS_METHODS,
   LEVEL_PERMISSIONS,
 } from "@t3tools/contracts/j5";
 import * as Deferred from "effect/Deferred";
@@ -393,6 +394,73 @@ it.layer(testLayer)("access gate", (it) => {
         /^refused/,
       );
     }),
+  );
+
+  it.effect(
+    "lets anyone who writes somewhere use the Playbook library, and only Owners change it",
+    () =>
+      Effect.gen(function* () {
+        const mine = yield* thread("thread:playbook-runs");
+        const playbook = { name: "release" };
+        const changes = [
+          [J5_PLAYBOOK_WS_METHODS.savePlaybook, { ...playbook, yaml: "title: Release" }],
+          [J5_PLAYBOOK_WS_METHODS.renamePlaybook, { ...playbook, title: "Ship" }],
+          [J5_PLAYBOOK_WS_METHODS.deletePlaybook, playbook],
+          [J5_PLAYBOOK_WS_METHODS.setFolders, { folders: [] }],
+          [J5_PLAYBOOK_WS_METHODS.readSources, {}],
+        ] as const;
+
+        const { session: writer } = yield* signed("Playbook writer", [
+          { scope: { kind: "thread", threadId: mine }, level: "collaborator" },
+        ]);
+        for (const [method, payload] of [
+          [J5_PLAYBOOK_WS_METHODS.readLibrary, {}],
+          [J5_PLAYBOOK_WS_METHODS.exportPlaybook, playbook],
+          [J5_PLAYBOOK_WS_METHODS.subscribeChanges, {}],
+          [J5_PLAYBOOK_WS_METHODS.listThreadRuns, { threadId: mine }],
+        ] as const) {
+          assert.strictEqual(yield* call(writer, method, payload), "ran", method);
+        }
+        // Every run on the server is the server's to show.
+        assert.match(yield* call(writer, J5_PLAYBOOK_WS_METHODS.listRuns, {}), /^refused/);
+        for (const [method, payload] of changes) {
+          assert.match(yield* call(writer, method, payload), /^refused/, method);
+        }
+
+        const { session: watcher } = yield* signed(
+          "Playbook watcher",
+          [{ scope: { kind: "thread", threadId: mine }, level: "viewer" }],
+          LEVEL_PERMISSIONS.viewer,
+        );
+        assert.strictEqual(
+          yield* call(watcher, J5_PLAYBOOK_WS_METHODS.listThreadRuns, { threadId: mine }),
+          "ran",
+        );
+        for (const method of [
+          J5_PLAYBOOK_WS_METHODS.readLibrary,
+          J5_PLAYBOOK_WS_METHODS.subscribeChanges,
+        ]) {
+          assert.match(yield* call(watcher, method, {}), /^refused/, method);
+        }
+
+        // A Collaborator at server scope is held to upstream's checks alone, which an Owner's
+        // permission settles.
+        const { session: wide } = yield* signed("Server collaborator", [
+          { scope: { kind: "server" }, level: "collaborator" },
+        ]);
+        assert.strictEqual(yield* call(wide, J5_PLAYBOOK_WS_METHODS.listRuns, {}), "ran");
+        for (const [method, payload] of changes) {
+          assert.match(yield* call(wide, method, payload), /^refused/, method);
+        }
+        const { session: owner } = yield* signed(
+          "Playbook owner",
+          [{ scope: { kind: "server" }, level: "owner" }],
+          LEVEL_PERMISSIONS.owner,
+        );
+        for (const [method, payload] of changes) {
+          assert.strictEqual(yield* call(owner, method, payload), "ran", method);
+        }
+      }),
   );
 
   it.effect("ends a feed already open when the person loses what it shows", () =>

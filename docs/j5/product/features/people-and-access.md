@@ -86,8 +86,10 @@ Upstream is built for one person who sees everything, and each of its surfaces w
 | Home scope  | What it adds                                                                                                                                |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Thread**  | The conversation and the agents beneath it, its diffs, its preview tabs, the pages its tools published, and the scheduled tasks bound to it |
-| **Project** | The project's artifacts, its Playbooks, the skills in its workspace, and its other scheduled tasks                                          |
+| **Project** | The project's artifacts, the skills in its workspace, and its other scheduled tasks                                                         |
 | **Server**  | The Fleet page, Personas, and the skills installed for the server's providers                                                               |
+
+Playbooks are the server's, and are not cut down to a scope: anyone who can write somewhere uses them, and a run starts only on a thread its person writes to. Only Owners change them.
 
 A Viewer never sees files, terminals, settings, providers or connections, at any scope: files and terminals reach the server's machine and its credentials, not just its work, and the rest configures the server. A person's inbox belongs to the person, not to a scope.
 
@@ -152,12 +154,12 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 17. When a person's level changes, each device paired as them is given a new session holding the new level's permissions in place of the old one, and reconnects once. A lowered level takes effect at once, on open connections too. A device that is offline gets its new session when it next connects, while its old one is within its lifetime; after that it is paired again by hand.
 18. A device paired from upstream's Connections settings with permissions chosen there keeps, in any new session, only the chosen permissions its person's level allows.
 19. A Collaborator at server scope adds projects; a Collaborator at project scope or wider renames and removes a project; editing a project's scripts follows upstream's permission for environment settings, so only an Owner does it.
-20. Installing a skill from a catalog is for Owners; seeing and using skills, Personas, Playbooks and scheduled tasks follows the scope they belong to.
+20. Installing a skill from a catalog is for Owners; seeing and using skills, Personas and scheduled tasks follows the scope they belong to. Playbooks are the server's: anyone who holds Collaborator at any scope sees them and has an agent run one on a thread they write to, and only an Owner saves, renames, deletes or chooses the folders of one.
 
 ### What each scope shows
 
 21. A thread's scope shows its conversation, the agents beneath it, its diffs, its preview tabs, the pages its tools published and the scheduled tasks bound to it. For now, a Viewer sees a thread's preview tabs listed and does not watch them.
-22. A project's scope adds every thread in the project, the project's artifacts, its Playbooks, the skills in its workspace and its other scheduled tasks; a person whose scope is a thread sees a link to an artifact and cannot open it.
+22. A project's scope adds every thread in the project, the project's artifacts, the skills in its workspace and its other scheduled tasks; a person whose scope is a thread sees a link to an artifact and cannot open it.
 23. The server's scope adds every project, the Fleet page, Personas and the skills installed for the server's providers.
 24. A Viewer is shown no files, file contents, terminals, settings, providers or connections at any scope.
 25. A person whose scope is narrower than the server is listed only the projects and threads their scope covers, and the server refuses their request for any other, whatever client sent it.
@@ -220,3 +222,4 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 - 2026-10-18 — someone who is not an Owner sees their own row on the People page, so they can leave a project or the server as AC48 says, and who reaches each project they reach, as AC26 says (AC27, AC28; provisional, for Jackson to confirm; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
 - 2026-10-18 — for now a Viewer sees a thread's preview tabs listed, and watching them is set aside (AC21; Jackson's 2026-10-11 deferral of [#540](https://github.com/Jacksondr5/j5code/issues/540); provisional, for Jackson to confirm).
 - 2026-10-18 — a bare `j5 auth pairing create` makes a link for a device the server asks about, since upstream's desktop app runs it over SSH; `j5 pair` still refuses (AC4; provisional, for Jackson to confirm; register D36).
+- 2026-10-19 — Playbooks are the server's: anyone who can write uses them, Owners change them (Jackson, after [#621](https://github.com/Jacksondr5/j5code/pull/621)).

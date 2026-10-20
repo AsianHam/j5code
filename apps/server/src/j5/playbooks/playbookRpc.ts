@@ -1,4 +1,4 @@
-import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, AuthSettingsWriteScope } from "@t3tools/contracts";
 import {
   J5_PLAYBOOK_WS_METHODS,
   type PlaybookDeleteRequest,
@@ -15,17 +15,21 @@ import * as Effect from "effect/Effect";
 import { playbookError, type PlaybookStore } from "./PlaybookStore.ts";
 import { makeWorkspacePlaybooks } from "./WorkspacePlaybooks.ts";
 
+/**
+ * The library is the server's: changing it, or reading which folders it draws on, is an Owner's
+ * (People and access); `settings:write` is a permission only an Owner's level holds.
+ */
 export const PLAYBOOK_RPC_SCOPES = {
-  [J5_PLAYBOOK_WS_METHODS.savePlaybook]: AuthOrchestrationOperateScope,
-  [J5_PLAYBOOK_WS_METHODS.setFolders]: AuthOrchestrationOperateScope,
-  [J5_PLAYBOOK_WS_METHODS.readSources]: AuthOrchestrationReadScope,
+  [J5_PLAYBOOK_WS_METHODS.savePlaybook]: AuthSettingsWriteScope,
+  [J5_PLAYBOOK_WS_METHODS.setFolders]: AuthSettingsWriteScope,
+  [J5_PLAYBOOK_WS_METHODS.readSources]: AuthSettingsWriteScope,
   [J5_PLAYBOOK_WS_METHODS.subscribeChanges]: AuthOrchestrationReadScope,
   [J5_PLAYBOOK_WS_METHODS.readLibrary]: AuthOrchestrationReadScope,
   [J5_PLAYBOOK_WS_METHODS.listThreadRuns]: AuthOrchestrationReadScope,
   [J5_PLAYBOOK_WS_METHODS.listRuns]: AuthOrchestrationReadScope,
   [J5_PLAYBOOK_WS_METHODS.exportPlaybook]: AuthOrchestrationReadScope,
-  [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: AuthOrchestrationOperateScope,
-  [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: AuthOrchestrationOperateScope,
+  [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: AuthSettingsWriteScope,
+  [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: AuthSettingsWriteScope,
 } as const;
 
 const failedSave = (error: PlaybookError) =>

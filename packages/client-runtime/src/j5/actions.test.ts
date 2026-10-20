@@ -4,6 +4,7 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   CLIENT_GUARDED_RPC_SCOPES,
   EnvironmentId,
   J5_AGENT_PERSONA_WS_METHODS,
@@ -114,7 +115,7 @@ describe("J5 action commands", () => {
   it.effect("reports availability per environment and refuses to send without the grant", () =>
     Effect.gen(function* () {
       const { atoms, calls, registry } = yield* fixture(() => Effect.succeed({ deleted: true }));
-      registry.set(sessions(work), AsyncResult.success(granting([AuthOrchestrationOperateScope])));
+      registry.set(sessions(work), AsyncResult.success(granting([AuthSettingsWriteScope])));
       registry.set(sessions(home), AsyncResult.success(granting([AuthOrchestrationReadScope])));
       const input = { projectId: ProjectId.make("project:1"), name: "release" };
       expect(registry.get(atoms.deletePlaybook.permissionAtom(work))).toBe(true);
@@ -124,11 +125,12 @@ describe("J5 action commands", () => {
       );
       expect(failureOf(refused)).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
-        requiredPermission: AuthOrchestrationOperateScope,
+        requiredPermission: AuthSettingsWriteScope,
       });
       expect(calls).toEqual([]);
 
-      // A sheet opened while the session could operate loses its action when the grant narrows.
+      // A sheet opened while the session could change the library loses its action when the
+      // grant narrows.
       registry.set(sessions(work), AsyncResult.success(granting([AuthOrchestrationReadScope])));
       expect(registry.get(atoms.deletePlaybook.permissionAtom(work))).toBe(false);
       const narrowed = yield* Effect.promise(() =>
@@ -159,12 +161,15 @@ describe("J5 action commands", () => {
         atoms.archiveCrew,
         atoms.respondCrewRuntimeRequest,
         atoms.answerHumanExchange,
-        atoms.deletePlaybook,
-        atoms.renamePlaybook,
         atoms.deleteArtifact,
       ]) {
         expect(command.requiredScopes()).toEqual([AuthOrchestrationOperateScope]);
         expect(registry.get(command.permissionAtom(work))).toBe(true);
+      }
+      // The Playbook library is changed by Owners only.
+      for (const command of [atoms.deletePlaybook, atoms.renamePlaybook]) {
+        expect(command.requiredScopes()).toEqual([AuthSettingsWriteScope]);
+        expect(registry.get(command.permissionAtom(work))).toBe(false);
       }
       registry.set(sessions(work), AsyncResult.success(granting([AuthOrchestrationReadScope])));
       expect(atoms.previewCrewProposal.requiredScopes()).toEqual([]);
