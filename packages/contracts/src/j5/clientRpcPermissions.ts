@@ -21,16 +21,17 @@ import { J5_SKILL_LINK_WS_METHODS } from "./skillLinks.ts";
  * again when it runs. Reads are left out: a guarded method cannot back a query.
  */
 export const J5_CLIENT_GUARDED_RPC_SCOPES = {
-  [J5_AGENT_PERSONA_WS_METHODS.importAgentPersonas]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.editImportedAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.setImportedAgentPersonaEnabled]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.removeImportedAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.removeSourceAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.removeAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.restoreSourceAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.createAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaLibraryFolders]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaEnabled]: AuthOrchestrationOperateScope,
+  // The Persona library, like the Playbook library below, is changed by Owners only.
+  [J5_AGENT_PERSONA_WS_METHODS.importAgentPersonas]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.editImportedAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.setImportedAgentPersonaEnabled]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.removeImportedAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.removeSourceAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.removeAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.restoreSourceAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.createAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaLibraryFolders]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaEnabled]: AuthSettingsWriteScope,
 
   [J5_SKILL_CATALOG_WS_METHODS.applySkillCatalogGroups]: AuthProvidersManageScope,
   [J5_SKILL_CATALOG_WS_METHODS.updateSkillCatalog]: AuthProvidersManageScope,

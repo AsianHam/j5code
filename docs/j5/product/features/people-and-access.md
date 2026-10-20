@@ -154,7 +154,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 17. When a person's level changes, each device paired as them is given a new session holding the new level's permissions in place of the old one, and reconnects once. A lowered level takes effect at once, on open connections too. A device that is offline gets its new session when it next connects, while its old one is within its lifetime; after that it is paired again by hand. For now, a device on the mobile app is paired again by hand after any change of its person's level.
 18. A device paired from upstream's Connections settings with permissions chosen there keeps, in any new session, only the chosen permissions its person's level allows.
 19. A Collaborator at server scope adds projects; a Collaborator at project scope or wider renames and removes a project; editing a project's scripts follows upstream's permission for environment settings, so only an Owner does it.
-20. Installing a skill from a catalog is for Owners; seeing and using skills, Personas and scheduled tasks follows the scope they belong to. Playbooks are the server's: anyone who holds Collaborator at any scope sees them and has an agent run one on a thread they write to, and only an Owner saves, renames, deletes or chooses the folders of one.
+20. Installing a skill from a catalog is for Owners; seeing and using skills, Personas and scheduled tasks follows the scope they belong to, and changing a Persona is an Owner's, as any setting is. Playbooks are the server's: anyone who holds Collaborator at any scope sees them and has an agent run one on a thread they write to, and only an Owner saves, renames, deletes or chooses the folders of one in the app. A Collaborator's agent can still save a Playbook through its own tool, as it can change files.
 
 ### What each scope shows
 
@@ -224,3 +224,4 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 - 2026-10-18 — a bare `j5 auth pairing create` makes a link for a device the server asks about, since upstream's desktop app runs it over SSH; `j5 pair` still refuses (AC4; confirmed by Jackson 2026-10-19; register D36).
 - 2026-10-19 — Playbooks are the server's: anyone who can write uses them, Owners change them (Jackson, after [#621](https://github.com/Jacksondr5/j5code/pull/621)).
 - 2026-10-19 — for now a device on the mobile app is paired again by hand after a change of level; its renewal joins sharing on mobile (AC17; Jackson, from Bryant's review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).
+- 2026-10-19 — changing a Persona is an Owner's, as any setting is, and a Collaborator's agent can still save a Playbook through its own tool, since sharing is trust (AC20; Jackson).

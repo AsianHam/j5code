@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   type AuthEnvironmentScope,
+  J5_AGENT_PERSONA_WS_METHODS,
   ORCHESTRATION_V2_WS_METHODS,
   RpcScopeAuthorization,
   WS_METHODS,
@@ -461,6 +462,32 @@ it.layer(testLayer)("access gate", (it) => {
           assert.strictEqual(yield* call(owner, method, payload), "ran", method);
         }
       }),
+  );
+
+  it.effect("leaves changing Personas to Owners, a server-scope Collaborator included", () =>
+    Effect.gen(function* () {
+      const { session: wide } = yield* signed("Persona collaborator", [
+        { scope: { kind: "server" }, level: "collaborator" },
+      ]);
+      const { session: owner } = yield* signed(
+        "Persona owner",
+        [{ scope: { kind: "server" }, level: "owner" }],
+        LEVEL_PERMISSIONS.owner,
+      );
+      for (const method of [
+        J5_AGENT_PERSONA_WS_METHODS.createAgentPersona,
+        J5_AGENT_PERSONA_WS_METHODS.importAgentPersonas,
+        J5_AGENT_PERSONA_WS_METHODS.readAgentPersonaImportFiles,
+        J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaEnabled,
+      ]) {
+        assert.match(yield* call(wide, method, {}), /^refused/, method);
+        assert.strictEqual(yield* call(owner, method, {}), "ran", method);
+      }
+      assert.strictEqual(
+        yield* call(wide, J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaCatalog, {}),
+        "ran",
+      );
+    }),
   );
 
   it.effect("ends a feed already open when the person loses what it shows", () =>
