@@ -166,8 +166,8 @@ function EnvironmentRuns({
 } & PlaybookRunCrewLinks) {
   const [offset, setOffset] = useState(0);
   // Every run on the server is the server's to list: someone who reaches less is not asked it.
-  const guest = useNarrowEnvironmentIds().has(environment.environmentId);
-  const unsupported = guest || j5LedgerSupported(environment.serverConfig) === false;
+  const narrow = useNarrowEnvironmentIds().has(environment.environmentId);
+  const unsupported = narrow || j5LedgerSupported(environment.serverConfig) === false;
   const query = useEnvironmentQuery(
     unsupported
       ? null
@@ -230,7 +230,7 @@ function EnvironmentRuns({
         </p>
       ) : unsupported ? (
         <p role="status" className="text-sm text-muted-foreground">
-          {guest
+          {narrow
             ? "This server's Playbook runs are not shared with you."
             : "This environment does not support the playbook overview yet."}
         </p>
