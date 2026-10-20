@@ -1,0 +1,98 @@
+---
+/**
+ * Shared servers: one server, three agents, and two people on its pier. The
+ * first is already talking to the middle boat; the second walks in, they ask
+ * different boats at the same time, then they swap boats so the routes cross.
+ * The boats never move. 16s loop, gated by the motion controller.
+ */
+import { WIDTH, HEIGHT, WATER, DECK, SAILOR_SCALE, wave, boat, sailor, arc } from "./horizonScene";
+
+// Inside the server's box, which ends at 472.
+const boats = [180, 275, 370].map((x) => boat(x, 1.5));
+const a = sailor(70);
+const b = sailor(125);
+const r = {
+  a1: arc(a.flag, boats[1]!.mast, 70), a1b: arc(boats[1]!.mast, a.flag, 70),
+  a2: arc(a.flag, boats[0]!.mast, 40), a2b: arc(boats[0]!.mast, a.flag, 40),
+  b2: arc(b.flag, boats[2]!.mast, 90), b2b: arc(boats[2]!.mast, b.flag, 90),
+  a3: arc(a.flag, boats[2]!.mast, 110), a3b: arc(boats[2]!.mast, a.flag, 110),
+  b3: arc(b.flag, boats[0]!.mast, 30), b3b: arc(boats[0]!.mast, b.flag, 30),
+};
+const dots: [name: string, kind: "ask" | "reply", d: string][] = [
+  ["e1", "ask", r.a1], ["e2", "reply", r.a1b],
+  ["e3", "ask", r.a2], ["e4", "ask", r.b2], ["e5", "reply", r.a2b], ["e6", "reply", r.b2b],
+  ["e7", "ask", r.a3], ["e8", "ask", r.b3], ["e9", "reply", r.a3b], ["e10", "reply", r.b3b],
+];
+---
+
+<svg class="scene" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Two people on one server talking to its three agents" data-motion>
+  <rect class="region" x="8" y="8" width={WIDTH - 16} height={HEIGHT - 14} rx="14" />
+  <text class="lbl" x="24" y="32">TEAM SERVER</text>
+  <path class="water" d={wave} />
+  {[20, 90, 150].map((x) => <line class="pile" x1={x} y1={DECK + 2} x2={x} y2={WATER + 5} />)}
+  <rect class="plank" x="-4" y={DECK - 2} width="164" height="5" rx="1" />
+  {[r.a1, r.a2, r.a3].map((d) => <path class="route" d={d} />)}
+  <g class="newcomer-routes">{[r.b2, r.b3].map((d) => <path class="route" d={d} />)}</g>
+  <g class="arrive" style={`--at: translate(${b.x}px, ${b.y}px) scale(${SAILOR_SCALE})`}><use class="agent flag fb" href="#j5-sailor" /></g>
+  <g transform={a.transform}><use class="agent flag fa" href="#j5-sailor" /></g>
+  {boats.map((bt, i) => (
+    <g transform={`translate(${bt.x} ${bt.y}) scale(${bt.scale})`}>
+      <g class="bob" style={`--bob-dur:${5.2 + i * 0.4}s;--bob-delay:${-i}s`}><use class:list={["agent flag", `fb${i}`]} href="#j5-boat" /></g>
+    </g>
+  ))}
+  {dots.map(([name, kind, d]) => <circle class:list={["dot", kind, name]} r="5" style={`offset-path: path("${d}")`} />)}
+</svg>
+
+<style>
+  /* Clipped, so the newcomer walks in from the paper's edge rather than across the card. */
+  .scene { display: block; width: 100%; height: auto; overflow: hidden; }
+  /* Chart-paper colors unless the stage sets the --scene-* tones for navy. */
+  .agent { --ink: var(--scene-ink, #12202f); --hull: var(--scene-hull, #fbf7ee); --sail-l: var(--scene-sail, #e5ddc8); --sail-r: var(--scene-hull, #fbf7ee); --pennant: var(--msg-reply); --pennant-fill: var(--pennant); }
+  .region { fill: var(--scene-region, var(--canvas-2)); fill-opacity: var(--scene-region-opacity, 0.55); stroke: var(--scene-region-line, var(--canvas-line)); }
+  .lbl { font: 600 12px var(--font-mono); letter-spacing: 0.08em; fill: var(--scene-label, var(--ink)); }
+  .water { fill: none; stroke: var(--sea); stroke-opacity: 0.45; stroke-width: 1.2; }
+  .route { fill: none; stroke: var(--scene-line, var(--ink-dim)); stroke-opacity: 0.45; stroke-width: 1.2; stroke-dasharray: 3 6; }
+  .plank { fill: var(--brass-deep); stroke: var(--scene-ink, var(--ink)); stroke-width: 1.2; }
+  .pile { stroke: var(--scene-pile, var(--ink)); stroke-width: 2.2; }
+
+  .dot { opacity: 0; offset-rotate: 0deg; }
+  .ask { fill: var(--msg-ask); }
+  .reply { fill: var(--msg-reply); }
+  .dot, .flag, .arrive, .newcomer-routes {
+    animation-duration: 16s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+    animation-play-state: var(--motion-state, paused);
+  }
+
+  /* The second person walks in along the pier at 20%. Stands in place under reduced motion. */
+  .arrive { transform: var(--at); animation-name: ss-arrive; animation-timing-function: linear; }
+  @keyframes ss-arrive { 0%, 19% { transform: translate(-40px, 130px) scale(1.7); } 29%, 100% { transform: var(--at); } }
+  .newcomer-routes { opacity: 0; animation-name: ss-newcomer-routes; }
+  @keyframes ss-newcomer-routes { 0%, 29% { opacity: 0; } 32%, 100% { opacity: 1; } }
+
+  .e1 { animation-name: ss-e1; } .e2 { animation-name: ss-e2; } .e3 { animation-name: ss-e3; } .e4 { animation-name: ss-e4; } .e5 { animation-name: ss-e5; }
+  .e6 { animation-name: ss-e6; } .e7 { animation-name: ss-e7; } .e8 { animation-name: ss-e8; } .e9 { animation-name: ss-e9; } .e10 { animation-name: ss-e10; }
+  @keyframes ss-e1 { 0%, 3% { offset-distance: 0%; opacity: 0; } 4% { opacity: 1; } 9% { opacity: 1; } 10%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes ss-e2 { 0%, 13% { offset-distance: 0%; opacity: 0; } 14% { opacity: 1; } 19% { opacity: 1; } 20%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes ss-e3 { 0%, 38% { offset-distance: 0%; opacity: 0; } 39% { opacity: 1; } 44% { opacity: 1; } 45%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes ss-e4 { 0%, 40% { offset-distance: 0%; opacity: 0; } 41% { opacity: 1; } 46% { opacity: 1; } 47%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes ss-e5 { 0%, 50% { offset-distance: 0%; opacity: 0; } 51% { opacity: 1; } 56% { opacity: 1; } 57%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes ss-e6 { 0%, 53% { offset-distance: 0%; opacity: 0; } 54% { opacity: 1; } 59% { opacity: 1; } 60%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes ss-e7 { 0%, 67% { offset-distance: 0%; opacity: 0; } 68% { opacity: 1; } 74% { opacity: 1; } 75%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes ss-e8 { 0%, 69% { offset-distance: 0%; opacity: 0; } 70% { opacity: 1; } 75% { opacity: 1; } 76%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes ss-e9 { 0%, 82% { offset-distance: 0%; opacity: 0; } 83% { opacity: 1; } 89% { opacity: 1; } 90%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes ss-e10 { 0%, 84% { offset-distance: 0%; opacity: 0; } 85% { opacity: 1; } 90% { opacity: 1; } 91%, 100% { offset-distance: 100%; opacity: 0; } }
+
+  .fa { animation-name: ss-fa; } .fb { animation-name: ss-fb; } .fb0 { animation-name: ss-fb0; } .fb1 { animation-name: ss-fb1; } .fb2 { animation-name: ss-fb2; }
+  @keyframes ss-fa { 0%, 2.5% { --pennant: var(--msg-reply); } 3.5%, 19.5% { --pennant: var(--msg-ask); } 20.5%, 37.5% { --pennant: var(--msg-receive); } 38.5%, 56.5% { --pennant: var(--msg-ask); } 57.5%, 66.5% { --pennant: var(--msg-receive); } 67.5%, 89.5% { --pennant: var(--msg-ask); } 90.5%, 100% { --pennant: var(--msg-receive); } }
+  @keyframes ss-fb { 0%, 39.5% { --pennant: var(--msg-reply); } 40.5%, 59.5% { --pennant: var(--msg-ask); } 60.5%, 68.5% { --pennant: var(--msg-receive); } 69.5%, 90.5% { --pennant: var(--msg-ask); } 91.5%, 100% { --pennant: var(--msg-receive); } }
+  @keyframes ss-fb1 { 0%, 9.5% { --pennant: var(--msg-reply); } 10.5%, 13.5% { --pennant: var(--msg-receive); } 14.5%, 100% { --pennant: var(--msg-reply); } }
+  @keyframes ss-fb0 { 0%, 44.5% { --pennant: var(--msg-reply); } 45.5%, 50.5% { --pennant: var(--msg-receive); } 51.5%, 75.5% { --pennant: var(--msg-reply); } 76.5%, 84.5% { --pennant: var(--msg-receive); } 85.5%, 100% { --pennant: var(--msg-reply); } }
+  @keyframes ss-fb2 { 0%, 46.5% { --pennant: var(--msg-reply); } 47.5%, 53.5% { --pennant: var(--msg-receive); } 54.5%, 74.5% { --pennant: var(--msg-reply); } 75.5%, 82.5% { --pennant: var(--msg-receive); } 83.5%, 100% { --pennant: var(--msg-reply); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dot, .flag, .arrive, .newcomer-routes { animation: none; }
+    .newcomer-routes { opacity: 1; }
+  }
+</style>

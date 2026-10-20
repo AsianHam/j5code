@@ -172,7 +172,9 @@ const personas = [
 
   /* Each persona owns a fifth of the 20s loop: sails in from the right over
      the first second, holds, sails off to the left over the last second. The
-     next one is already entering as this one leaves, like boats in a channel. */
+     next one is already entering as this one leaves, like boats in a channel.
+     The step back to the right edge is a step, not a tween: eased, the boat
+     would cross the stage half-faded in the frame between the two keyframes. */
   .ps-p {
     opacity: 0;
     animation-duration: 20s;
@@ -189,35 +191,35 @@ const personas = [
   @keyframes sail-1 {
     0% { opacity: 1; transform: translateX(240px); }
     4.5%, 15.5% { opacity: 1; transform: translateX(0); }
-    19.9% { opacity: 1; transform: translateX(-240px); }
+    19.9% { opacity: 1; transform: translateX(-240px); animation-timing-function: step-end; }
     20%, 100% { opacity: 0; transform: translateX(240px); }
   }
   @keyframes sail-2 {
     0%, 14.9% { opacity: 0; transform: translateX(240px); }
     15% { opacity: 1; transform: translateX(240px); }
     24.5%, 35.5% { opacity: 1; transform: translateX(0); }
-    39.9% { opacity: 1; transform: translateX(-240px); }
+    39.9% { opacity: 1; transform: translateX(-240px); animation-timing-function: step-end; }
     40%, 100% { opacity: 0; transform: translateX(240px); }
   }
   @keyframes sail-3 {
     0%, 34.9% { opacity: 0; transform: translateX(240px); }
     35% { opacity: 1; transform: translateX(240px); }
     44.5%, 55.5% { opacity: 1; transform: translateX(0); }
-    59.9% { opacity: 1; transform: translateX(-240px); }
+    59.9% { opacity: 1; transform: translateX(-240px); animation-timing-function: step-end; }
     60%, 100% { opacity: 0; transform: translateX(240px); }
   }
   @keyframes sail-4 {
     0%, 54.9% { opacity: 0; transform: translateX(240px); }
     55% { opacity: 1; transform: translateX(240px); }
     64.5%, 75.5% { opacity: 1; transform: translateX(0); }
-    79.9% { opacity: 1; transform: translateX(-240px); }
+    79.9% { opacity: 1; transform: translateX(-240px); animation-timing-function: step-end; }
     80%, 100% { opacity: 0; transform: translateX(240px); }
   }
   @keyframes sail-5 {
     0%, 74.9% { opacity: 0; transform: translateX(240px); }
     75% { opacity: 1; transform: translateX(240px); }
     84.5%, 95.5% { opacity: 1; transform: translateX(0); }
-    99.9% { opacity: 1; transform: translateX(-240px); }
+    99.9% { opacity: 1; transform: translateX(-240px); animation-timing-function: step-end; }
     100% { opacity: 0; transform: translateX(240px); }
   }
 

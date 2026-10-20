@@ -8,6 +8,8 @@ export const DIVERGENCES_URL = `${GITHUB_REPOSITORY_URL}/blob/j5/main/docs/j5/pr
 
 export const UPSTREAM_REPOSITORY_URL = "https://github.com/pingdotgg/t3code";
 export const UPSTREAM_MAIN_URL = `${UPSTREAM_REPOSITORY_URL}/tree/main`;
+/** Upstream's contribution guide, which says what they will take from outside. */
+export const UPSTREAM_CONTRIBUTING_URL = `${UPSTREAM_REPOSITORY_URL}/blob/main/CONTRIBUTING.md`;
 /** Upstream's orchestrator rewrite, the branch stable releases tracked until it merged to main. */
 export const UPSTREAM_V2_BRANCH = "t3code/codex-turn-mapping";
 export const UPSTREAM_V2_PR_URL = `${UPSTREAM_REPOSITORY_URL}/pull/2829`;

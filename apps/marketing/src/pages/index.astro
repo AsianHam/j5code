@@ -8,6 +8,9 @@ import PlaybookScene from "../components/PlaybookScene.astro";
 import HorizonScene from "../components/HorizonScene.astro";
 import HeroScene from "../components/HeroScene.astro";
 import PersonaScene from "../components/PersonaScene.astro";
+import PeeringCardScene from "../components/PeeringCardScene.astro";
+import SharedChatScene from "../components/SharedChatScene.astro";
+import SharedServerScene from "../components/SharedServerScene.astro";
 import { readForkFacts } from "../lib/forkFacts";
 import {
   DIVERGENCES_URL,
@@ -18,6 +21,7 @@ import {
   PRODUCT_DOCS_URL,
   STATUS_HELP,
   T3_SITE_URL,
+  UPSTREAM_CONTRIBUTING_URL,
   UPSTREAM_MAIN_URL,
   UPSTREAM_REPOSITORY_URL,
   UPSTREAM_V2_BRANCH,
@@ -211,6 +215,25 @@ const harnesses = [
           </div>
         </article>
 
+        <article class="feature feature--wide feature--peering">
+          <div class="feature-wide-copy">
+            <div class="feature-top">
+              <svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="7" height="14" rx="1.5"/><rect x="14.5" y="5" width="7" height="14" rx="1.5"/><path d="M9.5 10h5M9.5 14h5"/></svg>
+              <Pennant status="underway" />
+            </div>
+            <h3>Cross-server A2A</h3>
+            <p>
+              Peer the machines you run J5 on and agents message each other across them, no matter
+              where they are. Give each machine its own capabilities and let an agent borrow them
+              from anywhere.
+            </p>
+            <a class="feature-link" href="/peering">How peering works<span aria-hidden="true"> &rarr;</span></a>
+          </div>
+          <div class="feature-stage">
+            <PeeringCardScene /><PeeringCardScene compact />
+          </div>
+        </article>
+
         <article class="feature feature--wide feature--personas">
           <div class="feature-wide-copy">
             <div class="feature-top">
@@ -303,32 +326,57 @@ const harnesses = [
       <div class="section-head">
         <h2 class="display">On the Horizon</h2>
         <p>
-          These features will take your agents even further. Fleets communicating across servers,
-          multi-human collaboration, and better sharing.
+          These features will take your agents even further. Other people in front of your agents,
+          more platforms, and a fleet that's easier to keep in view.
         </p>
       </div>
 
       <div class="horizon-grid">
         <article class="horizon-col">
-          <Pennant status="horizon" />
-          <h3>Cross-server A2A</h3>
-          <p>Let agents message other agents, no matter where they are.</p>
-          <ul>
-            <li>Build on T3's server connections to peer servers together.</li>
-            <li>Never worry about putting an agent on the right machine, it can borrow capabilities from anywhere.</li>
-            <li>Messages in your inbox get pulled from everywhere.</li>
-          </ul>
+          <div class="horizon-copy">
+            <Pennant status="charted" />
+            <h3>Share chats with others</h3>
+            <p>Put someone in front of your agent instead of copying its answers to them.</p>
+            <ul>
+              <li>Share links can be opened in the browser. Nothing to install.</li>
+              <li>Let them talk to your agent, or just see what the agent is saying.</li>
+            </ul>
+          </div>
+          <div class="horizon-stage horizon-stage--dark"><SharedChatScene /></div>
         </article>
 
         <article class="horizon-col">
-          <Pennant status="charted" />
-          <h3>Cross-person A2A</h3>
-          <p>Remove the meat proxy, let your agents talk to other people's agents.</p>
-          <ul>
-            <li>Share agents with others, securely.</li>
-            <li>Collaborate with agents and people in the same place, where the agents can get work done.</li>
-            <li>Hand off an agent and their work to someone else.</li>
-          </ul>
+          <div class="horizon-copy">
+            <Pennant status="charted" />
+            <h3>Collaborate with your whole team</h3>
+            <p>Share agents on a single server or project.</p>
+            <ul>
+              <li>Agents always know who's talking.</li>
+              <li>Tools to help you manage agents in a shared environment.</li>
+            </ul>
+          </div>
+          <div class="horizon-stage horizon-stage--dark"><SharedServerScene /></div>
+        </article>
+
+      </div>
+
+      <div class="horizon-grid horizon-grid--minor">
+        <article class="horizon-col horizon-col--plain">
+          <div class="feature-top">
+            <svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5l8-1.2v7.2H3zM12.5 4l8.5-1.3v8.8h-8.5zM3 12.5h8v7.2l-8-1.2zM12.5 12.5H21v8.8L12.5 20z"/></svg>
+            <Pennant status="horizon" />
+          </div>
+          <h3>Windows support</h3>
+          <p>Run J5 clients on Windows.</p>
+        </article>
+
+        <article class="horizon-col horizon-col--plain">
+          <div class="feature-top">
+            <svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 4V1.5M12 20v2.5M4 12H1.5M20 12h2.5M6.3 6.3L4.6 4.6M17.7 17.7l1.7 1.7M6.3 17.7l-1.7 1.7M17.7 6.3l1.7-1.7M12 9V4M12 15v5M9 12H4M15 12h5"/></svg>
+            <Pennant status="horizon" />
+          </div>
+          <h3>Better fleet management UX</h3>
+          <p>Keep the right agents in front of you, while letting the background ones reach you as you need them.</p>
         </article>
       </div>
     </div>
@@ -369,9 +417,9 @@ const harnesses = [
         <div class="qa-item">
           <dt>Will you be contributing back to T3 Code?</dt>
           <dd>
-            If we find any bugs or small items that match their contribution guide, we will gladly
-            give back. But, they've stated they're not interested in new features, so we'll not be
-            trying to get those back in.
+            Gladly, following their <a href={UPSTREAM_CONTRIBUTING_URL} target="_blank" rel="noopener noreferrer">contribution guide</a>.
+            In practice that means bug fixes: they've said they aren't taking new features from
+            outside right now, so we don't try to send ours upstream.
           </dd>
         </div>
       </dl>
@@ -908,6 +956,26 @@ const harnesses = [
     min-width: 0;
   }
 
+  /* The peering scene carries two labelled devices, so it gets more of the card. */
+  .feature--peering {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  }
+
+  .feature-link {
+    display: inline-block;
+    margin-top: 14px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fg);
+    text-decoration: underline;
+    text-decoration-color: rgba(18, 32, 47, 0.3);
+    text-underline-offset: 3px;
+  }
+
+  .feature-link:hover {
+    text-decoration-color: currentColor;
+  }
+
   .feature-grid--minor {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     margin-top: 18px;
@@ -1039,12 +1107,20 @@ const harnesses = [
 
   .horizon-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 28px;
-    max-width: 900px;
+    gap: 18px;
   }
 
+  .horizon-grid--minor {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 18px;
+  }
+
+  /* Copy beside its scene, as the fleet section's wide cards. */
   .horizon-col {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    gap: 32px;
+    align-items: center;
     padding: 26px 24px;
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -1053,6 +1129,49 @@ const harnesses = [
     --pennant-charted: var(--brass);
   }
 
+  /* A slip of chart paper on the water, so the boats keep their paper colors. */
+  .horizon-stage {
+    min-width: 0;
+    padding: 14px 18px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--canvas);
+  }
+
+  /* The same scene on the water itself. Boats and sailors keep their ink outlines, which is
+     what makes them read as paper cut-outs on navy; only the water-side marks go foam. */
+  .horizon-stage--dark {
+    padding: 0;
+    background: none;
+    --scene-label: #dfe9ee;
+    --scene-pile: var(--foam-dim);
+    --scene-line: var(--foam-dim);
+    --scene-region: #dfe9ee;
+    --scene-region-opacity: 0.05;
+    --scene-region-line: var(--line-strong);
+  }
+
+  /* No scene: laid out as the fleet section's minor cards. */
+  .horizon-col--plain {
+    display: block;
+    padding: 24px;
+  }
+
+  .horizon-col--plain .glyph {
+    stroke: var(--foam-muted);
+  }
+
+  .horizon-col--plain h3 {
+    font-size: 20px;
+    margin: 0 0 10px;
+  }
+
+  .horizon-col--plain p {
+    color: var(--foam-muted);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+
   .horizon-col h3 {
     font-family: var(--font-display);
     font-size: 24px;
@@ -1060,13 +1179,14 @@ const harnesses = [
     margin: 14px 0 8px;
   }
 
-  .horizon-col > p {
+  .horizon-copy > p {
     color: var(--foam-muted);
     font-size: 15px;
-    margin-bottom: 14px;
+    line-height: 1.55;
   }
 
   .horizon-col ul {
+    margin-top: 22px;
     list-style: none;
     display: flex;
     flex-direction: column;
@@ -1132,6 +1252,13 @@ const harnesses = [
     color: var(--foam-muted);
     font-size: 15px;
     line-height: 1.6;
+  }
+
+  .qa-item dd a {
+    color: var(--fg);
+    text-decoration: underline;
+    text-decoration-color: rgba(223, 233, 238, 0.3);
+    text-underline-offset: 3px;
   }
 
   /* ── CTA ──────────────────────────────────────────────────── */
@@ -1221,7 +1348,8 @@ const harnesses = [
     .feature-grid,
     .feature-grid--minor,
     .feature--wide,
-    .horizon-grid,
+    .horizon-col,
+    .horizon-grid--minor,
     .qa {
       grid-template-columns: 1fr;
     }

@@ -1,0 +1,88 @@
+---
+/**
+ * Share chats with others: one agent and a person on a dock, talking. A second
+ * dock grows in across the water with another person on it, who talks to the
+ * same agent. Each reply goes back to the one who asked. The second dock goes
+ * before the loop restarts. 12s loop, gated by the motion controller; under
+ * reduced motion both docks stand.
+ */
+import { WIDTH, HEIGHT, WATER, DECK, wave, boat, sailor, arc } from "./horizonScene";
+
+const agent = boat(186, 1.8);
+const a = sailor(60);
+const b = sailor(420, true);
+const askA = arc(a.flag, agent.mast, 50);
+const replyA = arc(agent.mast, a.flag, 50);
+const askB = arc(b.flag, agent.mast, 50);
+const replyB = arc(agent.mast, b.flag, 50);
+const dock = (x: number) => ({ plank: { x, width: 90 }, piles: [x + 10, x + 80] });
+const dockA = dock(16);
+const dockB = dock(374);
+---
+
+<svg class="scene" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="Two people, each on their own dock, talking to one agent" data-motion>
+  <path class="water" d={wave} />
+  {dockA.piles.map((x) => <line class="pile" x1={x} y1={DECK + 2} x2={x} y2={WATER + 5} />)}
+  <rect class="plank" x={dockA.plank.x} y={DECK - 2} width={dockA.plank.width} height="5" rx="1" />
+  <path class="route" d={askA} />
+  <path class="route guest-route" d={askB} />
+  <g class="guest">
+    {dockB.piles.map((x) => <line class="pile" x1={x} y1={DECK + 2} x2={x} y2={WATER + 5} />)}
+    <rect class="plank" x={dockB.plank.x} y={DECK - 2} width={dockB.plank.width} height="5" rx="1" />
+    <g transform={b.transform}><use class="agent flag fb" href="#j5-sailor" /></g>
+  </g>
+  <g transform={a.transform}><use class="agent flag fa" href="#j5-sailor" /></g>
+  <g transform={`translate(${agent.x} ${agent.y}) scale(${agent.scale})`}><g class="bob b1"><use class="agent flag fboat" href="#j5-boat" /></g></g>
+  <circle class="dot ask d1" r="5.5" style={`offset-path: path("${askA}")`} />
+  <circle class="dot reply d2" r="5.5" style={`offset-path: path("${replyA}")`} />
+  <circle class="dot ask d3" r="5.5" style={`offset-path: path("${askB}")`} />
+  <circle class="dot reply d4" r="5.5" style={`offset-path: path("${replyB}")`} />
+  <circle class="dot ask d5" r="5.5" style={`offset-path: path("${askA}")`} />
+  <circle class="dot reply d6" r="5.5" style={`offset-path: path("${replyA}")`} />
+</svg>
+
+<style>
+  .scene { display: block; width: 100%; height: auto; overflow: visible; }
+  /* Chart-paper colors unless the stage sets the --scene-* tones for navy. */
+  .agent { --ink: var(--scene-ink, #12202f); --hull: var(--scene-hull, #fbf7ee); --sail-l: var(--scene-sail, #e5ddc8); --sail-r: var(--scene-hull, #fbf7ee); --pennant: var(--msg-reply); --pennant-fill: var(--pennant); }
+  .b1 { --bob-dur: 5.4s; --bob-delay: -1s; }
+  .water { fill: none; stroke: var(--sea); stroke-opacity: 0.45; stroke-width: 1.2; }
+  .route { fill: none; stroke: var(--scene-line, var(--ink-dim)); stroke-opacity: 0.45; stroke-width: 1.2; stroke-dasharray: 3 6; }
+  .plank { fill: var(--brass-deep); stroke: var(--scene-ink, var(--ink)); stroke-width: 1.2; }
+  .pile { stroke: var(--scene-pile, var(--ink)); stroke-width: 2.2; }
+
+  .dot { opacity: 0; offset-rotate: 0deg; }
+  .ask { fill: var(--msg-ask); }
+  .reply { fill: var(--msg-reply); }
+  .dot, .flag, .guest, .guest-route {
+    animation-duration: 12s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+    animation-play-state: var(--motion-state, paused);
+  }
+
+  /* A asks 3-9, reply 15-21; the guest's dock grows in 26-32; the guest asks 38-44, reply 50-56;
+     A asks again 64-70, reply 76-82; the guest's dock goes 94-98. */
+  .guest { transform-box: fill-box; transform-origin: 50% 100%; animation-name: sc-guest; animation-timing-function: cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+  @keyframes sc-guest { 0%, 26% { transform: scale(0); } 32%, 94% { transform: scale(1); } 98%, 100% { transform: scale(0); } }
+  .guest-route { opacity: 0; animation-name: sc-guest-route; }
+  @keyframes sc-guest-route { 0%, 31% { opacity: 0; } 34%, 94% { opacity: 1; } 97%, 100% { opacity: 0; } }
+
+  .d1 { animation-name: sc-d1; } .d2 { animation-name: sc-d2; } .d3 { animation-name: sc-d3; } .d4 { animation-name: sc-d4; } .d5 { animation-name: sc-d5; } .d6 { animation-name: sc-d6; }
+  @keyframes sc-d1 { 0%, 2% { offset-distance: 0%; opacity: 0; } 3% { opacity: 1; } 8% { opacity: 1; } 9%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes sc-d2 { 0%, 14% { offset-distance: 0%; opacity: 0; } 15% { opacity: 1; } 20% { opacity: 1; } 21%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes sc-d3 { 0%, 37% { offset-distance: 0%; opacity: 0; } 38% { opacity: 1; } 43% { opacity: 1; } 44%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes sc-d4 { 0%, 49% { offset-distance: 0%; opacity: 0; } 50% { opacity: 1; } 55% { opacity: 1; } 56%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes sc-d5 { 0%, 63% { offset-distance: 0%; opacity: 0; } 64% { opacity: 1; } 69% { opacity: 1; } 70%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes sc-d6 { 0%, 75% { offset-distance: 0%; opacity: 0; } 76% { opacity: 1; } 81% { opacity: 1; } 82%, 100% { offset-distance: 100%; opacity: 0; } }
+
+  .fa { animation-name: sc-fa; } .fb { animation-name: sc-fb; } .fboat { animation-name: sc-fboat; }
+  @keyframes sc-fa { 0%, 2.5% { --pennant: var(--msg-reply); } 3.5%, 20.5% { --pennant: var(--msg-ask); } 21.5%, 63.5% { --pennant: var(--msg-receive); } 64.5%, 81.5% { --pennant: var(--msg-ask); } 82.5%, 100% { --pennant: var(--msg-receive); } }
+  @keyframes sc-fb { 0%, 37.5% { --pennant: var(--msg-reply); } 38.5%, 55.5% { --pennant: var(--msg-ask); } 56.5%, 100% { --pennant: var(--msg-receive); } }
+  @keyframes sc-fboat { 0%, 8.5% { --pennant: var(--msg-reply); } 9.5%, 14.5% { --pennant: var(--msg-receive); } 15.5%, 43.5% { --pennant: var(--msg-reply); } 44.5%, 49.5% { --pennant: var(--msg-receive); } 50.5%, 69.5% { --pennant: var(--msg-reply); } 70.5%, 75.5% { --pennant: var(--msg-receive); } 76.5%, 100% { --pennant: var(--msg-reply); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dot, .flag, .guest, .guest-route { animation: none; }
+    .guest-route { opacity: 1; }
+  }
+</style>

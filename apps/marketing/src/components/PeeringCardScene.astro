@@ -1,0 +1,128 @@
+---
+/**
+ * The homepage's cross-server card: the peering page's direct scene, cut down
+ * to its story. Two devices, an agent on each, and one dashed route between
+ * their masts, drawn as the A2A card above draws its routes. The VM asks and
+ * the device replies, then the other way round, on the peering page's 8s
+ * clock with its flag colors. The compact layout, for phones, is the same
+ * scene at half the width so everything reads larger: the page renders both
+ * and shows one. Gated by the motion controller through --motion-state.
+ */
+import { routePath } from "../lib/route";
+
+interface Props {
+  compact?: boolean;
+}
+
+const { compact = false } = Astro.props;
+
+const g = compact
+  ? { width: 400, height: 176, regions: [[6, 190], [204, 190]], scale: 1.3, water: 146, lift: -6, labelY: 32 }
+  : { width: 560, height: 200, regions: [[8, 264], [288, 264]], scale: 1.7, water: 170, lift: -10, labelY: 32 };
+
+const [left, right] = g.regions as [[number, number], [number, number]];
+const rightEdge = right[0] + right[1];
+// Stops at the frame's edge: the card clips nothing, so a longer wave would show.
+const wave = (y: number) =>
+  `M0 ${y} Q 40 ${y - 6} 80 ${y}` + Array.from({ length: (g.width - 160) / 80 + 1 }, (_, i) => ` T ${160 + i * 80} ${y}`).join("");
+
+// Each boat (60 wide, 44 tall in the sprite) sits centred in its device, hull on the water.
+const boatX = (region: [number, number]) => region[0] + region[1] / 2 - 30 * g.scale;
+const vmX = boatX(left);
+const deviceX = boatX(right);
+const boatY = g.water - 44 * g.scale;
+
+// Flag tips: messages leave from and land on them.
+const mastY = boatY - 2;
+const vm = vmX + 32 * g.scale;
+const device = deviceX + 32 * g.scale;
+const control: [number, number] = [(vm + device) / 2, g.lift];
+const out = routePath({ from: [vm, mastY], control, to: [device, mastY] });
+const back = routePath({ from: [device, mastY], control, to: [vm, mastY] });
+---
+
+<svg class:list={["scene", compact ? "compact" : "wide"]} viewBox={`0 0 ${g.width} ${g.height}`} role="img" aria-label="Agents on two devices messaging each other" data-motion>
+  <rect class="region" x={left[0]} y="8" width={left[1]} height={g.height - 14} rx="14" />
+  <rect class="region" x={right[0]} y="8" width={right[1]} height={g.height - 14} rx="14" />
+  <text class="lbl" x={left[0] + 16} y={g.labelY}>CLOUD VM</text>
+  <text class="lbl" x={rightEdge - 16} y={g.labelY} text-anchor="end">LOCAL SERVER</text>
+  <path class="water" d={wave(g.water)} />
+  <path class="route" d={out} />
+
+  <g transform={`translate(${vmX} ${boatY}) scale(${g.scale})`}>
+    <g class="bob b1"><use class="agent flag fS" href="#j5-boat" /></g>
+  </g>
+  <g transform={`translate(${deviceX} ${boatY}) scale(${g.scale})`}>
+    <g class="bob b3"><use class="agent flag fL" href="#j5-boat" /></g>
+  </g>
+
+  <circle class="dot ask h1" r="5.5" style={`offset-path: path("${out}")`} />
+  <circle class="dot reply h2" r="5.5" style={`offset-path: path("${back}")`} />
+  <circle class="dot ask h3" r="5.5" style={`offset-path: path("${back}")`} />
+  <circle class="dot reply h4" r="5.5" style={`offset-path: path("${out}")`} />
+</svg>
+
+<style>
+  /* Capped so the boats stay the size of the personas card's. */
+  .scene {
+    display: block;
+    width: 100%;
+    max-width: 560px;
+    height: auto;
+    margin: 0 auto;
+    overflow: visible;
+  }
+
+  /* Boat colors for chart paper, as Boat.astro's light tone. */
+  .agent {
+    --ink: #12202f;
+    --hull: #fbf7ee;
+    --sail-l: #e5ddc8;
+    --sail-r: #fbf7ee;
+    --pennant: var(--msg-reply);
+    --pennant-fill: var(--pennant);
+  }
+
+  .b1 { --bob-dur: 5.2s; --bob-delay: -1s; }
+  .b3 { --bob-dur: 5.8s; --bob-delay: -3s; }
+
+  .region { fill: var(--canvas-2); fill-opacity: 0.55; stroke: var(--canvas-line); }
+  .lbl { font: 600 12px var(--font-mono); letter-spacing: 0.08em; fill: var(--ink); }
+  .water { fill: none; stroke: var(--sea); stroke-opacity: 0.45; stroke-width: 1.2; }
+  .route { fill: none; stroke: var(--ink-dim); stroke-opacity: 0.45; stroke-width: 1.2; stroke-dasharray: 3 6; }
+
+  .compact { display: none; }
+  .compact .lbl { font-size: 13px; }
+  @media (max-width: 600px) {
+    .wide { display: none; }
+    .compact { display: block; }
+  }
+
+  .dot { opacity: 0; offset-rotate: 0deg; }
+  .dot, .flag {
+    animation-duration: 8s;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+    animation-play-state: var(--motion-state, paused);
+  }
+  .ask { fill: var(--msg-ask); }
+  .reply { fill: var(--msg-reply); }
+
+  .h1 { animation-name: h1; }
+  .h2 { animation-name: h2; }
+  .h3 { animation-name: h3; }
+  .h4 { animation-name: h4; }
+  @keyframes h1 { 0%, 4% { offset-distance: 0%; opacity: 0; } 5% { opacity: 1; } 13% { opacity: 1; } 14%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes h2 { 0%, 20% { offset-distance: 0%; opacity: 0; } 21% { opacity: 1; } 29% { opacity: 1; } 30%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes h3 { 0%, 50% { offset-distance: 0%; opacity: 0; } 51% { opacity: 1; } 59% { opacity: 1; } 60%, 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes h4 { 0%, 66% { offset-distance: 0%; opacity: 0; } 67% { opacity: 1; } 75% { opacity: 1; } 76%, 100% { offset-distance: 100%; opacity: 0; } }
+
+  .fS { --pennant: var(--msg-reply); animation-name: fS; }
+  .fL { --pennant: var(--msg-receive); animation-name: fL; }
+  @keyframes fS { 0%, 3.5% { --pennant: var(--msg-reply); } 4.5%, 29.5% { --pennant: var(--msg-ask); } 30.5%, 65.5% { --pennant: var(--msg-receive); } 66.5%, 100% { --pennant: var(--msg-reply); } }
+  @keyframes fL { 0%, 19.5% { --pennant: var(--msg-receive); } 20.5%, 49.5% { --pennant: var(--msg-reply); } 50.5%, 75.5% { --pennant: var(--msg-ask); } 76.5%, 100% { --pennant: var(--msg-receive); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dot, .flag { animation: none; }
+  }
+</style>
