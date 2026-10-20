@@ -1,10 +1,11 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useLocation } from "@tanstack/react-router";
 import { ScrollTextIcon } from "lucide-react";
 import { type ComponentType, type ReactNode, useMemo } from "react";
 
-import { SettingsPageContainer } from "../../components/settings/settingsLayout";
 import type { SettingsPath } from "../../components/settings/settingsSearch";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../../components/ui/empty";
+import { WorkspacePageContainer } from "../../components/WorkspacePageContainer";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useOwnedEnvironmentIds, useOwnerSomewhere, useWritesSomewhere } from "./access";
 import {
@@ -67,21 +68,37 @@ export function SettingsPageGate({
   return <OwnerOnlySettingsNotice />;
 }
 
+// Drawn as Settings draws a page, without upstream's "Applying settings for…" line: the person
+// owns none of the servers that line would name.
 function OwnerOnlySettingsNotice() {
+  // A link names the server it is for, such as a thread's "Manage scheduled tasks".
+  const linked = useLocation({
+    select: (location) => {
+      const search = location.search as Record<string, unknown>;
+      const id = search.environmentId ?? search.machine;
+      return typeof id === "string" ? (id as EnvironmentId) : null;
+    },
+  });
+  const linkedServer = useEnvironment(linked);
   const primary = useEnvironment(usePrimaryEnvironmentId());
   const notice = ownerOnlySettingsNotice({
-    serverName: primary?.label ?? null,
+    serverName: linkedServer?.label ?? primary?.label ?? null,
     writesSomewhere: useWritesSomewhere(),
   });
   return (
-    <SettingsPageContainer>
-      <Empty>
-        <EmptyHeader>
-          <EmptyTitle>{notice.title}</EmptyTitle>
-          <EmptyDescription>{notice.body}</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    </SettingsPageContainer>
+    <div
+      className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto"
+      data-settings-page-scroll
+    >
+      <WorkspacePageContainer width="readable">
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>{notice.title}</EmptyTitle>
+            <EmptyDescription>{notice.body}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </WorkspacePageContainer>
+    </div>
   );
 }
 
