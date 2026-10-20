@@ -61,7 +61,14 @@ const reduceEnvironment = (
   ...(environment.orchestrationProtocolVersion === undefined
     ? {}
     : { orchestrationProtocolVersion: environment.orchestrationProtocolVersion }),
-  capabilities: { repositoryIdentity: false },
+  // That the server keeps J5's ledger says nothing of the host, and without it a client asks a
+  // Viewer nothing J5 reads by project or thread: a thread's Playbook runs, the inbox, Crew asks.
+  capabilities: {
+    repositoryIdentity: false,
+    ...(environment.capabilities.j5ProjectLedger === undefined
+      ? {}
+      : { j5ProjectLedger: environment.capabilities.j5ProjectLedger }),
+  },
 });
 
 /** What the read requests a Viewer may make can do; they say nothing about the host. */
