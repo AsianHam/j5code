@@ -1012,6 +1012,24 @@ it.effect("an explicit shared workspace keeps the caller's checkout and starts t
   }),
 );
 
+it.effect("records no replay binding for a spawn without client_request_id", () =>
+  Effect.gen(function* () {
+    const unused = Effect.die(new Error("a keyless spawn has no retry key to bind"));
+    const replay = Layer.succeed(
+      RequestReplayService,
+      RequestReplayService.of({ check: () => unused, bind: () => unused }),
+    );
+    const { layer, call } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      replay,
+    });
+    const spawned = yield* call({ ...spawnArgs, workspace: { type: "shared" } }).pipe(
+      Effect.provide(layer),
+    );
+    assert.isFalse(spawned.isFailure);
+  }),
+);
+
 it.effect("binds a client_request_id to its first workspace type, across a restart", () =>
   Effect.gen(function* () {
     const replayContext = yield* Layer.build(requestReplayLayer.pipe(Layer.provide(layerMemory)));

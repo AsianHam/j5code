@@ -49,7 +49,8 @@ it.effect("persists the original request across database reopen and refuses chan
           readonly count: number;
         }>`SELECT COUNT(*) AS count FROM j5_a2a_request_replay`;
         assert.equal(rows[0]?.count, 1);
-        assert.isFalse(yield* replay.check("new-key", {}));
+        yield* replay.check("new-key", {});
+        assert.isTrue(Result.isFailure(yield* replay.check(first.id, {}).pipe(Effect.result)));
         const legacy = yield* replay
           .bind({ ...first, id: "legacy", legacy: true })
           .pipe(Effect.result);

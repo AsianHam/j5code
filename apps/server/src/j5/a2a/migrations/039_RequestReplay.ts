@@ -8,7 +8,8 @@ export default Effect.gen(function* () {
     CREATE TABLE j5_a2a_request_replay (
       id TEXT PRIMARY KEY NOT NULL,
       target TEXT NOT NULL,
-      request_digest TEXT NOT NULL
+      request_digest TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     )
   `;
 });

@@ -28,7 +28,10 @@ import {
 } from "../../../mcp/threadAccess.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { claimPendingAttachments } from "../../../orchestration-v2/AttachmentClaims.ts";
-import { exceededDispatchModeLimit } from "../../../orchestration-v2/DispatchModeLimit.ts";
+import {
+  type DispatchModes,
+  exceededDispatchModeLimit,
+} from "../../../orchestration-v2/DispatchModeLimit.ts";
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import {
   ThreadManagementService,
@@ -1035,7 +1038,10 @@ const handlers = {
       const replayService = yield* RequestReplayService;
       const replayFailure = (error: { readonly message: string }) =>
         stateError(error.message, "Inspect the original target before starting new work.");
-      yield* replayService.check(threadId, request).pipe(Effect.mapError(replayFailure));
+      // A generated key can never be retried, so it has nothing to bind.
+      const replayable = input.client_request_id !== undefined;
+      if (replayable)
+        yield* replayService.check(threadId, request).pipe(Effect.mapError(replayFailure));
       const selected = existing?.modelSelection ?? (yield* selectSpawnModel(scope, input));
       const personaId = input.persona;
       const persona =
@@ -1086,16 +1092,22 @@ const handlers = {
       // A retry finishes the agent its first attempt created, in the modes it was created with.
       // A caller's modes can be narrowed within one provider session, so those are checked
       // against what the caller may touch now. A persona's agent runs under its own policy,
-      // except for an outside agent, whose approved level caps every agent it starts.
-      if (existing !== null && (personaId === undefined || outside !== undefined)) {
-        const exceeded = exceededDispatchModeLimit(limits, existing);
-        if (exceeded !== undefined) {
-          return yield* stateError(
-            `client_request_id ${requestKey} already created an agent whose ${exceeded === "runtime" ? "permission" : "interaction"} mode is broader than yours is now.`,
-            "Ask the user to start that agent, or spawn a new one with a fresh client_request_id.",
-          );
-        }
-      }
+      // except for an outside agent, whose approved level caps every agent it starts. This early
+      // check is the only one an unbound legacy agent reaches, since bind refuses it before the
+      // start; the start checks again for an agent a concurrent attempt created since.
+      const replayExceedsCaller = (caller: DispatchModes, thread: DispatchModes) => {
+        if (personaId !== undefined && outside === undefined) return Effect.void;
+        const exceeded = exceededDispatchModeLimit(caller, thread);
+        return exceeded === undefined
+          ? Effect.void
+          : Effect.fail(
+              stateError(
+                `Peer Agent ${participantIdForThread(threadId)} already exists with a ${exceeded === "runtime" ? "permission" : "interaction"} mode broader than yours is now.`,
+                "Ask the user to start that agent, or spawn a new one with a fresh client_request_id.",
+              ),
+            );
+      };
+      if (existing !== null) yield* replayExceedsCaller(limits, existing);
 
       // The project the agent joins: the caller's, another one, or upstream's "No project".
       if (input.scratch === true && input.project_id !== undefined) {
@@ -1193,14 +1205,15 @@ const handlers = {
           stateError(`Peer Agent was not created: ${error.detail}`, error.nextStep),
         ),
       );
-      yield* replayService
-        .bind({
-          id: threadId,
-          target: `Peer Agent ${participantIdForThread(threadId)} on thread ${threadId}`,
-          request,
-          legacy: existing !== null,
-        })
-        .pipe(Effect.mapError(replayFailure));
+      if (replayable)
+        yield* replayService
+          .bind({
+            id: threadId,
+            target: `Peer Agent ${participantIdForThread(threadId)} on thread ${threadId}`,
+            request,
+            legacy: existing !== null,
+          })
+          .pipe(Effect.mapError(replayFailure));
       return yield* spawnWorkspace
         .withSpawnStart(
           { stableInput, threadId, workspace },
@@ -1214,14 +1227,7 @@ const handlers = {
             const current = yield* threadManagement
               .getThreadShell(threadId)
               .pipe(Effect.mapError(spawnReadFailure));
-            if (current !== null && (personaId === undefined || outside !== undefined)) {
-              const exceeded = exceededDispatchModeLimit((yield* loadCaller()).limits, current);
-              if (exceeded !== undefined)
-                return yield* stateError(
-                  `Peer Agent ${participantIdForThread(threadId)} has modes broader than yours is now.`,
-                  "Ask the user to start that agent, or use a fresh client_request_id.",
-                );
-            }
+            if (current !== null) yield* replayExceedsCaller((yield* loadCaller()).limits, current);
             const sharedCheckout =
               current !== null
                 ? current
