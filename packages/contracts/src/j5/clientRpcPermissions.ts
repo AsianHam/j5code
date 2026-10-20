@@ -1,9 +1,16 @@
-import { AuthAccessWriteScope, AuthOrchestrationOperateScope } from "../auth.ts";
+import {
+  AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
+  AuthSettingsWriteScope,
+} from "../auth.ts";
 import { J5_CLIENT_ACTION_WS_METHODS } from "../j5.ts";
 import { J5_AGENT_PERSONA_WS_METHODS } from "./agentPersona.ts";
 import { J5_ARTIFACT_WS_METHODS } from "./artifacts.ts";
+import { J5_ACCESS_WS_METHODS } from "./access.ts";
+import { J5_PEOPLE_WS_METHODS } from "./people.ts";
 import { J5_PLAYBOOK_WS_METHODS } from "./playbook.ts";
-import { J5_SHARING_WS_METHODS } from "./sharing.ts";
 import { J5_SKILL_CATALOG_WS_METHODS } from "./skillCatalog.ts";
 import { J5_SKILL_LINK_WS_METHODS } from "./skillLinks.ts";
 
@@ -14,28 +21,30 @@ import { J5_SKILL_LINK_WS_METHODS } from "./skillLinks.ts";
  * again when it runs. Reads are left out: a guarded method cannot back a query.
  */
 export const J5_CLIENT_GUARDED_RPC_SCOPES = {
-  [J5_AGENT_PERSONA_WS_METHODS.importAgentPersonas]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.editImportedAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.setImportedAgentPersonaEnabled]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.removeImportedAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.removeSourceAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.removeAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.restoreSourceAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.createAgentPersona]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaLibraryFolders]: AuthOrchestrationOperateScope,
-  [J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaEnabled]: AuthOrchestrationOperateScope,
+  // The Persona library, like the Playbook library below, is changed by Owners only.
+  [J5_AGENT_PERSONA_WS_METHODS.importAgentPersonas]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.editImportedAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.setImportedAgentPersonaEnabled]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.removeImportedAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.removeSourceAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.removeAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.restoreSourceAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.createAgentPersona]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaLibraryFolders]: AuthSettingsWriteScope,
+  [J5_AGENT_PERSONA_WS_METHODS.setAgentPersonaEnabled]: AuthSettingsWriteScope,
 
-  [J5_SKILL_CATALOG_WS_METHODS.applySkillCatalogGroups]: AuthOrchestrationOperateScope,
-  [J5_SKILL_CATALOG_WS_METHODS.updateSkillCatalog]: AuthOrchestrationOperateScope,
+  [J5_SKILL_CATALOG_WS_METHODS.applySkillCatalogGroups]: AuthProvidersManageScope,
+  [J5_SKILL_CATALOG_WS_METHODS.updateSkillCatalog]: AuthProvidersManageScope,
   [J5_SKILL_LINK_WS_METHODS.create]: AuthOrchestrationOperateScope,
   [J5_SKILL_LINK_WS_METHODS.remove]: AuthOrchestrationOperateScope,
   [J5_SKILL_LINK_WS_METHODS.unlink]: AuthOrchestrationOperateScope,
   [J5_SKILL_LINK_WS_METHODS.delete]: AuthOrchestrationOperateScope,
 
-  [J5_PLAYBOOK_WS_METHODS.savePlaybook]: AuthOrchestrationOperateScope,
-  [J5_PLAYBOOK_WS_METHODS.setFolders]: AuthOrchestrationOperateScope,
-  [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: AuthOrchestrationOperateScope,
-  [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: AuthOrchestrationOperateScope,
+  // The server's library is changed by its Owners only.
+  [J5_PLAYBOOK_WS_METHODS.savePlaybook]: AuthSettingsWriteScope,
+  [J5_PLAYBOOK_WS_METHODS.setFolders]: AuthSettingsWriteScope,
+  [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: AuthSettingsWriteScope,
+  [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: AuthSettingsWriteScope,
   [J5_ARTIFACT_WS_METHODS.deleteArtifact]: AuthOrchestrationOperateScope,
 
   [J5_CLIENT_ACTION_WS_METHODS.resolveCrewProposal]: AuthOrchestrationOperateScope,
@@ -50,15 +59,20 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_CLIENT_ACTION_WS_METHODS.listPeerAddresses]: AuthAccessWriteScope,
   [J5_CLIENT_ACTION_WS_METHODS.probePeer]: AuthAccessWriteScope,
 
-  [J5_SHARING_WS_METHODS.createGuest]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.putGrant]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.removeGrant]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.removePerson]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.revokeDevice]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.createLink]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.renamePerson]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.setOwnerName]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.revokeLink]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.createOpenLink]: AuthAccessWriteScope,
-  [J5_SHARING_WS_METHODS.revokeOpenLink]: AuthAccessWriteScope,
+  // A connection's own place on the server: saying whose its device is, naming the first owner,
+  // leaving a scope, renaming oneself, an Owner marking a notice seen. Every device holds what
+  // they need; the server checks each against the session itself.
+  [J5_ACCESS_WS_METHODS.claimDevice]: AuthOrchestrationReadScope,
+  [J5_ACCESS_WS_METHODS.setFirstOwnerName]: AuthOrchestrationReadScope,
+  [J5_ACCESS_WS_METHODS.leave]: AuthOrchestrationReadScope,
+  [J5_ACCESS_WS_METHODS.markRetiredLinksSeen]: AuthOrchestrationReadScope,
+  [J5_PEOPLE_WS_METHODS.renameSelf]: AuthOrchestrationReadScope,
+
+  [J5_PEOPLE_WS_METHODS.setLevel]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.removeLevel]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.removePerson]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.renamePerson]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.revokeDevice]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.createLink]: AuthAccessWriteScope,
+  [J5_PEOPLE_WS_METHODS.revokeLink]: AuthAccessWriteScope,
 } as const;

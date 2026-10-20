@@ -10,7 +10,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "../state/runtime.ts";
-import { sharingConnectionIsKnownGuest } from "./sharing.ts";
+import { connectionIsKnownNarrow } from "./sharing.ts";
 
 /** Environment-scoped atoms for the J5 agent persona library RPCs; web and mobile each build one. */
 export function createAgentPersonaEnvironmentAtoms<R, E>(
@@ -26,15 +26,15 @@ export function createAgentPersonaEnvironmentAtoms<R, E>(
     catalog: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:j5-agent-personas:catalog",
       tag: J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaCatalog,
-      // Pickers all over the chat view mount this. The server refuses it to a guest (Shared
-      // server AC24), so once the connection is known to be a guest's it is not sent.
+      // Pickers all over the chat view mount this. Personas are the server's (People and access
+      // AC23), so once the connection is known to reach less than the server it is not sent.
       execute: (input) =>
         Effect.gen(function* () {
-          if (yield* sharingConnectionIsKnownGuest) {
+          if (yield* connectionIsKnownNarrow) {
             const supervisor = yield* EnvironmentSupervisor;
             return yield* new EnvironmentRpcUnavailableError({
               environmentId: supervisor.target.environmentId,
-              message: "Personas are not available on a server you are a guest on.",
+              message: "Personas are not shared with you on this server.",
             });
           }
           return yield* request(J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaCatalog, input);

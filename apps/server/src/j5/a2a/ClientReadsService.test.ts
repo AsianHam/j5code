@@ -297,6 +297,10 @@ it.effect(
         INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
         VALUES (${firstPerson}, 1, ${createdAt}), (${secondPerson}, 0, ${createdAt})
       `;
+      yield* sql`
+        INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+        VALUES (${secondPerson}, 'server', '', 'collaborator', ${createdAt}, ${createdAt})
+      `;
       const insertExchange = Effect.fn("test.j5.a2a.clientReads.exchange")(function* (input: {
         readonly id: string;
         readonly personId: ParticipantId;

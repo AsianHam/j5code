@@ -224,6 +224,54 @@ describe("ThreadA2ADeliveryRenderer", () => {
     expect(markup).toContain("Please prioritize the alert.");
   });
 
+  it("reads the name of an inbox reply that carries one, without the level the agent is told", () => {
+    for (const [header, label] of [
+      ["[Message from Jackson (human:viewer)]", "Jackson"],
+      ["[Message from Priya (collaborator) (human:viewer)]", "Priya"],
+      // A name with spaces and parentheses of its own.
+      ["[Message from Ada (she/her) Lovelace (owner) (human:viewer)]", "Ada (she/her) Lovelace"],
+    ] as const) {
+      const source = message({
+        id: deliveryId(`human-named-${label}`),
+        createdBy: "user",
+        text: humanClosedRaw.replace("[Message from human:viewer]", header),
+      });
+      expect(presentThreadA2ADelivery({ message: source })).toMatchObject({
+        kind: "human",
+        senderId: "human:viewer",
+        senderLabel: label,
+        exchange: "closed",
+      });
+    }
+  });
+
+  it("reads a named reply in the exact form the server writes it", () => {
+    // `humanNamedClosedMessage` in the server's `j5/a2a/envelopes.v1.json`:
+    // "[Message from {{senderLabel}} ({{senderId}})]\n\n{{message}}\n\n{{closedExchangeInstruction}}",
+    // with the label "Priya (collaborator)" in a shared conversation.
+    const closedInstruction = humanClosedRaw.slice(humanClosedRaw.lastIndexOf("\n\n") + 2);
+    const text = `[Message from Priya (collaborator) (human:viewer)]\n\nCall Acme first.\n\n${closedInstruction}`;
+    expect(
+      presentThreadA2ADelivery({
+        message: message({ id: deliveryId("human-server-form"), createdBy: "user", text }),
+      }),
+    ).toMatchObject({
+      kind: "human",
+      senderId: "human:viewer",
+      senderLabel: "Priya",
+      body: "Call Acme first.",
+      exchange: "closed",
+    });
+  });
+
+  it("keeps a reply that carries only the id as it was", () => {
+    const source = message({ id: deliveryId("human-id"), createdBy: "user", text: humanClosedRaw });
+    expect(presentThreadA2ADelivery({ message: source })).toMatchObject({
+      senderId: "human:viewer",
+      senderLabel: null,
+    });
+  });
+
   it("uses You only when the caller proves the viewer matches the sender", () => {
     const markup = renderToStaticMarkup(
       <ThreadA2ADeliveryRenderer

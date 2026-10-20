@@ -71,6 +71,9 @@ function CrewGateCard(props: {
         {notice.crewName !== null ? (
           <span className="font-medium text-foreground">{notice.crewName}</span>
         ) : null}
+        {notice.decidedBy !== null ? (
+          <span className="text-muted-foreground">· by {notice.decidedBy}</span>
+        ) : null}
         {approved && notice.requestKind === "addition" && notice.crewVersion !== null ? (
           <span className="rounded-md border border-border/70 px-1.5 py-0.5 text-2xs font-semibold text-muted-foreground">
             v{notice.crewVersion}

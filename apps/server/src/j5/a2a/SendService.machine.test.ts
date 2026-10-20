@@ -7,6 +7,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { noneLayer as peerDirectoryNoneLayer } from "./PeerDirectory.ts";
+import { runMigrations } from "../../persistence/Migrations.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
 import { ensureLocalOperatorHumanPerson } from "./HumanPersonRegistry.ts";
 import { A2ASendService, layer as sendLayer } from "./SendService.ts";
@@ -44,6 +45,7 @@ const makeTestLayer = () => {
 };
 
 const setup = Effect.fn("test.j5.a2a.machineSend.setup")(function* () {
+  yield* runMigrations();
   yield* runJ5A2AMigrations();
   const ledger = yield* A2ALedger;
   yield* ledger.ensureProject({ projectId: projectId, createdAt: timestamp });
@@ -180,8 +182,8 @@ it.effect("lists the server's owner by the name they set, once they have set one
     assert.deepStrictEqual(yield* ownerRow, { ...before, displayName: "Jackson Miller" });
     // A guest is a person with a name too, and is not in the address book at all.
     yield* sql`
-      INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at, kind, display_name)
-      VALUES ('human:a-guest', 0, '2026-10-13T00:00:00.000Z', 'guest', 'Marco')
+      INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at, display_name)
+      VALUES ('human:a-guest', 0, '2026-10-13T00:00:00.000Z', 'Marco')
     `;
     assert.isUndefined(
       (yield* service.listParticipants(agent.threadId)).find(

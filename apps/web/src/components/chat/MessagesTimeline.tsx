@@ -120,6 +120,14 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
 import { J5Wordmark } from "../../j5/branding/J5Wordmark";
+import {
+  PromptAnsweredBy,
+  SharedMessageAuthorLine,
+} from "../../j5/sharing/SharedConversationCards";
+import {
+  useSharedConversationEntries,
+  useSharedMessageAuthor,
+} from "../../j5/sharing/sharedTimeline";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
   participantIdsForThreadA2ADelivery,
@@ -572,7 +580,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   isCompacting = false,
   awaitingUser = false,
   listRef,
-  timelineEntries,
+  timelineEntries: timelineEntriesAsBuilt,
   findExpanded = false,
   findQuery = "",
   activeFindMatch = null,
@@ -659,6 +667,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setExpandedAttemptIds(paintedExpandedAttemptIds);
   }
   const citationThreadRef = parseScopedThreadKey(routeThreadKey);
+  // J5 (case 80): a shared conversation shows each person's message as they typed it.
+  const timelineEntries = useSharedConversationEntries(citationThreadRef, timelineEntriesAsBuilt);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const expandCitedRun = (runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
@@ -2161,6 +2171,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
   const userMessage = resolveUserMessagePresentation(row.message);
+  // J5 (case 80): another person's message in a shared conversation sits on the left, named.
+  const sharedAuthor = useSharedMessageAuthor(ctx.threadRef, row.message);
   // A spawn brief shows only the spawner's words; the platform identity block
   // is already reflected in the thread header and the "Spawned by" divider.
   // It is literal text, so legacy composer-context upgrades skip it (J5).
@@ -2272,7 +2284,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   };
 
   return (
-    <div className="group flex flex-col items-end gap-1">
+    <div className={cn("group flex flex-col gap-1", sharedAuthor ? "items-start" : "items-end")}>
       {spawnBrief !== null ? (
         <SpawnBriefAttribution
           spawnedBy={spawnBrief.spawnedBy}
@@ -2320,11 +2332,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           )}
         </p>
       ) : null}
+      <SharedMessageAuthorLine threadRef={ctx.threadRef} message={row.message} />
       {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
-        <MessageAuthorHeading>You</MessageAuthorHeading>
+        <MessageAuthorHeading>{sharedAuthor?.name ?? "You"}</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
           <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
             {regularImages.map((image) => (
@@ -5561,6 +5574,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 {answerPreview}
               </span>
             ) : null}
+            <PromptAnsweredBy threadRef={threadRef} toolData={workEntry.toolData} />
           </p>
         </div>
       }

@@ -1,8 +1,8 @@
 import {
   AgentPersonaCatalogError,
   AgentPersonaImportConflictError,
-  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   J5_AGENT_PERSONA_WS_METHODS,
   type J5AgentPersonaRpcSchemas,
   type ServerProvider,
@@ -22,24 +22,29 @@ import { agentPersonaUsage } from "./agentPersonaUsage.ts";
 
 const METHODS = J5_AGENT_PERSONA_WS_METHODS;
 
-/** Spread into `RPC_REQUIRED_SCOPES`; the upstream `satisfies` check still covers every tag. */
+/**
+ * Spread into `RPC_REQUIRED_SCOPES`; the upstream `satisfies` check still covers every tag. The
+ * Persona library configures the server, so changing it, or reading the files it imports from,
+ * is an Owner's like any other setting (People and access): only an Owner's level holds
+ * `settings:write`.
+ */
 export const AGENT_PERSONA_RPC_SCOPES = {
   [METHODS.getAgentPersonaCatalog]: AuthOrchestrationReadScope,
-  [METHODS.importAgentPersonas]: AuthOrchestrationOperateScope,
-  [METHODS.listAgentPersonaImportFiles]: AuthOrchestrationOperateScope,
-  [METHODS.readAgentPersonaImportFiles]: AuthOrchestrationOperateScope,
-  [METHODS.editImportedAgentPersona]: AuthOrchestrationOperateScope,
-  [METHODS.setImportedAgentPersonaEnabled]: AuthOrchestrationOperateScope,
-  [METHODS.removeImportedAgentPersona]: AuthOrchestrationOperateScope,
-  [METHODS.removeSourceAgentPersona]: AuthOrchestrationOperateScope,
-  [METHODS.removeAgentPersona]: AuthOrchestrationOperateScope,
-  [METHODS.restoreSourceAgentPersona]: AuthOrchestrationOperateScope,
-  [METHODS.createAgentPersona]: AuthOrchestrationOperateScope,
+  [METHODS.importAgentPersonas]: AuthSettingsWriteScope,
+  [METHODS.listAgentPersonaImportFiles]: AuthSettingsWriteScope,
+  [METHODS.readAgentPersonaImportFiles]: AuthSettingsWriteScope,
+  [METHODS.editImportedAgentPersona]: AuthSettingsWriteScope,
+  [METHODS.setImportedAgentPersonaEnabled]: AuthSettingsWriteScope,
+  [METHODS.removeImportedAgentPersona]: AuthSettingsWriteScope,
+  [METHODS.removeSourceAgentPersona]: AuthSettingsWriteScope,
+  [METHODS.removeAgentPersona]: AuthSettingsWriteScope,
+  [METHODS.restoreSourceAgentPersona]: AuthSettingsWriteScope,
+  [METHODS.createAgentPersona]: AuthSettingsWriteScope,
   [METHODS.readAgentPersona]: AuthOrchestrationReadScope,
   [METHODS.getAgentPersonaUsage]: AuthOrchestrationReadScope,
   [METHODS.getAgentPersonaLibrarySources]: AuthOrchestrationReadScope,
-  [METHODS.setAgentPersonaLibraryFolders]: AuthOrchestrationOperateScope,
-  [METHODS.setAgentPersonaEnabled]: AuthOrchestrationOperateScope,
+  [METHODS.setAgentPersonaLibraryFolders]: AuthSettingsWriteScope,
+  [METHODS.setAgentPersonaEnabled]: AuthSettingsWriteScope,
   [METHODS.getAgentHandoffs]: AuthOrchestrationReadScope,
   [METHODS.subscribeAgentHandoffRefreshes]: AuthOrchestrationReadScope,
 } as const;

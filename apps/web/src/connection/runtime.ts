@@ -5,6 +5,7 @@ import {
   ThreadHistoryController,
 } from "@t3tools/client-runtime/state/threads";
 import { PullRequestDiffLoader } from "@t3tools/client-runtime/state/pull-requests";
+import * as J5SessionRenewal from "@t3tools/client-runtime/j5/session-renewal";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/reactivity";
 
@@ -47,6 +48,8 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
 );
 
 const layerConnection = BackgroundActivityReporter.layer.pipe(
+  // J5: a saved server's session ended for a change of level renews (FORK.md case 70).
+  Layer.provideMerge(J5SessionRenewal.layer),
   Layer.provideMerge(layerProvidedClientConnection),
 );
 

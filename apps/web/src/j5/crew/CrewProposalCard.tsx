@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { presentAgentPersonaCatalog } from "@t3tools/client-runtime/j5/agent-personas";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { PencilIcon, PlusIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -18,6 +18,7 @@ import { crewSeatStopsForApprovals, describeCrewSeatWorkspace } from "./crewSeat
 import type { CrewProposalSeatRuntime } from "@t3tools/contracts/j5";
 import { useParticipantLabels } from "../a2a/ParticipantIdentitiesClient";
 import { useCrewProposalPreview } from "./useCrewProposalPreview";
+import { useCanOperateThread } from "../sharing/access";
 
 function CaptainLabel(props: {
   readonly environmentId: EnvironmentId;
@@ -52,10 +53,16 @@ export function CrewProposalCard(props: {
   readonly onOpenCaptain?: (() => void) | undefined;
 }) {
   const { proposal } = props;
-  // Resolving a roster launches or refuses agents; the command says whether this session may.
-  const canResolve = useAtomValue(
+  // Resolving a roster launches or refuses agents; the command says whether this session may,
+  // and anyone who can write to the Captain's thread may (Shared conversations AC9).
+  const permitted = useAtomValue(
     j5Environment.resolveCrewProposal.permissionAtom(props.environmentId),
   );
+  const writesToCaptain = useCanOperateThread(
+    props.environmentId,
+    proposal.captainThreadId as ThreadId,
+  );
+  const canResolve = permitted && writesToCaptain;
   const [seats, setSeats] = useState<ReadonlyArray<CrewProposalSeat>>(proposal.requestedSeats);
   const [editor, setEditor] = useState<{
     readonly seat: CrewProposalSeat | null;
@@ -208,7 +215,7 @@ export function CrewProposalCard(props: {
                 <div className="flex items-center justify-self-end gap-1">
                   <Button
                     aria-label={`Edit seat ${seat.seat}`}
-                    disabled={props.busy}
+                    disabled={props.busy || !canResolve}
                     size="sm"
                     type="button"
                     variant="ghost"
@@ -219,7 +226,7 @@ export function CrewProposalCard(props: {
                   </Button>
                   <Button
                     aria-label={`Remove seat ${seat.seat}`}
-                    disabled={props.busy || seats.length === 1}
+                    disabled={props.busy || !canResolve || seats.length === 1}
                     size="sm"
                     type="button"
                     variant="ghost"
@@ -249,7 +256,7 @@ export function CrewProposalCard(props: {
       <Button
         className="mt-3"
         aria-label="Add crew member"
-        disabled={props.busy}
+        disabled={props.busy || !canResolve}
         size="sm"
         type="button"
         variant="outline"
@@ -258,7 +265,8 @@ export function CrewProposalCard(props: {
         <PlusIcon className="size-4" />
         Add member
       </Button>
-      {editor !== null ? (
+      {/* Someone who cannot write to the Captain's thread, or no longer can, edits no seat. */}
+      {editor !== null && canResolve ? (
         <CrewSeatDialog
           seat={editor.seat}
           proposalId={proposal.id}
@@ -267,7 +275,7 @@ export function CrewProposalCard(props: {
           workspaceOptions={preview.data?.workspaceOptions}
           environmentId={props.environmentId}
           agents={agents}
-          disabled={props.busy}
+          disabled={props.busy || !canResolve}
           onClose={() => setEditor(null)}
           onSave={(draft) => {
             const next =

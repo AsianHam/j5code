@@ -9,6 +9,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ShellStreamItem,
   ProjectId,
+  type ScheduledTaskListResult,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerConfig,
@@ -36,6 +37,9 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ProjectEnrichmentService from "../../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import { subscribeOrchestrationV2Shell } from "../../ws.ts";
+import type { PersonScope } from "@t3tools/contracts/j5";
+
+import { humanPersonRegistryLayer } from "../a2a/HumanPersonRegistry.ts";
 import * as GuestView from "./GuestView.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 
@@ -50,10 +54,12 @@ const session = (id: string, subject: string): EnvironmentAuth.AuthenticatedSess
   method: "browser-session-cookie",
   scopes: [AuthOrchestrationReadScope],
 });
-const MEMBER = session("session:member", "one-time-token");
-const GUEST = session("session:guest", PersonAccess.GUEST_SESSION_SUBJECT);
-/** Carries the guest mark, and no person was ever recorded for it. */
-const STRAY = session("session:stray", PersonAccess.GUEST_SESSION_SUBJECT);
+/** The first owner's own device: the link the server printed when it started. */
+const MEMBER = session("session:member", "administrative-bootstrap");
+/** A Viewer's device, once `guest` has recorded whose it is. */
+const GUEST = session("session:guest", "one-time-token");
+/** A device no one has claimed: no person was ever recorded for it. */
+const STRAY = session("session:stray", "one-time-token");
 const SESSIONS: Record<string, EnvironmentAuth.AuthenticatedSession> = {
   member: MEMBER,
   guest: GUEST,
@@ -98,10 +104,11 @@ const layerProjects = Layer.unwrap(
     );
   }),
 );
-const layerTest = Layer.mergeAll(layerManagement, layerProjects, PersonAccess.layer).pipe(
-  Layer.provideMerge(ProjectStore.layer),
-  Layer.provideMerge(layerPersistence),
-);
+const layerTest = Layer.mergeAll(
+  layerManagement,
+  layerProjects,
+  PersonAccess.layer.pipe(Layer.provideMerge(humanPersonRegistryLayer)),
+).pipe(Layer.provideMerge(ProjectStore.layer), Layer.provideMerge(layerPersistence));
 
 const project = Effect.fn("test.project")(function* (id: string) {
   const sink = yield* EventSink.EventSinkV2;
@@ -228,15 +235,17 @@ const write = Effect.fn("test.write")(function* (
   return stored.at(-1)!.sequence;
 });
 
-/** A guest for `GUEST`'s session, holding the grants given. */
-const guest = Effect.fn("test.guest")(function* (
-  ...targets: ReadonlyArray<PersonAccess.GrantTarget>
-) {
+/** A Viewer for `GUEST`'s session, at the scopes given. */
+const guest = Effect.fn("test.guest")(function* (...targets: ReadonlyArray<PersonScope>) {
   const access = yield* PersonAccess.PersonAccess;
-  const person = yield* access.createGuest({ displayName: "Contractor" });
-  yield* access.bindSession({ sessionId: GUEST.sessionId, personId: person.personId });
-  for (const target of targets) {
-    yield* access.putGrant({ personId: person.personId, target, level: "view" });
+  const person = yield* access.createPerson({ displayName: "Contractor" });
+  yield* access.bindSession({
+    sessionId: GUEST.sessionId,
+    personId: person.personId,
+    ceiling: null,
+  });
+  for (const scope of targets) {
+    yield* access.setLevel({ personId: person.personId, scope, level: "viewer" });
   }
   return person.personId;
 });
@@ -390,7 +399,12 @@ const fullConfig = {
     platform: { os: "linux", arch: "x64" },
     serverVersion: "0.0.48",
     orchestrationProtocolVersion: 2,
-    capabilities: { repositoryIdentity: true, j5HumanInbox: true, serverBrowser: true },
+    capabilities: {
+      repositoryIdentity: true,
+      j5ProjectLedger: true,
+      j5HumanInbox: true,
+      serverBrowser: true,
+    },
   },
   auth: {
     policy: "loopback-browser",
@@ -507,7 +521,7 @@ it.effect("a guest's configuration holds nothing of the host, and still decodes"
       platform: { os: "linux", arch: "x64" },
       serverVersion: "0.0.48",
       orchestrationProtocolVersion: 2,
-      capabilities: { repositoryIdentity: false },
+      capabilities: { repositoryIdentity: false, j5ProjectLedger: true },
     });
     assert.deepStrictEqual(Object.keys(reduced).toSorted(), [
       "auth",
@@ -597,7 +611,7 @@ it.effect("a guest's lifecycle feed is a welcome that names nothing of the host"
             platform: { os: "linux", arch: "x64" },
             serverVersion: "0.0.48",
             orchestrationProtocolVersion: 2,
-            capabilities: { repositoryIdentity: false },
+            capabilities: { repositoryIdentity: false, j5ProjectLedger: true },
           },
           cwd: "/",
           projectName: "Shared project",
@@ -787,10 +801,10 @@ live(
     });
 
     // Granted after connecting (AC10): the thread arrives, with its project.
-    yield* access.putGrant({
+    yield* access.setLevel({
       personId,
-      target: { kind: "thread", threadId: second },
-      level: "view",
+      scope: { kind: "thread", threadId: second },
+      level: "viewer",
     });
     const afterGrant = yield* until(feed, isSnapshot);
     assert.deepStrictEqual(listed(afterGrant), {
@@ -800,7 +814,7 @@ live(
     assertNothingOfTheHost(afterGrant);
 
     // Removed (AC11): it leaves, and so does the project it alone made visible.
-    yield* access.removeGrant({ personId, target: { kind: "thread", threadId: first } });
+    yield* access.removeLevel({ personId, scope: { kind: "thread", threadId: first } });
     assert.deepStrictEqual(listed(yield* until(feed, isSnapshot)), {
       threads: [second],
       projects: [other],
@@ -818,11 +832,11 @@ live(
     ]);
 
     // Another guest's grants changing does not disturb this one's feed.
-    const stranger = yield* access.createGuest({ displayName: "Someone else" });
-    yield* access.putGrant({
+    const stranger = yield* access.createPerson({ displayName: "Someone else" });
+    yield* access.setLevel({
       personId: stranger.personId,
-      target: { kind: "thread", threadId: first },
-      level: "view",
+      scope: { kind: "thread", threadId: first },
+      level: "viewer",
     });
     const again = yield* write("thread.metadata-updated", {
       id: second,
@@ -986,7 +1000,7 @@ live(
     const access = yield* PersonAccess.PersonAccess;
     const unreadable = PersonAccess.PersonAccess.of({
       ...access,
-      threadAccess: () =>
+      threadLevel: () =>
         Effect.fail(
           new PersonAccess.PersonAccessStorageError({
             operation: "read a person's access to a thread",
@@ -1004,5 +1018,148 @@ live(
     // The feed fails rather than guessing: the thread the guest does hold is not sent either.
     assert.isTrue(Exit.isFailure(exit));
     assert.deepStrictEqual(sent, []);
+  }).pipe(Effect.scoped),
+);
+
+live(
+  "a narrowed Collaborator is given upstream's configuration, and a Viewer a reduced one",
+  Effect.gen(function* () {
+    const access = yield* PersonAccess.PersonAccess;
+    const shared = yield* project("project:collaborated");
+    const personId = yield* guest({ kind: "project", projectId: shared });
+    const viewing = (yield* GuestView.connectionView(GUEST)).config(fullConfig);
+    assert.notStrictEqual(viewing, fullConfig);
+    assert.notInclude(JSON.stringify(viewing), HOST_PATH);
+
+    yield* access.setLevel({
+      personId,
+      scope: { kind: "project", projectId: shared },
+      level: "collaborator",
+    });
+    // A Collaborator can open a terminal on the host; the folders are theirs to see.
+    assert.strictEqual((yield* GuestView.connectionView(GUEST)).config(fullConfig), fullConfig);
+  }).pipe(Effect.scoped),
+);
+
+live(
+  "lists a narrowed person only the scheduled tasks bound to what they reach",
+  Effect.gen(function* () {
+    const shared = yield* project("project:scheduled");
+    const elsewhere = yield* project("project:not-shared");
+    yield* write("thread.created", { id: "thread:scheduled", projectId: shared });
+    yield* write("thread.created", { id: "thread:not-shared", projectId: elsewhere });
+    yield* guest({ kind: "thread", threadId: ThreadId.make("thread:scheduled") });
+    const task = (id: string, projectId: ProjectId, threadId: string | null) =>
+      ({
+        id,
+        projectId,
+        threadId: threadId === null ? null : ThreadId.make(threadId),
+        webhook: { url: "https://host/hook/secret-token" },
+      }) as unknown as ScheduledTaskListResult["tasks"][number];
+    const list: ScheduledTaskListResult = {
+      tasks: [
+        task("task:on-thread", shared, "thread:scheduled"),
+        task("task:on-project", shared, null),
+        task("task:elsewhere", elsewhere, "thread:not-shared"),
+      ],
+    };
+    const view = yield* GuestView.connectionView(GUEST);
+    const listed = yield* view.scheduledTasks(Effect.succeed(list));
+    // The thread's own task, and not its project's other tasks: those are the project's (AC22).
+    assert.deepStrictEqual(
+      listed.tasks.map((entry) => entry.id),
+      ["task:on-thread"],
+    );
+    // A Viewer is not given the address that would start it.
+    assert.isUndefined(listed.tasks[0]?.webhook);
+    const owner = yield* GuestView.connectionView(MEMBER);
+    assert.strictEqual(
+      (yield* owner.scheduledTasks(Effect.succeed(list))).tasks.length,
+      list.tasks.length,
+    );
+  }).pipe(Effect.scoped),
+);
+
+live(
+  "gives a task's webhook only to someone who writes where the task is at home",
+  Effect.gen(function* () {
+    const access = yield* PersonAccess.PersonAccess;
+    const written = yield* project("project:written");
+    const watched = yield* project("project:watched");
+    yield* write("thread.created", { id: "thread:watched-written", projectId: watched });
+    yield* write("thread.created", { id: "thread:watched-only", projectId: watched });
+    const personId = yield* guest({ kind: "project", projectId: watched });
+    yield* access.setLevel({
+      personId,
+      scope: { kind: "project", projectId: written },
+      level: "collaborator",
+    });
+    yield* access.setLevel({
+      personId,
+      scope: { kind: "thread", threadId: ThreadId.make("thread:watched-written") },
+      level: "collaborator",
+    });
+    const task = (id: string, projectId: ProjectId, threadId: string | null) =>
+      ({
+        id,
+        projectId,
+        threadId: threadId === null ? null : ThreadId.make(threadId),
+        webhook: { url: `https://host/hook/${id}` },
+      }) as unknown as ScheduledTaskListResult["tasks"][number];
+    const list: ScheduledTaskListResult = {
+      tasks: [
+        task("task:written-project", written, null),
+        task("task:watched-project", watched, null),
+        task("task:watched-written-thread", watched, "thread:watched-written"),
+        task("task:watched-only-thread", watched, "thread:watched-only"),
+      ],
+    };
+    const withWebhook = (result: ScheduledTaskListResult) =>
+      Object.fromEntries(result.tasks.map((entry) => [entry.id, entry.webhook !== undefined]));
+    const expected = {
+      "task:written-project": true,
+      "task:watched-project": false,
+      "task:watched-written-thread": true,
+      "task:watched-only-thread": false,
+    };
+    const view = yield* GuestView.connectionView(GUEST);
+    assert.deepStrictEqual(withWebhook(yield* view.scheduledTasks(Effect.succeed(list))), expected);
+    const streamed = yield* Stream.runCollect(view.scheduledTasksStream(Stream.make(list)));
+    assert.deepStrictEqual(streamed.map(withWebhook), [expected]);
+  }).pipe(Effect.scoped),
+);
+
+live(
+  "tells a Viewer the skills of the projects they reach by name, and none of their files",
+  Effect.gen(function* () {
+    const access = yield* PersonAccess.PersonAccess;
+    const shared = yield* project("project:skilled");
+    const personId = yield* guest({ kind: "project", projectId: shared });
+    const withSkills = {
+      ...fullConfig,
+      providers: fullConfig.providers.map((provider) => ({
+        ...provider,
+        skills: [
+          {
+            name: "project-skill",
+            description: "Reviews migrations",
+            path: `${HOST_PATH}/project:skilled/.claude/skills/review/SKILL.md`,
+            enabled: true,
+          },
+          { name: "host-skill", path: `${HOST_PATH}/skills/host-skill/SKILL.md`, enabled: true },
+        ],
+      })),
+    } as typeof fullConfig;
+    const names = (config: typeof fullConfig) =>
+      config.providers.flatMap((provider) => provider.skills.map((skill) => skill.name));
+
+    const projectView = (yield* GuestView.connectionView(GUEST)).config(withSkills);
+    assert.deepStrictEqual(names(projectView), ["project-skill"]);
+    assert.notInclude(JSON.stringify(projectView), HOST_PATH);
+
+    yield* access.setLevel({ personId, scope: { kind: "server" }, level: "viewer" });
+    const serverView = (yield* GuestView.connectionView(GUEST)).config(withSkills);
+    assert.deepStrictEqual(names(serverView), ["project-skill", "host-skill"]);
+    assert.notInclude(JSON.stringify(serverView), HOST_PATH);
   }).pipe(Effect.scoped),
 );

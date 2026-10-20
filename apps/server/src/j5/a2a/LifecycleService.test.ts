@@ -176,6 +176,7 @@ it.effect("drops a receiver-retired exchange loudly and rejects new sends to the
   Effect.gen(function* () {
     const notices = yield* Ref.make<ReadonlyArray<DeliveredNotice>>([]);
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const projectId = LedgerProjectId.make("project:lifecycle:receiver-retired");
       yield* createProjectLedger(projectId);
@@ -310,6 +311,7 @@ it.effect("drops a sender-retired person exchange so the active inbox source is 
   Effect.gen(function* () {
     const notices = yield* Ref.make<ReadonlyArray<DeliveredNotice>>([]);
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const projectId = LedgerProjectId.make("project:lifecycle:person");
       yield* createProjectLedger(projectId);
@@ -317,6 +319,11 @@ it.effect("drops a sender-retired person exchange so the active inbox source is 
       yield* (yield* SqlClient.SqlClient)`
         INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
         VALUES (${human.id}, 1, ${openedAt})
+      `;
+      // The first owner writes to every thread, as the server records them at startup.
+      yield* (yield* SqlClient.SqlClient)`
+        INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+        VALUES (${human.id}, 'server', '', 'owner', ${openedAt}, ${openedAt})
       `;
       const opened = yield* (yield* A2ASendService).send({
         commandId: CommCommandId.make("command:lifecycle:person:open"),
@@ -377,6 +384,7 @@ it.effect("leaves unrelated same- and cross-project exchanges open", () =>
   Effect.gen(function* () {
     const notices = yield* Ref.make<ReadonlyArray<DeliveredNotice>>([]);
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const localProjectId = LedgerProjectId.make("project:lifecycle:healthy:local");
       const remoteProjectId = LedgerProjectId.make("project:lifecycle:healthy:remote");
@@ -466,6 +474,7 @@ it.effect("replays archive then delete from its cursor without duplicating closu
     const deleted = retiredThreadEvent("thread.deleted", receiver.threadId, 8);
     const storedEvents = Stream.fromIterable([nativeNoHome, archived, deleted]);
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const projectId = LedgerProjectId.make("project:lifecycle:bridge");
       yield* createProjectLedger(projectId);
@@ -526,6 +535,7 @@ it.effect("drops a reply-owing participant exactly once from committed thread de
     const notices = yield* Ref.make<ReadonlyArray<DeliveredNotice>>([]);
     const storedEvents = Stream.make(retiredThreadEvent("thread.deleted", receiver.threadId, 11));
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const projectId = LedgerProjectId.make("project:lifecycle:delete-bridge");
       yield* createProjectLedger(projectId);
@@ -589,6 +599,7 @@ it.effect(
     Effect.gen(function* () {
       const notices = yield* Ref.make<ReadonlyArray<DeliveredNotice>>([]);
       yield* Effect.gen(function* () {
+        yield* runMigrations();
         yield* runJ5A2AMigrations();
         const projectId = LedgerProjectId.make("project:lifecycle:cycles");
         yield* createProjectLedger(projectId);
@@ -676,6 +687,7 @@ it.effect(
     Effect.gen(function* () {
       const notices = yield* Ref.make<ReadonlyArray<DeliveredNotice>>([]);
       yield* Effect.gen(function* () {
+        yield* runMigrations();
         yield* runJ5A2AMigrations();
         const projectId = LedgerProjectId.make("project:lifecycle:delete");
         yield* createProjectLedger(projectId);
@@ -804,11 +816,13 @@ it.effect(
           )
         `;
         const ledger = yield* A2ALedger;
+        yield* runMigrations();
         yield* runJ5A2AMigrations();
         yield* (yield* A2ALifecycleService).handleStoredEvent(
           retiredThreadEvent("thread.unarchived", receiver.threadId, 1),
         );
         yield* ledger.rebuildMembership(projectId);
+        yield* runMigrations();
         yield* runJ5A2AMigrations();
         assert.isTrue((yield* resolveThreadHome(sql, receiver.threadId)).retired);
         assert.lengthOf(yield* (yield* A2ASendService).listParticipants(sender.threadId, true), 1);
@@ -826,6 +840,7 @@ it.effect(
     Effect.gen(function* () {
       const notices = yield* Ref.make<ReadonlyArray<DeliveredNotice>>([]);
       yield* Effect.gen(function* () {
+        yield* runMigrations();
         yield* runJ5A2AMigrations();
         const projectId = LedgerProjectId.make("project:lifecycle:retry");
         yield* createProjectLedger(projectId);
@@ -833,6 +848,7 @@ it.effect(
         yield* join(projectId, receiver, "retry:receiver");
         const sql = yield* SqlClient.SqlClient;
         yield* sql`INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at) VALUES (${human.id}, 1, ${openedAt})`;
+        yield* sql`INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at) VALUES (${human.id}, 'server', '', 'owner', ${openedAt}, ${openedAt})`;
         const send = yield* A2ASendService;
         const peer = yield* send.send({
           commandId: CommCommandId.make("retry:peer"),
@@ -894,6 +910,7 @@ it.effect.each([true, false])(
     Effect.gen(function* () {
       const notices = yield* Ref.make<ReadonlyArray<DeliveredNotice>>([]);
       yield* Effect.gen(function* () {
+        yield* runMigrations();
         yield* runJ5A2AMigrations();
         const projectId = LedgerProjectId.make(`project:archive-order:${directFirst}`);
         yield* createProjectLedger(projectId);
@@ -938,6 +955,7 @@ it.effect("addresses drop notices to a counterparty on a peer server in both dir
   Effect.gen(function* () {
     const notices = yield* Ref.make<ReadonlyArray<DeliveredNotice>>([]);
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const projectId = LedgerProjectId.make("project:lifecycle:peers");
       yield* createProjectLedger(projectId);
@@ -1095,6 +1113,7 @@ it.effect(
     Effect.gen(function* () {
       const notices = yield* Ref.make<ReadonlyArray<DeliveredNotice>>([]);
       yield* Effect.gen(function* () {
+        yield* runMigrations();
         yield* runJ5A2AMigrations();
         const projectId = LedgerProjectId.make("project:lifecycle:unheld");
         yield* createProjectLedger(projectId);
@@ -1180,6 +1199,7 @@ it.effect("closes an Exchange on a peer server whose ask lands while its sender 
     const deliverPeer: A2ADeliveryTransportShape["deliverPeer"] = () =>
       Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(land)));
     yield* Effect.gen(function* () {
+      yield* runMigrations();
       yield* runJ5A2AMigrations();
       const projectId = LedgerProjectId.make("project:lifecycle:inflight");
       yield* createProjectLedger(projectId);

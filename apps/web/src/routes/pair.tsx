@@ -4,7 +4,7 @@ import {
   HostedPairingRouteSurface,
   PairingPendingSurface,
 } from "../components/auth/PairingRouteSurface";
-import { GuestAwarePairingSurface } from "../j5/sharing/GuestAwarePairingSurface";
+import { JoinLinkPairingSurface } from "../j5/sharing/JoinLinkPairingSurface";
 
 export const Route = createFileRoute("/pair")({
   beforeLoad: async ({ context }) => {
@@ -39,7 +39,7 @@ function PairRouteView() {
   }
 
   return (
-    <GuestAwarePairingSurface
+    <JoinLinkPairingSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
         // Recreate the primary connection so its WebSocket and cached scopes

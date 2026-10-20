@@ -171,7 +171,10 @@ describe("j5 pair", () => {
           }),
         });
 
-        const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
+        const output = yield* captureStdout(
+          // J5: a link names its person (register D36).
+          runCli(["pair", "--base-dir", baseDir, "--person", "Jackson", "--level", "owner"]),
+        );
 
         assert.include(output, `Pairing with pair-test (${origin})`);
         assert.include(output, `Pairing URL: ${origin}/pair#token=`);
@@ -190,7 +193,8 @@ describe("j5 pair", () => {
         }>;
         assert.equal(credentials.length, 1);
         assert.equal(credentials[0]?.label, "j5 pair");
-        assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
+        // J5: an Owner's permissions, in J5's level table's order (register D36).
+        assert.sameMembers([...(credentials[0]?.scopes ?? [])], [...AuthStandardClientScopes]);
       }),
     ).pipe(
       Effect.provide(NodeServices.layer),
@@ -227,6 +231,11 @@ describe("j5 pair", () => {
             "pair",
             "--base-dir",
             baseDir,
+            // J5: a link names its person (register D36).
+            "--person",
+            "Jackson",
+            "--level",
+            "owner",
             "--scope",
             "orchestration:read",
             "--scope",
@@ -261,7 +270,10 @@ describe("j5 pair", () => {
           }),
         });
 
-        const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
+        const output = yield* captureStdout(
+          // J5: a link names its person (register D36).
+          runCli(["pair", "--base-dir", baseDir, "--person", "Jackson", "--level", "owner"]),
+        );
 
         assert.include(output, "Pairing URL: http://localhost:5733/pair#token=");
       }),

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, J5_ARTIFACT_WS_METHODS, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
+  type ConnectionAccess,
+  type HeldPersonLevel,
+  J5_ACCESS_WS_METHODS,
   J5_CLIENT_READ_WS_METHODS,
-  J5_SHARING_WS_METHODS,
-  type SharingConnectionKind,
-  type SharingThreadLevel,
+  type PersonLevel,
 } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,22 +25,65 @@ import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
-import { createSharingEnvironmentAtoms, sharingAllowsOperate } from "./sharing.ts";
+import {
+  createSharingEnvironmentAtoms,
+  projectLevelFor,
+  reachesServer,
+  sharingAllowsOperate,
+  threadLevelFor,
+  threadLevelInProject,
+} from "./sharing.ts";
 import { createJ5EnvironmentAtoms } from "./state.ts";
 
-describe("sharingAllowsOperate", () => {
-  it("holds a member's connection to nothing", () => {
-    expect(sharingAllowsOperate({ connection: "member", level: null })).toBe(true);
+const person = (
+  levels: ReadonlyArray<HeldPersonLevel>,
+  options: { readonly wide?: boolean; readonly owner?: boolean } = {},
+): ConnectionAccess => ({
+  kind: "person",
+  personId: "human:person",
+  name: "Priya",
+  firstOwner: false,
+  levels,
+  wide: options.wide ?? false,
+  owner: options.owner ?? false,
+  retiredLinks: null,
+});
+
+const OWNER = person([{ scope: { kind: "server" }, level: "owner" }], { wide: true, owner: true });
+const SERVER_VIEWER = person([{ scope: { kind: "server" }, level: "viewer" }]);
+
+describe("what a connection may do with a thread", () => {
+  it("withholds nothing while the server has not answered", () => {
+    // A composer must not flicker to read-only while the answer is on its way.
+    expect(sharingAllowsOperate({ access: null, level: null })).toBe(true);
   });
 
-  it("withholds nothing while the server has not said which kind the connection is", () => {
-    // A member's composer must not flicker to read-only while the answer is on its way.
-    expect(sharingAllowsOperate({ connection: null, level: null })).toBe(true);
+  it("gives someone who writes to the whole server their server level on every thread", () => {
+    expect(threadLevelFor(OWNER, null)).toBe("owner");
   });
 
-  it("keeps a guest read-only on a thread with no grant, and until its level arrives", () => {
-    expect(sharingAllowsOperate({ connection: "guest", level: "none" })).toBe(false);
-    expect(sharingAllowsOperate({ connection: "guest", level: null })).toBe(false);
+  it("takes the server's word for anyone else, a server-scope Viewer included", () => {
+    // A Viewer at server scope may be a Collaborator on one thread; only the server knows which.
+    expect(threadLevelFor(SERVER_VIEWER, "collaborator")).toBe("collaborator");
+    expect(sharingAllowsOperate({ access: SERVER_VIEWER, level: "viewer" })).toBe(false);
+    expect(sharingAllowsOperate({ access: SERVER_VIEWER, level: "collaborator" })).toBe(true);
+  });
+
+  it("keeps a device the server cannot place from writing anywhere", () => {
+    expect(threadLevelFor({ kind: "unknown" }, null)).toBe(null);
+    expect(sharingAllowsOperate({ access: { kind: "unknown" }, level: null })).toBe(false);
+  });
+
+  it("counts only a level at server scope as reaching the server", () => {
+    expect(reachesServer(SERVER_VIEWER)).toBe(true);
+    expect(
+      reachesServer(
+        person([
+          { scope: { kind: "project", projectId: ProjectId.make("p") }, level: "collaborator" },
+        ]),
+      ),
+    ).toBe(false);
+    expect(reachesServer({ kind: "service" })).toBe(true);
   });
 });
 
@@ -48,21 +92,21 @@ const SHARED_SERVER = EnvironmentId.make("shared-server");
 const VIEWED = ThreadId.make("thread:viewed");
 const JOINED = ThreadId.make("thread:joined");
 
-/** Two connected environments: one this person's own, one they are a guest on. */
+const NARROW = person([
+  { scope: { kind: "thread", threadId: VIEWED }, level: "viewer" },
+  { scope: { kind: "thread", threadId: JOINED }, level: "collaborator" },
+]);
+
+/** Two connected environments: one this person owns, one where they hold two threads. */
 const environments = Effect.fn(function* (
-  // How a server answers "is this connection a guest's?"; by default with its kind.
-  answerKind: (
-    kind: SharingConnectionKind,
-  ) => Effect.Effect<{ readonly kind: SharingConnectionKind }> = (kind) => Effect.succeed({ kind }),
+  // How a server answers "what is this connection?"; by default with what it is there.
+  answer: (access: ConnectionAccess) => Effect.Effect<ConnectionAccess> = Effect.succeed,
 ) {
-  const viewedLevel = yield* SubscriptionRef.make<SharingThreadLevel>("view");
+  const viewedLevel = yield* SubscriptionRef.make<PersonLevel | null>("viewer");
   const asked: Array<string> = [];
   const fleetReads: Array<EnvironmentId> = [];
   const otherReads: Array<string> = [];
-  const supervisor = Effect.fn(function* (
-    environmentId: EnvironmentId,
-    kind: SharingConnectionKind,
-  ) {
+  const supervisor = Effect.fn(function* (environmentId: EnvironmentId, access: ConnectionAccess) {
     const target = new BearerConnectionTarget({
       environmentId,
       label: environmentId,
@@ -104,19 +148,15 @@ const environments = Effect.fn(function* (
               otherReads.push(`${environmentId}:artifacts`);
               return Effect.succeed({ entries: [] });
             },
-            [J5_SHARING_WS_METHODS.getConnectionAccess]: () => {
+            [J5_ACCESS_WS_METHODS.getConnectionAccess]: () => {
               asked.push(`${environmentId}:connection`);
-              return answerKind(kind);
+              return answer(access);
             },
-            [J5_SHARING_WS_METHODS.subscribeThreadAccess]: (input: { threadId: ThreadId }) => {
+            [J5_ACCESS_WS_METHODS.subscribeThreadLevel]: (input: { threadId: ThreadId }) => {
               asked.push(`${environmentId}:${input.threadId}`);
               return input.threadId === VIEWED
-                ? SubscriptionRef.changes(viewedLevel).pipe(
-                    Stream.map((level) => ({ kind, level })),
-                  )
-                : Stream.make({ kind, level: "collaborate" as const }).pipe(
-                    Stream.concat(Stream.never),
-                  );
+                ? SubscriptionRef.changes(viewedLevel).pipe(Stream.map((level) => ({ level })))
+                : Stream.make({ level: "collaborator" as const }).pipe(Stream.concat(Stream.never));
             },
           },
         } as unknown as RpcSession),
@@ -127,8 +167,8 @@ const environments = Effect.fn(function* (
     });
   });
   const supervisors = new Map([
-    [MEMBER_SERVER, yield* supervisor(MEMBER_SERVER, "member")],
-    [SHARED_SERVER, yield* supervisor(SHARED_SERVER, "guest")],
+    [MEMBER_SERVER, yield* supervisor(MEMBER_SERVER, OWNER)],
+    [SHARED_SERVER, yield* supervisor(SHARED_SERVER, NARROW)],
   ]);
   const layer = Layer.mock(EnvironmentRegistry)({
     entries: yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(
@@ -147,6 +187,18 @@ const environments = Effect.fn(function* (
   return { layer, registry, viewedLevel, asked, fleetReads, otherReads };
 });
 
+/** Waits for the atom to hold a value that passes; one that never arrives fails the test by timeout. */
+const settlesWhere = <A>(
+  registry: AtomRegistry.AtomRegistry,
+  atom: Atom.Atom<A>,
+  passes: (value: A) => boolean,
+) =>
+  AtomRegistry.toStream(registry, atom).pipe(
+    Stream.filter(passes),
+    Stream.runHead,
+    Effect.map(Option.isSome),
+  );
+
 /** Waits for the atom to hold `expected`; a value that never arrives fails the test by timeout. */
 const settlesAt = <A>(registry: AtomRegistry.AtomRegistry, atom: Atom.Atom<A>, expected: A) =>
   AtomRegistry.toStream(registry, atom).pipe(
@@ -155,7 +207,54 @@ const settlesAt = <A>(registry: AtomRegistry.AtomRegistry, atom: Atom.Atom<A>, e
     Effect.map(Option.isSome),
   );
 
-describe("a guest's connection", () => {
+describe("what a connection may do with a thread it is starting", () => {
+  const PROJECT = ProjectId.make("project:shared");
+
+  it("lets a project's Collaborator write to a new thread in it", () => {
+    const access = person([
+      { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
+    ]);
+    expect(sharingAllowsOperate({ access, level: projectLevelFor(access, PROJECT) })).toBe(true);
+  });
+
+  it("does not let them write to one in another project", () => {
+    const access = person([
+      { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
+    ]);
+    expect(sharingAllowsOperate({ access, level: projectLevelFor(access, "project:other") })).toBe(
+      false,
+    );
+  });
+
+  it("does not let a thread's Collaborator start another thread in its project", () => {
+    const access = person([
+      { scope: { kind: "thread", threadId: ThreadId.make("thread:one") }, level: "collaborator" },
+    ]);
+    expect(projectLevelFor(access, PROJECT)).toBeNull();
+  });
+
+  it("is not held back by an answer the server gave before the thread existed", () => {
+    const access = person([
+      { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
+    ]);
+    const level = threadLevelInProject({ access, threadLevel: null, projectId: PROJECT });
+    expect(sharingAllowsOperate({ access, level })).toBe(true);
+    expect(threadLevelInProject({ access, threadLevel: "owner", projectId: PROJECT })).toBe(
+      "owner",
+    );
+  });
+
+  it("gives a server's Viewer their server level, and the highest of the two", () => {
+    const access = person([
+      { scope: { kind: "server" }, level: "viewer" },
+      { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
+    ]);
+    expect(projectLevelFor(SERVER_VIEWER, PROJECT)).toBe("viewer");
+    expect(projectLevelFor(access, PROJECT)).toBe("collaborator");
+  });
+});
+
+describe("a connection that holds two threads of a server", () => {
   it.effect("reads one thread and writes to another on the same server", () =>
     Effect.gen(function* () {
       const { layer, registry, viewedLevel, asked } = yield* environments();
@@ -166,21 +265,22 @@ describe("a guest's connection", () => {
       const own = sharing.threadOperable(MEMBER_SERVER, VIEWED);
       for (const atom of [viewed, joined, draft, own]) yield* AtomRegistry.mount(registry, atom);
 
-      expect(yield* settlesAt(registry, sharing.connectionKind(SHARED_SERVER), "guest")).toBe(true);
+      expect(yield* settlesAt(registry, sharing.isNarrow(SHARED_SERVER), true)).toBe(true);
       expect(yield* settlesAt(registry, joined, true)).toBe(true);
       expect(registry.get(viewed)).toBe(false);
       expect(registry.get(draft)).toBe(false);
 
-      // The member raises the first thread to Collaborate while the guest has it open.
-      yield* SubscriptionRef.set(viewedLevel, "collaborate");
+      // An Owner raises the first thread to Collaborator while the person has it open.
+      yield* SubscriptionRef.set(viewedLevel, "collaborator");
       expect(yield* settlesAt(registry, viewed, true)).toBe(true);
-      yield* SubscriptionRef.set(viewedLevel, "none");
+      yield* SubscriptionRef.set(viewedLevel, null);
       expect(yield* settlesAt(registry, viewed, false)).toBe(true);
 
-      // On the person's own server nothing is withheld, and no thread is asked about.
-      expect(yield* settlesAt(registry, sharing.connectionKind(MEMBER_SERVER), "member")).toBe(
-        true,
-      );
+      // On the server the person owns nothing is withheld, and no thread is asked about.
+      expect(
+        yield* settlesWhere(registry, sharing.connectionAccess(MEMBER_SERVER), (a) => a !== null),
+      ).toBe(true);
+      expect(registry.get(own)).toBe(true);
       expect(registry.get(own)).toBe(true);
       expect(asked.filter((entry) => entry.startsWith(MEMBER_SERVER))).toEqual([
         `${MEMBER_SERVER}:connection`,
@@ -188,7 +288,7 @@ describe("a guest's connection", () => {
     }),
   );
 
-  it.effect("is offered a thread's actions only where it holds Collaborate", () =>
+  it.effect("is offered a thread's actions only where it holds Collaborator", () =>
     Effect.gen(function* () {
       const { layer, registry } = yield* environments();
       const sharing = createSharingEnvironmentAtoms(Atom.runtime(layer));
@@ -198,31 +298,31 @@ describe("a guest's connection", () => {
       const own = sharing.threadOperable(MEMBER_SERVER, VIEWED);
       for (const atom of [viewed, joined, own]) yield* AtomRegistry.mount(registry, atom);
       expect(yield* settlesAt(registry, joined, true)).toBe(true);
-      expect(yield* settlesAt(registry, sharing.connectionKind(MEMBER_SERVER), "member")).toBe(
-        true,
-      );
+      expect(
+        yield* settlesWhere(registry, sharing.connectionAccess(MEMBER_SERVER), (a) => a !== null),
+      ).toBe(true);
       const read = (environmentId: EnvironmentId, threadId: ThreadId, permitted: boolean) =>
         sharing.readCanOperateThread(registry, { environmentId, threadId, permitted });
 
-      // A member gets upstream's answer, whichever it is.
+      // An Owner gets upstream's answer, whichever it is.
       expect(read(MEMBER_SERVER, VIEWED, true)).toBe(true);
       expect(read(MEMBER_SERVER, VIEWED, false)).toBe(false);
-      // A guest with View gets no; with Collaborate on that thread, yes.
+      // A Viewer of the thread gets no; a Collaborator on that thread, yes.
       expect(read(SHARED_SERVER, VIEWED, true)).toBe(false);
       expect(read(SHARED_SERVER, JOINED, true)).toBe(true);
-      // A guest never gets more than upstream's permission allows.
+      // Nobody gets more than upstream's permission allows.
       expect(read(SHARED_SERVER, JOINED, false)).toBe(false);
     }),
   );
 
-  it.effect("sends none of J5's reads once the server has said it is a guest's", () =>
+  it.effect("sends none of the server's own reads once the server has said what it holds", () =>
     Effect.gen(function* () {
       const { layer, registry, fleetReads } = yield* environments();
       const runtime = Atom.runtime(layer);
       const sharing = createSharingEnvironmentAtoms(runtime);
       const atoms = createJ5EnvironmentAtoms(runtime);
-      yield* AtomRegistry.mount(registry, sharing.isGuest(SHARED_SERVER));
-      expect(yield* settlesAt(registry, sharing.isGuest(SHARED_SERVER), true)).toBe(true);
+      yield* AtomRegistry.mount(registry, sharing.isNarrow(SHARED_SERVER));
+      expect(yield* settlesAt(registry, sharing.isNarrow(SHARED_SERVER), true)).toBe(true);
 
       const own = atoms.fleet({ environmentId: MEMBER_SERVER, input: {} });
       const shared = atoms.fleet({ environmentId: SHARED_SERVER, input: {} });
@@ -236,14 +336,14 @@ describe("a guest's connection", () => {
     }),
   );
 
-  it.effect("still asks for a project's artifacts, which the server gives a project's guest", () =>
+  it.effect("still asks for what its scope gives it: artifacts, its inbox and Crew requests", () =>
     Effect.gen(function* () {
       const { layer, registry, fleetReads, otherReads } = yield* environments();
       const runtime = Atom.runtime(layer);
       const sharing = createSharingEnvironmentAtoms(runtime);
       const atoms = createJ5EnvironmentAtoms(runtime);
-      yield* AtomRegistry.mount(registry, sharing.isGuest(SHARED_SERVER));
-      expect(yield* settlesAt(registry, sharing.isGuest(SHARED_SERVER), true)).toBe(true);
+      yield* AtomRegistry.mount(registry, sharing.isNarrow(SHARED_SERVER));
+      expect(yield* settlesAt(registry, sharing.isNarrow(SHARED_SERVER), true)).toBe(true);
 
       const listed = yield* Effect.promise(() =>
         atoms.listArtifacts.run(registry, {
@@ -259,20 +359,24 @@ describe("a guest's connection", () => {
           Effect.map((exit) => exit._tag === "Failure"),
         );
       expect(yield* refused(atoms.openCount({ environmentId: SHARED_SERVER, input: {} }))).toBe(
-        true,
+        false,
+      );
+      expect(yield* refused(atoms.crewProposals({ environmentId: SHARED_SERVER, input: {} }))).toBe(
+        false,
       );
       expect(yield* refused(atoms.fleet({ environmentId: SHARED_SERVER, input: {} }))).toBe(true);
-      expect(yield* refused(atoms.crewProposals({ environmentId: SHARED_SERVER, input: {} }))).toBe(
-        true,
-      );
-      expect(otherReads).toEqual([`${SHARED_SERVER}:artifacts`]);
+      expect(otherReads).toEqual([
+        `${SHARED_SERVER}:artifacts`,
+        `${SHARED_SERVER}:inbox`,
+        `${SHARED_SERVER}:crew`,
+      ]);
       expect(fleetReads).toEqual([]);
     }),
   );
 });
 
-describe("a member's connection", () => {
-  it.effect("reads at once while the server has not answered what kind it is", () =>
+describe("an Owner's connection", () => {
+  it.effect("reads at once while the server has not answered what it is", () =>
     Effect.gen(function* () {
       // The server never answers the question: nothing may wait on it.
       const { layer, registry, fleetReads, asked } = yield* environments(() => Effect.never);
@@ -290,9 +394,9 @@ describe("a member's connection", () => {
 
   it.effect("reads, and may write to its threads, when the server cannot answer", () =>
     Effect.gen(function* () {
-      // A server from before sharing has no such request, and it has no guests either.
+      // A server from before people has no such request; upstream's permissions decide there.
       const { layer, registry, fleetReads } = yield* environments(() =>
-        Effect.die(new Error("Unknown request tag: j5.sharing.getConnectionAccess")),
+        Effect.die(new Error("Unknown request tag: j5.access.getConnectionAccess")),
       );
       const runtime = Atom.runtime(layer);
       const sharing = createSharingEnvironmentAtoms(runtime);
@@ -305,9 +409,13 @@ describe("a member's connection", () => {
       yield* AtomRegistry.mount(registry, operable);
       yield* AtomRegistry.getResult(registry, own);
       expect(fleetReads).toEqual([MEMBER_SERVER]);
-      expect(yield* settlesAt(registry, sharing.connectionKind(MEMBER_SERVER), "member")).toBe(
-        true,
+      yield* Effect.exit(
+        AtomRegistry.getResult(
+          registry,
+          sharing.connectionAccessQuery({ environmentId: MEMBER_SERVER, input: {} }),
+        ),
       );
+      expect(registry.get(sharing.isNarrow(MEMBER_SERVER))).toBe(false);
       expect(registry.get(operable)).toBe(true);
     }),
   );

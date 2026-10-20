@@ -40,11 +40,7 @@ import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useSettingsScopeEnvironments } from "../settingsScopeEnvironment";
-import {
-  GUEST_LIBRARY_UNAVAILABLE,
-  useGuestEnvironmentIds,
-  useIsGuestEverywhere,
-} from "../sharing/guestAccess";
+import { LIBRARY_FOR_OWNERS, useIsOwnerSomewhere, useOwnedEnvironmentIds } from "../sharing/access";
 import { agentPersonaEnvironment } from "./agentPersonaAtoms";
 import { PlaybookLibrarySettings } from "../playbooks/PlaybookLibrarySettings";
 import { useEnvironmentQuery } from "../../state/query";
@@ -79,13 +75,11 @@ import {
 } from "../../components/settings/settingsLayout";
 
 export function AgentLibrarySettings() {
-  // A guest is not offered a server's Personas or Playbooks (Shared server AC24).
-  return useIsGuestEverywhere() ? (
+  // Settings is an Owner's, for the servers they own (People and access AC27).
+  return !useIsOwnerSomewhere() ? (
     <SettingsPageContainer>
       <SettingsSection title="Personas">
-        <SettingsUnavailableGroup message={GUEST_LIBRARY_UNAVAILABLE}>
-          {null}
-        </SettingsUnavailableGroup>
+        <SettingsUnavailableGroup message={LIBRARY_FOR_OWNERS}>{null}</SettingsUnavailableGroup>
       </SettingsSection>
     </SettingsPageContainer>
   ) : (
@@ -95,10 +89,10 @@ export function AgentLibrarySettings() {
 
 function MemberAgentLibrarySettings() {
   const { environments: connected, isReady } = useEnvironments();
-  const guestEnvironmentIds = useGuestEnvironmentIds();
+  const ownedEnvironmentIds = useOwnedEnvironmentIds();
   const environments = useMemo(
-    () => connected.filter((environment) => !guestEnvironmentIds.has(environment.environmentId)),
-    [connected, guestEnvironmentIds],
+    () => connected.filter((environment) => ownedEnvironmentIds.has(environment.environmentId)),
+    [connected, ownedEnvironmentIds],
   );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const orderedEnvironments = useMemo(

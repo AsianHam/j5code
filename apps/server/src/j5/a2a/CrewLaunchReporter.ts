@@ -1,4 +1,5 @@
 import { makeCrewFailureAlert } from "./crewFailureAlert.ts";
+import { layer as sharedThreadsLayer } from "../sharing/SharedThreads.ts";
 import {
   MessageId,
   type OrchestrationV2Run,
@@ -508,6 +509,6 @@ const makeLayer = (daemon: boolean) =>
   );
 
 /** Production: the sweep and the stream run once the layer is built. */
-export const layer = makeLayer(true);
+export const layer = makeLayer(true).pipe(Layer.provide(sharedThreadsLayer));
 /** For tests and for a runtime whose own stream feeds `handleStoredEvent`. */
-export const manualLayer = makeLayer(false);
+export const manualLayer = makeLayer(false).pipe(Layer.provide(sharedThreadsLayer));

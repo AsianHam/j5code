@@ -1,6 +1,7 @@
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { layer as j5ThreadLineageLayer } from "../j5/a2a/ThreadLineage.ts";
+import { layer as j5ScheduledRunsLayer } from "../j5/sharing/scheduledRuns.ts";
 import * as Layer from "effect/Layer";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
@@ -300,6 +301,8 @@ const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
+  // J5: a run on a shared conversation names who scheduled it (FORK.md case 81).
+  Layer.provide(j5ScheduledRunsLayer),
   Layer.provide(
     Layer.mergeAll(
       layerThreadLaunchProvided,

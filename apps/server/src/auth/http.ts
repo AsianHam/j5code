@@ -31,7 +31,11 @@ import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
-import { GUEST_LINK_FOR_MEMBER, isMemberOpenedGuestLink } from "../j5/sharing/GuestPairing.ts";
+import {
+  PAIRED_AS_SOMEONE_ELSE_REFUSAL,
+  isPairedAsSomeoneElse,
+  recordConnectionsLinkCreator,
+} from "../j5/sharing/PairingIntents.ts";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -97,7 +101,7 @@ export function annotateEnvironmentRequest(endpoint: string) {
 export function failEnvironmentAuthInvalid(
   reason: EnvironmentAuthInvalidReason,
   dpopFailureReason?: DpopFailureReason,
-  pairingRefusal?: typeof GUEST_LINK_FOR_MEMBER,
+  pairingRefusal?: typeof PAIRED_AS_SOMEONE_ELSE_REFUSAL,
 ) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
@@ -344,8 +348,8 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
-              // J5: a member's browser opening a guest's link is told why (FORK.md case 70).
-              isMemberOpenedGuestLink(error) ? GUEST_LINK_FOR_MEMBER : undefined,
+              // J5: a browser paired as someone else is told why (FORK.md case 70).
+              isPairedAsSomeoneElse(error) ? PAIRED_AS_SOMEONE_ELSE_REFUSAL : undefined,
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -447,7 +451,23 @@ export const layer = HttpApiBuilder.group(
                 return yield* failEnvironmentScopeRequired(delegatedScope);
               }
             }
-            return yield* serverAuth.issuePairingCredential(args.payload);
+            const issued = yield* serverAuth.issuePairingCredential(args.payload);
+            // J5: the link pairs a device for the person whose device made it (FORK.md case 70).
+            yield* recordConnectionsLinkCreator({
+              creator: session,
+              link: issued,
+              scopes: delegatedScopes,
+            }).pipe(
+              // A link whose maker is not recorded would pair a device no one owns: revoked.
+              Effect.catch((error) =>
+                Effect.ignore(serverAuth.revokePairingLink(issued.id)).pipe(
+                  Effect.andThen(
+                    failEnvironmentInternal("pairing_credential_issuance_failed", error),
+                  ),
+                ),
+              ),
+            );
+            return issued;
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),

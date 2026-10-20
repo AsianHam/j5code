@@ -101,33 +101,23 @@ it.effect("counts what the fleet is doing right now, and names nothing", () =>
             ${participantIdForThread(parent!)}, 'j5_spawn', ${index + 1}, ${index + 1}
           )
         `;
-      // Two guests on the captain's thread, one of them on the whole project too.
+      // Two people on the captain's thread, one of them on the whole project too.
       for (const guest of ["human:guest-a", "human:guest-b"]) {
         yield* sql`
-          INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at, kind)
-          VALUES (${guest}, 0, ${at}, 'guest')
+          INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
+          VALUES (${guest}, 0, ${at})
         `;
         yield* sql`
-          INSERT INTO j5_a2a_person_grant (
-            person_id, target_kind, target_id, level, created_at, updated_at
-          ) VALUES (${guest}, 'thread', ${captain}, 'view', ${at}, ${at})
+          INSERT INTO j5_a2a_person_level (
+            person_id, scope_kind, scope_id, level, created_at, updated_at
+          ) VALUES (${guest}, 'thread', ${captain}, 'viewer', ${at}, ${at})
         `;
       }
       yield* sql`
-        INSERT INTO j5_a2a_person_grant (
-          person_id, target_kind, target_id, level, created_at, updated_at
-        ) VALUES ('human:guest-a', 'project', 'project:fleet-snapshot', 'collaborate', ${at}, ${at})
+        INSERT INTO j5_a2a_person_level (
+          person_id, scope_kind, scope_id, level, created_at, updated_at
+        ) VALUES ('human:guest-a', 'project', 'project:fleet-snapshot', 'collaborator', ${at}, ${at})
       `;
-      // One open link still works; the others were revoked or have expired.
-      for (const [name, expiresAt, revokedAt] of [
-        ["live", "2999-01-01T00:00:00.000Z", null],
-        ["revoked", "2999-01-01T00:00:00.000Z", at],
-        ["expired", "2000-01-01T00:00:00.000Z", null],
-      ])
-        yield* sql`
-          INSERT INTO j5_a2a_open_link (link_id, token_hash, thread_id, created_at, expires_at, revoked_at)
-          VALUES (${name}, ${name}, ${captain}, ${at}, ${expiresAt}, ${revokedAt})
-        `;
       yield* sql`
         INSERT INTO j5_a2a_peer (environment_id, label, link_mode, created_at, updated_at)
         VALUES ('environment:peer', 'Peer', 'store', ${at}, ${at})
@@ -230,7 +220,7 @@ it.effect("counts what the fleet is doing right now, and names nothing", () =>
         guests: 2,
         sharedThreads: 1,
         sharedProjects: 1,
-        liveOpenLinks: 1,
+        liveOpenLinks: 0,
         peerServers: 1,
       },
     ]);

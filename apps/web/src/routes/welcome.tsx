@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useSetupWizardRefusal } from "../j5/sharing/firstRunSetup";
 
 const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);
 
@@ -33,6 +34,9 @@ function WelcomeRouteView() {
   const [dismissed, setDismissed] = useState(false);
   const openNewThread = useNewThreadHandler();
   const localAvailable = authGateState.status === "authenticated";
+  // J5 (case 73): the wizard is an Owner's, once the server has their name.
+  const setupRefusal = useSetupWizardRefusal(localAvailable);
+  if (setupRefusal !== null) return setupRefusal;
   return (
     <>
       <NoProjectsHero />

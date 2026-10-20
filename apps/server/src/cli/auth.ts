@@ -16,6 +16,12 @@ import {
 } from "../cliAuthFormat.ts";
 import * as ServerConfig from "../config.ts";
 import { authScopesFlag } from "./authScopes.ts";
+import { cliEnvironmentAuth as j5CliEnvironmentAuth } from "../j5/sharing/AccessGate.ts";
+import {
+  pairingLinkForPerson as j5PairingLinkForPerson,
+  pairingScopesFlag as j5PairingScopesFlag,
+  personPairingFlags as j5PersonPairingFlags,
+} from "../j5/sharing/cliPairing.ts";
 import {
   authLocationFlags,
   type CliAuthLocationFlags,
@@ -23,9 +29,9 @@ import {
   resolveCliAuthConfig,
 } from "./config.ts";
 
-const runWithEnvironmentAuth = <A, E>(
+const runWithEnvironmentAuth = <A, E, R = never>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E, R>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -39,7 +45,8 @@ const runWithEnvironmentAuth = <A, E>(
       return yield* run(environmentAuth);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
+        // J5: ending a session here also ends its renewal; links name their person (FORK.md case 79).
+        j5CliEnvironmentAuth(EnvironmentAuth.layerRuntime).pipe(
           Layer.provide(ServerConfig.layer(config)),
           Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
         ),
@@ -80,11 +87,14 @@ const tokenOnlyFlag = Flag.Boolean("token-only").pipe(
 
 const pairingCreateCommand = Command.make("create", {
   ...authLocationFlags,
-  scopes: authScopesFlag(AuthStandardClientScopes),
+  // J5: also says whether --scope was given (FORK.md case 79).
+  scopes: j5PairingScopesFlag(AuthStandardClientScopes),
   ttl: ttlFlag,
   label: labelFlag,
   baseUrl: baseUrlFlag,
   json: jsonFlag,
+  // J5: the person the device is for (FORK.md case 79).
+  ...j5PersonPairingFlags,
 }).pipe(
   Command.withDescription("Issue a new client pairing token."),
   Command.withHandler((flags) =>
@@ -92,12 +102,20 @@ const pairingCreateCommand = Command.make("create", {
       flags,
       (environmentAuth) =>
         Effect.gen(function* () {
-          const issued = yield* environmentAuth.createPairingLink({
+          const { link: issued, said } = yield* j5PairingLinkForPerson({
+            flags,
             scopes: flags.scopes,
-            subject: "one-time-token",
-            ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
-            ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
+            // Upstream's desktop app runs this bare over SSH, knowing no one's name there.
+            withoutPerson: "ask",
+            mint: (scopes) =>
+              environmentAuth.createPairingLink({
+                scopes,
+                subject: "one-time-token",
+                ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
+                ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
+              }),
           });
+          yield* flags.json ? Console.error(said) : Console.log(said);
           const output = formatIssuedPairingCredential(issued, {
             json: flags.json,
             ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value } : {}),

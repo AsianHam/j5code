@@ -87,6 +87,8 @@ export interface CrewProposal {
   readonly approvedSeats: ReadonlyArray<CrewProposalSeat> | null;
   readonly createdAt: string;
   readonly resolvedAt: string | null;
+  /** Who approved or declined it, named only when the Captain's thread is a shared conversation. */
+  readonly decidedBy?: string | null | undefined;
   /** When the Captain received the launch report for an approval; null until it posts. */
   readonly reportedAt: string | null;
   /** The store always sets it; null when the proposal follows no playbook. */
@@ -142,6 +144,7 @@ export interface AgentCrewProposalServiceShape {
     readonly decision: CrewProposalDecision;
     readonly approvedSeats: ReadonlyArray<CrewProposalSeat> | null;
     readonly resolvedAt: string;
+    readonly decidedBy?: string | null | undefined;
   }) => Effect.Effect<CrewProposal | null, SqlError>;
   /** Approved proposals whose launch report has not reached the Captain yet. */
   readonly listUnreported: () => Effect.Effect<ReadonlyArray<CrewProposal>, SqlError>;
@@ -173,6 +176,7 @@ interface Row {
   readonly created_at: string;
   readonly resolved_at: string | null;
   readonly reported_at: string | null;
+  readonly decided_by: string | null;
   readonly playbook_name: string | null;
   readonly playbook_definition_path: string | null;
 }
@@ -192,6 +196,7 @@ const fromRow = (row: Row): CrewProposal => ({
   createdAt: row.created_at,
   resolvedAt: row.resolved_at,
   reportedAt: row.reported_at,
+  decidedBy: row.decided_by,
   playbook:
     row.playbook_name === null || row.playbook_definition_path === null
       ? null
@@ -291,6 +296,7 @@ export const layer: Layer.Layer<AgentCrewProposalService, never, SqlClient.SqlCl
         readonly decision: CrewProposalDecision;
         readonly approvedSeats: ReadonlyArray<CrewProposalSeat> | null;
         readonly resolvedAt: string;
+        readonly decidedBy?: string | null | undefined;
       }) {
         const approvedSeats =
           input.decision === "approve" && input.approvedSeats !== null
@@ -300,7 +306,8 @@ export const layer: Layer.Layer<AgentCrewProposalService, never, SqlClient.SqlCl
           UPDATE j5_agent_crew_proposal
           SET status = ${finalStatus(input.decision)},
               approved_seats = ${approvedSeats},
-              resolved_at = ${input.resolvedAt}
+              resolved_at = ${input.resolvedAt},
+              decided_by = ${input.decidedBy ?? null}
           WHERE id = ${input.id} AND status = 'open'
           RETURNING id
         `;

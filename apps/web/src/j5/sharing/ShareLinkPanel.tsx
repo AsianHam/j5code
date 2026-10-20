@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { CopyIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
 import { selectQrEndpointOption } from "../../components/settings/ConnectionsSettings.logic";
@@ -31,7 +32,7 @@ import {
 /**
  * The addresses a link to this server can use. The desktop app knows every address its own
  * server advertises; any other client knows only the one it reached the server at. Nothing is
- * opened to make a link work (Shared server AC22).
+ * opened to make a link work (People and access AC38).
  */
 export function useLinkRoutes(environmentId: EnvironmentId): ReadonlyArray<LinkRoute> {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -47,43 +48,36 @@ export function useLinkRoutes(environmentId: EnvironmentId): ReadonlyArray<LinkR
 }
 
 /** The address a link has over the route this client would offer first, for a one-click copy. */
-export function useLinkAddress(
-  environmentId: EnvironmentId,
-  kind: "named" | "join",
-): (secret: string) => string | null {
+export function useLinkAddress(environmentId: EnvironmentId): (token: string) => string | null {
   const routes = useLinkRoutes(environmentId);
   const defaultRouteKey = useUiStateStore((state) => state.defaultAdvertisedEndpointKey);
   const route = selectQrEndpointOption(routes, null, defaultRouteKey);
-  return (secret) =>
-    route === null ? null : kind === "join" ? route.directUrlFor(secret) : route.urlFor(secret);
+  return (token) => (route === null ? null : route.urlFor(token));
 }
 
 /**
  * A link to send to someone: the route it travels by, the address to copy, and a QR code for a
- * route another device can reach. `secret` is a share link's credential or a join link's token.
+ * route another device can reach. `token` is the link's own, kept by the server so it can be
+ * copied again (AC41).
  */
 export function ShareLinkPanel({
   environmentId,
-  secret,
-  kind,
+  token,
   meta,
   whoCannotOpen,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly secret: string;
-  /** A named person's link may open in the hosted app; a join link opens on the server itself. */
-  readonly kind: "named" | "join";
+  readonly token: string;
   readonly meta: ReactNode;
-  /** Who the loopback-only warning names: the person, or "People" for a join link. */
+  /** Who the loopback-only warning names: the person, or "People" for a link for many. */
   readonly whoCannotOpen: string;
 }) {
   const routes = useLinkRoutes(environmentId);
   const defaultRouteKey = useUiStateStore((state) => state.defaultAdvertisedEndpointKey);
   const [routeId, setRouteId] = useState<string | null>(null);
   const route = selectQrEndpointOption(routes, routeId, defaultRouteKey);
-  const url =
-    route === null ? "" : kind === "join" ? route.directUrlFor(secret) : route.urlFor(secret);
-  const detailOf = (option: LinkRoute) => (kind === "join" ? option.directDetail : option.detail);
+  const url = route === null ? "" : route.urlFor(token);
+  const detailOf = (option: LinkRoute) => option.detail;
   const localOnly = onlyThisMachineCanReach(routes);
   // A browser on plain HTTP has no clipboard; the address is shown whole to copy by hand.
   const [showWhole, setShowWhole] = useState(false);
@@ -151,6 +145,7 @@ export function ShareLinkPanel({
             <TooltipPopup side="top">{url}</TooltipPopup>
           </Tooltip>
           <Button size="xs" variant="outline" onClick={() => copyToClipboard(url, undefined)}>
+            <CopyIcon />
             {isCopied ? "Copied" : "Copy"}
           </Button>
         </div>

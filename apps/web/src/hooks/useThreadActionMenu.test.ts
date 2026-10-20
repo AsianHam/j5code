@@ -241,7 +241,7 @@ describe("the Share thread item", () => {
       expect(sharingDialogStore.read().request).toEqual({
         kind: "share",
         environmentId: target.environmentId,
-        target: { kind: "thread", threadId: target.threadId },
+        scope: { kind: "thread", threadId: target.threadId },
       }),
     );
     expect(state.effects).toEqual([]);

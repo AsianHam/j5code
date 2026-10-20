@@ -13,19 +13,19 @@ Two people who want the same agent's help relay it to each other: one asks their
 
 A **shared conversation** is a thread that more than one person can write to: one an Owner and a Collaborator can both reach, or two Owners ([People and access](people-and-access.md)). A thread stays a shared conversation once it has been one. On a server several people use, every thread is one from its first message; on a server with one person and an occasional invitation, only the threads and projects that were shared are. A thread only one person has ever been able to write to is unchanged by anything here.
 
-**The agent is told who is speaking.** The server puts the author's name and level on each person's message, at its start, in the text the agent reads, the way it names the sender of a message from another agent. The name is the one the server holds for that person, so a person cannot write as someone else. When a thread becomes shared, the agent is told in a note who can write to it, how to read the author's line, and who wrote the messages before it. The note is not a message of its own: it goes at the top of the next message a person sends, so the agent learns it in the turn it first matters. A message that begins with a slash is a command for the provider, which reads it only from the first character, so for now it goes to the agent exactly as typed, with no line; the person who sent it is still shown to everyone on the thread.
+**The agent is told who is speaking.** The server puts the author's name and level on each person's message, at its start, in the text the agent reads, the way it names the sender of a message from another agent. The name is the one the server holds for that person, so a person cannot write as someone else. When a thread becomes shared, the agent is told in a note who can write to it, how to read the author's line, and who wrote the messages before it. The note is not a message of its own: it goes at the top of the next message a person sends, so the agent learns it in the turn it first matters. A message that begins with a slash is a command for the provider, which reads it only from the first character, so for now it goes to the agent exactly as typed, with no line; the person who sent it is still shown to everyone on the thread. A scheduled task's run is named the same way, after the person who wrote its prompt; it is not sent under the name of someone who can no longer write to the thread.
 
-**For now, everyone who can write is trusted alike.** Owners own the server the agent runs on, and Collaborators were invited by an Owner to work with it. The agent treats everyone's requests the same way. When two people ask for things that conflict, it asks in the thread, naming them, and an Owner's word settles it. This is guidance the agent is given, not a rule the platform enforces: an agent reads every message as text. Every agent on a server, shared or not, is told who the server's Owners are, so that it knows them by name long before anyone else arrives.
+**For now, everyone who can write is trusted alike.** Owners own the server the agent runs on, and Collaborators were invited by an Owner to work with it. The agent treats everyone's requests the same way. When two people ask for things that conflict, it asks in the thread, naming them, and an Owner's word settles it. This is guidance the agent is given, not a rule the platform enforces: an agent reads every message as text.
 
 **Prompts belong to everyone who can write.** An agent raises three kinds of prompt in its thread: a question, a command waiting for approval, and a Crew roster waiting for approval. Anyone who can write to the thread answers one, the first answer settles it, and it then shows who answered. An answer to a question carries its author's name to the agent, and a Crew's Captain is told who decided its roster. Who approved a command is shown to the people on the thread and not told to the agent: an approval carries no words to put a name on. A Viewer sees each prompt with nothing to press.
 
-**An agent asks one person, or everyone here.** In a shared conversation an agent can ask, through the [inbox](inbox.md), any one person who can write to its thread, or **everyone here**: everyone who can write to its thread at the time the ask is read. An ask shows in the thread for everyone on it, and so does its reply. The first reply closes it for everyone. A Crew's later requests, a seat's approval and a request for a further seat, reach everyone who can write to that thread the same way ([Crews](crews.md)).
+**An agent asks one person, or everyone here.** In a shared conversation an agent can ask, through the [inbox](inbox.md), any one person who can write to its thread, or, while more than one person can write to it, **everyone here**: everyone who can write to its thread at the time the ask is read. Where only one person can write to the thread, there is no everyone here, and the agent asks that person. An ask shows in the thread for everyone on it, and so does its reply. The first reply closes it for everyone. A Crew's later requests, a seat's approval and a request for a further seat, reach everyone who can write to that thread the same way ([Crews](crews.md)).
 
 **Anyone who can write runs the thread.** A Collaborator, like an Owner, sends, queues and steers messages, interrupts and stops work, and changes or withdraws any queued message. When a person can no longer write to a thread, the messages they still have queued there are withdrawn.
 
 **Thread state is shared, for now.** Whether a thread is archived, settled, snoozed or pinned, and whether it has been read, is one value for everyone on the server, as upstream keeps it.
 
-**Each person reads their own messages as they always have**, and other people's in the same bubble on the left, with the author's name and picture. The level the agent is told is not drawn. A person's picture is their GitHub profile picture, from a username they enter in their own client.
+**Each person reads their own messages as they always have**, and other people's in the same bubble on the left, with the author's name. The level the agent is told is not drawn.
 
 **A shared conversation is shared whole.** A person added to it reads it from the beginning. Hiding the earlier part would be a promise the platform cannot keep, since a collaborator can ask the agent what was said. A person whose access ends loses the thread, and their messages stay in it under their name.
 
@@ -34,6 +34,7 @@ A **shared conversation** is a thread that more than one person can write to: on
 Set aside on purpose, each tracked where it is linked. An item leaves this list when the definition takes it in.
 
 - The read marker, snooze and pin kept per person rather than per thread ([#629](https://github.com/Jacksondr5/j5code/issues/629)).
+- A person's picture beside their messages: the GitHub profile picture for a username they enter in their own client ([#637](https://github.com/Jacksondr5/j5code/issues/637)).
 - Seeing who else is reading or typing in a thread, and the rest of the set-aside list ([#542](https://github.com/Jacksondr5/j5code/issues/542)).
 
 ## Acceptance criteria
@@ -42,7 +43,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 1. In a shared conversation, every message a person sends reaches the agent beginning with the line `[Message from <name> (<level>)]`, where the level is owner or collaborator. The name is the one the server holds for that person; nothing the person or their client sends changes it.
 2. In a thread only one person has ever been able to write to, a message reaches the agent as it does without this feature.
-3. When a thread becomes shared, the next message any person sends to it carries a note to the agent, at the top of that message and ahead of its author's line. The note names who can write and at what level, explains the author's line, the answer's line and that a command carries no line, and names who wrote the messages before it.
+3. When a thread becomes shared, the next message any person sends to it carries a note to the agent, at the top of that message and ahead of its author's line. The note names who can write and at what level, explains the author's line, the answer's line, a scheduled run's line and that a command carries no line, and names who wrote the messages before it.
 4. After someone gains or loses the ability to write to a shared conversation, changes level, or is renamed, the next message any person sends to it carries a note saying so, with who can write now. A note is carried by every message a person sends until one that carries it has reached the agent, so the agent can read it more than once and never reads a person's message without it. If the conversation is rewound to before the note, the next message carries it again.
 
 5. For now, a message whose first character that is not whitespace is `/` reaches the agent exactly as typed, with no author's line and no note, whoever sent it; the timeline still shows who sent it.
@@ -54,69 +55,50 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 8. No message is refused, altered or held by the platform on account of its content, except that only the platform sends the context records of its own kinds.
 
-9. Every agent's standing instructions name the server's Owners: "This server belongs to Jackson.", or "This server's owners are Jackson and Maria." when there are several.
-
 ### Prompts and asks
 
-10. In a shared conversation, a question prompt, an approval prompt and a Crew roster prompt can each be answered by anyone who can write to the thread, including editing a roster's seats and allowing a command for the session.
-11. The first answer settles a prompt for everyone, and the settled prompt shows who answered. An answer to a question carries its author's name and level to the agent. A Crew roster's Captain is told who approved or declined it. For a command's approval, the people on the thread see who answered and the agent is not told.
+9. In a shared conversation, a question prompt, an approval prompt and a Crew roster prompt can each be answered by anyone who can write to the thread, including editing a roster's seats and allowing a command for the session.
+10. The first answer settles a prompt for everyone, and the settled prompt shows who answered. An answer to a question carries its author's name and level to the agent. A Crew roster's Captain is told who approved or declined it. For a command's approval, the people on the thread see who answered and the agent is not told.
 
-12. A Viewer sees each prompt and its outcome, with its controls shown disabled.
-13. A Crew seat's request for approval, and a Captain's request for a further seat, reach the inbox of everyone who can write to that thread, and the first answer settles each.
+11. A Viewer sees each prompt and its outcome, with its controls shown disabled.
+12. A Crew seat's request for approval, and a Captain's request for a further seat, reach the inbox of everyone who can write to that thread, and the first answer settles each.
 
-14. In a shared conversation, an agent can ask one person who can write to its thread, or everyone here; an ask and its reply show in the thread to everyone on it.
+13. In a shared conversation, an agent can ask one person who can write to its thread, or everyone here while more than one person can write to it; an ask and its reply show in the thread to everyone on it.
 
 ### Queueing and steering
 
-15. Anyone who can write to a thread can send, queue and steer messages, interrupt and stop work, and change or withdraw any queued message.
+14. Anyone who can write to a thread can send, queue and steer messages, interrupt and stop work, and change or withdraw any queued message.
 
-16. When a person can no longer write to a thread, the messages they have queued there are withdrawn, and what was already delivered stays under their name.
+15. When a person can no longer write to a thread, the messages they have queued there are withdrawn, and what was already delivered stays under their name. A message they sent while they could still write, and still on its way when their access ended, may still reach the agent.
 
 ### Reading
 
-17. A person's own messages render as they do in a thread that is not shared; another person's message, a command included, renders in the same bubble on the left, with that person's picture beside it and their name above it, and no level.
-18. A person's picture is the GitHub profile picture for the username they entered in their client's settings; a person with no username, or a picture that cannot be loaded, shows initials on a coloured circle.
-19. The server stores a person's GitHub username and never a picture address; an Owner can clear it from the People page.
+16. A person's own messages render as they do in a thread that is not shared; another person's message, a command included, renders in the same bubble on the left, with that person's name above it and initials on a coloured circle beside it, and no level.
 
 ### History
 
-20. A person added to a thread can read all of it, from its first message.
-21. When a person's access to a thread ends, by removal or by their leaving, their messages remain in it under their name.
+17. A person added to a thread can read all of it, from its first message.
+18. When a person's access to a thread ends, by removal or by their leaving, their messages remain in it under their name.
 
 ### Thread state
 
-22. For now, archive, settle, snooze, pin and the read marker are one value per thread, shared by everyone on the server.
+19. For now, archive, settle, snooze, pin and the read marker are one value per thread, shared by everyone on the server.
+
+### Scheduled runs
+
+20. In a shared conversation, a run of a scheduled task reaches the agent beginning with the line `[Scheduled by <name> (<level>)]`, carrying any note due as a person's message does. It names the person who created the task or, when someone else has changed its prompt since, that person, by the name and level they have when it runs. A task whose prompt no person is recorded as writing, because an agent scheduled it or last changed its prompt, or it was made before this criterion, runs with no line. When the person a run would name can no longer write to the thread, the run is not sent: it fails, with the reason shown in the task list, and each later run fails the same way until someone who can write changes the task's prompt, which makes it theirs.
 
 ## Scenarios
 
-- **Two people, one agent.** The user gives a teammate Collaborator on a thread in Billing Migration. The teammate's first message reaches the agent with a note naming the user (owner) and the teammate (collaborator), saying the earlier messages were the user's, and then `[Message from Priya (collaborator)]`. On the user's screen the message is a card with Priya's picture; on hers it is an ordinary message. (AC1, AC3, AC7, AC17, AC6)
+- **Two people, one agent.** The user gives a teammate Collaborator on a thread in Billing Migration. The teammate's first message reaches the agent with a note naming the user (owner) and the teammate (collaborator), saying the earlier messages were the user's, and then `[Message from Priya (collaborator)]`. On the user's screen the message is a card with Priya's name; on hers it is an ordinary message. (AC1, AC3, AC7, AC16, AC6)
 - **A team server.** On L2 Support Rotation's server everyone on shift is a Collaborator at server scope. A thread an engineer starts is a shared conversation from its first message, and an agent asked a week later "what did Sam tell you?" can answer, because every message carried its author. (AC1, AC6)
 - **A request that conflicts.** Priya asks the agent to drop a migration step; the user said earlier to keep it. The agent asks in the thread, naming both, and the user says to keep it. (AC7)
 - **A command.** Priya types `/compact`. It reaches the provider as typed and the conversation is compacted; the timeline shows it as Priya's. (AC5)
-- **Everyone here.** A background agent on the L2 server needs a decision and asks everyone here. The ask appears in the inbox of everyone on shift; Sam answers first, and it leaves the others' inboxes showing that Sam answered. (AC14)
-- **A Crew, end to end.** Priya asks the agent for a Crew, edits a seat's model on the roster and approves it. A seat later needs a command approved; the request reaches her inbox and the user's, and she approves it. (AC10, AC13)
-- **The agent is busy.** The user sees the agent heading the wrong way and stops it; Priya steers it with a correction instead. Either can fix a typo in the other's queued message. (AC15)
-- **Watching.** A Viewer on the thread sees each prompt and how it was answered, with the controls disabled. (AC12)
-- **Access removed.** The user removes Priya. Her queued message is withdrawn, the agent is told she can no longer write, and her earlier messages still carry her name. (AC4, AC21, AC16)
-
-## History
-
-20. A person added to a thread can read all of it, from its first message.
-21. When a person's access to a thread ends, by removal or by their leaving, their messages remain in it under their name.
-
-## Scenarios
-
-- **Two people, one agent.** A member gives a guest Collaborate on a thread in Billing Migration, and writes "reviewing the migration plan with me" in the Share dialog. The agent receives a system note naming the guest, the line the member wrote, and where guests stand. The guest asks the agent a question; it arrives under their name and the agent answers it. On the member's screen the question is a card with the guest's picture; on the guest's it is an ordinary message. (AC1, AC3, AC5, AC6, AC17, AC18)
-- **A request beyond the work.** The guest asks the agent to delete the staging database. The agent does not, and writes in the thread that it is holding off and asks the member, by name, whether to go ahead. The member says no and the rule stands. Everything is visible to both. (AC5, AC7)
-- **A question for one of them.** The agent needs a decision only the member can make. Its attempt to send the member an ask through the inbox is refused with an error telling it to ask in the thread. It writes the question there, addressed to the member by name. (AC13)
-- **A prompt anyone can answer.** The guest asks the agent to run the migration tests, and the agent's access mode requires approval for the command. The prompt appears for both people; the guest approves it, and it now reads as approved by the guest. Later the agent raises a question prompt with two options; the member picks one before the guest does, and the guest sees which was picked and by whom. (AC8, AC9)
-- **A Crew.** The guest asks the agent for a Crew to split the work, the agent proposes a roster, and the guest approves it. The guest sees each seat's model and access and cannot change them. (AC8, AC10)
-- **The agent is busy.** The guest sends a message while the agent is running tests. It queues. They spot a typo, fix it while it waits, and it reaches the agent when the tests finish. They see no control for stopping the run; the member stops it when asked. (AC14, AC15, AC16)
-- **A private thread.** The member's other threads in the project have no guest collaborator. Their messages carry no name, and an agent there asks through the inbox as before. (AC2, AC13)
-- **Joining late.** A second guest is given View on the thread a week in. They read it from its first message. (AC20)
-- **Watching.** That second guest sees each prompt the agent raises and how it was answered, and no buttons. (AC11)
-- **Access removed.** The member removes the first guest's grant. The thread leaves the guest's list, the agent is told they can no longer write, and their earlier messages still carry their name for the member. (AC4, AC21)
-- **A guest leaves.** The second guest is finished with the thread and leaves it from their own client. It goes from their list, and the member sees on the People page that the guest no longer has it. (AC4, AC21)
+- **Everyone here.** A background agent on the L2 server needs a decision and asks everyone here. The ask appears in the inbox of everyone on shift; Sam answers first, and it leaves the others' inboxes showing that Sam answered. (AC13)
+- **A Crew, end to end.** Priya asks the agent for a Crew, edits a seat's model on the roster and approves it. A seat later needs a command approved; the request reaches her inbox and the user's, and she approves it. (AC9, AC12)
+- **The agent is busy.** The user sees the agent heading the wrong way and stops it; Priya steers it with a correction instead. Either can fix a typo in the other's queued message. (AC14)
+- **Watching.** A Viewer on the thread sees each prompt and how it was answered, with the controls disabled. (AC11)
+- **Access removed.** The user removes Priya. Her queued message is withdrawn, the agent is told she can no longer write, and her earlier messages still carry her name. (AC4, AC18, AC15)
 
 ## History
 
@@ -126,7 +108,12 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 - 2026-10-13 — AC5: the note no longer says a guest is "not fully trusted". A guest is worked with on ordinary work; sensitive things need a member's prior authorization, which the "here for" line can give. In a live test two models refused a guest's harmless request for want of a member's approval (Jackson).
 - 2026-10-13 — AC9: the agent is told who answered a question, on the answer, and a Captain who decided its roster; it is not told who answered a command's approval, which the people on the thread see (Jackson: "The providers dont provide a way for us to give the context, a queued message is terrible UX"). AC10: a guest approves a roster whatever access its seats have (Jackson).
 - 2026-10-13 — AC22: a member's message that begins with a slash is sent as typed so that provider commands work; a guest's is sent as words under their name (Jackson).
-- 2026-10-17 — rewritten for the people model (Jackson; [record](../../worklog/2026-10-16-people-and-access-session.md)). A thread is shared whenever more than one person can write to it, and stays so (AC6), so that agents can tell people apart across their memories. The author's line names the level (AC1). Anyone's command goes as typed (AC5). The note trusts everyone who can write alike and an Owner settles a conflict (AC3, AC7). Every agent is told the server's Owners (AC9). Anyone who can write answers every prompt, edits a roster and allows a command for the session (AC10). Crew requests (AC13) and asks (AC14) go to everyone who can write, with "everyone here" as an address. Anyone who can write steers, stops and changes any queued message (AC15, AC16). Thread state is shared (AC22). Another person's message is drawn as the reader's own bubble on the left, with name and picture and no level (AC17; Jackson, in the design review). Retired, by their former numbers: AC6 (the "here for" line), AC10 (a guest approved a roster only as proposed), AC13 (an inbox ask was refused in a shared conversation), AC14 and AC15 (a guest only queued and could not stop).
+- 2026-10-17 — rewritten for the people model (Jackson; [record](../../worklog/2026-10-16-people-and-access-session.md)). A thread is shared whenever more than one person can write to it, and stays so (AC6), so that agents can tell people apart across their memories. The author's line names the level (AC1). Anyone's command goes as typed (AC5). The note trusts everyone who can write alike and an Owner settles a conflict (AC3, AC7). Anyone who can write answers every prompt, edits a roster and allows a command for the session (AC10). Crew requests (AC13) and asks (AC14) go to everyone who can write, with "everyone here" as an address. Anyone who can write steers, stops and changes any queued message (AC15, AC16). Thread state is shared (AC22). Another person's message is drawn as the reader's own bubble on the left, with name and picture and no level (AC17; Jackson, in the design review). Retired, by their former numbers: AC6 (the "here for" line), AC10 (a guest approved a roster only as proposed), AC13 (an inbox ask was refused in a shared conversation), AC14 and AC15 (a guest only queued and could not stop).
 
 - 2026-10-17 — criteria renumbered in order, after the rewrite retired the former AC6, AC10, AC13, AC14 and AC15 (Jackson). Former numbers: AC5 → AC7; AC7 → AC8; AC8 → AC10; AC9 → AC11; AC11 → AC12; AC12 → AC13; AC16 → AC15; AC22 → AC5; AC1 to AC4 and AC17 to AC21 unchanged. The rewrite's own line above uses the new numbers. Code comments that cite the former numbers are rewritten with the rebuild.
 - 2026-10-17 — what holds only for now is marked so, and a Later list names what is set aside, with the issue that tracks each (Jackson).
+- 2026-10-18 — a person's picture moves to the Later list (Jackson, 2026-10-17, for the build of [#636](https://github.com/Jacksondr5/j5code/issues/636)): AC17 draws initials, and former AC18 and AC19 are retired; former AC20 to AC22 are now AC18 to AC20. A copy of the guest-era History and Scenarios left in by the rewrite is removed.
+- 2026-10-18 — AC16: a message sent while its author could still write, and still on its way when their access ended, may still reach the agent; holding every send against every change of access would cost more than it returns, since that person was trusted when they sent it (security review of [#636](https://github.com/Jacksondr5/j5code/issues/636); accepted by Jackson 2026-10-19).
+- 2026-10-18 — the Owners line is dropped; the note names everyone who can write, Owners included (Jackson). Former AC9 is retired, and former AC10 to AC20 are now AC9 to AC19.
+- 2026-10-18 — "everyone here" only while more than one person can write to the thread; where one can, the agent asks that person (AC13; Jackson, in the review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).
+- 2026-10-19 — a scheduled task's run names who wrote its prompt, and fails, not sent, while they can no longer write to the thread; the task is not paused, since that would change upstream's scheduler (AC20, AC3; Jackson, in the review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).

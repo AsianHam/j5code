@@ -86,14 +86,16 @@ Upstream is built for one person who sees everything, and each of its surfaces w
 | Home scope  | What it adds                                                                                                                                |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Thread**  | The conversation and the agents beneath it, its diffs, its preview tabs, the pages its tools published, and the scheduled tasks bound to it |
-| **Project** | The project's artifacts, its Playbooks, the skills in its workspace, and its other scheduled tasks                                          |
+| **Project** | The project's artifacts, the skills in its workspace, and its other scheduled tasks                                                         |
 | **Server**  | The Fleet page, Personas, and the skills installed for the server's providers                                                               |
+
+Playbooks are the server's, and are not cut down to a scope: anyone who can write somewhere uses them, and a run starts only on a thread its person writes to. Only Owners change them.
 
 A Viewer never sees files, terminals, settings, providers or connections, at any scope: files and terminals reach the server's machine and its credentials, not just its work, and the rest configures the server. A person's inbox belongs to the person, not to a scope.
 
 ### Settings
 
-Settings configures a server, so it belongs to that server's Owners. Settings and the People page list only the servers where the person is an Owner, with a picker to choose among them, so an Owner of several servers manages them all from one client. For now, someone who is an Owner of no connected server sees only the pages about their own device, and Settings is not divided page by page between the levels: each of upstream's pages would need its own work to be right for every level and scope, so a page is for Owners unless it is one of the few about the device itself.
+Settings configures a server, so it belongs to that server's Owners. Settings and the People page list only the servers where the person is an Owner, with a picker to choose among them, so an Owner of several servers manages them all from one client. For now, someone who is an Owner of no connected server sees only the pages about their own device and, on the People page, their own row, from which they leave, and who reaches each project they reach; and Settings is not divided page by page between the levels: each of upstream's pages would need its own work to be right for every level and scope, so a page is for Owners unless it is one of the few about the device itself.
 
 ### Links
 
@@ -119,7 +121,8 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 - Settings worked through page by page for Collaborators and Viewers, and with it archiving and deleting for those who are not Owners ([#630](https://github.com/Jacksondr5/j5code/issues/630)).
 - An authoritative identity: a sign-in, such as a company's, that proves who a person is ([#632](https://github.com/Jacksondr5/j5code/issues/632)).
-- Sharing on mobile ([#609](https://github.com/Jacksondr5/j5code/issues/609)).
+- Sharing on mobile, including a phone taking its new session when its person's level changes ([#609](https://github.com/Jacksondr5/j5code/issues/609)).
+- A Viewer watching a thread's preview tabs ([#540](https://github.com/Jacksondr5/j5code/issues/540)).
 - Leaving one thread inside a project or server one holds as a whole, and the rest of the set-aside list ([#542](https://github.com/Jacksondr5/j5code/issues/542)).
 
 ## Acceptance criteria
@@ -129,7 +132,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 1. Every paired device belongs to exactly one person, and every person's id is stable across restarts and independent of how the device signed in.
 2. The desktop app on the server's own machine, and the link the server prints when it starts, pair a device as the first owner.
 3. A pairing link made from a device in upstream's Connections settings pairs a device for the person that device belongs to.
-4. `j5 pair` and `j5 auth pairing create` refuse to make a link without `--person`. A name that matches a person makes the link for them, at their levels; a name that matches no one creates that person, and then `--level` is required, with `--project` or `--thread` for a scope narrower than the server. Upstream's `--scope` keeps its meaning: it narrows the device's permissions, within the person's level. The command says which it did.
+4. `j5 pair` refuses to make a link without `--person`; `j5 auth pairing create` without it makes a link for a device the server then asks about, as AC5 says. A name that matches a person makes the link for them, at their levels; a name that matches no one creates that person, and then `--level` is required, with `--project` or `--thread` for a scope narrower than the server. Upstream's `--scope` keeps its meaning: it narrows the device's permissions, within the person's level. The command says which it did.
 5. A device whose person the server does not know is asked "What should people and agents on _&lt;server name&gt;_ call you?" before it can use the server, with every person already on the server offered, with their levels, alongside a new name. Choosing a person makes the device theirs; a new name creates a person at server scope, an Owner if the device holds Manage access, a Collaborator if it holds Operate tasks, and a Viewer otherwise.
 6. A server's first owner is asked the same question on their first device to connect, before that device can use the server.
 7. Devices paired before this definition held belong to the first owner.
@@ -148,15 +151,15 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 14. A Collaborator can do within their scope everything an Owner can, except configure the server, share it, for now archive or delete a thread, and, at thread scope, start a thread, fork one or merge one back.
 15. An Owner configures the server and shares it.
 16. Each level's upstream permissions are listed by name in one place, and a device holds exactly its person's highest level's set: a Viewer "View environment"; a Collaborator "View environment", "Operate tasks", "Control previews", "View diagnostics and usage", "View terminals", "Use terminals", "Change source control", "Read files", "Write files" and "View relay"; an Owner every permission upstream lets a client be given. J5 never gives upstream more permissions for a request than its device holds.
-17. When a person's level changes, each device paired as them is given a new session holding the new level's permissions in place of the old one, and reconnects once. A lowered level takes effect at once, on open connections too. A device that is offline gets its new session when it next connects, while its old one is within its lifetime; after that, and for an MCP client, it is paired again by hand.
+17. When a person's level changes, each device paired as them is given a new session holding the new level's permissions in place of the old one, and reconnects once. A lowered level takes effect at once, on open connections too. A device that is offline gets its new session when it next connects, while its old one is within its lifetime; after that it is paired again by hand. For now, a device on the mobile app is paired again by hand after any change of its person's level.
 18. A device paired from upstream's Connections settings with permissions chosen there keeps, in any new session, only the chosen permissions its person's level allows.
 19. A Collaborator at server scope adds projects; a Collaborator at project scope or wider renames and removes a project; editing a project's scripts follows upstream's permission for environment settings, so only an Owner does it.
-20. Installing a skill from a catalog is for Owners; seeing and using skills, Personas, Playbooks and scheduled tasks follows the scope they belong to.
+20. Installing a skill from a catalog is for Owners; seeing and using skills, Personas and scheduled tasks follows the scope they belong to, and changing a Persona is an Owner's, as any setting is. Playbooks are the server's: anyone who holds Collaborator at any scope sees them and has an agent run one on a thread they write to, and only an Owner saves, renames, deletes or chooses the folders of one in the app. A Collaborator's agent can still save a Playbook through its own tool, as it can change files.
 
 ### What each scope shows
 
-21. A thread's scope shows its conversation, the agents beneath it, its diffs, its preview tabs, the pages its tools published and the scheduled tasks bound to it.
-22. A project's scope adds every thread in the project, the project's artifacts, its Playbooks, the skills in its workspace and its other scheduled tasks; a person whose scope is a thread sees a link to an artifact and cannot open it.
+21. A thread's scope shows its conversation, the agents beneath it, its diffs, its preview tabs, the pages its tools published and the scheduled tasks bound to it. For now, a Viewer sees a thread's preview tabs listed and does not watch them.
+22. A project's scope adds every thread in the project, the project's artifacts, the skills in its workspace and its other scheduled tasks; a person whose scope is a thread sees a link to an artifact and cannot open it.
 23. The server's scope adds every project, the Fleet page, Personas and the skills installed for the server's providers.
 24. A Viewer is shown no files, file contents, terminals, settings, providers or connections at any scope.
 25. A person whose scope is narrower than the server is listed only the projects and threads their scope covers, and the server refuses their request for any other, whatever client sent it.
@@ -164,8 +167,8 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 ### Settings and the first screen
 
-27. An Owner sees all of Settings for each server they own. Settings and the People page list only the servers where the person is an Owner, with a picker to choose among them.
-28. For now, someone who is an Owner of no connected server is shown only the Settings pages about their own device: Appearance, Snap-shot and Open-source licenses. Settings search finds only the pages a person is shown.
+27. An Owner sees all of Settings for each server they own. Settings lists only the servers where the person is an Owner, with a picker to choose among them. The People page lists them too, and for a server where the person is not an Owner it shows only their own row and, read only, who reaches each project they reach (AC26).
+28. For now, someone who is an Owner of no connected server is shown only the Settings pages about their own device, Appearance, Snap-shot and Open-source licenses, and the People page with their own row and the projects they reach on each server. Settings search finds only the pages a person is shown.
 29. A Settings page is shown to someone who is not an Owner only if it is one of those listed; any other page, including one upstream adds later, is shown to Owners only.
 30. The setup wizard is offered only to an Owner of the server the client opened first, decided by that server's answer. Someone whose scope covers nothing, because they left or lost the last thing they reached, sees "Nothing is shared with you".
 
@@ -216,3 +219,9 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 - 2026-10-16 — defined (Jackson): the principles, three layers, scopes and levels, home scopes, one kind of link, devices and the first owner, names, leaving and removal. Absorbs [Shared server](shared-server.md) AC3 to AC35 and the access model that register entry D33 described ([record](../../worklog/2026-10-16-people-and-access-session.md)).
 - 2026-10-17 — what holds only for now is marked so, and a Later list names what is set aside, with the issue that tracks each (Jackson).
+- 2026-10-18 — someone who is not an Owner sees their own row on the People page, so they can leave a project or the server as AC48 says, and who reaches each project they reach, as AC26 says (AC27, AC28; confirmed by Jackson 2026-10-19; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
+- 2026-10-18 — for now a Viewer sees a thread's preview tabs listed, and watching them is set aside (AC21; Jackson's 2026-10-11 deferral of [#540](https://github.com/Jacksondr5/j5code/issues/540); confirmed by Jackson 2026-10-19).
+- 2026-10-18 — a bare `j5 auth pairing create` makes a link for a device the server asks about, since upstream's desktop app runs it over SSH; `j5 pair` still refuses (AC4; confirmed by Jackson 2026-10-19; register D36).
+- 2026-10-19 — Playbooks are the server's: anyone who can write uses them, Owners change them (Jackson, after [#621](https://github.com/Jacksondr5/j5code/pull/621)).
+- 2026-10-19 — for now a device on the mobile app is paired again by hand after a change of level; its renewal joins sharing on mobile (AC17; Jackson, from Bryant's review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).
+- 2026-10-19 — changing a Persona is an Owner's, as any setting is, and a Collaborator's agent can still save a Playbook through its own tool, since sharing is trust (AC20; Jackson).

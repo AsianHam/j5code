@@ -395,6 +395,10 @@
       "types": "./src/j5/peering.ts",
       "default": "./src/j5/peering.ts"
     },
+    "./j5/session-renewal": {
+      "types": "./src/j5/sessionRenewal.ts",
+      "default": "./src/j5/sessionRenewal.ts"
+    },
     "./j5/sharing": {
       "types": "./src/j5/sharing.ts",
       "default": "./src/j5/sharing.ts"

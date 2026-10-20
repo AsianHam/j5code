@@ -163,8 +163,6 @@ it("shows nothing from a server once its connection is known to be a guest's", (
     error: null,
   });
   expect(routeCalls).toBe(1);
-  // The page says why, in a guest's terms, and not that the server is too old.
-  expect(j5SourceNotice(registry.get(sources).sources[0]!)).toBe(
-    "Nothing from a server you are a guest on appears here.",
-  );
+  // The page says why, and not that the server is too old.
+  expect(j5SourceNotice(registry.get(sources).sources[0]!)).toBe("Remote: not shared with you.");
 });

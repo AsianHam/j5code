@@ -21,6 +21,7 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { renewPrimarySession } from "../../j5/sharing/sessionRenewal";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -72,14 +73,15 @@ export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.Tag
   "PrimaryEnvironmentPairingCredentialRejectedError",
   {
     providedLength: Schema.Number,
-    // J5: the token was good, and is a guest's link opened by a signed-in member (FORK.md case 70).
-    guestLinkForMember: Schema.optional(Schema.Boolean),
+    // J5: the token was good, and is a link for another person opened on a device that is already
+    // someone's (FORK.md case 70).
+    pairedAsSomeoneElse: Schema.optional(Schema.Boolean),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return this.guestLinkForMember
-      ? "You are already signed in to this server as a member. This link is for a guest: send it to them rather than opening it."
+    return this.pairedAsSomeoneElse
+      ? "This device is already paired as someone else on this server. Open the link on the device it is for."
       : "Invalid pairing token. Check the token and try again.";
   }
 }
@@ -240,7 +242,9 @@ async function exchangeBootstrapCredential(credential: string): Promise<AuthBrow
       ) {
         throw new PrimaryEnvironmentPairingCredentialRejectedError({
           providedLength: credential.length,
-          ...(error.pairingRefusal === "guest_link_for_member" ? { guestLinkForMember: true } : {}),
+          ...(error.pairingRefusal === "paired_as_someone_else"
+            ? { pairedAsSomeoneElse: true }
+            : {}),
           cause: error,
         });
       }
@@ -322,6 +326,8 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
 
   const bootstrapCredential = urlCredential ?? getDesktopBootstrapCredential();
   if (!bootstrapCredential) {
+    // J5: a session J5 ended for a change of level renews with its own cookie (FORK.md case 70).
+    if ((await renewPrimarySession()) === "renewed") return { status: "authenticated" };
     return {
       status: "requires-auth",
       auth: currentSession.auth,

@@ -1,23 +1,14 @@
 import type { AdvertisedEndpoint } from "@t3tools/contracts";
-import {
-  markedAsShareLink,
-  type SharingGrantLevel,
-  type SharingLinkLifetime,
-  type SharingOpenLink,
-  type SharingPerson,
-} from "@t3tools/contracts/j5";
+import { markedAsShareLink, type SharingLinkLifetime } from "@t3tools/contracts/j5";
 
 import {
   isQrShareableEndpoint,
   type QrEndpointOption,
 } from "../../components/settings/ConnectionsSettings.logic";
 import { isLoopbackHostname } from "../../environments/primary/target";
-import {
-  resolveDesktopPairingUrl,
-  resolveHostedPairingUrl,
-} from "../../components/settings/pairingUrls";
+import { resolveDesktopPairingUrl } from "../../components/settings/pairingUrls";
 
-/** How long a link stays usable, as the Share and Join link dialogs offer it. */
+/** How long a link stays usable, as the Share dialog offers it (AC31). */
 export const LINK_LIFETIMES: ReadonlyArray<{
   readonly id: SharingLinkLifetime;
   readonly label: string;
@@ -32,30 +23,22 @@ export const DEFAULT_LINK_LIFETIME: LinkLifetime = "7d";
 
 /** What a person is told when a name is not one the server will take, before it is sent. */
 export const NAME_NOT_USABLE =
-  "Use a name of one line, up to 80 characters, with no invisible characters or square brackets.";
+  "Use a name of one line, up to 80 characters, with no invisible characters, no square or angle brackets, and no level in parentheses such as (owner).";
 /** What a person is told when the name they chose is someone else's on this server. */
 export const NAME_IN_USE = "That name is already in use on this server. Choose another.";
 
-const LEVEL_LABELS: Record<SharingGrantLevel, string> = {
-  view: "View",
-  collaborate: "Collaborate",
-};
-export const levelLabel = (level: SharingGrantLevel) => LEVEL_LABELS[level];
-
-/** One way a link can reach the server: an address the server is already reachable at (AC22). */
+/**
+ * One way a link can reach the server: an address the server is already reachable at (AC38).
+ * A link always opens on the server itself, never in the hosted app, whose pairing form takes an
+ * upstream pairing credential and cannot ask what a J5 link opens or who is joining.
+ */
 export interface LinkRoute extends QrEndpointOption {
   readonly label: string;
   readonly detail: string;
   /** Only this machine can open a link over this route. */
   readonly loopback: boolean;
-  readonly urlFor: (credential: string) => string;
-  /**
-   * The address on the server itself, never the hosted app's. A join link uses it: the hosted
-   * app's pairing form takes a pairing credential and cannot ask a join link's person their name.
-   */
-  readonly directUrlFor: (secret: string) => string;
-  /** What `detail` says when the direct address is the one offered. */
-  readonly directDetail: string;
+  /** The address of the join page for a link's token. */
+  readonly urlFor: (token: string) => string;
 }
 
 const hostnameOf = (baseUrl: string) => {
@@ -65,24 +48,6 @@ const hostnameOf = (baseUrl: string) => {
     return "";
   }
 };
-
-const isHostedUrl = (value: string) => {
-  try {
-    const url = new URL(value);
-    return url.pathname === "/pair" && url.searchParams.has("host");
-  } catch {
-    return false;
-  }
-};
-
-// The four helpers below follow upstream's Connections settings, where they are private to
-// `ConnectionsSettings.tsx`: which address a link uses, how it is described, and which one a
-// saved default names. Reread them there when upstream changes how it picks a route.
-const endpointUrl = (endpoint: AdvertisedEndpoint, credential: string) =>
-  endpoint.compatibility.hostedHttpsApp === "compatible"
-    ? (resolveHostedPairingUrl(endpoint.httpBaseUrl, credential) ??
-      resolveDesktopPairingUrl(endpoint.httpBaseUrl, credential))
-    : resolveDesktopPairingUrl(endpoint.httpBaseUrl, credential);
 
 const reachabilityHint = (reachability: AdvertisedEndpoint["reachability"]) => {
   switch (reachability) {
@@ -122,14 +87,9 @@ export function linkRoutesFromEndpoints(
       preferenceKey: endpointPreferenceKey(endpoint),
       qrShareable: isQrShareableEndpoint(endpoint),
       label: endpoint.label,
-      detail: isHostedUrl(endpointUrl(endpoint, "x"))
-        ? "Opens the hosted app, no install needed"
-        : reachabilityHint(endpoint.reachability),
+      detail: reachabilityHint(endpoint.reachability),
       loopback: endpoint.reachability === "loopback",
-      urlFor: (credential) => markedAsShareLink(endpointUrl(endpoint, credential)),
-      directUrlFor: (secret) =>
-        markedAsShareLink(resolveDesktopPairingUrl(endpoint.httpBaseUrl, secret)),
-      directDetail: reachabilityHint(endpoint.reachability),
+      urlFor: (token) => markedAsShareLink(resolveDesktopPairingUrl(endpoint.httpBaseUrl, token)),
     }));
 }
 
@@ -144,9 +104,7 @@ export function linkRouteFromBaseUrl(baseUrl: string): LinkRoute {
     label: hostname === "" ? baseUrl : hostname,
     detail: loopback ? "Clients on this machine" : "The address this client uses",
     loopback,
-    urlFor: (credential) => markedAsShareLink(resolveDesktopPairingUrl(baseUrl, credential)),
-    directUrlFor: (secret) => markedAsShareLink(resolveDesktopPairingUrl(baseUrl, secret)),
-    directDetail: loopback ? "Clients on this machine" : "The address this client uses",
+    urlFor: (token) => markedAsShareLink(resolveDesktopPairingUrl(baseUrl, token)),
   };
 }
 
@@ -167,68 +125,6 @@ export function lifetimeLeft(expiresAtMs: number, nowMs: number): string | null 
   // A link made for seven days reads "7 days" for the first hour of its life, not "6 days".
   const days = Math.round(hours / 24);
   return `${days} ${plural(days, "day", "days")}`;
-}
-
-/** The line under a named person's link: "Works once. Expires in 7 days. View on <title>." */
-export function namedLinkMeta(input: {
-  readonly expiresAtMs: number;
-  readonly nowMs: number;
-  readonly level: SharingGrantLevel | null;
-  readonly targetTitle: string | null;
-}): string {
-  const left = lifetimeLeft(input.expiresAtMs, input.nowMs);
-  return [
-    "Works once.",
-    left === null ? "Expired." : `Expires in ${left}.`,
-    ...(input.level !== null && input.targetTitle !== null
-      ? [`${levelLabel(input.level)} on ${input.targetTitle}.`]
-      : []),
-  ].join(" ");
-}
-
-/** The line under an active join link: "Expires in 6 days. 2 people have joined." */
-export function joinLinkMeta(input: {
-  readonly expiresAtMs: number;
-  readonly nowMs: number;
-  readonly joined: number;
-}): string {
-  const left = lifetimeLeft(input.expiresAtMs, input.nowMs);
-  const joined =
-    input.joined === 0
-      ? "Nobody has joined yet."
-      : `${input.joined} ${plural(input.joined, "person has", "people have")} joined.`;
-  return `${left === null ? "Expired." : `Expires in ${left}.`} ${joined}`;
-}
-
-/** Whether new people can still join through an open link. */
-export const openLinkIsActive = (link: SharingOpenLink, nowMs: number) =>
-  !link.revoked && link.expiresAt.epochMilliseconds > nowMs;
-
-/** The join link a thread has now, the one with the longest left to run when there are several. */
-export function activeOpenLinkFor(
-  links: ReadonlyArray<SharingOpenLink>,
-  threadId: string,
-  nowMs: number,
-): SharingOpenLink | null {
-  return (
-    links
-      .filter((link) => link.threadId === threadId && openLinkIsActive(link, nowMs))
-      .toSorted(
-        (left, right) => right.expiresAt.epochMilliseconds - left.expiresAt.epochMilliseconds,
-      )[0] ?? null
-  );
-}
-
-/** The guests whose name holds what was typed; an existing person is shared with, not invited. */
-export function guestsMatchingName(
-  people: ReadonlyArray<SharingPerson>,
-  typed: string,
-): ReadonlyArray<SharingPerson> {
-  const query = typed.trim().toLowerCase();
-  if (query === "") return [];
-  return people.filter(
-    (person) => person.kind === "guest" && (person.displayName ?? "").toLowerCase().includes(query),
-  );
 }
 
 /** The first one or two letters a person's avatar shows. */

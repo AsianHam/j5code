@@ -10,9 +10,11 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import {
+  J5_ACCESS_WS_METHODS,
   J5_CLIENT_READ_WS_METHODS,
+  J5_PEOPLE_WS_METHODS,
   J5_PLAYBOOK_WS_METHODS,
-  J5_SHARING_WS_METHODS,
+  J5_SHARED_CONVERSATION_WS_METHODS,
 } from "@t3tools/contracts/j5";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -85,9 +87,11 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.terminalObserve
   // J5: saved-agent handoff refresh signal (packages/contracts/src/j5/agentPersona.ts).
   | typeof J5_AGENT_PERSONA_WS_METHODS.subscribeAgentHandoffRefreshes
-  // J5: a guest's level on one thread (packages/contracts/src/j5/sharing.ts).
-  | typeof J5_SHARING_WS_METHODS.subscribeThreadAccess
-  | typeof J5_SHARING_WS_METHODS.subscribeThreadPeopleChanges;
+  // J5: a person's level on one thread, who reaches a thread or project, and who wrote in a
+  // shared conversation (packages/contracts/src/j5/access.ts, people.ts, sharedConversation.ts).
+  | typeof J5_ACCESS_WS_METHODS.subscribeThreadLevel
+  | typeof J5_PEOPLE_WS_METHODS.subscribeScopePeopleChanges
+  | typeof J5_SHARED_CONVERSATION_WS_METHODS.subscribeThreadAuthorsChanges;
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.chatGptHandoffSubscribe
