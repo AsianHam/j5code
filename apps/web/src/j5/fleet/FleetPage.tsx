@@ -2,7 +2,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { j5SourceNotice } from "@t3tools/client-runtime/j5/inbox";
 import { spansMultipleEnvironments } from "@t3tools/client-runtime/j5/readSources";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
 import { ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
@@ -379,7 +382,7 @@ function FleetNodeRows(
             displayName === null
               ? { displayName: "Unnamed participant", tooltipParticipantId: agent.participantId }
               : { displayName, tooltipParticipantId: null },
-          runningTurn: classifyCrewSeat(thread) === "running",
+          runningTurn: threadRuntimeIsActive(thread?.runtime),
           openAsks: agent.openAsks,
         };
       }),

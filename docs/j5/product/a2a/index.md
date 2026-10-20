@@ -97,6 +97,10 @@ Silence is **never measured about a person**. A person has no turn that ends. Ho
 
 The platform names five kinds of silence: the turn ended without the owed reply; the turn errored; the agent was stopped, which tells the waiter not to retry; the agent is itself waiting on a person, and whether that person has seen the ask; and the agent is blocked on a peer, naming the peer. A notice informs the waiter. It never closes the Exchange, and it never claims to know whether the agent forgot or is waiting on something first — that is the waiter's judgment to make with the facts in hand.
 
+A J5-spawned Peer Agent's native question is separate from an Exchange. The platform tells its placement parent which thread and request to read. A live question is described as blocked; a message question may leave the agent working. The parent may answer through upstream's pending-request tools when permitted and the answer follows the task or the person's instructions; otherwise it asks the person to answer in the original thread. Resolving the question removes a notice still queued for the parent; a notice already delivered stays as history. This applies to live Crew seats too, when their harness still permits native questions. Archived or deleted threads and retired Crew seats do not raise these notices. With no reachable placement parent, no parent notice is sent; an actionable question still appears as an Inbox link to the agent's thread. Forks and ordinary threads placed under an agent do not gain this routing; J5-spawned agents retain it when their placement parent changes. A J5-spawned Captain still notifies its placement parent about its own questions, while those questions stay inline rather than being duplicated in the human Inbox. Native delegated children use upstream's own parent notification.
+
+Notices follow native-question updates and relevant run changes; there is no startup sweep. A question left pending across a restart needs a later qualifying event to notify its parent. Provider approvals and private secret requests do not use this notification.
+
 ## Envelopes
 
 Every delivered message is wrapped in an **envelope**: the platform's wrapper that tells the receiving agent who sent this and from which project — and, for a sender on a peer server, which server — and what it now owes and how to discharge it. A machine participant's envelope says that the sender is automated and cannot receive a reply, so the agent acts on the message directly and takes any question to a person or a peer. An outside agent's envelope names it by its label and its id, names no project, and says that `j5_send_message` cannot reply to it. Envelope wording is versioned configuration rendered from one place, so the channels never drift, and it is written in plain words for an agent reading it in the middle of its work. People reading the app see the letter, not the envelope.
@@ -141,7 +145,7 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 ### Silence
 
 20. When an agent's turn ends without a reply it owed, the platform records a silence notice holding the measured facts and delivers it to the waiter.
-21. A silence notice never closes an Exchange.
+21. A silence notice never closes an Exchange. Pending native questions separately notify a placed agent's reachable parent; this notice is not an Exchange and disappears from the parent's queue if the question resolves before delivery.
 
 ### Envelopes
 

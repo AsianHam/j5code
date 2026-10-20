@@ -9,7 +9,7 @@ import {
   ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
-import { J5_SHARING_WS_METHODS } from "@t3tools/contracts/j5";
+import { J5_CLIENT_READ_WS_METHODS, J5_SHARING_WS_METHODS } from "@t3tools/contracts/j5";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -253,6 +253,23 @@ const call = Effect.fn("test.call")(function* (
 });
 
 it.layer(testLayer)("guest RPC authorization", (it) => {
+  it.effect(
+    "native-question Inbox links remain member-only even for a guest who can collaborate",
+    () =>
+      Effect.gen(function* () {
+        const id = yield* thread("thread:question-inbox-access");
+        yield* grantGuest(id, "collaborate");
+        assert.match(
+          yield* call(GUEST, J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests, {}),
+          /^refused: /,
+        );
+        assert.strictEqual(
+          yield* call(MEMBER, J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests, {}),
+          "ran",
+        );
+      }),
+  );
+
   it.effect("a member's connection is upstream's check and nothing more", () =>
     Effect.gen(function* () {
       const threadId = yield* thread("thread:rpc-member");

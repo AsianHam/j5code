@@ -577,8 +577,20 @@ export const CrewRuntimeRequestItem = Schema.Struct({
   options: Schema.optionalKey(Schema.Array(ProviderApprovalOption)),
 });
 export type CrewRuntimeRequestItem = typeof CrewRuntimeRequestItem.Type;
+/** A placed agent's native question, answered through its original thread form. */
+export const NativeQuestionInboxItem = Schema.Struct({
+  threadId: ThreadId,
+  requestId: RuntimeRequestId,
+  projectId: Schema.String,
+  threadTitle: Schema.String,
+  createdAt: Schema.String,
+  responseCapability: Schema.Literals(["live", "message"]),
+  crew: Schema.optionalKey(Schema.Struct({ name: Schema.String, seat: Schema.String })),
+});
+export type NativeQuestionInboxItem = typeof NativeQuestionInboxItem.Type;
 export const CrewRuntimeRequestsResponse = Schema.Struct({
   requests: Schema.Array(CrewRuntimeRequestItem),
+  questions: Schema.optionalKey(Schema.Array(NativeQuestionInboxItem)),
 });
 export type CrewRuntimeRequestsResponse = typeof CrewRuntimeRequestsResponse.Type;
 

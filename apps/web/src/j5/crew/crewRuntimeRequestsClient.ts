@@ -13,7 +13,10 @@ import {
   refreshJ5Sources,
 } from "../state";
 import { createVisibleRefreshHook } from "../useVisibleRefresh";
-import { mergeCrewRuntimeRequestSources } from "./crewRuntimeRequests.logic";
+import {
+  mergeCrewRuntimeRequestSources,
+  mergeNativeQuestionInboxSources,
+} from "./crewRuntimeRequests.logic";
 
 /** Answer on the environment that holds the thread; the refusal message says why it failed. */
 export async function respondCrewRuntimeRequest(
@@ -36,7 +39,7 @@ export const refreshCrewRuntimeRequests = (environmentId?: EnvironmentId) =>
   });
 
 /**
- * Re-reads only the environments with a thread waiting on an approval; sends nothing while none is.
+ * Re-reads only environments with a pending request summary or flag.
  * An environment entering the plan needs no call here: its query mounts and fetches on its own.
  */
 const refreshAskedEnvironments = () => {
@@ -53,4 +56,10 @@ export function useCrewRuntimeRequests() {
   const sources = useAtomValue(crewRuntimeRequestSourcesAtom);
   useCrewRuntimeRequestsRefresh();
   return useMemo(() => mergeCrewRuntimeRequestSources(sources), [sources]);
+}
+
+export function useNativeQuestionInbox() {
+  const sources = useAtomValue(crewRuntimeRequestSourcesAtom);
+  useCrewRuntimeRequestsRefresh();
+  return useMemo(() => mergeNativeQuestionInboxSources(sources), [sources]);
 }

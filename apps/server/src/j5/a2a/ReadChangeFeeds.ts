@@ -83,7 +83,7 @@ const RUNTIME_REQUEST_EVENT_TYPES = [
  */
 export const changesRuntimeRequests = ({ event }: OrchestrationV2StoredEvent) =>
   event.type === "turn-item.updated"
-    ? event.payload.type === "approval_request"
+    ? event.payload.type === "approval_request" || event.payload.type === "user_input_request"
     : event.type === "runtime-request.updated" ||
       event.type === "thread.archived" ||
       event.type === "thread.unarchived" ||

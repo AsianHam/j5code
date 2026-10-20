@@ -41,7 +41,12 @@ import { presentParticipantIdentity } from "./ParticipantIdentity";
 import { CrewProposalCard } from "../crew/CrewProposalCard";
 import { CrewRuntimeRequestsSection } from "../crew/CrewRuntimeRequestsSection";
 import type { ScopedCrewRuntimeRequest } from "../crew/crewRuntimeRequests.logic";
-import { useCrewRuntimeRequests } from "../crew/crewRuntimeRequestsClient";
+import {
+  refreshCrewRuntimeRequests,
+  useCrewRuntimeRequests,
+  useNativeQuestionInbox,
+} from "../crew/crewRuntimeRequestsClient";
+import { NativeQuestionInboxSection } from "./NativeQuestionInboxSection";
 import { inboxCrewRequests } from "../crew/crewProposals.logic";
 import {
   mergeCrewProposalSources,
@@ -55,6 +60,7 @@ import {
   answeredInboxQueryAtom,
   answeredInboxSourcesAtom,
   crewProposalSourcesAtom,
+  crewRuntimeRequestSourcesAtom,
   j5Environment,
   openInboxQueryAtom,
   openInboxSourcesAtom,
@@ -403,6 +409,7 @@ export async function refreshHumanInboxes(environmentId?: EnvironmentId, force =
   const results = await Promise.all([
     refreshJ5Sources(openInboxSourcesAtom, openInboxQueryAtom, options),
     refreshJ5Sources(answeredInboxSourcesAtom, answeredInboxQueryAtom, options),
+    refreshCrewRuntimeRequests(environmentId),
   ]);
   const failed = results.flat().find((result) => result._tag === "Failure");
   if (failed?._tag === "Failure") throw Cause.squash(failed.cause);
@@ -446,6 +453,8 @@ export function HumanInboxPage() {
   const [resolvingProposalId, setResolvingProposalId] = useState<string | null>(null);
   useCrewProposalsRefresh();
   const runtimeRequests = useCrewRuntimeRequests();
+  const runtimeSources = useAtomValue(crewRuntimeRequestSourcesAtom);
+  const nativeQuestions = useNativeQuestionInbox();
   const previousOpenItems = useRef(new Map<EnvironmentId, ReadonlySet<string>>());
   useEffect(() => {
     const next = new Map<EnvironmentId, ReadonlySet<string>>();
@@ -477,16 +486,22 @@ export function HumanInboxPage() {
   );
   const complete =
     openSources.isReady &&
+    runtimeSources.isReady &&
+    runtimeSources.sources.every(
+      (source) => source.status === "ready" || source.status === "unsupported",
+    ) &&
     openSources.sources.some((source) => source.status === "ready") &&
     openSources.sources.every(
       (source) => source.status === "ready" || source.status === "unsupported",
     );
   const notices = [
     ...new Set(
-      [...openSources.sources, ...answeredSources.sources].flatMap((source) => {
-        const notice = j5SourceNotice(source);
-        return notice === null ? [] : [notice];
-      }),
+      [...openSources.sources, ...answeredSources.sources, ...runtimeSources.sources].flatMap(
+        (source) => {
+          const notice = j5SourceNotice(source);
+          return notice === null ? [] : [notice];
+        },
+      ),
     ),
   ];
   const refresh = useCallback(async (environmentId?: EnvironmentId) => {
@@ -575,7 +590,7 @@ export function HumanInboxPage() {
   );
 
   const openCrewThread = useCallback(
-    (request: ScopedCrewRuntimeRequest) => {
+    (request: Pick<ScopedCrewRuntimeRequest, "environmentId" | "threadId">) => {
       void navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(scopeThreadRef(request.environmentId, request.threadId)),
@@ -618,9 +633,9 @@ export function HumanInboxPage() {
                           ? ""
                           : ` · ${proposals.length} crew ${proposals.length === 1 ? "request" : "requests"}`
                       }${
-                        runtimeRequests.length === 0
+                        runtimeRequests.length + nativeQuestions.length === 0
                           ? ""
-                          : ` · ${runtimeRequests.length} crew agent ${runtimeRequests.length === 1 ? "request" : "requests"}`
+                          : ` · ${runtimeRequests.length + nativeQuestions.length} agent ${runtimeRequests.length + nativeQuestions.length === 1 ? "request" : "requests"}`
                       }`}
                 </p>
               </div>
@@ -685,13 +700,15 @@ export function HumanInboxPage() {
             ) : null}
 
             <CrewRuntimeRequestsSection requests={runtimeRequests} onOpenThread={openCrewThread} />
+            <NativeQuestionInboxSection questions={nativeQuestions} onOpenThread={openCrewThread} />
 
             {complete &&
             !loading &&
             error === null &&
             items.length === 0 &&
             proposals.length === 0 &&
-            runtimeRequests.length === 0 ? (
+            runtimeRequests.length === 0 &&
+            nativeQuestions.length === 0 ? (
               <div className="flex min-h-56 flex-col items-center justify-center px-6 py-12 text-center">
                 <span className="flex size-10 items-center justify-center rounded-full bg-success/10 text-success">
                   <InboxIcon aria-hidden className="size-5" />

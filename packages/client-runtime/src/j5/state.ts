@@ -267,16 +267,13 @@ export function createJ5EnvironmentAtoms<R, E>(
       "j5:archive-crew",
       J5_CLIENT_ACTION_WS_METHODS.archiveCrew,
     ),
-    // Crew seats' provider approvals answered from the Inbox. The list changes when an approval
-    // does, and when a Crew gains, loses or retires the seat it is on.
+    // Seat approvals and placed agents' native-question links, refreshed by request and roster changes.
     crewRuntimeRequests: createEnvironmentQueryAtomFamily(runtime, {
       label: "j5:crew-runtime-requests",
       staleTimeMs: 7_500,
-      refreshTrigger: rereadOn("crew", "runtimeRequests"),
+      refreshTrigger: rereadOn("crew", "runtimeRequests", "fleet"),
       execute: (_input: Record<string, never>) =>
-        j5Read(J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests, {}).pipe(
-          Effect.map((response) => response.requests),
-        ),
+        j5Read(J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests, {}),
     }),
     respondCrewRuntimeRequest: createJ5ActionCommand(
       runtime,

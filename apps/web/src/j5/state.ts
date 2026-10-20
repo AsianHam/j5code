@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/j5/readSources";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { CrewRuntimeRequestItem } from "@t3tools/contracts/j5";
+import type { CrewRuntimeRequestsResponse } from "@t3tools/contracts/j5";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -61,15 +61,18 @@ export const crewProposalSourcesAtom = createJ5ReadSourcesAtom({
   queryAtom: crewProposalsQueryAtom,
 });
 let lastCrewApprovalRead: CrewApprovalReadPlan = { key: "", environmentIds: [] };
-/** The environments with a thread waiting on an approval; the same object until that changes. */
+/** The environments with pending requests; the same object until that changes. */
 export const crewApprovalReadAtom = Atom.make((get) => {
   const next = crewApprovalReadPlan(get(environmentThreadShells.threadShellsAtom));
   if (next.key !== lastCrewApprovalRead.key) lastCrewApprovalRead = next;
   return lastCrewApprovalRead;
 }).pipe(Atom.withLabel("web-j5:crew-approval-read"));
-const NO_CREW_RUNTIME_REQUESTS = AsyncResult.success<ReadonlyArray<CrewRuntimeRequestItem>>([]);
-// An environment with no thread waiting on an approval has no seat approval to list, so it is
-// not asked; the read starts when one of its threads raises the flag.
+const NO_CREW_RUNTIME_REQUESTS = AsyncResult.success<CrewRuntimeRequestsResponse>({
+  requests: [],
+  questions: [],
+});
+// No pending request means no Inbox approval or question to list. Placement is checked by the
+// server after a pending summary or flag starts the read.
 const gatedCrewRuntimeRequestsAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) =>
     get(crewApprovalReadAtom).environmentIds.includes(environmentId)

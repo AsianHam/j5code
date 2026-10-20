@@ -373,7 +373,10 @@ export const layer: Layer.Layer<
         Effect.flatMap((open) => Effect.forEach(open, projectProposal)),
         Effect.map((listed) => ({ proposals: listed })),
       ),
-      crewRuntimeRequests: runtimeRequests.list.pipe(Effect.map((requests) => ({ requests }))),
+      crewRuntimeRequests: Effect.all({
+        requests: runtimeRequests.list,
+        questions: runtimeRequests.questions,
+      }),
       crewMemberships: yield* makeCrewMembershipsRead,
       spawnedChildren: yield* makeSpawnedChildrenRead,
       fleet: yield* makeFleetRead,

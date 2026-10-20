@@ -317,10 +317,14 @@ it.effect("lists a live Crew seat's approvals", () =>
       detail: "Run the tests?",
     };
     const handlers = yield* handlersWith({
-      runtimeRequests: Layer.mock(CrewRuntimeRequestService)({ list: Effect.succeed([request]) }),
+      runtimeRequests: Layer.mock(CrewRuntimeRequestService)({
+        list: Effect.succeed([request]),
+        questions: Effect.succeed([]),
+      }),
     });
     assert.deepStrictEqual(yield* handlers[METHODS.listCrewRuntimeRequests](), {
       requests: [request],
+      questions: [],
     });
   }),
 );

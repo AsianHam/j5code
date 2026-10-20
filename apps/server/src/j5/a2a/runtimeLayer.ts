@@ -16,6 +16,7 @@ import { manualLayer as crewLaunchReporterLayer } from "./CrewLaunchReporter.ts"
 import { layer as crewLaunchLayer } from "./CrewLaunchService.ts";
 import { layer as crewProposalLayer } from "./CrewProposalService.ts";
 import { layer as crewSeatFinishNotifierLayer } from "./CrewSeatFinishNotifier.ts";
+import * as NativeQuestionNotifier from "./NativeQuestionNotifier.ts";
 import { layer as captainArchiveCascadeLayer } from "./CrewCaptainArchiveCascade.ts";
 import { layer as crewStopLayer } from "./CrewStopService.ts";
 import { layer as crewRuntimeRequestLayer } from "./CrewRuntimeRequestService.ts";
@@ -233,6 +234,7 @@ export const makeJ5A2AAuxiliaryLayer = (
     crewStopProvided,
     crewRuntimeRequestProvided,
     crewSeatFinishNotifierProvided,
+    NativeQuestionNotifier.layer.pipe(Layer.provide(agentCrewInstanceLayer)),
     threadAnalyticsLayer.pipe(Layer.provide(agentCrewInstanceLayer)),
     exchangeAnalyticsLayer,
     fleetSnapshotLayer,
