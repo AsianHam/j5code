@@ -561,7 +561,7 @@ it.effect(
         assert.equal(notices[0]!.receiver_id, billing.id);
         assert.include(
           notices[0]!.message_text,
-          `Your message to ${remoteSupport} on Home was not delivered: Home has no active participant with that id.`,
+          `Your ask "incident status" (message ${sent.messageId}) to ${remoteSupport} on Home was not delivered: Home has no active participant with that id.`,
         );
         assert.include(
           notices[0]!.message_text,
@@ -666,7 +666,7 @@ it.effect("tells the sender of a plain message once when the peer server can't b
     const posted: Array<PostedRequest> = [];
     yield* Effect.gen(function* () {
       yield* seedLocal();
-      yield* (yield* A2ASendService).send({
+      const sent = yield* (yield* A2ASendService).send({
         commandId: CommCommandId.make("command:peer-outbound:unreachable-plain"),
         senderThreadId: billing.threadId,
         to: remoteSupport,
@@ -679,7 +679,7 @@ it.effect("tells the sender of a plain message once when the peer server can't b
       assert.equal(notices[0]!.receiver_id, billing.id);
       assert.include(
         notices[0]!.message_text,
-        `Your message to ${remoteSupport} on Home may not have been delivered: this server could not reach Home in 3 attempts, and it will not be tried again.`,
+        `Your message ${sent.messageId} to ${remoteSupport} on Home may not have been delivered: this server could not reach Home in 3 attempts, and it will not be tried again.`,
       );
       assert.include(notices[0]!.message_text, "ECONNREFUSED", "it says what the attempt hit");
       assert.notInclude(notices[0]!.message_text, "xchange", "a plain message has no Exchange");
@@ -709,7 +709,7 @@ it.effect(
         assert.equal(notices[0]!.receiver_id, billing.id);
         assert.include(
           notices[0]!.message_text,
-          `Your message to ${remoteSupport} on Home may not have been delivered: this server could not reach Home in 3 attempts`,
+          `Your ask "incident status" (message ${sent.messageId}) to ${remoteSupport} on Home may not have been delivered: this server could not reach Home in 3 attempts`,
         );
         assert.include(
           notices[0]!.message_text,
@@ -729,7 +729,7 @@ it.effect("tells the sender of a plain message the peer refused, naming the serv
     yield* Effect.gen(function* () {
       yield* seedLocal();
       const send = yield* A2ASendService;
-      yield* send.send({
+      const sent = yield* send.send({
         commandId: CommCommandId.make("command:peer-outbound:refused-plain"),
         senderThreadId: billing.threadId,
         to: remoteSupport,
@@ -747,7 +747,7 @@ it.effect("tells the sender of a plain message the peer refused, naming the serv
       assert.equal(notices[0]!.receiver_id, billing.id);
       assert.include(
         notices[0]!.message_text,
-        `Your message to ${remoteSupport} on Home was not delivered: Home refused it; the recipient is archived or does not accept messages from this sender.`,
+        `Your message ${sent.messageId} to ${remoteSupport} on Home was not delivered: Home refused it; the recipient is archived or does not accept messages from this sender.`,
       );
       assert.notInclude(
         notices[0]!.message_text,

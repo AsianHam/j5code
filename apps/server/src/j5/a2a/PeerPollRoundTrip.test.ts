@@ -806,7 +806,7 @@ it.effect("refuses the VM's ask when the laptop archived its receiver before pol
       assert.equal(told.receiverId, vm.agent.id);
       assert.include(
         told.message,
-        `Your message to ${laptop.agent.id} on ${laptop.label} was not delivered: ${laptop.label} refused it; the recipient is archived or does not accept messages from this sender.`,
+        `Your ask "ios build" (message ${asked.messageId}) to ${laptop.agent.id} on ${laptop.label} was not delivered: ${laptop.label} refused it; the recipient is archived or does not accept messages from this sender.`,
       );
       assert.notInclude(
         told.message,

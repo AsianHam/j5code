@@ -106,8 +106,21 @@ export const layer: Layer.Layer<
               const now = DateTime.formatIso(yield* DateTime.now);
 
               // Exchanges first: an ask still waiting is told of by its Exchange's drop.
-              const exchanges = yield* sql<DroppedExchange>`
-                SELECT e.project_id, e.exchange_id, e.sender_id, e.receiver_id
+              // The ask's own row exists only for an ask sent from this server.
+              const exchanges = yield* sql<
+                DroppedExchange & {
+                  readonly intent: string;
+                  readonly ask_message_id: string | null;
+                }
+              >`
+                SELECT e.project_id, e.exchange_id, e.sender_id, e.receiver_id, e.intent,
+                  (
+                    SELECT d.message_id FROM j5_a2a_delivery AS d
+                    WHERE d.project_id = e.project_id AND d.exchange_id = e.exchange_id
+                      AND d.exchange_role = 'ask' AND d.origin_environment_id IS NULL
+                    ORDER BY d.sent_seq
+                    LIMIT 1
+                  ) AS ask_message_id
                 FROM j5_a2a_exchange AS e
                 WHERE e.status = 'open'
                   AND EXISTS (
@@ -153,7 +166,15 @@ export const layer: Layer.Layer<
                       projectId: remote.projectId,
                     },
                     localProjectId: exchange.project_id,
-                    noticeText: formatPeerDropNotice({ exchangeId, disposition, because }),
+                    noticeText: formatPeerDropNotice({
+                      exchangeId,
+                      disposition,
+                      because,
+                      intent: exchange.intent,
+                      ...(disposition === "receiver-retired" && exchange.ask_message_id !== null
+                        ? { askMessageId: exchange.ask_message_id }
+                        : {}),
+                    }),
                     createdAt: now,
                   }),
                 });

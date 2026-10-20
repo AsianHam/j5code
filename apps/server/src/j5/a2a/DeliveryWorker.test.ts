@@ -530,7 +530,7 @@ it.effect.each([false, true])(
         assert.equal(notices[0]!.receiver_id, sender.id);
         assert.include(
           notices[0]!.message_text,
-          `Your message to ${receiver.id} may not have been delivered: delivery failed 3 times, and it will not be tried again. The last attempt failed with: "recipient unavailable"`,
+          `${ask ? `Your ask "delivery probe" (message ${sent.messageId})` : `Your message ${sent.messageId}`} to ${receiver.id} may not have been delivered: delivery failed 3 times, and it will not be tried again. The last attempt failed with: "recipient unavailable"`,
         );
         const exchanges = yield* sql<{ readonly status: string }>`
           SELECT status FROM j5_a2a_exchange

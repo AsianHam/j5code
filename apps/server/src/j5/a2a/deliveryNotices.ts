@@ -81,7 +81,17 @@ export const deliveryAlarmReason = (input: {
       : `this server could not reach ${input.serverName} in ${input.attempts} attempts`
   }, and it will not be tried again. The last attempt failed with: "${oneLine(input.error)}"`;
 
+/** How a notice names the message it is about: by the id its send returned, and an ask by its intent too. */
+const namedMessage = (messageId: string, intent: string | undefined) =>
+  intent === undefined
+    ? `Your message ${messageId}`
+    : `Your ask "${oneLine(intent)}" (message ${messageId})`;
+
 export const formatNotDeliveredNotice = (input: {
+  /** The id `j5_send_message` returned for the message. */
+  readonly messageId: string;
+  /** Set for an ask: the intent its sender gave it. */
+  readonly intent?: string;
   readonly receiverId: string;
   /** Set when the receiver is on a peer server. */
   readonly serverName?: string;
@@ -97,7 +107,7 @@ export const formatNotDeliveredNotice = (input: {
     input.mayHaveArrived === true
       ? "[Cross-agent messaging system notice: message may not have been delivered]"
       : "[Cross-agent messaging system notice: message not delivered]",
-    `Your message to ${input.receiverId}${input.serverName === undefined ? "" : ` on ${input.serverName}`} ${input.mayHaveArrived === true ? "may not have been delivered" : "was not delivered"}: ${input.reason}`,
+    `${namedMessage(input.messageId, input.intent)} to ${input.receiverId}${input.serverName === undefined ? "" : ` on ${input.serverName}`} ${input.mayHaveArrived === true ? "may not have been delivered" : "was not delivered"}: ${input.reason}`,
     ...(input.exchangeId === undefined
       ? []
       : [
@@ -118,10 +128,14 @@ export const formatPeerDropNotice = (input: {
   readonly disposition: ExchangeDropDisposition;
   /** Why it ended, completing "Exchange X ended because …". */
   readonly because: string;
+  readonly intent: string;
+  /** Set when the party told sent the ask: the id its send returned. */
+  readonly askMessageId?: string;
 }) =>
   [
     "[Cross-agent messaging system notice: exchange dropped]",
     `Exchange ${input.exchangeId} ended because ${input.because} (${input.disposition}).`,
+    `It was opened by ${input.askMessageId === undefined ? "the" : "your"} ask "${oneLine(input.intent)}"${input.askMessageId === undefined ? "" : ` (message ${input.askMessageId})`}.`,
     input.disposition === "receiver-retired"
       ? "The receiver will not answer this Exchange. Do not retry it."
       : "The asker is gone. Your reply obligation has ended; do not send a replacement reply.",
@@ -151,6 +165,8 @@ export const notDeliveredNoticeEvent = (input: {
   readonly reason: string;
   readonly createdAt: string;
   readonly mayHaveArrived?: boolean;
+  /** Set for an ask: the intent its sender gave it. */
+  readonly intent?: string;
   readonly openExchangeId?: string;
 }): CommEvent => {
   const key = notDeliveredKey(input.message);
@@ -163,6 +179,8 @@ export const notDeliveredNoticeEvent = (input: {
     payload: {
       messageId: notDeliveredNoticeMessageId(input.message),
       text: formatNotDeliveredNotice({
+        messageId: input.message.message_id,
+        ...(input.intent === undefined ? {} : { intent: input.intent }),
         receiverId: input.message.receiver_id,
         ...(input.serverName === undefined ? {} : { serverName: input.serverName }),
         reason: input.reason,

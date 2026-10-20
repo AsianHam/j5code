@@ -522,34 +522,38 @@ const makeLayer = (daemon: boolean) =>
         if (row.receiver_environment_id === null) return [];
         const serverName = yield* peerServerName(row.receiver_environment_id);
         const reason = peerRefusalReason({ serverName, ...refusal });
-        if (row.exchange_role === "ask" && row.exchange_id !== null) {
-          const exchange = (yield* sql<DroppedExchange>`
-            SELECT project_id, exchange_id, sender_id, receiver_id FROM j5_a2a_exchange
-            WHERE project_id = ${row.project_id} AND exchange_id = ${row.exchange_id}
-              AND status = 'open'
-          `)[0];
-          if (exchange !== undefined) {
-            return peerDropEvents({
-              exchange,
-              disposition: "receiver-retired",
-              cause: {
-                kind: "delivery-refused",
-                participantId: ParticipantId.make(row.receiver_id),
-                projectId: LedgerProjectId.make(row.receiver_project_id),
-              },
-              localProjectId: row.project_id,
-              noticeText: formatNotDeliveredNotice({
-                receiverId: row.receiver_id,
-                serverName,
-                reason,
-                exchangeId: exchange.exchange_id,
-              }),
-              createdAt,
-            });
-          }
+        const ask = yield* askExchange(row);
+        if (ask?.status === "open") {
+          return peerDropEvents({
+            exchange: ask,
+            disposition: "receiver-retired",
+            cause: {
+              kind: "delivery-refused",
+              participantId: ParticipantId.make(row.receiver_id),
+              projectId: LedgerProjectId.make(row.receiver_project_id),
+            },
+            localProjectId: row.project_id,
+            noticeText: formatNotDeliveredNotice({
+              messageId: row.message_id,
+              intent: ask.intent,
+              receiverId: row.receiver_id,
+              serverName,
+              reason,
+              exchangeId: ask.exchange_id,
+            }),
+            createdAt,
+          });
         }
         if (!canBeNotified(row.sender_id)) return [];
-        return [notDeliveredNoticeEvent({ message: row, serverName, reason, createdAt })];
+        return [
+          notDeliveredNoticeEvent({
+            message: row,
+            serverName,
+            reason,
+            ...(ask === undefined ? {} : { intent: ask.intent }),
+            createdAt,
+          }),
+        ];
       });
 
       /**
@@ -578,14 +582,7 @@ const makeLayer = (daemon: boolean) =>
           row.receiver_environment_id === null
             ? undefined
             : yield* peerServerName(row.receiver_environment_id);
-        const openExchangeId =
-          row.exchange_role === "ask" && row.exchange_id !== null
-            ? (yield* sql<{ readonly exchange_id: string }>`
-                SELECT exchange_id FROM j5_a2a_exchange
-                WHERE project_id = ${row.project_id} AND exchange_id = ${row.exchange_id}
-                  AND status = 'open'
-              `)[0]?.exchange_id
-            : undefined;
+        const ask = yield* askExchange(row);
         return [
           notDeliveredNoticeEvent({
             message: row,
@@ -596,10 +593,21 @@ const makeLayer = (daemon: boolean) =>
               attempts,
               error: failureMessage(cause),
             }),
-            ...(openExchangeId === undefined ? {} : { openExchangeId }),
+            ...(ask === undefined ? {} : { intent: ask.intent }),
+            ...(ask?.status === "open" ? { openExchangeId: ask.exchange_id } : {}),
             createdAt,
           }),
         ];
+      });
+
+      /** The Exchange a row's ask opened, for its intent and whether it is still open. */
+      const askExchange = Effect.fn("j5.a2a.delivery.askExchange")(function* (row: DeliveryRow) {
+        if (row.exchange_role !== "ask" || row.exchange_id === null) return undefined;
+        return (yield* sql<DroppedExchange & { readonly status: string; readonly intent: string }>`
+          SELECT project_id, exchange_id, sender_id, receiver_id, status, intent
+          FROM j5_a2a_exchange
+          WHERE project_id = ${row.project_id} AND exchange_id = ${row.exchange_id}
+        `)[0];
       });
 
       const peerServerName = Effect.fn("j5.a2a.delivery.peerServerName")(function* (

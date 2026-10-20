@@ -319,6 +319,11 @@ it.effect(
       const elsewhere = yield* sendFromBilling("elsewhere", { environmentId: otherPeer });
       const toldBefore = (yield* read.notices).length;
       assert.equal(toldBefore, 1, "the refusal's notice");
+      assert.include(
+        (yield* read.notices)[0]!.message_text,
+        `Your message ${refused.messageId} to ${iosBuild} on JM-LT-04213 was not delivered:`,
+        "a refusal names the message by the id its send returned",
+      );
 
       const removal = yield* PeerRemovalService;
       const result = yield* removal.remove(laptop);
@@ -356,12 +361,21 @@ it.effect(
         "ended because JM-LT-04213 is no longer peered (receiver-retired)",
       );
       assert.include(
+        told[0]!.message_text,
+        `It was opened by your ask "ask intent" (message ${ask.messageId}).`,
+      );
+      assert.include(
         told[1]!.message_text,
         "ended because JM-LT-04213 is no longer peered (sender-retired)",
       );
       assert.include(
+        told[1]!.message_text,
+        'It was opened by the ask "schema status".',
+        "an ask from the peer is named by its intent; its id was never this party's",
+      );
+      assert.include(
         told[2]!.message_text,
-        `Your message to ${iosBuild} on JM-LT-04213 may not have been delivered: JM-LT-04213 is no longer peered.`,
+        `Your message ${plain.messageId} to ${iosBuild} on JM-LT-04213 may not have been delivered: JM-LT-04213 is no longer peered.`,
         "it was handed to the laptop, which may have taken it",
       );
       assert.equal(yield* read.peerCount, 0);
@@ -393,19 +407,18 @@ it.effect(
         // The first is sent and its answer lost; the second never left.
         const tried = yield* sendFromBilling("tried");
         assert.equal((yield* (yield* A2ADeliveryWorker).runOnce)?.state, "retry_scheduled");
-        yield* sendFromBilling("untried");
+        const untried = yield* sendFromBilling("untried");
 
         yield* (yield* PeerRemovalService).remove(laptop);
         const told = (yield* read.notices).map((notice) => notice.message_text);
         assert.lengthOf(told, 2);
         assert.include(
           told[0]!,
-          `Your message to ${iosBuild} on JM-LT-04213 may not have been delivered: JM-LT-04213 is no longer peered.`,
-          tried.messageId,
+          `Your message ${tried.messageId} to ${iosBuild} on JM-LT-04213 may not have been delivered: JM-LT-04213 is no longer peered.`,
         );
         assert.include(
           told[1]!,
-          `Your message to ${iosBuild} on JM-LT-04213 was not delivered: JM-LT-04213 is no longer peered.`,
+          `Your message ${untried.messageId} to ${iosBuild} on JM-LT-04213 was not delivered: JM-LT-04213 is no longer peered.`,
         );
       }).pipe(
         Effect.provide(
@@ -454,7 +467,7 @@ it.effect(
         assert.lengthOf(told, 1);
         assert.include(
           told[0]!,
-          `Your message to ${iosBuild} on JM-LT-04213 may not have been delivered: JM-LT-04213 is no longer peered.`,
+          `Your message ${onWire.messageId} to ${iosBuild} on JM-LT-04213 may not have been delivered: JM-LT-04213 is no longer peered.`,
         );
       }).pipe(
         Effect.provide(
