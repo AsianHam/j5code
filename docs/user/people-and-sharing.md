@@ -50,6 +50,6 @@ someone new.
 ## What changes for people who are not Owners
 
 Settings shows only Appearance, SnapShots, Open-source licenses and People to someone who owns no
-connected server. A device reconnects once when its person's level changes; a phone is paired again
-by hand. Someone who has lost everything they were given sees "Nothing is shared with you" until an
+connected server. A device reconnects once when its person's level changes. A phone running the mobile app is
+paired again by hand instead, with a new link from an Owner, even when the level was raised. Someone who has lost everything they were given sees "Nothing is shared with you" until an
 Owner shares something again.

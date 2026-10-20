@@ -121,7 +121,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 - Settings worked through page by page for Collaborators and Viewers, and with it archiving and deleting for those who are not Owners ([#630](https://github.com/Jacksondr5/j5code/issues/630)).
 - An authoritative identity: a sign-in, such as a company's, that proves who a person is ([#632](https://github.com/Jacksondr5/j5code/issues/632)).
-- Sharing on mobile ([#609](https://github.com/Jacksondr5/j5code/issues/609)).
+- Sharing on mobile, including a phone taking its new session when its person's level changes ([#609](https://github.com/Jacksondr5/j5code/issues/609)).
 - A Viewer watching a thread's preview tabs ([#540](https://github.com/Jacksondr5/j5code/issues/540)).
 - Leaving one thread inside a project or server one holds as a whole, and the rest of the set-aside list ([#542](https://github.com/Jacksondr5/j5code/issues/542)).
 
@@ -151,7 +151,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 14. A Collaborator can do within their scope everything an Owner can, except configure the server, share it, for now archive or delete a thread, and, at thread scope, start a thread, fork one or merge one back.
 15. An Owner configures the server and shares it.
 16. Each level's upstream permissions are listed by name in one place, and a device holds exactly its person's highest level's set: a Viewer "View environment"; a Collaborator "View environment", "Operate tasks", "Control previews", "View diagnostics and usage", "View terminals", "Use terminals", "Change source control", "Read files", "Write files" and "View relay"; an Owner every permission upstream lets a client be given. J5 never gives upstream more permissions for a request than its device holds.
-17. When a person's level changes, each device paired as them is given a new session holding the new level's permissions in place of the old one, and reconnects once. A lowered level takes effect at once, on open connections too. A device that is offline gets its new session when it next connects, while its old one is within its lifetime; after that it is paired again by hand.
+17. When a person's level changes, each device paired as them is given a new session holding the new level's permissions in place of the old one, and reconnects once. A lowered level takes effect at once, on open connections too. A device that is offline gets its new session when it next connects, while its old one is within its lifetime; after that it is paired again by hand. For now, a device on the mobile app is paired again by hand after any change of its person's level.
 18. A device paired from upstream's Connections settings with permissions chosen there keeps, in any new session, only the chosen permissions its person's level allows.
 19. A Collaborator at server scope adds projects; a Collaborator at project scope or wider renames and removes a project; editing a project's scripts follows upstream's permission for environment settings, so only an Owner does it.
 20. Installing a skill from a catalog is for Owners; seeing and using skills, Personas and scheduled tasks follows the scope they belong to. Playbooks are the server's: anyone who holds Collaborator at any scope sees them and has an agent run one on a thread they write to, and only an Owner saves, renames, deletes or chooses the folders of one.
@@ -219,7 +219,8 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 - 2026-10-16 — defined (Jackson): the principles, three layers, scopes and levels, home scopes, one kind of link, devices and the first owner, names, leaving and removal. Absorbs [Shared server](shared-server.md) AC3 to AC35 and the access model that register entry D33 described ([record](../../worklog/2026-10-16-people-and-access-session.md)).
 - 2026-10-17 — what holds only for now is marked so, and a Later list names what is set aside, with the issue that tracks each (Jackson).
-- 2026-10-18 — someone who is not an Owner sees their own row on the People page, so they can leave a project or the server as AC48 says, and who reaches each project they reach, as AC26 says (AC27, AC28; provisional, for Jackson to confirm; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
-- 2026-10-18 — for now a Viewer sees a thread's preview tabs listed, and watching them is set aside (AC21; Jackson's 2026-10-11 deferral of [#540](https://github.com/Jacksondr5/j5code/issues/540); provisional, for Jackson to confirm).
-- 2026-10-18 — a bare `j5 auth pairing create` makes a link for a device the server asks about, since upstream's desktop app runs it over SSH; `j5 pair` still refuses (AC4; provisional, for Jackson to confirm; register D36).
+- 2026-10-18 — someone who is not an Owner sees their own row on the People page, so they can leave a project or the server as AC48 says, and who reaches each project they reach, as AC26 says (AC27, AC28; confirmed by Jackson 2026-10-19; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
+- 2026-10-18 — for now a Viewer sees a thread's preview tabs listed, and watching them is set aside (AC21; Jackson's 2026-10-11 deferral of [#540](https://github.com/Jacksondr5/j5code/issues/540); confirmed by Jackson 2026-10-19).
+- 2026-10-18 — a bare `j5 auth pairing create` makes a link for a device the server asks about, since upstream's desktop app runs it over SSH; `j5 pair` still refuses (AC4; confirmed by Jackson 2026-10-19; register D36).
 - 2026-10-19 — Playbooks are the server's: anyone who can write uses them, Owners change them (Jackson, after [#621](https://github.com/Jacksondr5/j5code/pull/621)).
+- 2026-10-19 — for now a device on the mobile app is paired again by hand after a change of level; its renewal joins sharing on mobile (AC17; Jackson, from Bryant's review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).
