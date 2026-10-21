@@ -75,6 +75,8 @@ export const deriveFleetFacts = (input: {
   if (requestedAt !== null) candidates.push({ label: "Turn requested", at: requestedAt });
   if (startedAt !== null) candidates.push({ label: "Turn started", at: startedAt });
   if (completedAt !== null) candidates.push({ label: "Turn ended", at: completedAt });
+  const receivedAt = iso(shell.latestUserMessageAt);
+  if (receivedAt !== null) candidates.push({ label: "Message received", at: receivedAt });
   if (shell.latestVisibleMessage !== null)
     candidates.push({
       label: shell.latestVisibleMessage.role === "assistant" ? "Agent message" : "Message received",

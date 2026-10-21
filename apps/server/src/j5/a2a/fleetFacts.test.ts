@@ -22,6 +22,33 @@ const sender = "agent:sender";
 const receiver = "agent:receiver";
 const at = "2026-10-19T10:00:00.000Z";
 
+it.effect("bounds both Fleet ask summaries without changing the stored intent", () =>
+  Effect.gen(function* () {
+    yield* runMigrations();
+    yield* runJ5A2AMigrations();
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO j5_a2a_project_ledger (project_id, created_at) VALUES ('p', ${at})`;
+    for (const [intent, summary] of [
+      ["Review the diff", "Review the diff"],
+      ["a".repeat(200), "a".repeat(200)],
+      ["a".repeat(10_000), `${"a".repeat(199)}…`],
+      ["🚀".repeat(5_000), `${"🚀".repeat(199)}…`],
+    ]) {
+      yield* sql`INSERT INTO j5_a2a_exchange (
+        project_id, exchange_id, sender_id, receiver_id, status, intent, opened_seq, created_at, updated_at
+      ) VALUES ('p', 'ask', ${sender}, ${receiver}, 'open', ${intent}, 1, ${at}, ${at})
+      ON CONFLICT (project_id, exchange_id) DO UPDATE SET intent = excluded.intent`;
+      const facts = yield* readFleetLedgerFacts(sql, "p", [sender, receiver], () => null);
+      assert.equal(facts.awaited.get(sender)?.[0]?.intent, summary);
+      assert.equal(facts.owed.get(receiver)?.[0]?.intent, summary);
+      const stored = yield* sql<{ intent: string }>`
+        SELECT intent FROM j5_a2a_exchange WHERE project_id = 'p' AND exchange_id = 'ask'
+      `;
+      assert.equal(stored[0]?.intent, intent);
+    }
+  }).pipe(Effect.provide(database)),
+);
+
 it.effect(
   "reads both ask directions across projects and keeps local/remote alarms on their sender",
   () =>
