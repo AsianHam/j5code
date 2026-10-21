@@ -2,6 +2,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
+import { CompletionSoundSettings } from "../../j5/notifications/CompletionSoundSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
@@ -2368,6 +2369,7 @@ export function GeneralSettingsPanel() {
 
       <SettingsSection id="behavior" title="Behavior">
         <NotificationSettings />
+        <CompletionSoundSettings />
         <SettingsRow
           {...searchableSetting("in-app-notifications")}
           description="Show a toast when another thread finishes, fails, or needs input or approval while this app has focus."

@@ -1,5 +1,7 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
+import { completionSoundManager } from "./j5/notifications/completionSound";
+
 import completionUrl from "./assets/notification-completion.mp3";
 import inputUrl from "./assets/notification-input.mp3";
 
@@ -66,11 +68,13 @@ export function setNotificationBadge(count: number) {
 
 let audioContext: AudioContext | undefined;
 const buffers = new Map<string, Promise<AudioBuffer>>();
+/** When each sound's current playback ends, on the audio context's clock. */
+const playingUntil = new Map<string, number>();
 
 /** Called from a gesture so browsers allow later background playback. */
 export function unlockNotificationAudio() {
   audioContext ??= new AudioContext();
-  void audioContext.resume().catch(() => undefined);
+  return audioContext.resume().catch(() => undefined);
 }
 
 export async function playNotificationSound(
@@ -81,7 +85,9 @@ export async function playNotificationSound(
   const context = audioContext;
   const url = kind === "completion" ? completionUrl : inputUrl;
   try {
-    let buffer = buffers.get(url);
+    // J5 (FORK.md case 82): custom bytes share upstream's playback and burst slot.
+    const custom = kind === "completion" ? await completionSoundManager.getBuffer(context) : null;
+    let buffer = custom ? Promise.resolve(custom) : buffers.get(url);
     if (!buffer) {
       buffer = fetch(url)
         .then((response) => response.arrayBuffer())
@@ -90,10 +96,12 @@ export async function playNotificationSound(
     }
     const decoded = await buffer;
     if (!shouldPlay() || context.state !== "running") return;
+    if (context.currentTime < (playingUntil.get(url) ?? 0)) return;
     const source = context.createBufferSource();
     source.buffer = decoded;
     source.connect(context.destination);
     source.start();
+    playingUntil.set(url, context.currentTime + decoded.duration);
   } catch {
     buffers.delete(url);
   }

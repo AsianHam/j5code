@@ -475,6 +475,18 @@ Recorded in `FORK.md` cases 69 to 73, 78 and 80.
 
 **Decided:** Jackson, 2026-10-19. Recorded in FORK.md's temporary patches.
 
+#### D38. Completion sounds can use a local MP3
+
+**Upstream:** web and desktop play a bundled completion sound through the notification audio helper.
+
+**J5:** Settings › General can choose, preview, replace and reset a completion MP3, persisted as bytes in this browser profile or Electron installation for the app origin. Files must decode, fit within 5 MiB and last at most 30 seconds. Missing or unreadable custom data falls back to the bundled sound. Input and approval audio, notification modes and gesture unlocking keep their existing behavior.
+
+**Why:** Abraham requested a personal “work done” sound and explicitly chose the assessed device-local web/desktop scope over following upstream’s bundled-only behavior or leaving customization unsupported.
+
+**Consequences:** three small upstream integration sites are carried (FORK.md case 82). Check audio selection, gesture unlocking, mode cancellation and burst coalescing at each advance. The sound does not sync, reach providers or agents through MCP, or customize mobile push sounds. Clearing local site data removes it. No server storage or contract changes.
+
+**Decided:** Abraham, 2026-10-21, explicit implementation brief and instruction to proceed in thread `bb2eadb8-9a96-426f-9d88-621ce8f31fee`.
+
 ### Awaiting a decision
 
 These already diverge on `j5/main`, but no human ruling is on record. Each landed as an implementer's call inside a merged PR. The person rules on each one; an approved entry moves up into its section, and a rejected one becomes a fix.

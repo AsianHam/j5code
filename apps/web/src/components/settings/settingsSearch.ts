@@ -360,6 +360,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
+    id: "completion-sound",
+    title: "Completion sound",
+    to: "/settings/general",
+    searchTerms: ["custom mp3 upload replace preview restore default work done notification audio"],
+  },
+  {
     id: "in-app-notifications",
     title: "In-app notifications",
     to: "/settings/general",
