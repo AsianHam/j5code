@@ -21,7 +21,7 @@ A **reply that arrived through the inbox** is rendered as the person who sent it
 
 A **silence notice** is one muted platform line — "⚠ Platform notice · ⟨counterpart⟩'s turn ended without replying · ⟨age⟩" — visibly not a letter from anyone.
 
-A **catch-up turn**, the one turn in which a busy agent reads every message that arrived while it worked ([delivery](../a2a/index.md#delivery)), renders as one card per message, oldest first, each exactly as if it had arrived alone. A **roster-changed notice**, telling a Crew seat who joined its Crew, is one muted platform line naming the seats that joined.
+A **catch-up turn**, a turn in which a busy agent reads together the agents' messages that waited behind its running turn ([delivery](../a2a/index.md#delivery)), renders as one card per message, oldest first, each exactly as if it had arrived alone. A **roster-changed notice**, telling a Crew seat who joined its Crew, is one muted platform line naming the seats that joined.
 
 A **sent message** gets no card. In the sender's own thread it is one of the agent's tool calls and renders as upstream renders any tool call; the message itself is a card in the receiver's thread.
 
