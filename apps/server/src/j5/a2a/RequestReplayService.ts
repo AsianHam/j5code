@@ -8,14 +8,20 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+export const requestReplayConflict = (target: string) => ({
+  detail: `client_request_id is already bound to a different request for ${target}.`,
+  nextStep: "Retry the original request, or use a fresh client_request_id for new work.",
+});
+
 export class RequestReplayConflictError extends Schema.TaggedError<RequestReplayConflictError>()(
   "RequestReplayConflictError",
   { target: Schema.String, legacy: Schema.Boolean },
 ) {
   override get message() {
-    return this.legacy
-      ? `The original request for ${this.target} predates replay verification and cannot be compared. Inspect that target and use a fresh client_request_id for new work.`
-      : `client_request_id is already bound to a different request for ${this.target}. Retry the original request, or use a fresh client_request_id for new work.`;
+    if (this.legacy)
+      return `The original request for ${this.target} predates replay verification and cannot be compared. Inspect that target and use a fresh client_request_id for new work.`;
+    const { detail, nextStep } = requestReplayConflict(this.target);
+    return `${detail} ${nextStep}`;
   }
 }
 
@@ -29,6 +35,11 @@ const canonical = (value: unknown): unknown => {
       .map(([key, entry]) => [key, canonical(entry)]),
   );
 };
+
+export const requestDigest = (request: unknown) =>
+  NodeCrypto.createHash("sha256")
+    .update(JSON.stringify(canonical(request)))
+    .digest("hex");
 
 export class RequestReplayService extends Context.Service<
   RequestReplayService,
@@ -51,23 +62,19 @@ export const layer = Layer.effect(
   RequestReplayService,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const digestOf = (request: unknown) =>
-      NodeCrypto.createHash("sha256")
-        .update(JSON.stringify(canonical(request)))
-        .digest("hex");
     const check: RequestReplayService["Service"]["check"] = Effect.fn("j5.requestReplay.check")(
       function* (id, request) {
         const rows = yield* sql<{ readonly target: string; readonly request_digest: string }>`
           SELECT target, request_digest FROM j5_a2a_request_replay WHERE id = ${id}
         `;
         const original = rows[0];
-        if (original !== undefined && original.request_digest !== digestOf(request))
+        if (original !== undefined && original.request_digest !== requestDigest(request))
           return yield* new RequestReplayConflictError({ target: original.target, legacy: false });
       },
     );
     const bind: RequestReplayService["Service"]["bind"] = Effect.fn("j5.requestReplay.bind")(
       function* (input) {
-        const digest = digestOf(input.request);
+        const digest = requestDigest(input.request);
         if (!input.legacy) {
           yield* sql`
             INSERT INTO j5_a2a_request_replay (id, target, request_digest)

@@ -49,7 +49,7 @@ export const GitRefName = Schema.String.check(
 );
 
 /** A worktree path with its trailing separators dropped, so `/repo/wt/` matches git's `/repo/wt`. */
-const worktreePathKey = (path: string) => path.replace(/[\\/]+$/, "");
+export const worktreePathKey = (path: string) => path.replace(/[\\/]+$/, "");
 
 /** An absolute path a caller names for an existing worktree. */
 export const WorktreePath = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096));

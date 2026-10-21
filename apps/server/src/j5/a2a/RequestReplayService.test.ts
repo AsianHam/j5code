@@ -41,8 +41,10 @@ it.effect("persists the original request across database reopen and refuses chan
         assert.isTrue(Result.isFailure(changed));
         if (Result.isFailure(changed)) {
           assert.equal(changed.failure._tag, "RequestReplayConflictError");
-          assert.include(changed.failure.message, "agent:original");
-          assert.include(changed.failure.message, "fresh client_request_id");
+          assert.equal(
+            changed.failure.message,
+            "client_request_id is already bound to a different request for agent:original. Retry the original request, or use a fresh client_request_id for new work.",
+          );
         }
         const sql = yield* SqlClient.SqlClient;
         const rows = yield* sql<{
