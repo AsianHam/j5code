@@ -1,161 +1,134 @@
-import type { SharingLinkDescription } from "@t3tools/contracts/j5";
+import type { LinkDescription } from "@t3tools/contracts/j5";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  asYourselfWords,
   invitationFor,
-  invitationList,
   joinPageState,
-  landingFor,
-  guestIsLeftOnNothing,
+  joinRefusal,
+  joinView,
+  refusalWords,
 } from "./joinPage.logic";
 
-const noIcon = { projectIcon: null, projectFaviconUrl: null };
-const thread = (threadTitle: string, projectTitle: string | null = "Live test repo") =>
-  ({ kind: "thread", threadTitle, projectTitle, level: "view", ...noIcon }) as const;
-const project = (projectTitle: string) =>
-  ({ kind: "project", projectTitle, level: "view", ...noIcon }) as const;
-const link = (overrides: Partial<SharingLinkDescription>): SharingLinkDescription => ({
-  expiresAt: DateTime.makeUnsafe("2026-10-20T00:00:00Z"),
-  kind: "person",
+const link = (overrides: Partial<LinkDescription>): LinkDescription => ({
   serverName: "openclaw",
+  kind: "invite",
+  use: "one",
+  opens: {
+    kind: "thread",
+    threadTitle: "Replay fixture: proposed_plan",
+    projectTitle: "Live test repo",
+    projectIcon: null,
+    projectFaviconUrl: null,
+  },
+  level: "collaborator",
   personName: "Marco R.",
-  opens: [],
+  device: { state: "unpaired" },
+  expiresAt: DateTime.makeUnsafe("2026-10-25T00:00:00Z"),
   ...overrides,
 });
-const say = (description: SharingLinkDescription) => {
-  const { before, title, after } = invitationFor(description);
-  return `${before}${title ?? ""}${after}`;
+
+const say = (description: LinkDescription) => {
+  const words = invitationFor(description);
+  return `${words.before}${words.title ?? ""}${words.after} [${words.level}].${words.viewerNote === null ? "" : ` ${words.viewerNote}`}`;
 };
 
 describe("what the join page says a link opens", () => {
-  it("names the one thread, its project and the server", () => {
-    expect(say(link({ opens: [thread("Replay fixture: proposed_plan")] }))).toBe(
-      "You have been invited to Replay fixture: proposed_plan in Live test repo on openclaw.",
-    );
-  });
-
-  it("names a project by itself", () => {
-    expect(say(link({ opens: [project("Live test repo")] }))).toBe(
-      "You have been invited to Live test repo on openclaw.",
-    );
-  });
-
-  it("counts several, threads before projects, and lists them", () => {
-    const several = link({
-      opens: [thread("a"), project("Website"), thread("b"), thread("c", null)],
-    });
-    expect(say(several)).toBe("You have been invited to 3 threads and 1 project on openclaw.");
-    expect(invitationList(several)).toEqual({
-      lines: [
-        { title: "a", detail: "Live test repo", icon: null, faviconUrl: null },
-        { title: "Website", detail: null, icon: null, faviconUrl: null },
-        { title: "b", detail: "Live test repo", icon: null, faviconUrl: null },
-        { title: "c", detail: null, icon: null, faviconUrl: null },
-      ],
-      more: 0,
-    });
-  });
-
-  it("carries the icon a person chose for a project, and its favicon link", () => {
-    const several = link({
-      opens: [
-        { ...thread("a"), projectIcon: { kind: "emoji", emoji: "🚀" } },
-        { ...project("Website"), projectFaviconUrl: "/api/j5/sharing/icon?k=signed" },
-      ],
-    });
-    expect(invitationList(several).lines.map((line) => [line.icon, line.faviconUrl])).toEqual([
-      [{ kind: "emoji", emoji: "🚀" }, null],
-      [null, "/api/j5/sharing/icon?k=signed"],
-    ]);
-  });
-
-  it("lists five and says how many more", () => {
-    const many = link({ opens: Array.from({ length: 7 }, (_, index) => thread(`t${index}`)) });
-    const list = invitationList(many);
-    expect(list.lines).toHaveLength(5);
-    expect(list.more).toBe(2);
-  });
-
-  it("says so when nothing is shared with the person yet", () => {
+  it("names the thread, its project and the level", () => {
     expect(say(link({}))).toBe(
-      "Nothing is shared with you on openclaw yet. Once you join, a member can share a thread or project with you and it will appear on its own.",
+      "You have been invited to Replay fixture: proposed_plan in Live test repo as a [Collaborator].",
     );
   });
 
-  it("tells someone opening a join link that they will read and not send", () => {
-    expect(
-      say(
-        link({ kind: "open", personName: null, opens: [thread("Replay fixture: proposed_plan")] }),
-      ),
-    ).toBe(
-      "You have been invited to Replay fixture: proposed_plan in Live test repo on openclaw. You can read it and watch the agent work; you cannot send it anything.",
+  it("tells a Viewer what they can do", () => {
+    expect(say(link({ level: "viewer", use: "many", personName: null }))).toBe(
+      "You have been invited to Replay fixture: proposed_plan in Live test repo as a [Viewer]. You can read it and watch the agent work; you cannot send it anything.",
+    );
+  });
+
+  it("names the server for a link to all of it", () => {
+    expect(say(link({ opens: { kind: "server" }, level: "owner" }))).toBe(
+      "You have been invited to openclaw as an [Owner].",
     );
   });
 });
 
-describe("what the page does with the lookup's answer", () => {
-  it("shows what a working share link opens", () => {
-    const description = link({ opens: [project("Live test repo")] });
-    expect(joinPageState({ marked: true, status: 200, body: description })).toEqual({
-      kind: "described",
-      description,
+describe("what the join page asks", () => {
+  it("offers the name an Owner gave, to confirm or change", () => {
+    expect(joinView(link({}))).toEqual({ kind: "name", prefill: "Marco R.", placeholder: null });
+  });
+
+  it("asks someone opening a link for many what to call them", () => {
+    expect(joinView(link({ use: "many", personName: null, level: "viewer" }))).toEqual({
+      kind: "name",
+      prefill: "",
+      placeholder: "What should people and agents on openclaw call you?",
     });
   });
 
-  it("says a share link does not work when the lookup gives nothing, named or join alike", () => {
-    expect(joinPageState({ marked: true, status: 404, body: {} })).toEqual({ kind: "dead" });
+  it("lets a browser already on the server join a link for many as itself", () => {
+    const description = link({
+      use: "many",
+      personName: null,
+      level: "viewer",
+      device: { state: "paired", name: "Priya K.", samePerson: false },
+    });
+    expect(joinView(description)).toEqual({ kind: "as-yourself", name: "Priya K." });
+    expect(asYourselfWords(description, "Priya K.")).toBe(
+      "You are already on openclaw as Priya K. This link adds Replay fixture: proposed_plan as a Viewer.",
+    );
   });
 
-  it("leaves a link without J5's mark to upstream's page, whatever a lookup would say", () => {
-    expect(joinPageState({ marked: false, status: 404, body: {} })).toEqual({ kind: "upstream" });
+  it("refuses a link for one person on a device that is someone else's", () => {
+    expect(
+      joinView(link({ device: { state: "paired", name: "Priya K.", samePerson: false } })),
+    ).toEqual({ kind: "someone-elses", name: "Marco R." });
+  });
+
+  it("refuses a link for one person on a device that is already theirs", () => {
+    expect(
+      joinView(link({ device: { state: "paired", name: "Marco R.", samePerson: true } })),
+    ).toEqual({
+      kind: "already-yours",
+    });
+  });
+});
+
+describe("what the pairing page does with a link", () => {
+  it("hands an ordinary pairing link to upstream without asking", () => {
     expect(joinPageState({ marked: false, status: 200, body: link({}) })).toEqual({
       kind: "upstream",
     });
   });
 
-  it("leaves everything to upstream's page when the server cannot be asked", () => {
-    expect(joinPageState({ marked: true, status: null, body: null })).toEqual({ kind: "upstream" });
-    expect(joinPageState({ marked: true, status: 200, body: "<html>" })).toEqual({
-      kind: "upstream",
+  it("shows one state for every link that does not work", () => {
+    expect(joinPageState({ marked: true, status: 404, body: { error: "link_refused" } })).toEqual({
+      kind: "dead",
     });
   });
-});
 
-describe("the first screen", () => {
-  it("draws upstream's landing for a member at once, before the server has answered", () => {
-    expect(landingFor({ kind: null, pairedThroughShareLink: false })).toBe("upstream");
-  });
-
-  it("keeps drawing upstream's landing when the answer is a member's, or never comes", () => {
-    // A request that fails is answered as a member's: a server without sharing has no guests.
-    expect(landingFor({ kind: "member", pairedThroughShareLink: false })).toBe("upstream");
-    expect(landingFor({ kind: "member", pairedThroughShareLink: true })).toBe("upstream");
-  });
-
-  it("holds the frame only for a browser that was paired through a share link", () => {
-    expect(landingFor({ kind: null, pairedThroughShareLink: true })).toBe("hold");
-  });
-
-  it("is the guest's own once the server says so", () => {
-    expect(landingFor({ kind: "guest", pairedThroughShareLink: false })).toBe("guest");
+  it("leaves a link to upstream when the server cannot be asked", () => {
+    expect(joinPageState({ marked: true, status: null, body: null })).toEqual({ kind: "upstream" });
   });
 });
 
-describe("a guest whose last share is taken away while they have it open", () => {
-  const onThread = { isGuest: true, onThreadAddress: true, listed: true, threadCount: 0 };
-
-  it("is taken off the thread's address", () => {
-    expect(guestIsLeftOnNothing(onThread)).toBe(true);
+describe("a refused join", () => {
+  it("says a name is someone else's in the server's name", () => {
+    const refusal = joinRefusal(409, { error: "name_taken" });
+    expect(refusal).toBe("name_taken");
+    expect(refusalWords(refusal!, link({}))).toBe("Someone on openclaw already has that name.");
   });
 
-  it("is left to upstream while another thread remains, and before the server has listed any", () => {
-    expect(guestIsLeftOnNothing({ ...onThread, threadCount: 1 })).toBe(false);
-    expect(guestIsLeftOnNothing({ ...onThread, listed: false })).toBe(false);
+  it("asks for a name when the join needed one", () => {
+    const refusal = joinRefusal(400, { error: "invalid_request", message: "A name is needed." });
+    expect(refusal).toBe("invalid_request");
+    expect(refusalWords(refusal!, link({}))).toBe(
+      "Give the name people and agents should call you, then join.",
+    );
   });
 
-  it("never moves a member, or a guest who is somewhere else", () => {
-    expect(guestIsLeftOnNothing({ ...onThread, isGuest: false })).toBe(false);
-    expect(guestIsLeftOnNothing({ ...onThread, onThreadAddress: false })).toBe(false);
+  it("does not take an unknown refusal for one it knows", () => {
+    expect(joinRefusal(409, { error: "something_new" })).toBeNull();
   });
 });

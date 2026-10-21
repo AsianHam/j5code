@@ -11,7 +11,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -26,23 +25,18 @@ import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
-import { runMigrations } from "../../persistence/Migrations.ts";
 import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
 import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
-import { runJ5A2AMigrations } from "../a2a/Migrations.ts";
-import * as GuestGate from "./GuestGate.ts";
-import * as GuestPairing from "./GuestPairing.ts";
+import * as AccessGate from "./AccessGate.ts";
+import { accessLayer } from "./test-support/accessHarness.ts";
 import {
   GUEST_PROJECT_ICON_ROUTE_PREFIX,
   guestIconPath,
   guestProjectIconRouteLayer,
 } from "./GuestProjectIcons.ts";
-import { openLinkHttpRouteLayer } from "./OpenLinkHttp.ts";
-import * as OpenLinks from "./OpenLinks.ts";
 import * as PersonAccess from "./PersonAccess.ts";
-import { SHARING_DESCRIBE_PATH } from "@t3tools/contracts/j5";
 
 /**
  * A guest and a project's favicon, through the real gate, upstream's real favicon resolution and
@@ -57,22 +51,15 @@ const session = (id: string, subject: string): EnvironmentAuth.AuthenticatedSess
   method: "browser-session-cookie",
   scopes: SCOPES,
 });
-const MEMBER = session("session:member", "one-time-token");
-const GUEST = session("session:guest", PersonAccess.GUEST_SESSION_SUBJECT);
-const STRAY = session("session:stray", PersonAccess.GUEST_SESSION_SUBJECT);
+const MEMBER = session("session:member", "administrative-bootstrap");
+const GUEST = session("session:guest", "one-time-token");
+const STRAY = session("session:stray", "one-time-token");
 
 const upstreamAuth = Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
   authenticateHttpRequest: (_request: HttpServerRequest.HttpServerRequest) => Effect.succeed(GUEST),
   authenticateWebSocketUpgrade: (_request: HttpServerRequest.HttpServerRequest) =>
     Effect.succeed(GUEST),
 } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]);
-
-const database = Layer.effectDiscard(
-  Effect.gen(function* () {
-    yield* runMigrations();
-    yield* runJ5A2AMigrations();
-  }),
-).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "j5-guest-project-icons-",
@@ -91,8 +78,9 @@ const testLayer = Layer.mergeAll(
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
 ).pipe(
   Layer.provideMerge(
-    GuestGate.gateEnvironmentAuth(
-      upstreamAuth.pipe(Layer.provideMerge(GuestPairing.layer), Layer.provideMerge(database)),
+    AccessGate.layerGatedEnvironmentAuth.pipe(
+      Layer.provideMerge(upstreamAuth),
+      Layer.provideMerge(accessLayer),
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
@@ -153,7 +141,7 @@ const ask = Effect.fn("test.ask")(function* (
   resource: unknown,
 ) {
   const authorize = yield* RpcScopeAuthorization.pipe(
-    Effect.provide(GuestGate.layerRpcAuthorization(who, RpcAuthorization.layer(who.scopes))),
+    Effect.provide(AccessGate.layerRpcAuthorization(who, RpcAuthorization.layer(who.scopes))),
   );
   type Handler = Parameters<typeof authorize>[0];
   const outcome: unknown = yield* authorize(
@@ -216,21 +204,21 @@ const seeded = Effect.fn("test.seeded")(function* (tag: string) {
     file: "favicon.svg",
     bytes: "<svg>hidden</svg>",
   });
-  const guest = yield* access.createGuest({ displayName: `Contractor ${tag}` });
-  const who = session(`session:guest-${tag}`, PersonAccess.GUEST_SESSION_SUBJECT);
-  yield* access.bindSession({ sessionId: who.sessionId, personId: guest.personId });
+  const guest = yield* access.createPerson({ displayName: `Contractor ${tag}` });
+  const who = session(`session:guest-${tag}`, "one-time-token");
+  yield* access.bindSession({ sessionId: who.sessionId, personId: guest.personId, ceiling: null });
   const threadId = yield* thread(`thread:${tag}-in-by-thread`, byThread.id);
   yield* thread(`thread:${tag}-in-hidden`, hidden.id);
-  yield* access.putGrant({
+  yield* access.setLevel({
     personId: guest.personId,
-    target: { kind: "thread", threadId },
-    level: "view",
+    scope: { kind: "thread", threadId },
+    level: "viewer",
   });
   for (const projectId of [byGrant.id, bare.id]) {
-    yield* access.putGrant({
+    yield* access.setLevel({
       personId: guest.personId,
-      target: { kind: "project", projectId },
-      level: "view",
+      scope: { kind: "project", projectId },
+      level: "viewer",
     });
   }
   return { byThread, byGrant, bare, hidden, guest, threadId, who };
@@ -311,122 +299,6 @@ it.layer(testLayer)("a guest and a project's favicon", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("the join page is given the same link for a link that works, and no other", () =>
-    Effect.gen(function* () {
-      const { byThread, threadId, hidden } = yield* seeded("describe");
-      const openLinks = yield* OpenLinks.OpenLinks;
-      // An open link is made only on a server whose owner has a name.
-      yield* (yield* PersonAccess.PersonAccess).setOperatorName("The Owner");
-      const fetch = yield* iconRoute();
-      const context = yield* Effect.context<never>();
-      const { dispose, handler } = HttpRouter.toWebHandler(
-        openLinkHttpRouteLayer.pipe(
-          Layer.provideMerge(Layer.succeedContext(context)),
-          Layer.provide(HttpServer.layerServices),
-        ),
-        { disableLogger: true },
-      );
-      yield* Effect.addFinalizer(() => Effect.promise(dispose));
-      const describeLink = (link: string) =>
-        Effect.promise(async () => {
-          const response = await handler(
-            new Request(`http://environment.test${SHARING_DESCRIBE_PATH}`, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ link }),
-            }),
-          );
-          return { status: response.status, body: (await response.json()) as never };
-        });
-
-      const link = yield* openLinks.create(threadId);
-      const answer = yield* describeLink(link.token);
-      assert.strictEqual(answer.status, 200);
-      const [entry] = (
-        answer.body as { opens: Array<{ projectFaviconUrl: string | null; projectIcon: unknown }> }
-      ).opens;
-      assert.match(
-        entry!.projectFaviconUrl!,
-        /^\/api\/j5\/sharing\/project-icon\/[^/]+\/icon-[0-9a-f]{32}\.svg$/,
-      );
-      assert.strictEqual(entry!.projectIcon, null);
-      // It serves that project's favicon, and what was told names no folder and no file.
-      const served = yield* fetch(entry!.projectFaviconUrl!);
-      assert.strictEqual(served.status, 200);
-      assert.strictEqual(new TextDecoder().decode(served.bytes), SVG);
-      const told = JSON.stringify(answer.body);
-      for (const secret of ["host-secret", byThread.root, "favicon.svg", "projectId"]) {
-        assert.notInclude(told, secret);
-      }
-      // A thread in a project with no favicon: no link, so the page draws its default.
-      const bareThread = yield* thread(
-        "thread:describe-bare",
-        (yield* project("describe-none")).id,
-      );
-      const none = yield* describeLink((yield* openLinks.create(bareThread)).token);
-      assert.strictEqual(
-        (none.body as { opens: Array<{ projectFaviconUrl: string | null }> }).opens[0]!
-          .projectFaviconUrl,
-        null,
-      );
-      // Asking again and again spends nothing: the link still describes, and still joins.
-      for (let asked = 0; asked < 3; asked += 1) {
-        assert.strictEqual((yield* describeLink(link.token)).status, 200);
-      }
-      assert.strictEqual(
-        (yield* openLinks.list).find((entry) => entry.linkId === link.linkId)?.joined.length,
-        0,
-      );
-      // A project with a chosen icon is drawn by that; no favicon is looked up for it.
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`
-        UPDATE projection_projects
-        SET project_icon_json = ${JSON.stringify({ kind: "emoji", emoji: "🚀" })}
-        WHERE project_id = ${byThread.id}
-      `;
-      assert.deepStrictEqual(
-        (
-          (yield* describeLink(link.token)).body as { opens: Array<Record<string, unknown>> }
-        ).opens.map((opened) => [opened.projectIcon, opened.projectFaviconUrl]),
-        [[{ kind: "emoji", emoji: "🚀" }, null]],
-      );
-      yield* sql`
-        UPDATE projection_projects SET project_icon_json = NULL WHERE project_id = ${byThread.id}
-      `;
-      // A link that does not work is told nothing, a favicon least of all: expired, full,
-      // revoked, and something that was never a link.
-      // This test's clock starts at the epoch, and the route here runs on it.
-      const expired = yield* openLinks.create(threadId);
-      yield* sql`
-        UPDATE j5_a2a_open_link SET expires_at = '1969-12-31T00:00:00.000Z'
-        WHERE link_id = ${expired.linkId}
-      `;
-      const full = yield* openLinks.create(threadId);
-      for (let index = 0; index < OpenLinks.OPEN_LINK_MAX_PEOPLE; index += 1) {
-        yield* sql`
-          INSERT INTO j5_a2a_human_person (
-            person_id, is_local_operator, created_at, kind, display_name, name_self_given,
-            joined_open_link_id
-          ) VALUES (${`human:icon-full-${index}`}, 0, ${AT}, 'guest', NULL, 1, ${full.linkId})
-        `;
-        yield* sql`
-          INSERT INTO j5_a2a_open_link_join (link_id, person_id, joined_at)
-          VALUES (${full.linkId}, ${`human:icon-full-${index}`}, ${AT})
-        `;
-      }
-      yield* openLinks.revoke(link.linkId);
-      const refusals = [];
-      for (const dead of [link.token, expired.token, full.token, hidden.id, "never-a-link"]) {
-        refusals.push(yield* describeLink(dead));
-      }
-      for (const refused of refusals) {
-        assert.deepStrictEqual(refused, refusals[0]);
-        assert.strictEqual(refused.status, 404);
-        assert.notInclude(JSON.stringify(refused.body), "project-icon");
-      }
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("is refused every project that is not in its sidebar, however it is named", () =>
     Effect.gen(function* () {
       const { byThread, hidden, guest, threadId, who } = yield* seeded("refused");
@@ -453,9 +325,9 @@ it.layer(testLayer)("a guest and a project's favicon", (it) => {
       assert.deepStrictEqual(yield* ask(STRAY, icon(byThread.id)), refused);
       // And it ends with the grant.
       assert.strictEqual((yield* ask(who, icon(byThread.id))).kind, "link");
-      yield* access.removeGrant({
+      yield* access.removeLevel({
         personId: guest.personId,
-        target: { kind: "thread", threadId },
+        scope: { kind: "thread", threadId },
       });
       assert.deepStrictEqual(yield* ask(who, icon(byThread.id)), refused);
     }).pipe(Effect.scoped),

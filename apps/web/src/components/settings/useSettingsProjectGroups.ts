@@ -5,9 +5,11 @@ import { selectProjectGroupingSettings } from "../../logicalProject";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects } from "../../state/entities";
+import { useOwnedEnvironments } from "../../j5/sharing/settingsAccess";
 
 export function useSettingsProjectGroups() {
-  const projects = useProjects();
+  // J5 (case 72): Settings manages only the projects of servers the person owns.
+  const projects = useOwnedEnvironments(useProjects());
   const settings = useClientSettings(selectProjectGroupingSettings);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();

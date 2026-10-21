@@ -28,7 +28,8 @@ import { makeFleetRead } from "./fleetRead.ts";
 import { type A2AHumanInboxError, A2AHumanInbox } from "./HumanInboxService.ts";
 import { A2ALedger } from "./LedgerService.ts";
 import { ParticipantPlacementService } from "./PlacementService.ts";
-import { ParticipantId } from "./contracts.ts";
+import { EVERYONE_HERE_PERSON_ID, ParticipantId } from "./contracts.ts";
+import { writesEveryThread } from "./HumanPersonRegistry.ts";
 import { outsideAgentNameRows } from "./outsideAgentNames.ts";
 import { threadIdForParticipant } from "./HomeRegistrar.ts";
 import { makePreArchiveFactsRead } from "./preArchiveFactsRead.ts";
@@ -354,8 +355,18 @@ export const layer: Layer.Layer<
     const openInboxCount: ClientReadsShape["openInboxCount"] = (requestedPersonId) =>
       Effect.gen(function* () {
         const personId = yield* inbox.resolvePersonId(requestedPersonId);
-        const rows = yield* openInboxCountStatement(sql, personId);
-        return { personId, count: rows[0]?.count ?? 0 } satisfies OpenInboxCount;
+        // Someone who writes to every thread is asked everything addressed to everyone here,
+        // so their count is two counts by key; anyone else's follows what their inbox lists.
+        if (!(yield* writesEveryThread(sql, personId))) {
+          const open = yield* inbox.list(personId, "open");
+          return { personId, count: open.length } satisfies OpenInboxCount;
+        }
+        const own = yield* openInboxCountStatement(sql, personId);
+        const everyone = yield* openInboxCountStatement(sql, EVERYONE_HERE_PERSON_ID);
+        return {
+          personId,
+          count: (own[0]?.count ?? 0) + (everyone[0]?.count ?? 0),
+        } satisfies OpenInboxCount;
       });
 
     return ClientReadsService.of({
@@ -373,7 +384,10 @@ export const layer: Layer.Layer<
         Effect.flatMap((open) => Effect.forEach(open, projectProposal)),
         Effect.map((listed) => ({ proposals: listed })),
       ),
-      crewRuntimeRequests: runtimeRequests.list.pipe(Effect.map((requests) => ({ requests }))),
+      crewRuntimeRequests: Effect.all({
+        requests: runtimeRequests.list,
+        questions: runtimeRequests.questions,
+      }),
       crewMemberships: yield* makeCrewMembershipsRead,
       spawnedChildren: yield* makeSpawnedChildrenRead,
       fleet: yield* makeFleetRead,

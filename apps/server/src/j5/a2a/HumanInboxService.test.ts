@@ -97,6 +97,12 @@ it.effect(
             (${firstPerson.id}, 1, '2026-08-23T00:00:00.000Z'),
             (${secondPerson.id}, 0, '2026-08-23T00:00:00.000Z')
         `;
+        yield* sql`
+        INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+        VALUES
+          (${firstPerson.id}, 'server', '', 'owner', ${"2026-08-23T00:00:00.000Z"}, ${"2026-08-23T00:00:00.000Z"}),
+          (${secondPerson.id}, 'server', '', 'collaborator', ${"2026-08-23T00:00:00.000Z"}, ${"2026-08-23T00:00:00.000Z"})
+      `;
         assert.equal(yield* inbox.resolvePersonId(), firstPerson.id);
         assert.equal(yield* inbox.resolvePersonId(secondPerson.id), secondPerson.id);
         const unregistered = yield* Effect.flip(

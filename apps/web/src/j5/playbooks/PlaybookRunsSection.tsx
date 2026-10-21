@@ -22,7 +22,7 @@ import { j5Environment } from "../state";
 import { useVisibleRefresh } from "../useVisibleRefresh";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { fleetCrewAnchorId } from "../fleet/fleet.logic";
-import { useGuestEnvironmentIds } from "../sharing/guestAccess";
+import { useNarrowEnvironmentIds } from "../sharing/access";
 
 /** The Fleet page's Crews, so a Crew-linked run can name its Crew and jump to its group. */
 interface PlaybookRunCrewLinks {
@@ -165,9 +165,9 @@ function EnvironmentRuns({
   showEnvironmentLabel: boolean;
 } & PlaybookRunCrewLinks) {
   const [offset, setOffset] = useState(0);
-  // A guest is shown none of a server's Playbooks (Shared server AC24), so none is read.
-  const guest = useGuestEnvironmentIds().has(environment.environmentId);
-  const unsupported = guest || j5LedgerSupported(environment.serverConfig) === false;
+  // Every run on the server is the server's to list: someone who reaches less is not asked it.
+  const narrow = useNarrowEnvironmentIds().has(environment.environmentId);
+  const unsupported = narrow || j5LedgerSupported(environment.serverConfig) === false;
   const query = useEnvironmentQuery(
     unsupported
       ? null
@@ -230,8 +230,8 @@ function EnvironmentRuns({
         </p>
       ) : unsupported ? (
         <p role="status" className="text-sm text-muted-foreground">
-          {guest
-            ? "Nothing from a server you are a guest on appears here."
+          {narrow
+            ? "This server's Playbook runs are not shared with you."
             : "This environment does not support the playbook overview yet."}
         </p>
       ) : query.error ? (

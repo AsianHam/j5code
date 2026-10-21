@@ -135,6 +135,8 @@ export interface ResolveCrewProposalInput {
   readonly approvalToken?: string | undefined;
   /** The human's final roster on approval; the requested seats when omitted. */
   readonly seats?: ReadonlyArray<CrewProposalSeat> | undefined;
+  /** Who is answering, as the Captain is told; given only for a shared conversation. */
+  readonly decidedBy?: string | null | undefined;
 }
 
 /** What the Captain is told about a playbook proposal it just filed. */
@@ -513,6 +515,7 @@ export const layer = Layer.effect(
             decision: "approve",
             approvedSeats: seats,
             resolvedAt: DateTime.formatIso(yield* DateTime.now),
+            decidedBy: proposal.decidedBy,
           })
           .pipe(Effect.mapError(failed));
         if (approved === null)
@@ -826,9 +829,13 @@ export const layer = Layer.effect(
       gates.withLock(
         input.proposalId,
         Effect.gen(function* () {
-          const proposal = yield* proposals
-            .read(input.proposalId)
-            .pipe(Effect.mapError(operationError("reading the proposal")));
+          // Who is answering rides on the proposal from here: both notices and the record read it.
+          const proposal = yield* proposals.read(input.proposalId).pipe(
+            Effect.mapError(operationError("reading the proposal")),
+            Effect.map((read) =>
+              read === null ? null : { ...read, decidedBy: input.decidedBy ?? null },
+            ),
+          );
           if (proposal === null)
             return yield* new CrewProposalNotFoundError({ proposalId: input.proposalId });
           if (proposal.status !== "open")
@@ -847,6 +854,7 @@ export const layer = Layer.effect(
                 decision: "decline",
                 approvedSeats: null,
                 resolvedAt: DateTime.formatIso(yield* DateTime.now),
+                decidedBy: proposal.decidedBy,
               })
               .pipe(Effect.mapError(operationError("recording the decline")));
             if (declined === null)

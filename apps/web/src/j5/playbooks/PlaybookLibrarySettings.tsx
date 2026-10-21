@@ -42,7 +42,7 @@ import { environmentProjects } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentFolderPickerDialog } from "../agents/AgentFolderPickerDialog";
-import { useGuestEnvironmentIds } from "../sharing/guestAccess";
+import { useOwnedEnvironmentIds } from "../sharing/access";
 import { j5Environment } from "../state";
 import { playbookImportName } from "./importPlaybookFile";
 import { PlaybookConversationDialog } from "./PlaybookConversationDialog";
@@ -54,8 +54,9 @@ export function PlaybookLibrarySettings({
   environmentId: EnvironmentId | null;
 }) {
   const { environments: connected } = useEnvironments();
-  const guests = useGuestEnvironmentIds();
-  const environments = connected.filter((entry) => !guests.has(entry.environmentId));
+  // Settings manages the servers the person owns (People and access AC27).
+  const owned = useOwnedEnvironmentIds();
+  const environments = connected.filter((entry) => owned.has(entry.environmentId));
   const environment = environments.find((entry) => entry.environmentId === environmentId);
   return environment ? (
     <PlaybookLibrary

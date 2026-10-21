@@ -20,6 +20,23 @@ const seat = (overrides: Partial<CrewSeatThread> = {}): CrewSeatThread => ({
 });
 
 describe("crew state", () => {
+  it.each(["running", "waiting"] as const)(
+    "shows a %s native question as needs you while retaining Stop crew",
+    (status) => {
+      const waiting = seat({ runtime: { status }, hasPendingUserInput: true });
+      const summary = summarizeCrewState([waiting]);
+      expect(classifyCrewSeat(waiting)).toBe("needs-you");
+      expect(summary.counts["needs-you"]).toBe(1);
+      expect(summary.counts.running).toBe(0);
+      expect(formatCrewStateSummary(summary)).toBe("1 needs you");
+      expect(crewHasRunningSeat(summary)).toBe(true);
+      expect(classifyCrewSeat({ ...waiting, archivedAt: "2026-10-19T12:00:00.000Z" })).toBe(
+        "archived",
+      );
+      expect(classifyCrewSeat({ ...waiting, runtime: { status: "failed" } })).toBe("failed");
+    },
+  );
+
   it("classifies each seat from measured facts in precedence order", () => {
     expect(classifyCrewSeat(undefined)).toBe("unknown");
     expect(classifyCrewSeat(seat({ archivedAt: "2026-09-14T09:00:00.000Z" }))).toBe("archived");

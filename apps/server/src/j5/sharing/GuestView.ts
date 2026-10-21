@@ -12,6 +12,8 @@ import {
   type ServerLifecycleStreamEvent,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderSkill,
+  type ScheduledTaskListResult,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -21,17 +23,26 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { guestIconPath } from "./GuestProjectIcons.ts";
-import { GUEST_SESSION_SUBJECT, PersonAccess, type SessionIdentity } from "./PersonAccess.ts";
+import { levelReaches } from "@t3tools/contracts/j5";
+
+import {
+  PersonAccess,
+  type SessionIdentity,
+  type SessionReach,
+  isWide,
+  reachPersonId,
+} from "./PersonAccess.ts";
 
 /**
- * What a guest's connection is told (Shared server AC12, AC23). A guest's client cannot connect
- * without the server configuration, the lifecycle welcome and the sidebar feed, so a guest gets
- * each in a reduced form: what a client needs to draw a granted thread, and none of the host's
- * paths, network addresses, provider accounts or settings. Its providers are named, with their
- * models, and nothing more. That holds outside the threads a guest
- * was granted. A granted thread's own contents are shared whole: its thread load and its feed
- * carry its worktree path and working directory, as its history already does. A member's
- * connection gets upstream's answer untouched; nothing here looks past the session's subject.
+ * What a narrowed connection is told (People and access AC24, AC25): a person whose scope is
+ * narrower than the server, a Viewer at server scope, or a device no one has claimed. Its client
+ * cannot connect without the server configuration, the lifecycle welcome and the sidebar feed. A
+ * Viewer gets each in a reduced form: what a client needs to draw a thread in reach, and none of
+ * the host's paths, network addresses, provider accounts or settings; its providers are named,
+ * with their models, and nothing more. A Collaborator, who can open a terminal on the host, gets
+ * upstream's configuration, and a sidebar cut to what they reach with its folders kept. A thread
+ * in reach is shared whole: its thread load and its feed carry its worktree path and working
+ * directory, as its history already does. A wide connection gets upstream's answers untouched.
  */
 
 /** Stands in for every host path a required field would otherwise carry. */
@@ -42,18 +53,25 @@ const reduceEnvironment = (
 ): ExecutionEnvironmentDescriptor => ({
   environmentId: environment.environmentId,
   // The server's own name and platform, which its public descriptor
-  // (`/.well-known/t3/environment`) gives anyone who can reach it. A person who is a guest of
-  // two servers tells them apart by name.
+  // (`/.well-known/t3/environment`) gives anyone who can reach it. A Viewer on two servers tells
+  // them apart by name.
   label: environment.label,
   platform: environment.platform,
   serverVersion: environment.serverVersion,
   ...(environment.orchestrationProtocolVersion === undefined
     ? {}
     : { orchestrationProtocolVersion: environment.orchestrationProtocolVersion }),
-  capabilities: { repositoryIdentity: false },
+  // That the server keeps J5's ledger says nothing of the host, and without it a client asks a
+  // Viewer nothing J5 reads by project or thread: a thread's Playbook runs, the inbox, Crew asks.
+  capabilities: {
+    repositoryIdentity: false,
+    ...(environment.capabilities.j5ProjectLedger === undefined
+      ? {}
+      : { j5ProjectLedger: environment.capabilities.j5ProjectLedger }),
+  },
 });
 
-/** What the read requests a guest may make can do; they say nothing about the host. */
+/** What the read requests a Viewer may make can do; they say nothing about the host. */
 const PROTOCOL_FLAGS = [
   "shellResumeCompletionMarker",
   "threadResumeCompletionMarker",
@@ -78,14 +96,37 @@ const reduceModel = (model: ServerProviderModel): ServerProviderModel => ({
 });
 
 /**
- * A provider as a guest's client is told of it: which one it is, what it is called and the models
+ * A provider as a Viewer's client is told of it: which one it is, what it is called and the models
  * it offers. Upstream's composer shows its "enable a provider" setup state when the list is empty,
- * and with these it shows a thread's model and, for a guest with View, its own read-only state.
- * Nothing of the provider's sign-in, version, health, paths, usage, skills or commands is sent:
+ * and with these it shows a thread's model and, for a Viewer, its own read-only state.
+ * Nothing of the provider's sign-in, version, health, paths, usage or commands is sent, and its
+ * skills only as `reduceSkill` tells them:
  * each is left out or given its emptiest valid value. Built field by field, so a field upstream
  * adds later is left out until it is listed here.
  */
-const reduceProvider = (provider: ServerProvider): ServerProvider => ({
+/**
+ * A skill as a Viewer is told of it: its name and what it is for, and none of its files (People
+ * and access AC20, AC23). Built field by field, so a field upstream adds is left out.
+ */
+const reduceSkill = (skill: ServerProviderSkill): ServerProviderSkill => ({
+  name: skill.name,
+  ...(skill.description === undefined ? {} : { description: skill.description }),
+  path: PLACEHOLDER_PATH,
+  ...(skill.scope === undefined ? {} : { scope: skill.scope }),
+  enabled: skill.enabled,
+  ...(skill.displayName === undefined ? {} : { displayName: skill.displayName }),
+  ...(skill.shortDescription === undefined ? {} : { shortDescription: skill.shortDescription }),
+  ...(skill.userInvocationOnly === undefined
+    ? {}
+    : { userInvocationOnly: skill.userInvocationOnly }),
+  ...(skill.userInvocable === undefined ? {} : { userInvocable: skill.userInvocable }),
+});
+
+/** Which of a provider's skills a Viewer is told of: all at server scope, a project's own at its. */
+export type SkillsShown = (skill: ServerProviderSkill) => boolean;
+const NO_SKILLS: SkillsShown = () => false;
+
+const reduceProvider = (provider: ServerProvider, skillsShown: SkillsShown): ServerProvider => ({
   instanceId: provider.instanceId,
   driver: provider.driver,
   ...(provider.displayName === undefined ? {} : { displayName: provider.displayName }),
@@ -97,25 +138,30 @@ const reduceProvider = (provider: ServerProvider): ServerProvider => ({
   checkedAt: PLACEHOLDER_CHECKED_AT,
   models: provider.models.map(reduceModel),
   slashCommands: [],
-  skills: [],
+  skills: provider.skills.filter(skillsShown).map(reduceSkill),
 });
 
-/** The providers a guest is told of: every one a thread could be running on, reduced. */
-const reduceProviders = (providers: ServerConfig["providers"]) =>
-  providers.filter((provider) => provider.enabled).map(reduceProvider);
+/** The providers a Viewer is told of: every one a thread could be running on, reduced. */
+const reduceProviders = (providers: ServerConfig["providers"], skillsShown: SkillsShown) =>
+  providers
+    .filter((provider) => provider.enabled)
+    .map((provider) => reduceProvider(provider, skillsShown));
 
 /**
- * The configuration a guest's client is given. Built field by field, so a field upstream adds
+ * The configuration a Viewer's client is given. Built field by field, so a field upstream adds
  * later is left out until it is listed here.
  */
-export const reduceServerConfig = (config: ServerConfig): ServerConfig => ({
+export const reduceServerConfig = (
+  config: ServerConfig,
+  skillsShown: SkillsShown = NO_SKILLS,
+): ServerConfig => ({
   environment: reduceEnvironment(config.environment),
   auth: config.auth,
   cwd: PLACEHOLDER_PATH,
   keybindingsConfigPath: PLACEHOLDER_PATH,
   keybindings: [],
   issues: [],
-  providers: reduceProviders(config.providers),
+  providers: reduceProviders(config.providers, skillsShown),
   availableEditors: [],
   observability: {
     logsDirectoryPath: PLACEHOLDER_PATH,
@@ -131,10 +177,10 @@ export const reduceServerConfig = (config: ServerConfig): ServerConfig => ({
 });
 
 /**
- * A project as a guest's client is told of it: enough to draw the thread under its project's name
+ * A project as a Viewer's client is told of it: enough to draw the thread under its project's name
  * and chosen icon. The icon a person chose (`projectIcon`: a named glyph, an emoji or a monogram)
  * is plain data and passes. A favicon file is asked for by the project's folder upstream, which a
- * guest is not told, so its path is replaced by one that names the project by id, and J5 serves
+ * Viewer is not told, so its path is replaced by one that names the project by id, and J5 serves
  * the file (`GuestProjectIcons.ts`).
  */
 const reduceProject = (project: OrchestrationProjectShell): OrchestrationProjectShell => ({
@@ -158,8 +204,15 @@ type ShellSubscribeInput = {
   readonly requestCompletionMarker?: boolean;
 };
 
-/** How one connection is answered where a guest's answer differs from a member's. */
+/** How one connection is answered where a narrowed connection's answer differs from upstream's. */
 export interface ConnectionView {
+  /** The scheduled tasks a connection is listed: those bound to a thread or a project it reaches. */
+  readonly scheduledTasks: <E, R>(
+    list: Effect.Effect<ScheduledTaskListResult, E, R>,
+  ) => Effect.Effect<ScheduledTaskListResult, E, R>;
+  readonly scheduledTasksStream: <E, R>(
+    stream: Stream.Stream<ScheduledTaskListResult, E, R>,
+  ) => Stream.Stream<ScheduledTaskListResult, E, R>;
   readonly config: (config: ServerConfig) => ServerConfig;
   readonly configStream: <E, R>(
     stream: Stream.Stream<ServerConfigStreamEvent, E, R>,
@@ -167,7 +220,7 @@ export interface ConnectionView {
   readonly lifecycleStream: <E, R>(
     stream: Stream.Stream<ServerLifecycleStreamEvent, E, R>,
   ) => Stream.Stream<ServerLifecycleStreamEvent, E, R>;
-  /** `subscribe` is upstream's sidebar feed; a guest's is read through its grants. */
+  /** `subscribe` is upstream's sidebar feed, read through what a narrowed person reaches. */
   readonly shellStream: <R>(
     input: ShellSubscribeInput,
     subscribe: (
@@ -177,19 +230,33 @@ export interface ConnectionView {
 }
 
 const MEMBER_VIEW: ConnectionView = {
+  scheduledTasks: identity,
+  scheduledTasksStream: identity,
   config: identity,
   configStream: identity,
   lifecycleStream: identity,
   shellStream: (input, subscribe) => subscribe(input),
 };
 
-const makeShellFilter = (access: PersonAccess["Service"], session: SessionIdentity) => {
+/**
+ * How a narrowed connection's sidebar is cut to what its person reaches. A Viewer's projects and
+ * threads are reduced to what names nothing of the host; a Collaborator's keep their folders,
+ * which their terminals and files open.
+ */
+const makeShellFilter = (access: PersonAccess["Service"], reach: SessionReach, reduce: boolean) => {
+  const personId = reachPersonId(reach);
   const seesThread = (threadId: ThreadId) =>
-    access.threadAccess(session, threadId).pipe(Effect.map((level) => level !== "none"));
+    personId === null
+      ? Effect.succeed(false)
+      : access.threadLevel(personId, threadId).pipe(Effect.map((level) => level !== null));
   const holdsProject = (projectId: ProjectId) =>
-    access.projectAccess(session, projectId).pipe(Effect.map((level) => level !== "none"));
+    personId === null
+      ? Effect.succeed(false)
+      : access.projectLevel(personId, projectId).pipe(Effect.map((level) => level !== null));
+  const project = reduce ? reduceProject : identity<OrchestrationProjectShell>;
+  const thread = reduce ? reduceThread : identity<OrchestrationV2ThreadShell>;
 
-  /** The threads a guest's grants cover, and the projects those threads or a grant name. */
+  /** The threads a person reaches, and the projects those threads or a level name. */
   const snapshot = Effect.fn("j5.sharing.guestView.shellSnapshot")(function* (
     full: OrchestrationV2ShellSnapshot,
   ) {
@@ -201,14 +268,14 @@ const makeShellFilter = (access: PersonAccess["Service"], session: SessionIdenti
     return {
       schemaVersion: full.schemaVersion,
       snapshotSequence: full.snapshotSequence,
-      projects: projects.map(reduceProject),
-      threads: threads.map(reduceThread),
+      projects: projects.map(project),
+      threads: threads.map(thread),
       archivedThreads: [],
     } satisfies OrchestrationV2ShellSnapshot;
   });
 
   /**
-   * One run of upstream's feed, read through the guest's grants. Sequence numbers and the
+   * One run of upstream's feed, read through what the person reaches. Sequence numbers and the
    * completion marker pass through as upstream sent them. `restart` asks for the feed to begin
    * again when a change cannot be told as one item.
    */
@@ -229,7 +296,7 @@ const makeShellFilter = (access: PersonAccess["Service"], session: SessionIdenti
               case "synchronized":
                 return pass(item);
               case "snapshot": {
-                // A repository-identity refresh names host folders, and a guest's projects carry
+                // A repository-identity refresh names host folders, and a narrowed sidebar's projects carry
                 // no repository identity for it to fill in.
                 if (item.resolvedRepositoryIdentityRoots !== undefined) return drop;
                 const reduced = yield* snapshot(item.snapshot);
@@ -253,7 +320,7 @@ const makeShellFilter = (access: PersonAccess["Service"], session: SessionIdenti
                   return drop;
                 }
                 threads.add(item.thread.id);
-                return pass({ ...item, thread: reduceThread(item.thread) });
+                return pass({ ...item, thread: thread(item.thread) });
               }
               case "thread.removed":
                 return threads.delete(item.threadId) ? pass(item) : drop;
@@ -262,7 +329,7 @@ const makeShellFilter = (access: PersonAccess["Service"], session: SessionIdenti
                   return drop;
                 }
                 projects.add(item.project.id);
-                return pass({ ...item, project: reduceProject(item.project) });
+                return pass({ ...item, project: project(item.project) });
               }
               case "project.removed":
                 return projects.delete(item.projectId) ? pass(item) : drop;
@@ -281,23 +348,63 @@ const shellFailure = (cause: unknown) =>
   isShellFailure(cause)
     ? cause
     : new OrchestrationV2GetShellSnapshotError({
-        message: "Failed to read what is shared with this guest",
+        message: "Failed to read what is shared with this person",
         cause,
       });
 
-const guestView = (access: PersonAccess["Service"], session: SessionIdentity): ConnectionView => {
-  const filter = makeShellFilter(access, session);
+const narrowedView = (
+  access: PersonAccess["Service"],
+  reach: SessionReach,
+  skillsShown: SkillsShown,
+): ConnectionView => {
+  // The configuration names the host's folders, network addresses, provider accounts and
+  // settings. A Viewer is shown none of them (AC24); a Collaborator, who can open a terminal on
+  // the host, is given upstream's.
+  const writes =
+    reach.kind === "person" &&
+    reach.levels.some((held) => levelReaches(held.level, "collaborator"));
+  const filter = makeShellFilter(access, reach, !writes);
+  const personId = reachPersonId(reach);
+  /**
+   * A task bound to a thread is at home there; any other is its project's (AC21, AC22). A task's
+   * webhook address starts it, so it is given only to someone who writes where the task is at
+   * home, whatever they write elsewhere. A task that cannot be checked is left out.
+   */
+  const reachableTasks = (result: ScheduledTaskListResult) =>
+    Effect.forEach(result.tasks, (task) =>
+      personId === null
+        ? Effect.succeed([])
+        : (task.threadId === null
+            ? access.projectLevel(personId, task.projectId)
+            : access.threadLevel(personId, task.threadId)
+          ).pipe(
+            Effect.map((level) => {
+              if (level === null) return [];
+              if (levelReaches(level, "collaborator")) return [task];
+              const { webhook: _webhook, ...shown } = task;
+              return [shown];
+            }),
+            Effect.orElseSucceed(() => []),
+          ),
+    ).pipe(Effect.map((tasks) => ({ tasks: tasks.flat() })));
   return {
-    config: reduceServerConfig,
+    scheduledTasks: (list) => list.pipe(Effect.flatMap(reachableTasks)),
+    scheduledTasksStream: (stream) => stream.pipe(Stream.mapEffect(reachableTasks)),
+    config: writes ? identity : (config) => reduceServerConfig(config, skillsShown),
     // Every later provider, settings, keybinding, theme and usage update is dropped rather than
-    // reduced: a guest's client keeps the providers and models it was told of when it connected.
-    configStream: (stream) =>
-      stream.pipe(
-        Stream.filter((event) => event.type === "snapshot"),
-        Stream.map((event) => ({ ...event, config: reduceServerConfig(event.config) })),
-      ),
+    // reduced: a Viewer's client keeps the providers and models it was told of when it connected.
+    configStream: writes
+      ? identity
+      : (stream) =>
+          stream.pipe(
+            Stream.filter((event) => event.type === "snapshot"),
+            Stream.map((event) => ({
+              ...event,
+              config: reduceServerConfig(event.config, skillsShown),
+            })),
+          ),
     // A client waits for the welcome before it draws anything. The other events report a server
-    // update or a migration, which a guest neither starts nor is told about.
+    // update or a migration, which a narrowed connection neither starts nor is told about.
     lifecycleStream: (stream) =>
       stream.pipe(
         Stream.filter((event) => event.type === "welcome"),
@@ -314,24 +421,24 @@ const guestView = (access: PersonAccess["Service"], session: SessionIdentity): C
         })),
       ),
     /**
-     * A guest's feed always begins from a full snapshot, the answer upstream already gives a
-     * client whose cursor is too old to replay from, because what a replay may tell a guest
-     * depends on what its client was sent before. It begins again, without the client
-     * reconnecting, each time the guest's grants change (AC10, AC11).
+     * A narrowed feed always begins from a full snapshot, the answer upstream already gives a
+     * client whose cursor is too old to replay from, because what a replay may tell this
+     * connection depends on what its client was sent before. It begins again, without the
+     * client reconnecting, each time what the person reaches changes (AC10, AC12).
      */
     shellStream: (input, subscribe) =>
       Stream.unwrap(
         Effect.gen(function* () {
-          const person = yield* access.sessionPerson(session);
-          const grantChanges = yield* access.subscribeGrantChanges;
+          const personId = reachPersonId(reach);
+          const reachChanges = yield* access.subscribeChanges;
           const restarts = yield* Queue.sliding<void>(1);
           const restart = Queue.offer(restarts, undefined);
           const begin = (marker: boolean) =>
             filter.stream(subscribe(marker ? { requestCompletionMarker: true } : {}), restart);
           return Stream.merge(
             Stream.fromQueue(restarts),
-            Stream.fromSubscription(grantChanges).pipe(
-              Stream.filter((personId) => personId === person?.personId),
+            Stream.fromSubscription(reachChanges).pipe(
+              Stream.filter((changed) => changed === personId),
             ),
           ).pipe(
             Stream.as(false),
@@ -343,10 +450,37 @@ const guestView = (access: PersonAccess["Service"], session: SessionIdentity): C
   };
 };
 
-/** The view for one WebSocket connection: upstream's own for a member, the reduced one for a guest. */
+/**
+ * The view for one WebSocket connection: upstream's own for a wide session, the narrowed one for
+ * anyone else. Whose the session is is read once, when the socket opens; a change that would
+ * alter it renews the session, which closes the socket (`Access`).
+ */
 export const connectionView = (
   session: SessionIdentity,
 ): Effect.Effect<ConnectionView, never, PersonAccess> =>
-  session.subject !== GUEST_SESSION_SUBJECT
-    ? Effect.succeed(MEMBER_VIEW)
-    : Effect.map(PersonAccess, (access) => guestView(access, session));
+  Effect.gen(function* () {
+    const access = yield* PersonAccess;
+    const reach = yield* access.sessionReach(session).pipe(
+      Effect.catch((cause) =>
+        Effect.logError("J5 could not read whose a socket is; narrowing its view", {
+          cause,
+        }).pipe(Effect.as({ kind: "unknown" } as SessionReach)),
+      ),
+    );
+    if (isWide(reach)) return MEMBER_VIEW;
+    // A Viewer at server scope is told every provider's skills; one at a project, the skills in
+    // that project's own folders; anyone else, none.
+    const roots =
+      reach.kind !== "person"
+        ? []
+        : reach.levels.some((held) => held.scope.kind === "server")
+          ? null
+          : yield* access
+              .projectRoots(reach.person.personId)
+              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+    const skillsShown: SkillsShown =
+      roots === null
+        ? () => true
+        : (skill) => roots.some((root) => skill.path.startsWith(`${root.replace(/\/+$/u, "")}/`));
+    return narrowedView(access, reach, skillsShown);
+  });

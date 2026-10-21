@@ -12,6 +12,7 @@ import { EffectOutboxV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { makeCrewFailureAlert, needsHumanForCrewFailure } from "./crewFailureAlert.ts";
+import { layer as sharedThreadsLayer } from "../sharing/SharedThreads.ts";
 import {
   A2ADeliveryWorker,
   layer as daemonDeliveryWorkerLayer,
@@ -31,6 +32,7 @@ import { runJ5A2AMigrations } from "./Migrations.ts";
 import { A2ASendService, layer as sendLayer } from "./SendService.ts";
 import {
   CommCommandId,
+  EVERYONE_HERE_PERSON_ID,
   ParticipantId,
   LedgerProjectId,
   type AgentParticipant,
@@ -83,7 +85,8 @@ const makeTestLayer = (
     Layer.provide(database),
     Layer.provide(transport),
   );
-  return Layer.mergeAll(database, ledger, send, inbox, worker);
+  const shared = sharedThreadsLayer.pipe(Layer.provide(database));
+  return Layer.mergeAll(database, ledger, send, inbox, worker, shared);
 };
 
 /** A project holding the Captain, with the local person registered. */
@@ -93,6 +96,7 @@ const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const ledger = yield* A2ALedger;
   yield* sql`INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at) VALUES (${person.id}, 1, ${at})`;
+  yield* sql`INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at) VALUES (${person.id}, 'server', '', 'owner', ${at}, ${at})`;
   yield* ledger.ensureProject({ projectId: projectId, createdAt: at });
   yield* ledger.appendEvents({
     commandId: CommCommandId.make("join:alerts"),
@@ -122,6 +126,7 @@ const reviewCrew = {
   id: "crew:review",
   projectId,
   captainParticipantId: captain.id,
+  captainThreadId: captain.threadId,
   displayName: "Review",
 };
 
@@ -294,6 +299,30 @@ it.effect("an alert wakes the delivery worker once it commits, and a replay wake
       assert.equal(yield* Ref.get(wakes), 1);
       yield* alert(critic);
       assert.equal(yield* Ref.get(wakes), 1);
-    }).pipe(Effect.provide(Layer.mergeAll(database, ledger, worker)));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(database, ledger, worker, sharedThreadsLayer.pipe(Layer.provide(database))),
+      ),
+    );
   }),
+);
+
+it.effect(
+  "where more than one person writes to the Captain's thread, the alert asks everyone here",
+  () =>
+    Effect.gen(function* () {
+      const deliveries = yield* Ref.make<ReadonlyArray<AgentDeliveryInput>>([]);
+      yield* Effect.gen(function* () {
+        yield* seed;
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at) VALUES ('human:priya', 0, ${at})`;
+        yield* sql`INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at) VALUES ('human:priya', 'server', '', 'collaborator', ${at}, ${at})`;
+        const alert = yield* makeCrewFailureAlert;
+        yield* alert({ instance: reviewCrew, seatName: "critic", runId: "run:shared", failure });
+        const asked = yield* sql<{ readonly receiver_id: string }>`
+        SELECT receiver_id FROM j5_a2a_exchange WHERE sender_id = ${captain.id}
+      `;
+        assert.deepStrictEqual(asked, [{ receiver_id: EVERYONE_HERE_PERSON_ID }]);
+      }).pipe(Effect.provide(makeTestLayer(deliveries)));
+    }),
 );

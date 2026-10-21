@@ -37,6 +37,7 @@ import { CrewStopService } from "../CrewStopService.ts";
 import { A2ADeliveryWorker } from "../DeliveryWorker.ts";
 import { A2AHomeRegistrar } from "../HomeRegistrar.ts";
 import { A2ALedger, layer as ledgerLayer } from "../LedgerService.ts";
+import { runMigrations } from "../../../persistence/Migrations.ts";
 import { runJ5A2AMigrations } from "../Migrations.ts";
 import { noneLayer as peerDirectoryNoneLayer } from "../PeerDirectory.ts";
 import { PeerRegistryService } from "../PeerRegistryService.ts";
@@ -189,6 +190,7 @@ const makeLayer = (stops: Ref.Ref<ReadonlyArray<Stop>>) => {
 };
 
 const setup = Effect.fn("test.j5.a2a.mcp.outside.setup")(function* () {
+  yield* runMigrations();
   yield* runJ5A2AMigrations();
   const ledger = yield* A2ALedger;
   const sql = yield* SqlClient.SqlClient;
@@ -219,6 +221,11 @@ const setup = Effect.fn("test.j5.a2a.mcp.outside.setup")(function* () {
   yield* sql`
     INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
     VALUES (${person}, 1, ${timestamp})
+  `;
+  // The first owner writes to every thread, as the server records them at startup.
+  yield* sql`
+    INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+    VALUES (${person}, 'server', '', 'owner', ${timestamp}, ${timestamp})
   `;
 });
 

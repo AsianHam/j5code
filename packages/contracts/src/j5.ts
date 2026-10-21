@@ -5,6 +5,10 @@ import { Rpc, RpcGroup } from "effect/rpc";
 export * from "./j5/actionError.ts";
 export * from "./j5/peerPoll.ts";
 export * from "./j5/playbook.ts";
+export * from "./j5/access.ts";
+export * from "./j5/levels.ts";
+export * from "./j5/people.ts";
+export * from "./j5/sharedConversation.ts";
 export * from "./j5/sharing.ts";
 
 import { ModelSelection } from "./modelSelection.ts";
@@ -34,6 +38,10 @@ export const HumanInboxItem = Schema.Struct({
   openedAt: Schema.String,
   status: Schema.Literals(["open", "answered"]),
   terminalAt: Schema.NullOr(Schema.String),
+  /** Asked of everyone who can write to the asking agent's thread (Inbox AC15). */
+  forEveryone: Schema.optionalKey(Schema.Boolean),
+  /** Who answered an ask that is closed, by the name they had then (Inbox AC16). */
+  answeredBy: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type HumanInboxItem = typeof HumanInboxItem.Type;
 export type ScopedHumanInboxItem = HumanInboxItem & { readonly environmentId: EnvironmentId };
@@ -47,8 +55,8 @@ export const HumanInboxResponse = Schema.Struct({
 });
 export type HumanInboxResponse = typeof HumanInboxResponse.Type;
 
+/** The person answering is the connection's own; nothing a client sends names them. */
 export const AnswerHumanExchangeRequest = Schema.Struct({
-  personId: Schema.String.check(Schema.isNonEmpty()),
   exchangeId: Schema.String.check(Schema.isNonEmpty()),
   message: Schema.String.check(Schema.isNonEmpty()),
   clientRequestId: Schema.String.check(Schema.isNonEmpty()),
@@ -577,8 +585,20 @@ export const CrewRuntimeRequestItem = Schema.Struct({
   options: Schema.optionalKey(Schema.Array(ProviderApprovalOption)),
 });
 export type CrewRuntimeRequestItem = typeof CrewRuntimeRequestItem.Type;
+/** A placed agent's native question, answered through its original thread form. */
+export const NativeQuestionInboxItem = Schema.Struct({
+  threadId: ThreadId,
+  requestId: RuntimeRequestId,
+  projectId: Schema.String,
+  threadTitle: Schema.String,
+  createdAt: Schema.String,
+  responseCapability: Schema.Literals(["live", "message"]),
+  crew: Schema.optionalKey(Schema.Struct({ name: Schema.String, seat: Schema.String })),
+});
+export type NativeQuestionInboxItem = typeof NativeQuestionInboxItem.Type;
 export const CrewRuntimeRequestsResponse = Schema.Struct({
   requests: Schema.Array(CrewRuntimeRequestItem),
+  questions: Schema.optionalKey(Schema.Array(NativeQuestionInboxItem)),
 });
 export type CrewRuntimeRequestsResponse = typeof CrewRuntimeRequestsResponse.Type;
 
@@ -1096,14 +1116,12 @@ export const ParticipantIdentitiesResponse = Schema.Struct({
 });
 export type ParticipantIdentitiesResponse = typeof ParticipantIdentitiesResponse.Type;
 
+/** The inbox read is the connection's own person's; nothing a client sends chooses whose. */
 export const HumanInboxListRequest = Schema.Struct({
   status: Schema.Literals(["open", "answered"]),
-  personId: Schema.optionalKey(Schema.String),
 });
 export type HumanInboxListRequest = typeof HumanInboxListRequest.Type;
-export const OpenInboxCountRequest = Schema.Struct({
-  personId: Schema.optionalKey(Schema.String),
-});
+export const OpenInboxCountRequest = Schema.Struct({});
 export type OpenInboxCountRequest = typeof OpenInboxCountRequest.Type;
 
 /** The sidebar asks about the rows it shows, in batches no larger than this. */

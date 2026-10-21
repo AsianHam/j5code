@@ -1886,6 +1886,10 @@ it.effect(
         INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
         VALUES (${personId}, 1, ${createdAt})
       `;
+        yield* sql`
+        INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+        VALUES (${personId}, 'server', '', 'owner', ${createdAt}, ${createdAt})
+      `;
         const ask = {
           commandId: CommCommandId.make("command:joined-message-path:ask"),
           senderThreadId: target.threadId,
@@ -1916,7 +1920,23 @@ it.effect(
           message: "Verified the intended recipient and the durable receipt.",
           acceptedAt: createdAt,
         };
-        const replied = yield* inbox.answer(answer);
+        // As a shared conversation records a reply when it is accepted: who sent it, by the
+        // name and level they had then, and the note due, which the delivery then carries.
+        const note =
+          "<j5_shared_conversation>\nWho can write: Jackson (owner).\n</j5_shared_conversation>";
+        const replied = yield* inbox.answer(answer, (reply) =>
+          sql`
+            INSERT INTO j5_a2a_message_author (
+              thread_id, message_id, person_id, display_name, level, note, told_json,
+              stored_prefix, created_at
+            ) VALUES (
+              ${reply.threadId}, ${deliveryMessageId(reply.messageId)}, ${personId}, 'Jackson',
+              'owner', ${note}, '[]', '', ${createdAt}
+            )
+          `.pipe(Effect.asVoid, Effect.orDie),
+        );
+        // Renamed after the reply was accepted: it still reaches the agent under the old name.
+        yield* sql`UPDATE j5_a2a_human_person SET display_name = 'Jack' WHERE person_id = ${personId}`;
         assert.deepStrictEqual(yield* inbox.answer(answer), replied);
         assert.equal(replied.exchangeState, "closed");
         assert.deepStrictEqual(yield* inbox.list(personId), []);
@@ -1956,7 +1976,20 @@ it.effect(
         assert.equal(inputs[0]?.threadId, target.threadId);
         assert.equal(inputs[0]?.message.messageId, upstreamMessageId);
         assert.include(inputs[0]!.message.text, answer.message);
+        assert.isTrue(
+          inputs[0]!.message.text.startsWith(
+            `${note}\n[Message from Jackson (owner) (${personId})]\n\n${answer.message}`,
+          ),
+          inputs[0]!.message.text,
+        );
         assert.equal(inputs[0]?.message.createdBy, "user");
+        // The reply's record is keyed by the id the delivered message carries.
+        assert.lengthOf(
+          yield* sql`
+            SELECT 1 FROM j5_a2a_message_author WHERE message_id = ${inputs[0]!.message.messageId}
+          `,
+          1,
+        );
         assert.deepStrictEqual(yield* delivery.drain, []);
         assert.equal(yield* worker.drain(), 0);
         assert.deepStrictEqual(yield* send.send(ask), accepted);
@@ -2236,6 +2269,7 @@ it.effect(
         const personId = ParticipantId.make("human:settlement-review");
         const acceptedAt = DateTime.formatIso(yield* DateTime.now);
         yield* sql`INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at) VALUES (${personId}, 1, ${acceptedAt})`;
+        yield* sql`INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at) VALUES (${personId}, 'server', '', 'owner', ${acceptedAt}, ${acceptedAt})`;
         const send = yield* A2ASendService;
         const delivery = yield* A2ADeliveryWorker;
         const inbox = yield* A2AHumanInbox;
@@ -2321,6 +2355,7 @@ it.effect.each([false, true])(
         const personId = ParticipantId.make("human:restart-review");
         const acceptedAt = DateTime.formatIso(yield* DateTime.now);
         yield* sql`INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at) VALUES (${personId}, 1, ${acceptedAt})`;
+        yield* sql`INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at) VALUES (${personId}, 'server', '', 'owner', ${acceptedAt}, ${acceptedAt})`;
         const askInput = {
           commandId: CommCommandId.make("command:restart:ask"),
           senderThreadId: target.threadId,
@@ -2520,6 +2555,7 @@ it.effect(
         const personId = ParticipantId.make("human:project-remove");
         const acceptedAt = DateTime.formatIso(yield* DateTime.now);
         yield* sql`INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at) VALUES (${personId}, 1, ${acceptedAt})`;
+        yield* sql`INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at) VALUES (${personId}, 'server', '', 'owner', ${acceptedAt}, ${acceptedAt})`;
         const peerAsk = yield* send.send({
           commandId: CommCommandId.make("command:project-remove:peer-ask"),
           senderThreadId: survivor.threadId,

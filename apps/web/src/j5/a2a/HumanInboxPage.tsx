@@ -3,6 +3,7 @@ import { ProjectId, ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import { scopedInboxItemKey, type ScopedHumanInboxItem } from "@t3tools/contracts/j5";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  compareInboxItems,
   j5SourceNotice,
   mergeHumanInboxSources,
   type PresentedHumanInboxItem as HumanInboxItem,
@@ -41,7 +42,12 @@ import { presentParticipantIdentity } from "./ParticipantIdentity";
 import { CrewProposalCard } from "../crew/CrewProposalCard";
 import { CrewRuntimeRequestsSection } from "../crew/CrewRuntimeRequestsSection";
 import type { ScopedCrewRuntimeRequest } from "../crew/crewRuntimeRequests.logic";
-import { useCrewRuntimeRequests } from "../crew/crewRuntimeRequestsClient";
+import {
+  refreshCrewRuntimeRequests,
+  useCrewRuntimeRequests,
+  useNativeQuestionInbox,
+} from "../crew/crewRuntimeRequestsClient";
+import { NativeQuestionInboxSection } from "./NativeQuestionInboxSection";
 import { inboxCrewRequests } from "../crew/crewProposals.logic";
 import {
   mergeCrewProposalSources,
@@ -55,6 +61,7 @@ import {
   answeredInboxQueryAtom,
   answeredInboxSourcesAtom,
   crewProposalSourcesAtom,
+  crewRuntimeRequestSourcesAtom,
   j5Environment,
   openInboxQueryAtom,
   openInboxSourcesAtom,
@@ -63,6 +70,8 @@ import {
 import { useLogicalProjects } from "../logicalProjects";
 import { createVisibleRefreshHook } from "../useVisibleRefresh";
 import { notifyHumanInboxChanged } from "./humanInboxRefresh";
+import { answeredByLine, closedLine, nextKeptItems } from "./inboxKept.logic";
+import { useConnectionAccess } from "../sharing/access";
 
 interface HumanInboxAnswerAttempt {
   readonly message: string;
@@ -99,6 +108,23 @@ function SenderName({
   );
 }
 
+/** The reader's own name on an item's server, so "Priya answered" can read "You answered". */
+function useOwnName(environmentId: EnvironmentId): string | null {
+  const access = useConnectionAccess(environmentId);
+  return access?.kind === "person" ? access.name : null;
+}
+
+/** The mark on an ask addressed to everyone who can write to the asking agent's thread (AC15). */
+function ForEveryoneMark({ item }: { readonly item: HumanInboxItem }) {
+  if (item.forEveryone !== true) return null;
+  return (
+    <>
+      <span aria-hidden>·</span>
+      <span className="shrink-0">for everyone here</span>
+    </>
+  );
+}
+
 const urgencyPresentation = {
   blocking: { label: "Blocking", variant: "destructive" as const },
   soon: { label: "Soon", variant: "warning" as const },
@@ -128,7 +154,6 @@ export async function submitHumanInboxAnswer(input: {
   readonly send: (
     environmentId: EnvironmentId,
     request: {
-      readonly personId: string;
       readonly exchangeId: string;
       readonly message: string;
       readonly clientRequestId: string;
@@ -151,8 +176,8 @@ export async function submitHumanInboxAnswer(input: {
           ? previousAttempt
           : { message: input.message, clientRequestId: input.randomUUID() };
       input.attempts.set(itemKey, attempt);
+      // The server answers as the connection's own person; the request names no one.
       await input.send(input.item.environmentId, {
-        personId: input.item.personId,
         exchangeId: input.item.exchangeId,
         message: input.message,
         clientRequestId: attempt.clientRequestId,
@@ -247,8 +272,19 @@ function OpenInboxItem({
   senderLabels,
   projectNameOf,
   showEnvironment,
+  closed,
 }: {
   readonly item: HumanInboxItem;
+  /**
+   * The item closed while the person had typed into it, and stays with their words (AC17): who
+   * answered, or that it is no longer open. `undefined` for an open item.
+   */
+  readonly closed?:
+    | {
+        readonly answered: { readonly answeredBy: string | null | undefined } | null;
+        readonly answeredReadSinceClose: boolean;
+      }
+    | undefined;
   readonly answer: (item: HumanInboxItem) => void;
   readonly senderLabels: SenderLabels;
   readonly projectNameOf: ProjectNameOf;
@@ -264,6 +300,8 @@ function OpenInboxItem({
     j5Environment.answerHumanExchange.permissionAtom(item.environmentId),
   );
   const canAnswer = item.sourceReady && mayAnswer;
+  const ownName = useOwnName(item.environmentId);
+  const closedText = closed === undefined ? null : closedLine({ ...closed, ownName });
   return (
     <li className="border-b border-border/70 last:border-b-0">
       <details className="group/details">
@@ -280,6 +318,7 @@ function OpenInboxItem({
               />
               <span aria-hidden>·</span>
               <span className="truncate">{projectNameOf(item)}</span>
+              <ForEveryoneMark item={item} />
               {showEnvironment || !item.connected ? (
                 <>
                   <span aria-hidden>·</span>
@@ -289,7 +328,7 @@ function OpenInboxItem({
                   </span>
                 </>
               ) : null}
-              {openDuration ? (
+              {openDuration && closed === undefined ? (
                 <>
                   <span aria-hidden>·</span>
                   <time className="tabular-nums" dateTime={item.openedAt}>
@@ -325,18 +364,24 @@ function OpenInboxItem({
                 item={item}
                 onOpen={onOpenThread}
               />
-              <Button
-                disabled={!canAnswer || pendingExchangeId !== null || answerText.length === 0}
-                title={
-                  canAnswer
-                    ? undefined
-                    : "This environment is unavailable or this connection is read-only."
-                }
-                onClick={() => answer(item)}
-                type="button"
-              >
-                {pendingExchangeId === scopedInboxItemKey(item) ? "Delivering…" : "Answer"}
-              </Button>
+              {closedText !== null ? (
+                <p className="text-sm text-muted-foreground" data-j5-inbox="closed">
+                  {closedText}
+                </p>
+              ) : (
+                <Button
+                  disabled={!canAnswer || pendingExchangeId !== null || answerText.length === 0}
+                  title={
+                    canAnswer
+                      ? undefined
+                      : "This environment is unavailable or this connection is read-only."
+                  }
+                  onClick={() => answer(item)}
+                  type="button"
+                >
+                  {pendingExchangeId === scopedInboxItemKey(item) ? "Delivering…" : "Answer"}
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -382,7 +427,9 @@ function AnsweredShelf({
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   <SenderName item={item} senderLabels={senderLabels} /> · {projectNameOf(item)}
                   {showEnvironment ? ` · ${item.environmentLabel}` : ""}
+                  {item.forEveryone === true ? " · for everyone here" : ""}
                   {` · ${formatAnsweredAgeLabel(answeredDuration)}`}
+                  <AnsweredBy item={item} />
                 </p>
               </div>
               <OpenThreadButton
@@ -398,11 +445,18 @@ function AnsweredShelf({
   );
 }
 
+/** " · Priya answered", for an ask whose answerer the server names (AC16). */
+function AnsweredBy({ item }: { readonly item: HumanInboxItem }) {
+  const line = answeredByLine(item.answeredBy, useOwnName(item.environmentId));
+  return line === null ? null : <> · {line}</>;
+}
+
 export async function refreshHumanInboxes(environmentId?: EnvironmentId, force = false) {
   const options = { force, ...(environmentId === undefined ? {} : { environmentId }) };
   const results = await Promise.all([
     refreshJ5Sources(openInboxSourcesAtom, openInboxQueryAtom, options),
     refreshJ5Sources(answeredInboxSourcesAtom, answeredInboxQueryAtom, options),
+    refreshCrewRuntimeRequests(environmentId),
   ]);
   const failed = results.flat().find((result) => result._tag === "Failure");
   if (failed?._tag === "Failure") throw Cause.squash(failed.cause);
@@ -435,6 +489,45 @@ export function HumanInboxPage() {
   );
   const [answers, setAnswers] = useState<HumanInboxAnswers>({});
   const [pendingExchangeId, setPendingExchangeId] = useState<string | null>(null);
+  // An item that closed while the person was answering it stays in place with their words. It is
+  // kept in the render it closes in, so its open row is never unmounted and drawn again closed;
+  // `closedWith` is the answered list as it was then, to tell a later read of it.
+  const [retention, setRetention] = useState(() => ({
+    items,
+    answers,
+    kept: new Map() as ReadonlyMap<string, HumanInboxItem>,
+    closedWith: new Map() as ReadonlyMap<string, typeof answeredSources>,
+  }));
+  let { kept, closedWith } = retention;
+  if (retention.items !== items || retention.answers !== answers) {
+    kept = nextKeptItems({
+      previous: retention.items,
+      current: items,
+      kept: retention.kept,
+      answers,
+      keyOf: scopedInboxItemKey,
+    });
+    closedWith = new Map(
+      [...kept.keys()].map((key) => [key, retention.closedWith.get(key) ?? answeredSources]),
+    );
+    setRetention({ items, answers, kept, closedWith });
+  }
+  const shownItems =
+    kept.size === 0 ? items : [...items, ...kept.values()].toSorted(compareInboxItems);
+  const answeredByKey = new Map(answeredItems.map((item) => [scopedInboxItemKey(item), item]));
+  const closedOf = (item: HumanInboxItem) => {
+    const key = scopedInboxItemKey(item);
+    if (!kept.has(key)) return undefined;
+    const answered = answeredByKey.get(key);
+    const source = answeredSources.sources.find(
+      (candidate) => candidate.environmentId === item.environmentId,
+    );
+    return {
+      answered: answered === undefined ? null : { answeredBy: answered.answeredBy },
+      answeredReadSinceClose:
+        closedWith.get(key) !== answeredSources && source?.status === "ready" && !source.refreshing,
+    };
+  };
   const [error, setError] = useState<string | null>(null);
   const answerAttempts = useRef(new Map<string, HumanInboxAnswerAttempt>());
   useInboxRefresh();
@@ -446,6 +539,8 @@ export function HumanInboxPage() {
   const [resolvingProposalId, setResolvingProposalId] = useState<string | null>(null);
   useCrewProposalsRefresh();
   const runtimeRequests = useCrewRuntimeRequests();
+  const runtimeSources = useAtomValue(crewRuntimeRequestSourcesAtom);
+  const nativeQuestions = useNativeQuestionInbox();
   const previousOpenItems = useRef(new Map<EnvironmentId, ReadonlySet<string>>());
   useEffect(() => {
     const next = new Map<EnvironmentId, ReadonlySet<string>>();
@@ -477,16 +572,22 @@ export function HumanInboxPage() {
   );
   const complete =
     openSources.isReady &&
+    runtimeSources.isReady &&
+    runtimeSources.sources.every(
+      (source) => source.status === "ready" || source.status === "unsupported",
+    ) &&
     openSources.sources.some((source) => source.status === "ready") &&
     openSources.sources.every(
       (source) => source.status === "ready" || source.status === "unsupported",
     );
   const notices = [
     ...new Set(
-      [...openSources.sources, ...answeredSources.sources].flatMap((source) => {
-        const notice = j5SourceNotice(source);
-        return notice === null ? [] : [notice];
-      }),
+      [...openSources.sources, ...answeredSources.sources, ...runtimeSources.sources].flatMap(
+        (source) => {
+          const notice = j5SourceNotice(source);
+          return notice === null ? [] : [notice];
+        },
+      ),
     ),
   ];
   const refresh = useCallback(async (environmentId?: EnvironmentId) => {
@@ -575,7 +676,7 @@ export function HumanInboxPage() {
   );
 
   const openCrewThread = useCallback(
-    (request: ScopedCrewRuntimeRequest) => {
+    (request: Pick<ScopedCrewRuntimeRequest, "environmentId" | "threadId">) => {
       void navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(scopeThreadRef(request.environmentId, request.threadId)),
@@ -618,9 +719,9 @@ export function HumanInboxPage() {
                           ? ""
                           : ` · ${proposals.length} crew ${proposals.length === 1 ? "request" : "requests"}`
                       }${
-                        runtimeRequests.length === 0
+                        runtimeRequests.length + nativeQuestions.length === 0
                           ? ""
-                          : ` · ${runtimeRequests.length} crew agent ${runtimeRequests.length === 1 ? "request" : "requests"}`
+                          : ` · ${runtimeRequests.length + nativeQuestions.length} agent ${runtimeRequests.length + nativeQuestions.length === 1 ? "request" : "requests"}`
                       }`}
                 </p>
               </div>
@@ -685,13 +786,15 @@ export function HumanInboxPage() {
             ) : null}
 
             <CrewRuntimeRequestsSection requests={runtimeRequests} onOpenThread={openCrewThread} />
+            <NativeQuestionInboxSection questions={nativeQuestions} onOpenThread={openCrewThread} />
 
             {complete &&
             !loading &&
             error === null &&
-            items.length === 0 &&
+            shownItems.length === 0 &&
             proposals.length === 0 &&
-            runtimeRequests.length === 0 ? (
+            runtimeRequests.length === 0 &&
+            nativeQuestions.length === 0 ? (
               <div className="flex min-h-56 flex-col items-center justify-center px-6 py-12 text-center">
                 <span className="flex size-10 items-center justify-center rounded-full bg-success/10 text-success">
                   <InboxIcon aria-hidden className="size-5" />
@@ -703,8 +806,9 @@ export function HumanInboxPage() {
               </div>
             ) : (
               <ol className="divide-y divide-border/70">
-                {items.map((item) => (
+                {shownItems.map((item) => (
                   <OpenInboxItem
+                    closed={closedOf(item)}
                     answer={answer}
                     answerText={answers[scopedInboxItemKey(item)] ?? ""}
                     item={item}

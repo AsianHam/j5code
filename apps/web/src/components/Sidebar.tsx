@@ -179,7 +179,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
-import { useIsGuestEverywhere } from "../j5/sharing/guestAccess";
+import { useIsNarrowEverywhere } from "../j5/sharing/access";
 import { buildWithSharingMenuItems, runSharingMenuAction } from "../j5/sharing/sharingMenu";
 import {
   buildDraftActionMenuItems,
@@ -2715,7 +2715,7 @@ export default function Sidebar() {
   });
   const newThreadContext = useHandleNewThread();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const isGuest = useIsGuestEverywhere();
+  const isNarrowEverywhere = useIsNarrowEverywhere();
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -5057,7 +5057,7 @@ export default function Sidebar() {
             settledThreads.length ===
             0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 && !isGuest ? (
+              {projects.length === 0 && !isNarrowEverywhere ? (
                 <>
                   <span>No projects yet</span>
                   <button

@@ -1,5 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, type RuntimeRequestId, type ThreadId } from "@t3tools/contracts";
 import type {
   AnswerHumanExchangeRequest,
   AnswerHumanExchangeResponse,
@@ -56,6 +56,8 @@ export class ClientActionsService extends Context.Service<
     /** Approve (with the final seats) or decline one proposal; answers with it as the card reads it. */
     readonly resolveCrewProposal: (
       input: CrewProposalResolveRequest,
+      /** Who is answering, as the Captain is told; given only for a shared conversation. */
+      decidedBy?: string | null,
     ) => Effect.Effect<
       typeof CrewProposalResolveResponse.Type,
       Failure<CrewProposalService["Service"]["resolve"]>
@@ -75,13 +77,23 @@ export class ClientActionsService extends Context.Service<
     /** Answer a seat's provider approval from the Inbox; refused once the request resolved. */
     readonly respondCrewRuntimeRequest: (
       input: CrewRuntimeRequestRespondRequest,
+      /**
+       * Writes down who is answering, given the command that will carry the answer, before it is
+       * sent; a shared conversation's prompt shows who answered once upstream settles it.
+       */
+      claim?: (command: {
+        readonly threadId: ThreadId;
+        readonly requestId: RuntimeRequestId;
+        readonly commandId: CommandId;
+      }) => Effect.Effect<void>,
     ) => Effect.Effect<
       CrewRuntimeRequestRespondResponse,
       Failure<CrewRuntimeRequestService["Service"]["respond"]>
     >;
     /** Answer an Exchange an agent opened with the person, then wake delivery. */
     readonly answerHumanExchange: (
-      input: AnswerHumanExchangeRequest,
+      input: AnswerHumanExchangeRequest & { readonly personId: ParticipantId },
+      beforeReply?: Parameters<A2AHumanInbox["Service"]["answer"]>[1],
     ) => Effect.Effect<
       typeof AnswerHumanExchangeResponse.Type,
       Failure<A2AHumanInbox["Service"]["answer"]>
@@ -116,8 +128,8 @@ const make = Effect.gen(function* () {
 
   return ClientActionsService.of({
     previewCrewProposal: (input) => proposals.preview(input),
-    resolveCrewProposal: (input) =>
-      proposals.resolve(input).pipe(
+    resolveCrewProposal: (input, decidedBy) =>
+      proposals.resolve({ ...input, decidedBy }).pipe(
         Effect.flatMap((result) =>
           projectProposal(result.proposal).pipe(
             Effect.map((proposal) => ({
@@ -177,31 +189,32 @@ const make = Effect.gen(function* () {
         });
         return { crewInstanceId, status: result.status, members: createdSeats(result.members) };
       }),
-    respondCrewRuntimeRequest: ({ threadId, requestId, decision }) =>
+    respondCrewRuntimeRequest: ({ threadId, requestId, decision }, claim) =>
       freshId.pipe(
-        Effect.flatMap((id) =>
-          runtimeRequests.respond({
-            threadId,
-            requestId,
-            decision,
-            // Fresh per answer, so a second answer is refused by the request's state.
-            commandId: CommandId.make(`j5-crew-runtime-request:${id}`),
-          }),
-        ),
+        Effect.flatMap((id) => {
+          // Fresh per answer, so a second answer is refused by the request's state.
+          const commandId = CommandId.make(`j5-crew-runtime-request:${id}`);
+          return (claim?.({ threadId, requestId, commandId }) ?? Effect.void).pipe(
+            Effect.andThen(runtimeRequests.respond({ threadId, requestId, decision, commandId })),
+          );
+        }),
         Effect.as({ threadId, requestId }),
       ),
-    answerHumanExchange: (input) =>
+    answerHumanExchange: (input, beforeReply) =>
       Effect.gen(function* () {
         const acceptedAt = DateTime.formatIso(yield* DateTime.now);
-        const result = yield* inbox.answer({
-          commandId: CommCommandId.make(
-            `command:j5:a2a:human:${encodeURIComponent(input.personId)}:${encodeURIComponent(input.exchangeId)}:${encodeURIComponent(input.clientRequestId)}`,
-          ),
-          personId: ParticipantId.make(input.personId),
-          exchangeId: ExchangeId.make(input.exchangeId),
-          message: input.message,
-          acceptedAt,
-        });
+        const result = yield* inbox.answer(
+          {
+            commandId: CommCommandId.make(
+              `command:j5:a2a:human:${encodeURIComponent(input.personId)}:${encodeURIComponent(input.exchangeId)}:${encodeURIComponent(input.clientRequestId)}`,
+            ),
+            personId: input.personId,
+            exchangeId: ExchangeId.make(input.exchangeId),
+            message: input.message,
+            acceptedAt,
+          },
+          beforeReply,
+        );
         yield* worker.notify;
         return { result };
       }),

@@ -4,7 +4,7 @@ import {
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { CrewRuntimeRequestItem } from "@t3tools/contracts/j5";
+import type { CrewRuntimeRequestItem, NativeQuestionInboxItem } from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -19,6 +19,7 @@ import {
 } from "../../orchestration-v2/ThreadManagementService.ts";
 import { AgentCrewInstanceService, type AgentCrewInstance } from "./AgentCrewInstanceService.ts";
 import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
+import { makeNativeQuestionInboxRead } from "./nativeQuestionInboxRead.ts";
 
 /** A seat's thread, and the Crew that holds the seat. */
 interface CrewSeatThread {
@@ -67,6 +68,10 @@ export interface RespondToCrewRuntimeRequestInput {
 }
 
 export interface CrewRuntimeRequestServiceShape {
+  readonly questions: Effect.Effect<
+    ReadonlyArray<NativeQuestionInboxItem>,
+    CrewRuntimeRequestReadError
+  >;
   /** Every approval the Inbox can answer on a live Crew's seat threads, oldest first. */
   readonly list: Effect.Effect<ReadonlyArray<CrewRuntimeRequestItem>, CrewRuntimeRequestReadError>;
   readonly respond: (
@@ -89,15 +94,17 @@ export class CrewRuntimeRequestService extends Context.Service<
  * The Captain is the thread the person watches, so its approvals and questions stay inline there;
  * a seat runs out of view, so its provider approvals reach the Inbox (Crews AC9) and are answered
  * through the same `runtime-request.respond` command the composer sends. Only what the Inbox can
- * answer is listed: approvals the provider can still take. Questions and approvals that stopped
- * being answerable stay in the seat's thread. Only live Crews count: a retired Crew's seats leave
- * the list, and a thread in no live Crew, or a Captain's, is never listed or answered here.
+ * answer is listed here: approvals the provider can still take. The separate questions read
+ * lists placed agents' actionable native questions as links to the original thread forms.
+ * The approval list covers only live Crew seats; the question links also cover solo Peer Agents.
+ * A Captain's own requests remain inline, and retired seats leave both lists.
  */
 export const layer = Layer.effect(
   CrewRuntimeRequestService,
   Effect.gen(function* () {
     const crews = yield* AgentCrewInstanceService;
     const threads = yield* ThreadManagementService;
+    const questions = yield* makeNativeQuestionInboxRead;
 
     /**
      * One entry per seat thread, even when more than one Crew record names it. A thread that
@@ -204,6 +211,6 @@ export const layer = Layer.effect(
           );
       });
 
-    return CrewRuntimeRequestService.of({ list, respond });
+    return CrewRuntimeRequestService.of({ list, respond, questions });
   }),
 );

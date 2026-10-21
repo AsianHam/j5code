@@ -46,6 +46,7 @@ import * as RuntimeLayer from "../../../orchestration-v2/runtimeLayer.ts";
 import { ThreadLaunchService } from "../../../orchestration-v2/ThreadLaunchService.ts";
 import { layer as threadLifecycleServiceLayer } from "../../../orchestration-v2/ThreadLifecycleService.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import { quietAccessLayer } from "../../sharing/test-support/conversationHarness.ts";
 import * as OrchestrationCommandReceipts from "../../../persistence/OrchestrationCommandReceipts.ts";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import { ManagedProjectFolders } from "../../../project/ManagedProjectFolders.ts";
@@ -234,6 +235,7 @@ const liveLayer = Layer.mergeAll(
   j5Layer,
   handlersLayer,
 ).pipe(
+  Layer.provide(quietAccessLayer),
   Layer.provide(Layer.mock(GitWorkflow.GitWorkflowService)({})),
   // The project is unreadable here, so every spawn shares the caller's checkout.
   Layer.provide(Layer.mock(ThreadLaunchService)({})),

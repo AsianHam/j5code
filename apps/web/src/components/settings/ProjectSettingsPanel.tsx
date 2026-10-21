@@ -1,4 +1,3 @@
-import { ProjectSharingSettings } from "../../j5/sharing/ProjectSharingSettings";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -571,7 +570,6 @@ function ProjectDetail({
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
-        <ProjectSharingSettings projects={group.memberProjects} />
         <SettingsSection title="Danger">
           <SettingsRow
             title={

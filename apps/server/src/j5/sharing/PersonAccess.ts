@@ -2,75 +2,143 @@
 import * as NodeCrypto from "node:crypto";
 
 import type { AuthSessionId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  type PersonLevel,
+  type PersonScope,
+  highestLevel,
+  levelReaches,
+} from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 
 import { ParticipantId } from "../a2a/contracts.ts";
-import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
+import { getLocalOperatorHumanPersonId } from "../a2a/HumanPersonRegistry.ts";
 import { ReadChanges, layer as readChangesLayer } from "../a2a/ReadChanges.ts";
 
 /**
- * Shared server's people and grants (docs/j5/product/features/shared-server.md). A member reaches
- * everything on the server; a guest reaches what their grants cover, at the grant's level.
+ * People, their levels at scopes, and the devices that are theirs
+ * (docs/j5/product/features/people-and-access.md). A device is one of upstream's auth sessions. A
+ * person's level at the server covers everything; at a project, its threads; at a thread, the
+ * thread and the agents beneath it. Where two levels cover one thing the higher applies.
+ *
+ * What a device reaches is read here on every request, by its session id. A change of what a
+ * person holds is made through `Access`, which also renews their devices' sessions.
  */
-export type PersonKind = "member" | "guest";
-export type GrantLevel = "view" | "collaborate";
-export type GrantTarget =
-  | { readonly kind: "project"; readonly projectId: ProjectId }
-  | { readonly kind: "thread"; readonly threadId: ThreadId };
-
-/** What a person may do with one thread or project: a member's reach, a guest's level, or none. */
-export type Access = "member" | GrantLevel | "none";
 
 /**
- * Something a message in a thread carries, which a client asks the server for a URL to. The server
- * finds the thread in its own records: a client's word for which thread it belongs to is not used.
+ * Sessions that are no person's device and are not narrowed: agents signed in over MCP, peer
+ * servers, the machine participants of `j5 a2a`, and the CLI's own sessions. Each holds only the
+ * permissions upstream issued it for its purpose. MCP clients are approved only by an Owner, and
+ * lowering or removing an Owner refuses an approval still waiting (`Access.issueMcpClient`).
  */
+export const isServiceSubject = (subject: string) =>
+  subject.startsWith("peer:") ||
+  subject.startsWith("machine:") ||
+  subject === "mcp-client" ||
+  subject === "cli-issued-session";
+
+/**
+ * Sessions that are the first owner's by how they were issued: the link the server prints when
+ * it starts, the desktop app on its own machine, T3 Connect, and the development credential
+ * (AC2). Upstream mints Connect's credential only for the cloud account the server was linked
+ * to, which is the server's own; J5 does not know which person linked it, so it is the first
+ * owner's. The first three are bound to the first owner as they are issued (`PairingIntents`);
+ * the subject decides for the development credential, which upstream never stores, and for a
+ * session from before.
+ */
+export const FIRST_OWNER_SUBJECTS: ReadonlySet<string> = new Set([
+  "administrative-bootstrap",
+  "desktop-bootstrap",
+  "cloud-connect",
+  "reusable-dev-token",
+  "reusable-dev-token-child",
+]);
+
 export type MessageAsset =
   | { readonly kind: "attachment"; readonly attachmentId: string }
   | { readonly kind: "tool-output-image"; readonly threadId: ThreadId; readonly itemId: string };
 
 export interface Person {
   readonly personId: ParticipantId;
-  readonly kind: PersonKind;
   readonly displayName: string | null;
-  /** The person typed this name themselves, joining by an open link; no member has confirmed it. */
-  readonly nameSelfGiven: boolean;
-  /** The open link the person joined through, when they did. */
-  readonly joinedOpenLinkId: string | null;
+  /** The person the server's own machine belongs to; never lowered or removed (AC51). */
+  readonly firstOwner: boolean;
 }
 
-export interface PersonGrant {
-  readonly personId: ParticipantId;
-  readonly target: GrantTarget;
-  readonly level: GrantLevel;
-  /** The line the member wrote when sharing, saying what the guest is there for. */
-  readonly note: string | null;
+export interface HeldLevel {
+  readonly scope: PersonScope;
+  readonly level: PersonLevel;
 }
 
-/** A person as the people list shows them: what they hold and the sessions paired as them. */
+export interface BoundDevice {
+  readonly sessionId: AuthSessionId;
+  /** The permissions the device was paired with, which a new session for it never exceeds. */
+  readonly ceiling: ReadonlyArray<string> | null;
+  readonly renewPendingSince: string | null;
+}
+
 export interface PersonRecord {
   readonly person: Person;
   readonly createdAt: string;
-  readonly grants: ReadonlyArray<PersonGrant>;
-  readonly sessionIds: ReadonlyArray<AuthSessionId>;
+  readonly levels: ReadonlyArray<HeldLevel>;
+  readonly devices: ReadonlyArray<BoundDevice>;
 }
 
 /**
- * The subject a guest's pairing link carries, which upstream copies onto every session made from
- * it and which nothing a client sends can change. It is what marks a connection as a guest's;
- * `j5_a2a_person_session` then says which guest. A marked session with no person recorded is a
- * guest with no grants. A session without the mark is a member's own device and is never looked
- * up, so members pay nothing for guests existing.
+ * What one session is. A person's session carries what they hold at server scope and the
+ * highest level they hold anywhere, which is what their device's permissions follow.
  */
-export const GUEST_SESSION_SUBJECT = "j5:guest";
+export type SessionReach =
+  | { readonly kind: "service" }
+  | { readonly kind: "unknown" }
+  | {
+      readonly kind: "person";
+      readonly person: Person;
+      readonly levels: ReadonlyArray<HeldLevel>;
+      readonly serverLevel: PersonLevel | null;
+      readonly highest: PersonLevel | null;
+      readonly ceiling: ReadonlyArray<string> | null;
+    };
+
+/**
+ * Whether a session is held to upstream's own checks alone: a service session, or a person who
+ * writes to the whole server. Everyone else is narrowed (`AccessGate`), a server-scope Viewer
+ * included, since a Viewer is refused what upstream would let `orchestration:read` see.
+ */
+export const isWide = (reach: SessionReach) =>
+  reach.kind === "service" ||
+  (reach.kind === "person" && levelReaches(reach.serverLevel, "collaborator"));
+
+/** The person a session belongs to, when it belongs to one. */
+export const reachPersonId = (reach: SessionReach) =>
+  reach.kind === "person" ? reach.person.personId : null;
+
+export interface SessionIdentity {
+  readonly sessionId: AuthSessionId;
+  readonly subject: string;
+}
+
+/** How someone reaches a thread or project: at its own scope, through a thread above it, its project, or the server. */
+export type ReachVia = "thread" | "ancestor" | "project" | "server";
+
+export interface ScopePerson {
+  readonly person: Person;
+  readonly level: PersonLevel;
+  readonly via: ReadonlyArray<{
+    readonly via: ReachVia;
+    readonly level: PersonLevel;
+    /** Where the level is held, so it is changed there (AC36). */
+    readonly scope: PersonScope;
+  }>;
+}
 
 export class PersonAccessStorageError extends Schema.TaggedError<PersonAccessStorageError>()(
   "PersonAccessStorageError",
@@ -90,21 +158,21 @@ export class PersonNotFoundError extends Schema.TaggedError<PersonNotFoundError>
   }
 }
 
-export class GrantOnMemberError extends Schema.TaggedError<GrantOnMemberError>()(
-  "GrantOnMemberError",
-  { personId: Schema.String },
+export class FirstOwnerFixedError extends Schema.TaggedError<FirstOwnerFixedError>()(
+  "FirstOwnerFixedError",
+  {},
 ) {
   override get message(): string {
-    return `${this.personId} is a member of this server and already reaches everything on it; only a guest holds grants.`;
+    return "The first owner is the person the server's own machine belongs to, and cannot be lowered or removed.";
   }
 }
 
-export class MemberNotRemovableError extends Schema.TaggedError<MemberNotRemovableError>()(
-  "MemberNotRemovableError",
-  { personId: Schema.String },
+export class OwnerOutsideServerError extends Schema.TaggedError<OwnerOutsideServerError>()(
+  "OwnerOutsideServerError",
+  {},
 ) {
   override get message(): string {
-    return `${this.personId} is a member of this server; only a guest can be removed.`;
+    return "Owner is held at server scope only.";
   }
 }
 
@@ -138,171 +206,150 @@ const brokeNameRule = (cause: unknown): boolean => {
   return false;
 };
 
-export interface SessionIdentity {
-  readonly sessionId: AuthSessionId;
-  readonly subject: string;
-}
+export const scopeColumns = (scope: PersonScope) =>
+  scope.kind === "server"
+    ? { kind: "server" as const, id: "" }
+    : scope.kind === "project"
+      ? { kind: "project" as const, id: scope.projectId as string }
+      : { kind: "thread" as const, id: scope.threadId as string };
+
+export const sameScope = (a: PersonScope, b: PersonScope) => {
+  const left = scopeColumns(a);
+  const right = scopeColumns(b);
+  return left.kind === right.kind && left.id === right.id;
+};
 
 export interface PersonAccessShape {
-  /**
-   * Records a guest under the name the member bringing them in gave them. `joinedOpenLinkId`
-   * marks one who joined by an open link instead, under a name they typed themselves. A name
-   * another person on the server already has, compared folded, is refused.
-   */
-  readonly createGuest: (input: {
-    readonly displayName: string;
-    readonly joinedOpenLinkId?: string;
-  }) => Effect.Effect<Person, PersonAccessStorageError | PersonNameTakenError>;
-  /** The name of the person the server belongs to; `null` until one is set. */
-  readonly operatorName: Effect.Effect<string | null, PersonAccessStorageError>;
-  /**
-   * Names the person the server belongs to: the one member there is, whom every device that is
-   * not a guest's is taken to be. It is the name guests and agents know them by.
-   */
-  readonly setOperatorName: (
-    displayName: string,
-  ) => Effect.Effect<Person, PersonAccessStorageError | PersonNameTakenError>;
-  readonly readPerson: (
+  /** What a session is: a person's device, a service session, or a device no one has claimed. */
+  readonly sessionReach: (
+    session: SessionIdentity,
+  ) => Effect.Effect<SessionReach, PersonAccessStorageError>;
+  /** The highest level a person holds over a thread: at the server, its project, or the thread or one above it. */
+  readonly threadLevel: (
     personId: ParticipantId,
-  ) => Effect.Effect<Person | null, PersonAccessStorageError>;
-  /**
-   * Gives a guest a level on a project or thread, replacing any level they held on it. A `note`
-   * left out keeps the one already recorded; `null` clears it.
-   */
-  readonly putGrant: (
-    grant: Omit<PersonGrant, "note"> & { readonly note?: string | null },
-  ) => Effect.Effect<void, PersonAccessStorageError | PersonNotFoundError | GrantOnMemberError>;
-  readonly removeGrant: (input: {
-    readonly personId: ParticipantId;
-    readonly target: GrantTarget;
-  }) => Effect.Effect<void, PersonAccessStorageError>;
-  readonly listGrants: (
+    threadId: ThreadId,
+  ) => Effect.Effect<PersonLevel | null, PersonAccessStorageError>;
+  /** The highest level a person holds over a project as a whole: at the server or the project. */
+  readonly projectLevel: (
     personId: ParticipantId,
-  ) => Effect.Effect<ReadonlyArray<PersonGrant>, PersonAccessStorageError>;
-  /**
-   * Gives a guest a new name, which is from then on a member's word for them and no longer one
-   * they gave themselves. Told to open feeds, as a change to who is on a thread.
-   */
-  readonly setGuestName: (input: {
-    readonly personId: ParticipantId;
-    readonly displayName: string;
-  }) => Effect.Effect<void, PersonAccessStorageError | PersonNotFoundError | PersonNameTakenError>;
-  /**
-   * Every guest whose grants cover a thread, each with every grant that covers it: on the thread
-   * itself, on a thread above it, or on its project. Members reach every thread and are listed
-   * apart.
-   */
-  readonly threadPeople: (threadId: ThreadId) => Effect.Effect<
-    {
-      readonly members: ReadonlyArray<Person>;
-      readonly guests: ReadonlyArray<{
-        readonly person: Person;
-        readonly grants: ReadonlyArray<{
-          readonly via: "thread" | "ancestor" | "project";
-          readonly level: GrantLevel;
-        }>;
-      }>;
-    },
-    PersonAccessStorageError
-  >;
-  /** Every person recorded on this server, oldest first, with their grants and sessions. */
-  readonly listPeople: Effect.Effect<ReadonlyArray<PersonRecord>, PersonAccessStorageError>;
-  /**
-   * Removes a guest with everything recorded for them: their grants, the sessions paired as them
-   * and their unused links. Reports those sessions and links so the caller can end them upstream.
-   * From the moment it commits, a connection still open for them reaches nothing.
-   */
-  readonly removeGuest: (personId: ParticipantId) => Effect.Effect<
-    {
-      readonly sessionIds: ReadonlyArray<AuthSessionId>;
-      readonly pairingLinkIds: ReadonlyArray<string>;
-    },
-    PersonAccessStorageError | PersonNotFoundError | MemberNotRemovableError
-  >;
-  /**
-   * Cuts a session loose from the guest it was paired as, and reports who that was; `null` when
-   * the session is no guest's. A connection still open on it reaches nothing from then on.
-   */
-  readonly unbindSession: (
-    sessionId: AuthSessionId,
-  ) => Effect.Effect<ParticipantId | null, PersonAccessStorageError>;
-  /**
-   * The same for every guest's session but one, as when a member ends all other devices. Reports
-   * the guests it cut sessions loose from.
-   */
-  readonly unbindOtherSessions: (
-    exceptSessionId: AuthSessionId,
-  ) => Effect.Effect<ReadonlyArray<ParticipantId>, PersonAccessStorageError>;
-  /**
-   * Ties an auth session to a person. Only tests call it: a real session is tied as upstream
-   * issues it, by `GuestPairing.issueSession`.
-   */
-  readonly bindSession: (input: {
-    readonly sessionId: AuthSessionId;
-    readonly personId: ParticipantId;
-  }) => Effect.Effect<void, PersonAccessStorageError | PersonNotFoundError>;
-  /**
-   * The guest a connection belongs to, or `null` for a member's own device: every session that
-   * does not carry `GUEST_SESSION_SUBJECT`. A marked session with no person recorded is reported
-   * as a guest with no id, so it reaches nothing.
-   */
-  readonly sessionPerson: (
-    session: SessionIdentity,
-  ) => Effect.Effect<
-    Person | { readonly kind: "guest"; readonly personId: null } | null,
-    PersonAccessStorageError
-  >;
-  /**
-   * A connection's access to a thread. A guest's grant on a thread covers the agents beneath it:
-   * the Subagents it ran and the Peer Agents placed under it, Crew seats among them. A fork is a
-   * thread of its own and is not covered by its source's grant. A grant on the thread's project
-   * covers it too; the higher level applies.
-   */
-  readonly threadAccess: (
-    session: SessionIdentity,
-    threadId: ThreadId,
-  ) => Effect.Effect<Access, PersonAccessStorageError>;
-  /**
-   * A connection's access to a thread now, then again each time a change to its guest's grants
-   * alters it, so a client already showing the thread follows the change (AC10). A member's
-   * connection is told once.
-   */
-  readonly watchThreadAccess: (
-    session: SessionIdentity,
-    threadId: ThreadId,
-  ) => Stream.Stream<Access, PersonAccessStorageError>;
-  /**
-   * A connection's access to an attachment or a tool's image, through a thread that holds it: an
-   * attachment by the messages that carry its id, a tool's image by the thread its turn item is
-   * stored under. Something no thread holds, or held only by threads out of reach, gives `none`.
-   */
-  readonly messageAssetAccess: (
-    session: SessionIdentity,
-    asset: MessageAsset,
-  ) => Effect.Effect<Access, PersonAccessStorageError>;
-  /** A connection's access to a project as a whole; a grant on one of its threads gives none. */
-  readonly projectAccess: (
-    session: SessionIdentity,
     projectId: ProjectId,
-  ) => Effect.Effect<Access, PersonAccessStorageError>;
-  /**
-   * Whether a project is one a connection's sidebar holds: a member's always; a guest's when
-   * they hold a grant on it or can see a thread that lives in it.
-   */
+  ) => Effect.Effect<PersonLevel | null, PersonAccessStorageError>;
+  /** Where a scheduled task is bound: its thread, or else its project; `null` for no such task. */
+  readonly scheduledTaskHome: (
+    taskId: string,
+  ) => Effect.Effect<
+    { readonly projectId: ProjectId; readonly threadId: ThreadId | null } | null,
+    PersonAccessStorageError
+  >;
+  /** The folders of the projects a person holds a level on as a whole. */
+  readonly projectRoots: (
+    personId: ParticipantId,
+  ) => Effect.Effect<ReadonlyArray<string>, PersonAccessStorageError>;
+  /** The project a thread lives in; `null` for a thread the server does not hold. */
+  readonly threadProject: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProjectId | null, PersonAccessStorageError>;
+  /** Whether a project belongs in a person's sidebar: they reach it or a thread in it. */
   readonly projectInFeed: (
-    session: SessionIdentity,
+    personId: ParticipantId,
     projectId: ProjectId,
   ) => Effect.Effect<boolean, PersonAccessStorageError>;
   /**
-   * The guest whose reach just changed, each time `putGrant`, `removeGrant`, `removeGuest` or
-   * `unbindSession` commits. A feed already open for that guest subscribes so the change reaches
-   * them without reconnecting.
+   * The highest level a person holds over a thread that carries an attachment or a tool's image:
+   * an attachment by the messages that carry its id, a tool's image by its turn item.
    */
-  readonly subscribeGrantChanges: Effect.Effect<
-    PubSub.Subscription<ParticipantId>,
-    never,
-    Scope.Scope
+  readonly messageAssetLevel: (
+    personId: ParticipantId,
+    asset: MessageAsset,
+  ) => Effect.Effect<PersonLevel | null, PersonAccessStorageError>;
+  /**
+   * Whether a person may be told an agent's name: its own thread is one they reach, or it sent a
+   * message to an agent whose thread they reach. Anything else they are told nothing of, since an
+   * agent's name is its thread's title.
+   */
+  readonly participantVisible: (
+    personId: ParticipantId,
+    participant: { readonly participantId: string; readonly threadId: string | null },
+  ) => Effect.Effect<boolean, PersonAccessStorageError>;
+  /** The resource an MCP app a tool published in a thread draws from; `null` for none there. */
+  readonly mcpAppResource: (
+    threadId: ThreadId,
+    itemId: string,
+  ) => Effect.Effect<string | null, PersonAccessStorageError>;
+  /** Everyone who reaches a thread or a project, with how. */
+  readonly scopePeople: (
+    scope: Exclude<PersonScope, { readonly kind: "server" }>,
+  ) => Effect.Effect<ReadonlyArray<ScopePerson>, PersonAccessStorageError>;
+
+  readonly readPerson: (
+    personId: ParticipantId,
+  ) => Effect.Effect<Person | null, PersonAccessStorageError>;
+  readonly firstOwner: Effect.Effect<Person, PersonAccessStorageError>;
+  /** Every person still on the server, oldest first, with their levels and devices. */
+  readonly listPeople: Effect.Effect<ReadonlyArray<PersonRecord>, PersonAccessStorageError>;
+  readonly listLevels: (
+    personId: ParticipantId,
+  ) => Effect.Effect<ReadonlyArray<HeldLevel>, PersonAccessStorageError>;
+  readonly listDevices: (
+    personId: ParticipantId,
+  ) => Effect.Effect<ReadonlyArray<BoundDevice>, PersonAccessStorageError>;
+
+  /** Records a person with a name and no level yet. A name someone else holds is refused. */
+  readonly createPerson: (input: {
+    readonly displayName: string;
+  }) => Effect.Effect<Person, PersonAccessStorageError | PersonNameTakenError>;
+  readonly setName: (input: {
+    readonly personId: ParticipantId;
+    readonly displayName: string;
+  }) => Effect.Effect<void, PersonAccessStorageError | PersonNotFoundError | PersonNameTakenError>;
+  /** Gives a person a level at a scope, replacing any they held at that scope. */
+  readonly setLevel: (input: {
+    readonly personId: ParticipantId;
+    readonly scope: PersonScope;
+    readonly level: PersonLevel;
+  }) => Effect.Effect<
+    void,
+    PersonAccessStorageError | PersonNotFoundError | FirstOwnerFixedError | OwnerOutsideServerError
   >;
+  readonly removeLevel: (input: {
+    readonly personId: ParticipantId;
+    readonly scope: PersonScope;
+  }) => Effect.Effect<void, PersonAccessStorageError | FirstOwnerFixedError>;
+  /**
+   * Takes everything a person holds away: their levels and their devices' bindings. Their record
+   * stays, without a name anyone else is kept from, so their messages keep the name they had, and
+   * so do their pairing intents, each now naming someone removed.
+   * Reports the sessions that were theirs, for the caller to end upstream.
+   */
+  readonly removePerson: (
+    personId: ParticipantId,
+  ) => Effect.Effect<
+    ReadonlyArray<AuthSessionId>,
+    PersonAccessStorageError | PersonNotFoundError | FirstOwnerFixedError
+  >;
+
+  /** Ties a session to a person, with the ceiling it was paired with. */
+  readonly bindSession: (input: {
+    readonly sessionId: AuthSessionId;
+    readonly personId: ParticipantId;
+    readonly ceiling: ReadonlyArray<string> | null;
+  }) => Effect.Effect<void, PersonAccessStorageError | PersonNotFoundError>;
+  /** Cuts a session loose from its person; reports whose it was. Its renewal mark goes with it. */
+  readonly unbindSession: (
+    sessionId: AuthSessionId,
+  ) => Effect.Effect<ParticipantId | null, PersonAccessStorageError>;
+  /** The same for every session but one. */
+  readonly unbindOtherSessions: (
+    exceptSessionId: AuthSessionId,
+  ) => Effect.Effect<ReadonlyArray<ParticipantId>, PersonAccessStorageError>;
+
+  /**
+   * The person whose reach changed, each time something here commits a change to it. Feeds
+   * already open for them re-check.
+   */
+  readonly subscribeChanges: Effect.Effect<PubSub.Subscription<ParticipantId>, never, Scope.Scope>;
+  /** Tells subscribers and the People page that a person's reach or name changed. */
+  readonly announce: (personId: ParticipantId) => Effect.Effect<void>;
 }
 
 export class PersonAccess extends Context.Service<PersonAccess, PersonAccessShape>()(
@@ -311,80 +358,84 @@ export class PersonAccess extends Context.Service<PersonAccess, PersonAccessShap
 
 interface PersonRow {
   readonly person_id: string;
-  readonly kind: PersonKind;
   readonly display_name: string | null;
-  readonly name_self_given: number;
-  readonly joined_open_link_id: string | null;
+  readonly is_local_operator: number;
 }
 
-interface GrantRow {
+interface LevelRow {
   readonly person_id: string;
-  readonly target_kind: "project" | "thread";
-  readonly target_id: string;
-  readonly level: GrantLevel;
-  readonly note: string | null;
+  readonly scope_kind: "server" | "project" | "thread";
+  readonly scope_id: string;
+  readonly level: PersonLevel;
+}
+
+interface DeviceRow {
+  readonly session_id: string;
+  readonly person_id: string;
+  readonly ceiling_scopes: string | null;
+  readonly renew_pending_since: string | null;
 }
 
 const toPerson = (row: PersonRow): Person => ({
   personId: ParticipantId.make(row.person_id),
-  kind: row.kind,
   displayName: row.display_name,
-  nameSelfGiven: row.name_self_given === 1,
-  joinedOpenLinkId: row.joined_open_link_id,
+  firstOwner: row.is_local_operator === 1,
 });
 
-const targetColumns = (target: GrantTarget) =>
-  target.kind === "project"
-    ? { kind: "project" as const, id: target.projectId as string }
-    : { kind: "thread" as const, id: target.threadId as string };
+const toScope = (row: Pick<LevelRow, "scope_kind" | "scope_id">): PersonScope =>
+  row.scope_kind === "server"
+    ? { kind: "server" }
+    : row.scope_kind === "project"
+      ? { kind: "project", projectId: row.scope_id as ProjectId }
+      : { kind: "thread", threadId: row.scope_id as ThreadId };
 
-const toGrant = (row: GrantRow): PersonGrant => ({
-  personId: ParticipantId.make(row.person_id),
-  target:
-    row.target_kind === "project"
-      ? { kind: "project", projectId: row.target_id as ProjectId }
-      : { kind: "thread", threadId: row.target_id as ThreadId },
-  level: row.level,
-  note: row.note,
+const toHeld = (row: LevelRow): HeldLevel => ({ scope: toScope(row), level: row.level });
+
+// A ceiling is stored as upstream stores a session's scopes: a JSON array of permission names.
+const StoredCeiling = Schema.fromJsonString(Schema.Array(Schema.String));
+const decodeStoredCeiling = Schema.decodeUnknownOption(StoredCeiling);
+const encodeCeiling = Schema.encodeSync(StoredCeiling);
+// A ceiling that cannot be read holds nothing, so a device under it gains nothing.
+const decodeCeiling = (stored: string | null): ReadonlyArray<string> | null =>
+  stored === null ? null : Option.getOrElse(decodeStoredCeiling(stored), () => []);
+
+const decodeItem = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+const toDevice = (row: DeviceRow): BoundDevice => ({
+  sessionId: row.session_id as AuthSessionId,
+  ceiling: decodeCeiling(row.ceiling_scopes),
+  renewPendingSince: row.renew_pending_since,
 });
-
-const highest = (levels: ReadonlyArray<GrantLevel>): Access =>
-  levels.includes("collaborate") ? "collaborate" : levels.includes("view") ? "view" : "none";
 
 type PersonAccessError =
   | PersonAccessStorageError
   | PersonNameTakenError
   | PersonNotFoundError
-  | GrantOnMemberError
-  | MemberNotRemovableError;
+  | FirstOwnerFixedError
+  | OwnerOutsideServerError;
 const isPersonAccessError = Schema.is(
   Schema.Union([
     PersonAccessStorageError,
     PersonNameTakenError,
     PersonNotFoundError,
-    GrantOnMemberError,
-    MemberNotRemovableError,
+    FirstOwnerFixedError,
+    OwnerOutsideServerError,
   ]),
 );
 
-/** How far up a placement tree a thread grant is looked for; trees are a few levels deep. */
+/** How far up a placement tree a thread's level is looked for; trees are a few levels deep. */
 const MAX_ANCESTOR_DEPTH = 64;
 
 const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> = Layer.effect(
   PersonAccess,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const grantChanges = yield* Effect.acquireRelease(
-      PubSub.sliding<ParticipantId>(256),
-      (pubsub) => PubSub.shutdown(pubsub),
+    const changes = yield* Effect.acquireRelease(PubSub.sliding<ParticipantId>(256), (pubsub) =>
+      PubSub.shutdown(pubsub),
     );
     const readChanges = yield* ReadChanges;
-    /**
-     * Said after every write that changes what a person holds or who they are: the open feeds
-     * of that person's connections re-check, and the People page re-reads.
-     */
-    const changed = (personId: ParticipantId) =>
-      PubSub.publish(grantChanges, personId).pipe(Effect.andThen(readChanges.notify("sharing")));
+    const announce = (personId: ParticipantId) =>
+      PubSub.publish(changes, personId).pipe(Effect.andThen(readChanges.notify("sharing")));
     // This module's own errors pass through; anything else is the database.
     const storage =
       (operation: string) =>
@@ -403,9 +454,9 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
 
     const readPersonRow = (personId: ParticipantId) =>
       sql<PersonRow>`
-        SELECT person_id, kind, display_name, name_self_given, joined_open_link_id
+        SELECT person_id, display_name, is_local_operator
         FROM j5_a2a_human_person
-        WHERE person_id = ${personId}
+        WHERE person_id = ${personId} AND removed_at IS NULL
       `.pipe(Effect.map((rows) => rows[0]));
 
     const requirePerson = Effect.fn("j5.sharing.personAccess.requirePerson")(function* (
@@ -416,30 +467,74 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
       return toPerson(row);
     });
 
-    const sessionPerson: PersonAccessShape["sessionPerson"] = Effect.fn(
-      "j5.sharing.personAccess.sessionPerson",
+    const levelsOf = (personId: ParticipantId) =>
+      sql<LevelRow>`
+        SELECT person_id, scope_kind, scope_id, level FROM j5_a2a_person_level
+        WHERE person_id = ${personId}
+        ORDER BY scope_kind DESC, scope_id
+      `.pipe(Effect.map((rows) => rows.map(toHeld)));
+
+    // The first owner is recorded when the server starts (`HumanPersonRegistry`), so a request
+    // only reads them.
+    const firstOwnerRow = Effect.gen(function* () {
+      const id = yield* getLocalOperatorHumanPersonId(sql).pipe(
+        Effect.mapError(
+          (cause) => new PersonAccessStorageError({ operation: "read the first owner", cause }),
+        ),
+      );
+      const row = yield* readPersonRow(id);
+      if (row === undefined) {
+        return yield* new PersonAccessStorageError({ operation: "read the first owner" });
+      }
+      return row;
+    });
+
+    const personReach = Effect.fn("j5.sharing.personAccess.personReach")(function* (
+      person: Person,
+      ceiling: ReadonlyArray<string> | null,
+    ) {
+      const levels = yield* levelsOf(person.personId);
+      return {
+        kind: "person" as const,
+        person,
+        levels,
+        serverLevel: highestLevel(
+          levels.filter((held) => held.scope.kind === "server").map((held) => held.level),
+        ),
+        highest: highestLevel(levels.map((held) => held.level)),
+        ceiling,
+      };
+    });
+
+    const sessionReach: PersonAccessShape["sessionReach"] = Effect.fn(
+      "j5.sharing.personAccess.sessionReach",
     )(
       function* (session) {
-        if (session.subject !== GUEST_SESSION_SUBJECT) return null;
-        const rows = yield* sql<PersonRow>`
-          SELECT person.person_id, person.kind, person.display_name, person.name_self_given,
-            person.joined_open_link_id
-          FROM j5_a2a_person_session AS bound
-          JOIN j5_a2a_human_person AS person ON person.person_id = bound.person_id
-          WHERE bound.session_id = ${session.sessionId} AND person.kind = 'guest'
+        // By subject first: these sessions are never bound, and need no read of their own.
+        if (isServiceSubject(session.subject)) return { kind: "service" as const };
+        if (FIRST_OWNER_SUBJECTS.has(session.subject)) {
+          return yield* personReach(toPerson(yield* firstOwnerRow), null);
+        }
+        const bound = yield* sql<PersonRow & { readonly ceiling_scopes: string | null }>`
+          SELECT person.person_id, person.display_name, person.is_local_operator,
+            device.ceiling_scopes
+          FROM j5_a2a_person_session AS device
+          JOIN j5_a2a_human_person AS person
+            ON person.person_id = device.person_id AND person.removed_at IS NULL
+          WHERE device.session_id = ${session.sessionId}
         `;
-        return rows[0] === undefined
-          ? { kind: "guest" as const, personId: null }
-          : toPerson(rows[0]);
+        const row = bound[0];
+        if (row !== undefined) {
+          return yield* personReach(toPerson(row), decodeCeiling(row.ceiling_scopes));
+        }
+        return { kind: "unknown" as const };
       },
-      Effect.mapError(storage("read the person a session belongs to")),
+      Effect.mapError(storage("read whose a session is")),
     );
 
     // Every thread from the one asked about up to the root of its tree. A Subagent's parent is
     // its upstream lineage parent; a Peer Agent's is its placement parent, unless it is a fork.
-    const threadLevels = (personId: ParticipantId, threadId: ThreadId) => sql<{
-      readonly level: GrantLevel;
-    }>`
+    const chain = (threadId: ThreadId) => sql`
       WITH RECURSIVE chain(thread_id, depth) AS (
         SELECT ${threadId}, 0
         UNION ALL
@@ -469,40 +564,59 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         FROM chain
         WHERE chain.thread_id IS NOT NULL AND chain.depth < ${MAX_ANCESTOR_DEPTH}
       )
-      SELECT level
-      FROM j5_a2a_person_grant
-      WHERE person_id = ${personId}
+    `;
+
+    /** Every level row that covers a thread, for one person or for everyone. */
+    const coveringThread = (threadId: ThreadId, personId: ParticipantId | null) => sql<LevelRow>`
+      ${chain(threadId)}
+      SELECT held.person_id, held.scope_kind, held.scope_id, held.level
+      FROM j5_a2a_person_level AS held
+      WHERE (${personId} IS NULL OR held.person_id = ${personId})
         AND (
-          (target_kind = 'thread' AND target_id IN (
+          held.scope_kind = 'server'
+          OR (held.scope_kind = 'thread' AND held.scope_id IN (
             SELECT thread_id FROM chain WHERE thread_id IS NOT NULL
           ))
-          OR (target_kind = 'project' AND target_id = (
+          OR (held.scope_kind = 'project' AND held.scope_id = (
             SELECT project_id FROM orchestration_v2_projection_threads
             WHERE thread_id = ${threadId}
           ))
         )
     `;
 
-    const threadAccess: PersonAccessShape["threadAccess"] = Effect.fn(
-      "j5.sharing.personAccess.threadAccess",
+    const threadLevel: PersonAccessShape["threadLevel"] = Effect.fn(
+      "j5.sharing.personAccess.threadLevel",
     )(
-      function* (session, threadId) {
-        const person = yield* sessionPerson(session);
-        if (person === null) return "member";
-        if (person.personId === null) return "none";
-        return highest((yield* threadLevels(person.personId, threadId)).map((row) => row.level));
+      function* (personId, threadId) {
+        const rows = yield* coveringThread(threadId, personId);
+        return highestLevel(rows.map((row) => row.level));
       },
-      Effect.mapError(storage("read a person's access to a thread")),
+      Effect.mapError(storage("read a person's level on a thread")),
     );
 
+    const viaOf = (row: LevelRow, threadId: ThreadId | null): ReachVia =>
+      row.scope_kind === "server"
+        ? "server"
+        : row.scope_kind === "project"
+          ? "project"
+          : row.scope_id === threadId
+            ? "thread"
+            : "ancestor";
+
     // The threads whose messages carry the attachment. The text search narrows the rows before
-    // each one's attachment list is read; only a guest's request for an attachment runs it.
+    // each one's attachment list is read; only a narrowed request for an attachment runs it.
+    // A page a tool published is an attachment named in its turn item's output, not a message's;
+    // its id is random, so a turn item that holds the id is the one that made it (AC21).
     const attachmentThreads = (attachmentId: string) => sql<{ readonly thread_id: string }>`
       SELECT DISTINCT message.thread_id
       FROM orchestration_v2_projection_messages AS message,
         json_each(message.payload_json, '$.attachments') AS attachment
       WHERE instr(message.payload_json, ${attachmentId}) > 0
         AND json_extract(attachment.value, '$.id') = ${attachmentId}
+      UNION
+      SELECT DISTINCT item.thread_id
+      FROM orchestration_v2_projection_turn_items AS item
+      WHERE instr(item.payload_json, ${attachmentId}) > 0
     `;
 
     const turnItemThreads = (threadId: ThreadId, itemId: string) => sql<{
@@ -513,61 +627,198 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
       WHERE turn_item_id = ${itemId} AND thread_id = ${threadId}
     `;
 
+    const refuseFirstOwner = Effect.fn("j5.sharing.personAccess.refuseFirstOwner")(function* (
+      personId: ParticipantId,
+    ) {
+      const row = yield* readPersonRow(personId);
+      if (row?.is_local_operator === 1) return yield* new FirstOwnerFixedError({});
+    });
+
     return PersonAccess.of({
-      createGuest: Effect.fn("j5.sharing.personAccess.createGuest")(
-        function* (input) {
-          const personId = ParticipantId.make(`human:${NodeCrypto.randomUUID()}`);
-          const createdAt = DateTime.formatIso(yield* DateTime.now);
-          const openLinkId = input.joinedOpenLinkId ?? null;
-          yield* sql`
-            INSERT INTO j5_a2a_human_person (
-              person_id, is_local_operator, created_at, kind, display_name, name_key,
-              name_self_given, joined_open_link_id
-            ) VALUES (
-              ${personId}, 0, ${createdAt}, 'guest', ${input.displayName},
-              ${personNameKey(input.displayName)}, ${openLinkId === null ? 0 : 1}, ${openLinkId}
-            )
-          `;
-          // A guest with no grant yet is on no thread, so only the People page is told.
-          yield* readChanges.notify("sharing");
-          return {
-            personId,
-            kind: "guest" as const,
-            displayName: input.displayName,
-            nameSelfGiven: openLinkId !== null,
-            joinedOpenLinkId: openLinkId,
-          };
-        },
-        Effect.mapError(naming("record a guest")),
-      ),
+      sessionReach,
 
-      operatorName: sql<{ readonly display_name: string | null }>`
-        SELECT display_name FROM j5_a2a_human_person WHERE is_local_operator = 1 LIMIT 1
-      `.pipe(
-        Effect.map((rows) => rows[0]?.display_name ?? null),
-        Effect.mapError(storage("read the owner's name")),
-        Effect.withSpan("j5.sharing.personAccess.operatorName"),
-      ),
+      threadLevel,
 
-      setOperatorName: Effect.fn("j5.sharing.personAccess.setOperatorName")(
-        function* (displayName) {
-          const personId = yield* ensureLocalOperatorHumanPerson(sql);
-          yield* sql`
-            UPDATE j5_a2a_human_person
-            SET display_name = ${displayName}, name_key = ${personNameKey(displayName)}
+      projectLevel: Effect.fn("j5.sharing.personAccess.projectLevel")(
+        function* (personId, projectId) {
+          const rows = yield* sql<{ readonly level: PersonLevel }>`
+            SELECT level FROM j5_a2a_person_level
             WHERE person_id = ${personId}
+              AND (scope_kind = 'server' OR (scope_kind = 'project' AND scope_id = ${projectId}))
           `;
-          // Told as a change to who is on every thread: the member is on all of them.
-          yield* changed(personId);
-          return {
-            personId,
-            kind: "member" as const,
-            displayName,
-            nameSelfGiven: false,
-            joinedOpenLinkId: null,
-          };
+          return highestLevel(rows.map((row) => row.level));
         },
-        Effect.mapError(naming("record the owner's name")),
+        Effect.mapError(storage("read a person's level on a project")),
+      ),
+
+      scheduledTaskHome: (taskId) =>
+        sql<{ readonly project_id: string; readonly thread_id: string | null }>`
+          SELECT project_id, thread_id FROM scheduled_tasks WHERE task_id = ${taskId}
+        `.pipe(
+          Effect.map((rows) =>
+            rows[0] === undefined
+              ? null
+              : {
+                  projectId: rows[0].project_id as ProjectId,
+                  threadId: rows[0].thread_id === null ? null : (rows[0].thread_id as ThreadId),
+                },
+          ),
+          Effect.mapError(storage("read where a scheduled task is bound")),
+          Effect.withSpan("j5.sharing.personAccess.scheduledTaskHome"),
+        ),
+
+      projectRoots: (personId) =>
+        sql<{ readonly workspace_root: string }>`
+          SELECT project.workspace_root
+          FROM j5_a2a_person_level AS held
+          JOIN projection_projects AS project
+            ON project.project_id = held.scope_id AND project.deleted_at IS NULL
+          WHERE held.person_id = ${personId} AND held.scope_kind = 'project'
+        `.pipe(
+          Effect.map((rows) => rows.map((row) => row.workspace_root)),
+          Effect.mapError(storage("read the folders of a person's projects")),
+          Effect.withSpan("j5.sharing.personAccess.projectRoots"),
+        ),
+
+      threadProject: (threadId) =>
+        sql<{ readonly project_id: string }>`
+          SELECT project_id FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}
+        `.pipe(
+          Effect.map((rows) => (rows[0] === undefined ? null : (rows[0].project_id as ProjectId))),
+          Effect.mapError(storage("read a thread's project")),
+          Effect.withSpan("j5.sharing.personAccess.threadProject"),
+        ),
+
+      projectInFeed: Effect.fn("j5.sharing.personAccess.projectInFeed")(
+        function* (personId, projectId) {
+          // The cheap answers first: the server, the project, or a thread that lives in it.
+          const direct = yield* sql<{ readonly found: number }>`
+            SELECT 1 AS found
+            FROM j5_a2a_person_level AS held
+            WHERE held.person_id = ${personId}
+              AND (
+                held.scope_kind = 'server'
+                OR (held.scope_kind = 'project' AND held.scope_id = ${projectId})
+                OR (held.scope_kind = 'thread' AND EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_threads AS thread
+                  WHERE thread.thread_id = held.scope_id
+                    AND thread.project_id = ${projectId}
+                    AND thread.deleted_at IS NULL
+                ))
+              )
+            LIMIT 1
+          `;
+          if (direct.length > 0) return true;
+          // An agent beneath a covered thread can live in another project; its thread is in the
+          // person's sidebar, and so is that project.
+          const threads = yield* sql<{ readonly thread_id: string }>`
+            SELECT thread_id FROM orchestration_v2_projection_threads
+            WHERE project_id = ${projectId} AND deleted_at IS NULL
+          `;
+          for (const thread of threads) {
+            if ((yield* coveringThread(thread.thread_id as ThreadId, personId)).length > 0) {
+              return true;
+            }
+          }
+          return false;
+        },
+        Effect.mapError(storage("read whether a project is in a person's sidebar")),
+      ),
+
+      messageAssetLevel: Effect.fn("j5.sharing.personAccess.messageAssetLevel")(
+        function* (personId, asset) {
+          const holders =
+            asset.kind === "attachment"
+              ? yield* attachmentThreads(asset.attachmentId)
+              : yield* turnItemThreads(asset.threadId, asset.itemId);
+          const levels = yield* Effect.forEach(holders, (holder) =>
+            coveringThread(holder.thread_id as ThreadId, personId),
+          );
+          return highestLevel(levels.flat().map((row) => row.level));
+        },
+        Effect.mapError(storage("read a person's level on an attachment")),
+      ),
+
+      participantVisible: Effect.fn("j5.sharing.personAccess.participantVisible")(
+        function* (personId, participant) {
+          if (
+            participant.threadId !== null &&
+            (yield* coveringThread(participant.threadId as ThreadId, personId)).length > 0
+          ) {
+            return true;
+          }
+          const receivers = yield* sql<{ readonly thread_id: string }>`
+            SELECT DISTINCT member.thread_id
+            FROM j5_a2a_delivery AS delivery
+            JOIN j5_a2a_membership AS member
+              ON member.project_id = delivery.receiver_project_id
+             AND member.participant_id = delivery.receiver_id
+            WHERE delivery.sender_id = ${participant.participantId}
+          `;
+          for (const receiver of receivers) {
+            if ((yield* coveringThread(receiver.thread_id as ThreadId, personId)).length > 0) {
+              return true;
+            }
+          }
+          return false;
+        },
+        Effect.mapError(storage("read whether a person may know an agent")),
+      ),
+
+      mcpAppResource: Effect.fn("j5.sharing.personAccess.mcpAppResource")(
+        function* (threadId, itemId) {
+          const rows = yield* sql<{ readonly payload_json: string }>`
+            SELECT payload_json FROM orchestration_v2_projection_turn_items
+            WHERE turn_item_id = ${itemId} AND thread_id = ${threadId}
+          `;
+          const item = rows[0] === undefined ? undefined : decodeItem(rows[0].payload_json);
+          if (item === undefined || Option.isNone(item)) return null;
+          const value = item.value as { readonly toolName?: unknown; readonly output?: unknown };
+          return (
+            mcpAppFromToolItem({
+              toolName: typeof value.toolName === "string" ? value.toolName : null,
+              output: value.output,
+            })?.resourceUri ?? null
+          );
+        },
+        Effect.mapError(storage("read an MCP app's resource")),
+      ),
+
+      scopePeople: Effect.fn("j5.sharing.personAccess.scopePeople")(
+        function* (scope) {
+          const threadId = scope.kind === "thread" ? scope.threadId : null;
+          const rows =
+            scope.kind === "thread"
+              ? yield* coveringThread(scope.threadId, null)
+              : yield* sql<LevelRow>`
+                  SELECT person_id, scope_kind, scope_id, level FROM j5_a2a_person_level
+                  WHERE scope_kind = 'server'
+                    OR (scope_kind = 'project' AND scope_id = ${scope.projectId})
+                `;
+          const people = yield* sql<PersonRow & { readonly created_at: string }>`
+            SELECT person_id, display_name, is_local_operator, created_at
+            FROM j5_a2a_human_person
+            WHERE removed_at IS NULL
+            ORDER BY created_at, person_id
+          `;
+          return people.flatMap((row): ReadonlyArray<ScopePerson> => {
+            const held = rows.filter((level) => level.person_id === row.person_id);
+            const level = highestLevel(held.map((entry) => entry.level));
+            if (level === null) return [];
+            return [
+              {
+                person: toPerson(row),
+                level,
+                via: held.map((entry) => ({
+                  via: viaOf(entry, threadId),
+                  level: entry.level,
+                  scope: toScope(entry),
+                })),
+              },
+            ];
+          });
+        },
+        Effect.mapError(storage("read who reaches a thread or project")),
       ),
 
       readPerson: Effect.fn("j5.sharing.personAccess.readPerson")(
@@ -578,214 +829,171 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         Effect.mapError(storage("read a person")),
       ),
 
-      putGrant: Effect.fn("j5.sharing.personAccess.putGrant")(
-        function* (grant) {
-          const person = yield* requirePerson(grant.personId);
-          if (person.kind === "member") {
-            return yield* new GrantOnMemberError({ personId: grant.personId });
-          }
-          const target = targetColumns(grant.target);
-          const now = DateTime.formatIso(yield* DateTime.now);
-          const keepNote = grant.note === undefined ? 1 : 0;
-          yield* sql`
-          INSERT INTO j5_a2a_person_grant (
-            person_id, target_kind, target_id, level, created_at, updated_at, note
-          ) VALUES (
-            ${grant.personId}, ${target.kind}, ${target.id}, ${grant.level}, ${now}, ${now},
-            ${grant.note ?? null}
-          )
-          ON CONFLICT (person_id, target_kind, target_id)
-          DO UPDATE SET
-            level = excluded.level,
-            updated_at = excluded.updated_at,
-            note = CASE WHEN ${keepNote} = 1 THEN j5_a2a_person_grant.note ELSE excluded.note END
-        `;
-          yield* changed(grant.personId);
-        },
-        Effect.mapError(storage("record a grant")),
-      ),
-
-      removeGrant: Effect.fn("j5.sharing.personAccess.removeGrant")(
-        function* (input) {
-          const target = targetColumns(input.target);
-          yield* sql`
-          DELETE FROM j5_a2a_person_grant
-          WHERE person_id = ${input.personId}
-            AND target_kind = ${target.kind}
-            AND target_id = ${target.id}
-        `;
-          yield* changed(input.personId);
-        },
-        Effect.mapError(storage("remove a grant")),
-      ),
-
-      listGrants: Effect.fn("j5.sharing.personAccess.listGrants")(
-        function* (personId) {
-          const rows = yield* sql<GrantRow>`
-          SELECT person_id, target_kind, target_id, level, note
-          FROM j5_a2a_person_grant
-          WHERE person_id = ${personId}
-          ORDER BY target_kind, target_id
-        `;
-          return rows.map(toGrant);
-        },
-        Effect.mapError(storage("list a person's grants")),
-      ),
-
-      setGuestName: Effect.fn("j5.sharing.personAccess.setGuestName")(
-        function* (input) {
-          const rows = yield* sql`
-            UPDATE j5_a2a_human_person
-            SET display_name = ${input.displayName},
-              name_key = ${personNameKey(input.displayName)}, name_self_given = 0
-            WHERE person_id = ${input.personId} AND kind = 'guest'
-            RETURNING person_id
-          `;
-          if (rows.length === 0)
-            return yield* new PersonNotFoundError({ personId: input.personId });
-          yield* changed(input.personId);
-        },
-        Effect.mapError(naming("record a guest's name")),
-      ),
-
-      threadPeople: Effect.fn("j5.sharing.personAccess.threadPeople")(
-        function* (threadId) {
-          // The same walk up from the thread as `threadLevels`, for everyone at once.
-          const rows = yield* sql<PersonRow & GrantRow>`
-            WITH RECURSIVE chain(thread_id, depth) AS (
-              SELECT ${threadId}, 0
-              UNION ALL
-              SELECT
-                COALESCE(
-                  (
-                    SELECT json_extract(thread.payload_json, '$.lineage.parentThreadId')
-                    FROM orchestration_v2_projection_threads AS thread
-                    WHERE thread.thread_id = chain.thread_id
-                      AND json_extract(thread.payload_json, '$.lineage.relationshipToParent') = 'subagent'
-                  ),
-                  (
-                    SELECT parent.thread_id
-                    FROM j5_a2a_membership AS child
-                    JOIN j5_a2a_participant_placement AS placement
-                      ON placement.project_id = child.project_id
-                     AND placement.participant_id = child.participant_id
-                    JOIN j5_a2a_membership AS parent
-                      ON parent.project_id = placement.project_id
-                     AND parent.participant_id = placement.placement_parent_id
-                    WHERE child.thread_id = chain.thread_id
-                      AND placement.provenance_kind <> 'forked-from'
-                    LIMIT 1
-                  )
-                ),
-                chain.depth + 1
-              FROM chain
-              WHERE chain.thread_id IS NOT NULL AND chain.depth < ${MAX_ANCESTOR_DEPTH}
-            )
-            SELECT person.person_id, person.kind, person.display_name, person.name_self_given,
-              person.joined_open_link_id, held.target_kind, held.target_id, held.level, held.note
-            FROM j5_a2a_person_grant AS held
-            JOIN j5_a2a_human_person AS person
-              ON person.person_id = held.person_id AND person.kind = 'guest'
-            WHERE (held.target_kind = 'thread' AND held.target_id IN (
-                SELECT thread_id FROM chain WHERE thread_id IS NOT NULL
-              ))
-              OR (held.target_kind = 'project' AND held.target_id = (
-                SELECT project_id FROM orchestration_v2_projection_threads
-                WHERE thread_id = ${threadId}
-              ))
-            ORDER BY person.created_at, person.person_id, held.target_kind DESC, held.target_id
-          `;
-          const members = yield* sql<PersonRow>`
-            SELECT person_id, kind, display_name, name_self_given, joined_open_link_id
-            FROM j5_a2a_human_person
-            WHERE kind = 'member'
-            ORDER BY created_at, person_id
-          `;
-          const guests = new Map<
-            string,
-            {
-              person: Person;
-              grants: Array<{ via: "thread" | "ancestor" | "project"; level: GrantLevel }>;
-            }
-          >();
-          for (const row of rows) {
-            const entry = guests.get(row.person_id) ?? { person: toPerson(row), grants: [] };
-            entry.grants.push({
-              via:
-                row.target_kind === "project"
-                  ? "project"
-                  : row.target_id === threadId
-                    ? "thread"
-                    : "ancestor",
-              level: row.level,
-            });
-            guests.set(row.person_id, entry);
-          }
-          return { members: members.map(toPerson), guests: [...guests.values()] };
-        },
-        Effect.mapError(storage("read who can reach a thread")),
+      firstOwner: firstOwnerRow.pipe(
+        Effect.map(toPerson),
+        Effect.mapError(storage("read the first owner")),
+        Effect.withSpan("j5.sharing.personAccess.firstOwner"),
       ),
 
       listPeople: Effect.gen(function* () {
         const people = yield* sql<PersonRow & { readonly created_at: string }>`
-          SELECT person_id, kind, display_name, name_self_given, joined_open_link_id, created_at
+          SELECT person_id, display_name, is_local_operator, created_at
           FROM j5_a2a_human_person
+          WHERE removed_at IS NULL
           ORDER BY created_at, person_id
         `;
-        const grants = yield* sql<GrantRow>`
-          SELECT person_id, target_kind, target_id, level, note
-          FROM j5_a2a_person_grant
-          ORDER BY target_kind, target_id
+        const levels = yield* sql<LevelRow>`
+          SELECT person_id, scope_kind, scope_id, level FROM j5_a2a_person_level
+          ORDER BY scope_kind DESC, scope_id
         `;
-        const sessions = yield* sql<{ readonly session_id: string; readonly person_id: string }>`
-          SELECT session_id, person_id FROM j5_a2a_person_session ORDER BY bound_at, session_id
+        const devices = yield* sql<DeviceRow>`
+          SELECT session_id, person_id, ceiling_scopes, renew_pending_since
+          FROM j5_a2a_person_session
+          ORDER BY bound_at, session_id
         `;
         return people.map((row): PersonRecord => ({
           person: toPerson(row),
           createdAt: row.created_at,
-          grants: grants.filter((grant) => grant.person_id === row.person_id).map(toGrant),
-          sessionIds: sessions
-            .filter((session) => session.person_id === row.person_id)
-            .map((session) => session.session_id as AuthSessionId),
+          levels: levels.filter((level) => level.person_id === row.person_id).map(toHeld),
+          devices: devices.filter((device) => device.person_id === row.person_id).map(toDevice),
         }));
       }).pipe(
         Effect.mapError(storage("list people")),
         Effect.withSpan("j5.sharing.personAccess.listPeople"),
       ),
 
-      removeGuest: Effect.fn("j5.sharing.personAccess.removeGuest")(
+      listLevels: (personId) =>
+        levelsOf(personId).pipe(
+          Effect.mapError(storage("list a person's levels")),
+          Effect.withSpan("j5.sharing.personAccess.listLevels"),
+        ),
+
+      listDevices: (personId) =>
+        sql<DeviceRow>`
+          SELECT session_id, person_id, ceiling_scopes, renew_pending_since
+          FROM j5_a2a_person_session WHERE person_id = ${personId}
+          ORDER BY bound_at, session_id
+        `.pipe(
+          Effect.map((rows) => rows.map(toDevice)),
+          Effect.mapError(storage("list a person's devices")),
+          Effect.withSpan("j5.sharing.personAccess.listDevices"),
+        ),
+
+      createPerson: Effect.fn("j5.sharing.personAccess.createPerson")(
+        function* (input) {
+          const personId = ParticipantId.make(`human:${NodeCrypto.randomUUID()}`);
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          yield* sql`
+            INSERT INTO j5_a2a_human_person (
+              person_id, is_local_operator, created_at, display_name, name_key
+            ) VALUES (
+              ${personId}, 0, ${createdAt}, ${input.displayName},
+              ${personNameKey(input.displayName)}
+            )
+          `;
+          // A person with no level yet reaches nothing, so only the People page is told.
+          yield* readChanges.notify("sharing");
+          return { personId, displayName: input.displayName, firstOwner: false };
+        },
+        Effect.mapError(naming("record a person")),
+      ),
+
+      setName: Effect.fn("j5.sharing.personAccess.setName")(
+        function* (input) {
+          const rows = yield* sql`
+            UPDATE j5_a2a_human_person
+            SET display_name = ${input.displayName}, name_key = ${personNameKey(input.displayName)}
+            WHERE person_id = ${input.personId} AND removed_at IS NULL
+            RETURNING person_id
+          `;
+          if (rows.length === 0)
+            return yield* new PersonNotFoundError({ personId: input.personId });
+          yield* announce(input.personId);
+        },
+        Effect.mapError(naming("record a person's name")),
+      ),
+
+      setLevel: Effect.fn("j5.sharing.personAccess.setLevel")(
+        function* (input) {
+          if (input.level === "owner" && input.scope.kind !== "server") {
+            return yield* new OwnerOutsideServerError({});
+          }
+          yield* requirePerson(input.personId);
+          yield* refuseFirstOwner(input.personId);
+          const scope = scopeColumns(input.scope);
+          const now = DateTime.formatIso(yield* DateTime.now);
+          yield* sql`
+            INSERT INTO j5_a2a_person_level (
+              person_id, scope_kind, scope_id, level, created_at, updated_at
+            ) VALUES (${input.personId}, ${scope.kind}, ${scope.id}, ${input.level}, ${now}, ${now})
+            ON CONFLICT (person_id, scope_kind, scope_id)
+            DO UPDATE SET level = excluded.level, updated_at = excluded.updated_at
+          `;
+          yield* announce(input.personId);
+        },
+        Effect.mapError(storage("record a level")),
+      ),
+
+      removeLevel: Effect.fn("j5.sharing.personAccess.removeLevel")(
+        function* (input) {
+          yield* refuseFirstOwner(input.personId);
+          const scope = scopeColumns(input.scope);
+          yield* sql`
+            DELETE FROM j5_a2a_person_level
+            WHERE person_id = ${input.personId}
+              AND scope_kind = ${scope.kind}
+              AND scope_id = ${scope.id}
+          `;
+          yield* announce(input.personId);
+        },
+        Effect.mapError(storage("remove a level")),
+      ),
+
+      removePerson: Effect.fn("j5.sharing.personAccess.removePerson")(
         function* (personId) {
-          const removed = yield* sql.withTransaction(
+          const sessions = yield* sql.withTransaction(
             Effect.gen(function* () {
-              const person = yield* requirePerson(personId);
-              if (person.kind === "member") {
-                return yield* new MemberNotRemovableError({ personId });
-              }
-              const sessions = yield* sql<{ readonly session_id: string }>`
-                SELECT session_id FROM j5_a2a_person_session WHERE person_id = ${personId}
+              yield* requirePerson(personId);
+              yield* refuseFirstOwner(personId);
+              const bound = yield* sql<{ readonly session_id: string }>`
+                DELETE FROM j5_a2a_person_session WHERE person_id = ${personId}
+                RETURNING session_id
               `;
-              const links = yield* sql<{ readonly pairing_link_id: string }>`
-                SELECT pairing_link_id FROM j5_a2a_guest_link WHERE person_id = ${personId}
-              `;
-              // Each by name, so nothing is left to reach if a connection has cascades off.
-              yield* sql`DELETE FROM j5_a2a_person_grant WHERE person_id = ${personId}`;
-              yield* sql`DELETE FROM j5_a2a_person_session WHERE person_id = ${personId}`;
-              yield* sql`DELETE FROM j5_a2a_guest_link WHERE person_id = ${personId}`;
-              // Off every open link's list of who joined, which frees their place on it.
-              yield* sql`DELETE FROM j5_a2a_open_link_join WHERE person_id = ${personId}`;
+              yield* sql`DELETE FROM j5_a2a_person_level WHERE person_id = ${personId}`;
+              // Their pairing intents stay, as a record that each credential was for someone
+              // since removed: a credential upstream had already taken when they were removed
+              // then pairs nothing, and is never taken for a device no one has claimed.
+              const removedAt = DateTime.formatIso(yield* DateTime.now);
               yield* sql`
-                DELETE FROM j5_a2a_human_person WHERE person_id = ${personId} AND kind = 'guest'
+                UPDATE j5_a2a_human_person SET removed_at = ${removedAt}, name_key = NULL
+                WHERE person_id = ${personId}
               `;
-              return {
-                sessionIds: sessions.map((row) => row.session_id as AuthSessionId),
-                pairingLinkIds: links.map((row) => row.pairing_link_id),
-              };
+              return bound.map((row) => row.session_id as AuthSessionId);
             }),
           );
-          yield* changed(personId);
-          return removed;
+          yield* announce(personId);
+          return sessions;
         },
-        Effect.mapError(storage("remove a guest")),
+        Effect.mapError(storage("remove a person")),
+      ),
+
+      bindSession: Effect.fn("j5.sharing.personAccess.bindSession")(
+        function* (input) {
+          yield* requirePerson(input.personId);
+          const boundAt = DateTime.formatIso(yield* DateTime.now);
+          const ceiling = input.ceiling === null ? null : encodeCeiling(input.ceiling);
+          yield* sql`
+            INSERT INTO j5_a2a_person_session (session_id, person_id, bound_at, ceiling_scopes)
+            VALUES (${input.sessionId}, ${input.personId}, ${boundAt}, ${ceiling})
+            ON CONFLICT (session_id) DO UPDATE SET
+              person_id = excluded.person_id,
+              bound_at = excluded.bound_at,
+              ceiling_scopes = excluded.ceiling_scopes,
+              renew_pending_since = NULL
+          `;
+          yield* announce(input.personId);
+        },
+        Effect.mapError(storage("tie a session to a person")),
       ),
 
       unbindSession: Effect.fn("j5.sharing.personAccess.unbindSession")(
@@ -795,7 +1003,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           `;
           if (rows[0] === undefined) return null;
           const personId = ParticipantId.make(rows[0].person_id);
-          yield* changed(personId);
+          yield* announce(personId);
           return personId;
         },
         Effect.mapError(storage("cut a session loose from its person")),
@@ -811,122 +1019,14 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           const personIds = [...new Set(rows.map((row) => row.person_id))].map((id) =>
             ParticipantId.make(id),
           );
-          yield* Effect.forEach(personIds, changed, {
-            discard: true,
-          });
+          yield* Effect.forEach(personIds, announce, { discard: true });
           return personIds;
         },
         Effect.mapError(storage("cut sessions loose from their people")),
       ),
 
-      bindSession: Effect.fn("j5.sharing.personAccess.bindSession")(
-        function* (input) {
-          yield* requirePerson(input.personId);
-          const boundAt = DateTime.formatIso(yield* DateTime.now);
-          yield* sql`
-          INSERT INTO j5_a2a_person_session (session_id, person_id, bound_at)
-          VALUES (${input.sessionId}, ${input.personId}, ${boundAt})
-        `;
-        },
-        Effect.mapError(storage("tie a session to a person")),
-      ),
-
-      sessionPerson,
-
-      threadAccess,
-
-      messageAssetAccess: Effect.fn("j5.sharing.personAccess.messageAssetAccess")(
-        function* (session, asset) {
-          const person = yield* sessionPerson(session);
-          if (person === null) return "member";
-          const { personId } = person;
-          if (personId === null) return "none";
-          const holders =
-            asset.kind === "attachment"
-              ? yield* attachmentThreads(asset.attachmentId)
-              : yield* turnItemThreads(asset.threadId, asset.itemId);
-          const levels = yield* Effect.forEach(holders, (holder) =>
-            threadLevels(personId, holder.thread_id as ThreadId),
-          );
-          return highest(levels.flat().map((row) => row.level));
-        },
-        Effect.mapError(storage("read a person's access to an attachment")),
-      ),
-
-      watchThreadAccess: (session, threadId) =>
-        session.subject !== GUEST_SESSION_SUBJECT
-          ? Stream.make<[Access]>("member")
-          : Stream.unwrap(
-              Effect.gen(function* () {
-                // Subscribed before the first read, so no change between the two is missed.
-                const changes = yield* PubSub.subscribe(grantChanges);
-                const read = threadAccess(session, threadId);
-                return Stream.fromEffect(read).pipe(
-                  Stream.concat(
-                    Stream.fromSubscription(changes).pipe(Stream.mapEffect(() => read)),
-                  ),
-                  Stream.changes,
-                );
-              }),
-            ),
-
-      projectAccess: Effect.fn("j5.sharing.personAccess.projectAccess")(
-        function* (session, projectId) {
-          const person = yield* sessionPerson(session);
-          if (person === null) return "member";
-          if (person.personId === null) return "none";
-          const rows = yield* sql<{ readonly level: GrantLevel }>`
-          SELECT level
-          FROM j5_a2a_person_grant
-          WHERE person_id = ${person.personId}
-            AND target_kind = 'project'
-            AND target_id = ${projectId}
-        `;
-          return highest(rows.map((row) => row.level));
-        },
-        Effect.mapError(storage("read a person's access to a project")),
-      ),
-
-      projectInFeed: Effect.fn("j5.sharing.personAccess.projectInFeed")(
-        function* (session, projectId) {
-          const person = yield* sessionPerson(session);
-          if (person === null) return true;
-          const { personId } = person;
-          if (personId === null) return false;
-          // The cheap answers first: a grant on the project, or on a thread that lives in it.
-          const direct = yield* sql<{ readonly found: number }>`
-            SELECT 1 AS found
-            FROM j5_a2a_person_grant AS held
-            WHERE held.person_id = ${personId}
-              AND (
-                (held.target_kind = 'project' AND held.target_id = ${projectId})
-                OR (held.target_kind = 'thread' AND EXISTS (
-                  SELECT 1 FROM orchestration_v2_projection_threads AS thread
-                  WHERE thread.thread_id = held.target_id
-                    AND thread.project_id = ${projectId}
-                    AND thread.deleted_at IS NULL
-                ))
-              )
-            LIMIT 1
-          `;
-          if (direct.length > 0) return true;
-          // An agent beneath a granted thread can live in another project; its thread is in the
-          // guest's sidebar, and so is that project.
-          const threads = yield* sql<{ readonly thread_id: string }>`
-            SELECT thread_id FROM orchestration_v2_projection_threads
-            WHERE project_id = ${projectId} AND deleted_at IS NULL
-          `;
-          for (const thread of threads) {
-            if ((yield* threadLevels(personId, thread.thread_id as ThreadId)).length > 0) {
-              return true;
-            }
-          }
-          return false;
-        },
-        Effect.mapError(storage("read whether a project is in a person's sidebar")),
-      ),
-
-      subscribeGrantChanges: PubSub.subscribe(grantChanges),
+      subscribeChanges: PubSub.subscribe(changes),
+      announce,
     });
   }),
 );

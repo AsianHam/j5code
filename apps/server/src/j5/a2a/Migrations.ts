@@ -39,7 +39,12 @@ import Migration0035 from "./migrations/035_GuestLinks.ts";
 import Migration0036 from "./migrations/036_OpenLinks.ts";
 import Migration0037 from "./migrations/037_PersonNames.ts";
 import Migration0038 from "./migrations/038_OpenLinkJoins.ts";
-import Migration0039 from "./migrations/039_RequestReplay.ts";
+import Migration0039 from "./migrations/039_PeopleAndLevels.ts";
+import Migration0040 from "./migrations/040_Links.ts";
+import Migration0041 from "./migrations/041_SharedConversation.ts";
+import Migration0042 from "./migrations/042_EveryoneHereAsks.ts";
+import Migration0043 from "./migrations/043_TaskSchedulers.ts";
+import Migration0044 from "./migrations/044_RequestReplay.ts";
 
 export const J5_A2A_MIGRATIONS_TABLE = "j5_a2a_migrations";
 
@@ -89,7 +94,12 @@ export const migrationEntries = [
   // 37 sits in the layer below 36 in the stack that introduced both; ids are never renumbered.
   [37, "PersonNames", Migration0037],
   [38, "OpenLinkJoins", Migration0038],
-  [39, "RequestReplay", Migration0039],
+  [39, "PeopleAndLevels", Migration0039],
+  [40, "Links", Migration0040],
+  [41, "SharedConversation", Migration0041],
+  [42, "EveryoneHereAsks", Migration0042],
+  [43, "TaskSchedulers", Migration0043],
+  [44, "RequestReplay", Migration0044],
 ] as const;
 
 const makeMigrationLoader = (throughId?: number) =>

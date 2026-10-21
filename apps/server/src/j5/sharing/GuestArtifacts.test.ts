@@ -11,7 +11,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { J5_CLIENT_READ_WS_METHODS } from "@t3tools/contracts/j5";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -23,13 +22,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
 import * as ServerConfig from "../../config.ts";
-import { runMigrations } from "../../persistence/Migrations.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
-import { runJ5A2AMigrations } from "../a2a/Migrations.ts";
 import { artifactHttpRouteLayer } from "../artifacts/ArtifactHttp.ts";
 import * as ArtifactWorkspace from "../artifacts/ArtifactWorkspace.ts";
-import * as GuestGate from "./GuestGate.ts";
-import * as GuestPairing from "./GuestPairing.ts";
+import * as AccessGate from "./AccessGate.ts";
+import { accessLayer } from "./test-support/accessHarness.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 
 /**
@@ -50,13 +47,13 @@ const session = (id: string, subject: string): EnvironmentAuth.AuthenticatedSess
   scopes: SCOPES,
 });
 const SESSIONS = {
-  member: session("session:member", "one-time-token"),
+  member: session("session:member", "administrative-bootstrap"),
   // Holds a grant on the project as a whole.
-  "project-guest": session("session:project-guest", PersonAccess.GUEST_SESSION_SUBJECT),
+  "project-guest": session("session:project-guest", "one-time-token"),
   // Holds a grant on one thread of the same project, and so none of its artifacts.
-  "thread-guest": session("session:thread-guest", PersonAccess.GUEST_SESSION_SUBJECT),
+  "thread-guest": session("session:thread-guest", "one-time-token"),
   // Marked as a guest's, with no person recorded.
-  stray: session("session:stray", PersonAccess.GUEST_SESSION_SUBJECT),
+  stray: session("session:stray", "one-time-token"),
 } as const;
 type Who = keyof typeof SESSIONS;
 
@@ -67,16 +64,10 @@ const upstreamAuth = Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
     Effect.succeed(SESSIONS[request.headers["x-test-session"] as Who]),
 } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]);
 
-const database = Layer.effectDiscard(
-  Effect.gen(function* () {
-    yield* runMigrations();
-    yield* runJ5A2AMigrations();
-  }),
-).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })));
-
 const testLayer = Layer.mergeAll(
-  GuestGate.gateEnvironmentAuth(
-    upstreamAuth.pipe(Layer.provideMerge(GuestPairing.layer), Layer.provideMerge(database)),
+  AccessGate.layerGatedEnvironmentAuth.pipe(
+    Layer.provideMerge(upstreamAuth),
+    Layer.provideMerge(accessLayer),
   ),
   ArtifactWorkspace.layer.pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-guest-artifacts-" })),
@@ -106,37 +97,39 @@ const seeded = Effect.fn("test.seeded")(function* () {
       NULL, NULL, '{}'
     )
   `;
-  const projectGuest = yield* access.createGuest({ displayName: "Project guest" });
+  const projectGuest = yield* access.createPerson({ displayName: "Project guest" });
   yield* access.bindSession({
     sessionId: SESSIONS["project-guest"].sessionId,
     personId: projectGuest.personId,
+    ceiling: null,
   });
-  yield* access.putGrant({
+  yield* access.setLevel({
     personId: projectGuest.personId,
-    target: { kind: "project", projectId: GRANTED },
-    level: "view",
+    scope: { kind: "project", projectId: GRANTED },
+    level: "viewer",
   });
-  const threadGuest = yield* access.createGuest({ displayName: "Thread guest" });
+  const threadGuest = yield* access.createPerson({ displayName: "Thread guest" });
   yield* access.bindSession({
     sessionId: SESSIONS["thread-guest"].sessionId,
     personId: threadGuest.personId,
+    ceiling: null,
   });
   // Collaborate, the higher level: a thread grant gives no artifacts at any level.
-  yield* access.putGrant({
+  yield* access.setLevel({
     personId: threadGuest.personId,
-    target: { kind: "thread", threadId },
-    level: "collaborate",
+    scope: { kind: "thread", threadId },
+    level: "collaborator",
   });
   return { projectGuest };
 });
 
 it("names the artifact read as the only request a guest may POST", () => {
-  assert.deepStrictEqual(GuestGate.guestHttpRule("POST", ARTIFACT_READ_PATH), {
+  assert.deepStrictEqual(AccessGate.accessHttpRule("POST", ARTIFACT_READ_PATH), {
     kind: "projectInBody",
   });
   for (const method of ["GET", "PUT", "DELETE", "PATCH"]) {
     assert.deepStrictEqual(
-      GuestGate.guestHttpRule(method, ARTIFACT_READ_PATH),
+      AccessGate.accessHttpRule(method, ARTIFACT_READ_PATH),
       { kind: "refuse" },
       method,
     );
@@ -151,7 +144,7 @@ it("names the artifact read as the only request a guest may POST", () => {
     `${ARTIFACT_READ_PATH}/../list`,
     "/api/j5/inbox",
   ]) {
-    assert.deepStrictEqual(GuestGate.guestHttpRule("POST", path), { kind: "refuse" }, path);
+    assert.deepStrictEqual(AccessGate.accessHttpRule("POST", path), { kind: "refuse" }, path);
   }
 });
 
@@ -228,9 +221,9 @@ it.layer(testLayer)("a project guest and the project's artifacts", (it) => {
       assert.strictEqual((yield* read("member", OTHER, "plan.md")).status, 200);
 
       // Removing the grant ends it for the next request.
-      yield* access.removeGrant({
+      yield* access.removeLevel({
         personId: projectGuest.personId,
-        target: { kind: "project", projectId: GRANTED },
+        scope: { kind: "project", projectId: GRANTED },
       });
       assert.strictEqual((yield* read("project-guest", GRANTED, "plan.md")).status, 403);
     }).pipe(Effect.scoped),
@@ -246,7 +239,7 @@ const authorized = Effect.fn("test.authorized")(function* (
 ) {
   const authorize = yield* RpcScopeAuthorization.pipe(
     Effect.provide(
-      GuestGate.layerRpcAuthorization(SESSIONS[who], RpcAuthorization.layer(SESSIONS[who].scopes)),
+      AccessGate.layerRpcAuthorization(SESSIONS[who], RpcAuthorization.layer(SESSIONS[who].scopes)),
     ),
   );
   type Handler = Parameters<typeof authorize>[0];
@@ -321,9 +314,9 @@ it.layer(testLayer)("a project guest and the artifact requests on the socket", (
           { projectId: GRANTED },
           Effect.never,
         ).pipe(Effect.forkScoped({ startImmediately: true }));
-        yield* access.removeGrant({
+        yield* access.removeLevel({
           personId: projectGuest.personId,
-          target: { kind: "project", projectId: GRANTED },
+          scope: { kind: "project", projectId: GRANTED },
         });
         assert.strictEqual(
           yield* Fiber.join(open),
@@ -339,11 +332,28 @@ it.layer(testLayer)("a project guest and the artifact requests on the socket", (
       }).pipe(Effect.scoped),
   );
 
-  it.effect("is refused every J5 client read and the stream that says they changed", () =>
+  it.effect("is refused every J5 client read but those that say nothing of anyone's work", () =>
     Effect.gen(function* () {
-      // Whatever a guest holds: none of these is listed, so each is refused by default.
+      // Neither names what changed or whose: agents' display names, and which reads moved.
+      const sayNothing = new Set<string>([
+        J5_CLIENT_READ_WS_METHODS.readParticipantIdentities,
+        J5_CLIENT_READ_WS_METHODS.subscribeReadChanges,
+      ]);
+      // Each answers for the person on the connection alone: their inbox, and a Crew's requests
+      // where they write to its Captain. A device no one has claimed is refused them.
+      const ownOnly = new Set<string>([
+        J5_CLIENT_READ_WS_METHODS.listHumanInbox,
+        J5_CLIENT_READ_WS_METHODS.readOpenInboxCount,
+        J5_CLIENT_READ_WS_METHODS.listCrewProposals,
+        J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests,
+        J5_CLIENT_READ_WS_METHODS.listCrewMemberships,
+      ]);
+      for (const method of ownOnly) {
+        assert.match(yield* authorized("stray", method, {}), /^refused: /, `stray ${method}`);
+      }
       for (const method of Object.values(J5_CLIENT_READ_WS_METHODS)) {
-        assert.isUndefined((GuestGate.GUEST_RPC_RULES as Record<string, unknown>)[method], method);
+        if (sayNothing.has(method) || ownOnly.has(method)) continue;
+        // The Fleet page is the server's: a project or thread scope does not reach it.
         for (const who of ["project-guest", "thread-guest", "stray"] as const) {
           assert.match(
             yield* authorized(who, method, { projectId: GRANTED }),

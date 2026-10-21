@@ -7,7 +7,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { PlaybookStages } from "./PlaybookStages";
 import { j5Environment } from "../state";
 import { useVisibleRefresh } from "../useVisibleRefresh";
-import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 
 /**
  * The visible thread owns this bounded read. It reads again when the server says a playbook run
@@ -19,9 +18,8 @@ export function PlaybookComposerControl(props: {
 }) {
   const environment = useEnvironment(props.environmentId);
   const thread = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
-  // A guest is shown none of a server's Playbooks (Shared server AC24), so none is read.
-  const guest = useGuestEnvironmentIds().has(props.environmentId);
-  const unsupported = guest || j5LedgerSupported(environment?.serverConfig) === false;
+  // A thread's Playbook runs are part of the thread, so anyone who reads it reads them.
+  const unsupported = j5LedgerSupported(environment?.serverConfig) === false;
   const query = useEnvironmentQuery(
     unsupported
       ? null

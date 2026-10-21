@@ -3,15 +3,19 @@ import { seedPlaybookOwners } from "./testFixtures.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
-  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   EventId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import { requiredScopeForRpcMethod } from "../../auth/RpcAuthorization.ts";
-import { J5_PLAYBOOK_WS_METHODS, type PlaybookError } from "@t3tools/contracts/j5";
+import {
+  J5_PLAYBOOK_WS_METHODS,
+  LEVEL_PERMISSIONS,
+  type PlaybookError,
+} from "@t3tools/contracts/j5";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -198,13 +202,16 @@ const codeOf = <A>(call: Effect.Effect<A, { readonly code: string }>) =>
     Effect.map((error) => error.code),
   );
 
-it("requires operate scope to delete or rename a playbook", () => {
+it("requires an Owner's settings permission to change the library or read its folders", () => {
   for (const method of [
+    J5_PLAYBOOK_WS_METHODS.savePlaybook,
+    J5_PLAYBOOK_WS_METHODS.setFolders,
     J5_PLAYBOOK_WS_METHODS.deletePlaybook,
     J5_PLAYBOOK_WS_METHODS.renamePlaybook,
+    J5_PLAYBOOK_WS_METHODS.readSources,
   ]) {
-    assert.equal(requiredScopeForRpcMethod(method), AuthOrchestrationOperateScope);
-    assert.equal(PLAYBOOK_RPC_SCOPES[method], AuthOrchestrationOperateScope);
+    assert.equal(requiredScopeForRpcMethod(method), AuthSettingsWriteScope);
+    assert.notInclude(LEVEL_PERMISSIONS.collaborator, AuthSettingsWriteScope);
   }
 });
 
@@ -574,15 +581,6 @@ it.effect("manages the environment library over RPC without a project", () =>
   Effect.gen(function* () {
     const { handlers, store } = yield* fixture;
     const save = J5_PLAYBOOK_WS_METHODS.savePlaybook;
-    assert.equal(PLAYBOOK_RPC_SCOPES[save], AuthOrchestrationOperateScope);
-    assert.equal(
-      PLAYBOOK_RPC_SCOPES[J5_PLAYBOOK_WS_METHODS.setFolders],
-      AuthOrchestrationOperateScope,
-    );
-    assert.equal(
-      PLAYBOOK_RPC_SCOPES[J5_PLAYBOOK_WS_METHODS.readSources],
-      AuthOrchestrationReadScope,
-    );
     const yaml = stringify(definition("Shared library"));
     yield* handlers[save]({ name: "shared", yaml });
     const library = yield* handlers[J5_PLAYBOOK_WS_METHODS.readLibrary]({

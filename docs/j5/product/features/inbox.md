@@ -13,9 +13,11 @@ The inbox is the one place a person looks to find everything that is waiting on 
 
 ## Definition
 
-The **inbox** is a person's queue of open asks addressed to them. It is **person-scoped, not project-scoped**: a person has one inbox across every environment the client connects to, every item wears the project it came from and, when more than one environment is connected, its environment, and no project selection elsewhere in the app hides an item.
+The **inbox** is a person's queue of open asks, live Crew-seat provider approvals, and placed agents' pending native questions. It is **person-scoped, not project-scoped**: a person has one inbox across every environment the client connects to, every item wears the project it came from and, when more than one environment is connected, its environment, and no project selection elsewhere in the app hides an item.
 
-The inbox is **pure**. It holds only asks that agents deliberately sent to the person — nothing inferred, no automatically promoted stalls, no plain messages, no platform alerts. Every item blocks a sender, so the count on the bell means exactly "things waiting on me." The purity has a sender-side mirror: an agent can send a person only an ask; a plain message to a person is refused, because if the person must see something then seeing it is the obligation. The person, in turn, never opens an ask through the platform — their channel to any agent is that agent's thread — and their only act on the ledger is the answer that closes an Exchange.
+The Inbox holds requests the person can act on: agent-addressed Exchanges, live Crew-seat provider approvals, pending Crew-member requests, and native questions on J5-spawned Peer Agents and live Crew seats. Native questions are links to the agent's original question form, not Exchanges or another answering form. A pending question counts whether it blocks the agent or the provider lets it continue working. Resolved, expired or cancelled questions leave the list as the server reports the change. Captains' own requests stay inline in the thread the person watches, and native or delegated Subagents use upstream's parent routing.
+
+A plain message to a person is refused; agents send an ask when a reply is owed. The person never opens an ask through the platform: their channel to an agent is its thread, and their only act on the ledger is the answer that closes an Exchange.
 
 An agent may have several asks open with the same person at once, each its own item. A follow-up to a question the person has not yet answered — sent by the agent with the open Exchange's id — joins that item and is shown beneath the original ask, so the person always reads the whole question.
 
@@ -29,7 +31,7 @@ A server puts asks only in the inboxes of people who can write to the asking age
 
 **Several people.** Where more than one person can write to an agent's thread, the agent can ask one of them, or **everyone here**: everyone who can write to its thread when the ask is read. An ask to everyone appears in each of their inboxes, marked as for everyone, and is counted on each of their bells. The first reply closes it for all of them, as any reply closes an ask, and for the others it moves to the Replied shelf showing who answered. A reply that arrives after that is refused and changes nothing. A person who had started typing an answer keeps the item in place, with their words, and sees who answered. In a thread only one person can write to, there is no "everyone here": the agent asks that person ([shared conversations](shared-conversations.md)).
 
-The inbox is reached from a bell in the rail that carries the count of open items and opens a full page.
+The Inbox is reached from a bell in the rail that counts open asks, Crew requests, seat approvals and native-question links, and opens a full page. It is available on web and desktop, over local, remote and tunnel connections; mobile has no J5 Inbox surface.
 
 The inbox is **not** a backlog (a non-blocking note an agent wants to keep is a Memo), **not** an alerts feed (an agent that fell over is a measured fact for the Fleet page, not an obligation), and **not** project-scoped.
 
@@ -37,7 +39,7 @@ The inbox is **not** a backlog (a non-blocking note an agent wants to keep is a 
 
 ### Contents
 
-1. The inbox lists every open ask addressed to the person from every project on every connected environment, and nothing else: no plain messages, no inferred items, no promoted stalls, no platform alerts.
+1. The Inbox lists open asks addressed to the person, live Crew-seat provider approvals, pending Crew-member requests, and actionable pending native questions from J5-spawned Peer Agents and live Crew seats across connected environments. Native questions open the original thread form and disappear when resolved; they are not answered as Exchanges. No plain messages or inferred stalls are added.
 2. A plain message from an agent to a person is refused at the tool; the person's row in the address book says it cannot receive one.
 3. Several open asks from the same agent to the same person appear as separate items; a follow-up that references an open ask by its Exchange id appears beneath that ask's original text in the same item.
 4. The bell's count equals the number of open items.
@@ -63,7 +65,7 @@ The inbox is **not** a backlog (a non-blocking note an agent wants to keep is a 
 ### Several people
 
 14. A server adds an ask only to the inbox of a person who can write to the asking agent's thread, and its agents are offered as someone to ask only the people who can write to their thread.
-15. In a thread more than one person can write to, an agent's address book offers "everyone here", and an ask to it reaches the inbox of everyone who can write to that thread when the ask is read, marked as for everyone.
+15. In a thread more than one person can write to, an agent's address book offers "everyone here", and an ask to it reaches the inbox of everyone who can write to that thread when the ask is read, marked as for everyone. From a thread only one person can write to, "everyone here" is not offered, and an ask to it is refused, naming that person.
 16. The first reply to an ask to everyone closes it for all of them, and for the others it moves to the Replied shelf naming who answered; a later reply is refused and changes nothing.
 17. An open item a person has typed an answer into stays in place when it closes, with their text and a line saying who answered or that the agent withdrew it, until they clear the text or leave the page.
 
@@ -86,3 +88,4 @@ The inbox is **not** a backlog (a non-blocking note an agent wants to keep is a 
 - 2026-10-07 — Squadrons retired: an item names the project its sender works in (Jackson, 2026-10-05; [#412](https://github.com/Jacksondr5/j5code/issues/412)).
 - 2026-10-10 — a server adds nothing to a guest's inbox (AC14); an ask in a shared conversation is defined by [shared conversations](shared-conversations.md) (Jackson; [record](../../worklog/2026-10-09-multi-player-session.md)).
 - 2026-10-17 — several people (Jackson; [record](../../worklog/2026-10-16-people-and-access-session.md)): asks go to the people who can write to the asking agent's thread, and Viewers have none (AC14 rewritten from the guest rule); an agent can ask everyone here, the first reply closing it for all (AC15, AC16); an item being answered stays in place when it closes (AC17).
+- 2026-10-18 — "everyone here" is offered, and taken, only while more than one person can write to the asking agent's thread; from a thread only one person can write to, the agent asks that person (AC15; Jackson, in the review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).

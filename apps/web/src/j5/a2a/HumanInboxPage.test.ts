@@ -181,13 +181,14 @@ it("retries an uncertain answer on its original server with the same request id 
   assert.deepStrictEqual(
     send.mock.calls.map(([environmentId, input]) => [
       environmentId,
-      input.personId,
+      "personId" in input,
       input.clientRequestId,
     ]),
+    // The request names no person: the server answers as the connection's own.
     [
-      ["remote", "human:remote", "request:remote"],
-      ["other", "human:other", "request:other"],
-      ["remote", "human:remote", "request:remote"],
+      ["remote", false, "request:remote"],
+      ["other", false, "request:other"],
+      ["remote", false, "request:remote"],
     ],
   );
   assert.deepStrictEqual(refresh.mock.calls, [

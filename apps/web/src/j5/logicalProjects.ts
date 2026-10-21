@@ -1,7 +1,11 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import { useSettingsProjectGroups } from "../components/settings/useSettingsProjectGroups";
+import { useClientSettings } from "../hooks/useSettings";
+import { selectProjectGroupingSettings } from "../logicalProject";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import { useProjects } from "../state/entities";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 
 /** The slice of upstream's logical project (a sidebar project snapshot) the J5 views need. */
 export interface LogicalProjectGroup {
@@ -29,8 +33,25 @@ export function createLogicalProjectLookup<Group extends LogicalProjectGroup>(
     groupByProject.get(`${environmentId}\u0000${projectId}`);
 }
 
-/** Upstream's logical projects for the J5 views that read a project-keyed ledger (Fleet, Inbox). */
+/**
+ * Upstream's logical projects for the J5 views that read a project-keyed ledger (Fleet, Inbox),
+ * grouped as Settings groups them but from every server's projects: Settings keeps to the servers
+ * the person owns, and an ask can come from any server.
+ */
 export function useLogicalProjects() {
-  const groups = useSettingsProjectGroups();
-  return useMemo(() => createLogicalProjectLookup(groups), [groups]);
+  const projects = useProjects();
+  const settings = useClientSettings(selectProjectGroupingSettings);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
+  return useMemo(() => {
+    const labels = new Map(environments.map((entry) => [entry.environmentId, entry.label]));
+    return createLogicalProjectLookup(
+      buildSidebarProjectSnapshots({
+        projects,
+        settings,
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: (id) => labels.get(id) ?? null,
+      }),
+    );
+  }, [environments, primaryEnvironmentId, projects, settings]);
 }

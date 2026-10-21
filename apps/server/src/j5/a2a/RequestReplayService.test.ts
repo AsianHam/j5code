@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as SqlClient from "effect/sql/SqlClient";
-import migration from "./migrations/039_RequestReplay.ts";
+import migration from "./migrations/044_RequestReplay.ts";
 import { RequestReplayService, layer } from "./RequestReplayService.ts";
 
 it.effect("persists the original request across database reopen and refuses changed reuse", () =>

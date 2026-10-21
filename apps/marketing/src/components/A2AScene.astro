@@ -9,24 +9,24 @@
  */
 ---
 
-<svg class="a2a" viewBox="0 0 720 170" role="img" aria-label="Three agents exchanging asks and replies" data-motion>
-  <path class="a2a-water" d="M0 150 Q 60 142 120 150 T 240 150 T 360 150 T 480 150 T 600 150 T 720 150" />
-  <path class="a2a-arc" d="M98 86 Q 228 14 358 86" />
-  <path class="a2a-arc" d="M618 86 Q 488 14 358 86" />
-  <path class="a2a-arc" d="M98 86 Q 358 -40 618 86" />
+<svg class="a2a" viewBox="0 0 480 200" role="img" aria-label="Three agents exchanging asks and replies" data-motion>
+  <path class="a2a-water" d="M0 180 Q 60 172 120 180 T 240 180 T 360 180 T 480 180" />
+  <path class="a2a-arc" d="M88 103 Q 166 27 244 103" />
+  <path class="a2a-arc" d="M400 103 Q 322 27 244 103" />
+  <path class="a2a-arc" d="M88 103 Q 244 -23 400 103" />
 
-  <g transform="translate(60 88) scale(1.2)"><g class="bob a2a-b1"><use class="boat a2a-flag a2a-flag-a" href="#j5-boat" /></g></g>
-  <g transform="translate(320 88) scale(1.2)"><g class="bob a2a-b2"><use class="boat a2a-flag a2a-flag-b" href="#j5-boat" /></g></g>
-  <g transform="translate(580 88) scale(1.2)"><g class="bob a2a-b3"><use class="boat a2a-flag a2a-flag-c" href="#j5-boat" /></g></g>
+  <g transform="translate(33.6 105.2) scale(1.7)"><g class="bob a2a-b1"><use class="boat a2a-flag a2a-flag-a" href="#j5-boat" /></g></g>
+  <g transform="translate(189.6 105.2) scale(1.7)"><g class="bob a2a-b2"><use class="boat a2a-flag a2a-flag-b" href="#j5-boat" /></g></g>
+  <g transform="translate(345.6 105.2) scale(1.7)"><g class="bob a2a-b3"><use class="boat a2a-flag a2a-flag-c" href="#j5-boat" /></g></g>
 
-  <circle class="a2a-dot a2a-dot--ask a2a-d1" r="4.5" />
-  <circle class="a2a-dot a2a-dot--reply a2a-d2" r="4.5" />
-  <circle class="a2a-dot a2a-dot--ask a2a-d3" r="4.5" />
-  <circle class="a2a-dot a2a-dot--reply a2a-d4" r="4.5" />
-  <circle class="a2a-dot a2a-dot--ask a2a-d5" r="4.5" />
-  <circle class="a2a-dot a2a-dot--reply a2a-d6" r="4.5" />
-  <circle class="a2a-dot a2a-dot--ask a2a-d7" r="4.5" />
-  <circle class="a2a-dot a2a-dot--reply a2a-d8" r="4.5" />
+  <circle class="a2a-dot a2a-dot--ask a2a-d1" r="5.5" />
+  <circle class="a2a-dot a2a-dot--reply a2a-d2" r="5.5" />
+  <circle class="a2a-dot a2a-dot--ask a2a-d3" r="5.5" />
+  <circle class="a2a-dot a2a-dot--reply a2a-d4" r="5.5" />
+  <circle class="a2a-dot a2a-dot--ask a2a-d5" r="5.5" />
+  <circle class="a2a-dot a2a-dot--reply a2a-d6" r="5.5" />
+  <circle class="a2a-dot a2a-dot--ask a2a-d7" r="5.5" />
+  <circle class="a2a-dot a2a-dot--reply a2a-d8" r="5.5" />
 
 </svg>
 
@@ -34,7 +34,7 @@
   .a2a {
     display: block;
     width: 100%;
-    max-width: 760px;
+    max-width: 520px;
     height: auto;
     margin: 0 auto;
     overflow: visible;
@@ -87,14 +87,14 @@
   .a2a-dot--ask { fill: var(--msg-ask); }
   .a2a-dot--reply { fill: var(--msg-reply); }
 
-  .a2a-d1 { offset-path: path("M98 86 Q 228 14 358 86"); animation-name: a2a-hop-1; }
-  .a2a-d2 { offset-path: path("M358 86 Q 228 14 98 86"); animation-name: a2a-hop-2; }
-  .a2a-d3 { offset-path: path("M618 86 Q 488 14 358 86"); animation-name: a2a-hop-3; }
-  .a2a-d4 { offset-path: path("M358 86 Q 488 14 618 86"); animation-name: a2a-hop-4; }
-  .a2a-d5 { offset-path: path("M98 86 Q 358 -40 618 86"); animation-name: a2a-hop-5; }
-  .a2a-d6 { offset-path: path("M618 86 Q 358 -40 98 86"); animation-name: a2a-hop-6; }
-  .a2a-d7 { offset-path: path("M358 86 Q 228 14 98 86"); animation-name: a2a-hop-7; }
-  .a2a-d8 { offset-path: path("M98 86 Q 228 14 358 86"); animation-name: a2a-hop-8; }
+  .a2a-d1 { offset-path: path("M88 103 Q 166 27 244 103"); animation-name: a2a-hop-1; }
+  .a2a-d2 { offset-path: path("M244 103 Q 166 27 88 103"); animation-name: a2a-hop-2; }
+  .a2a-d3 { offset-path: path("M400 103 Q 322 27 244 103"); animation-name: a2a-hop-3; }
+  .a2a-d4 { offset-path: path("M244 103 Q 322 27 400 103"); animation-name: a2a-hop-4; }
+  .a2a-d5 { offset-path: path("M88 103 Q 244 -23 400 103"); animation-name: a2a-hop-5; }
+  .a2a-d6 { offset-path: path("M400 103 Q 244 -23 88 103"); animation-name: a2a-hop-6; }
+  .a2a-d7 { offset-path: path("M244 103 Q 166 27 88 103"); animation-name: a2a-hop-7; }
+  .a2a-d8 { offset-path: path("M88 103 Q 166 27 244 103"); animation-name: a2a-hop-8; }
 
   @keyframes a2a-hop-1 { 0%, 2% { offset-distance: 0%; opacity: 0; } 3% { opacity: 1; } 9% { opacity: 1; } 10%, 100% { offset-distance: 100%; opacity: 0; } }
   @keyframes a2a-hop-2 { 0%, 12% { offset-distance: 0%; opacity: 0; } 13% { opacity: 1; } 19% { opacity: 1; } 20%, 100% { offset-distance: 100%; opacity: 0; } }

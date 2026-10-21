@@ -1,22 +1,12 @@
 import type { AdvertisedEndpoint } from "@t3tools/contracts";
-import {
-  isMarkedShareLink,
-  markedAsShareLink,
-  type SharingOpenLink,
-  type SharingPerson,
-} from "@t3tools/contracts/j5";
-import * as DateTime from "effect/DateTime";
+import { isMarkedShareLink, markedAsShareLink } from "@t3tools/contracts/j5";
 import { describe, expect, it } from "vite-plus/test";
 
 import { getPairingTokenFromUrl } from "../../pairingUrl";
 import {
-  activeOpenLinkFor,
-  guestsMatchingName,
-  joinLinkMeta,
   lifetimeLeft,
   linkRouteFromBaseUrl,
   linkRoutesFromEndpoints,
-  namedLinkMeta,
   onlyThisMachineCanReach,
 } from "./shareLink.logic";
 
@@ -38,31 +28,6 @@ const endpoint = (overrides: Partial<AdvertisedEndpoint>): AdvertisedEndpoint =>
     ...overrides,
   }) as AdvertisedEndpoint;
 
-const openLink = (overrides: Partial<SharingOpenLink>): SharingOpenLink =>
-  ({
-    linkId: "link-1",
-    threadId: "thread-1",
-    createdAt: DateTime.makeUnsafe(NOW - DAY),
-    expiresAt: DateTime.makeUnsafe(NOW + 6 * DAY),
-    revoked: false,
-    joined: [],
-    ...overrides,
-  }) as SharingOpenLink;
-
-const person = (overrides: Partial<SharingPerson>): SharingPerson =>
-  ({
-    personId: "person-1",
-    kind: "guest",
-    displayName: "Marco R.",
-    nameSelfGiven: false,
-    joinedOpenLinkId: null,
-    createdAt: "2026-10-12T00:00:00Z",
-    grants: [],
-    devices: [],
-    pendingLinks: [],
-    ...overrides,
-  }) as SharingPerson;
-
 describe("link routes", () => {
   it("puts the credential in a pairing address on the route's own host", () => {
     const [route] = linkRoutesFromEndpoints([endpoint({})]);
@@ -79,7 +44,7 @@ describe("link routes", () => {
     expect(isMarkedShareLink("https://app.example/pair#token=SECRET")).toBe(false);
   });
 
-  it("sends a named link through the hosted app where the route allows, and a join link never", () => {
+  it("opens a link on the server itself, never in the hosted app", () => {
     const [route] = linkRoutesFromEndpoints([
       endpoint({
         id: "tailscale-magicdns:openclaw",
@@ -88,13 +53,10 @@ describe("link routes", () => {
         compatibility: { hostedHttpsApp: "compatible" } as AdvertisedEndpoint["compatibility"],
       }),
     ]);
-    expect(new URL(route!.urlFor("SECRET")).searchParams.get("host")).toBe(
-      "https://openclaw.tail1234.ts.net",
-    );
-    expect(route!.directUrlFor("SECRET")).toBe(
+    expect(route!.urlFor("SECRET")).toBe(
       "https://openclaw.tail1234.ts.net/pair#token=SECRET&j5share=1",
     );
-    expect(route!.directDetail).toBe("Devices on your private network");
+    expect(route!.detail).toBe("Devices on your private network");
   });
 
   it("leaves out an address the server is not reachable at now", () => {
@@ -145,65 +107,5 @@ describe("how long a link has left", () => {
 
   it("has nothing left once it has passed", () => {
     expect(lifetimeLeft(NOW - 1, NOW)).toBeNull();
-  });
-});
-
-describe("the line under a link", () => {
-  it("says a named link works once, when it expires and what it opens", () => {
-    expect(
-      namedLinkMeta({
-        expiresAtMs: NOW + 7 * DAY,
-        nowMs: NOW,
-        level: "view",
-        targetTitle: "Replay fixture: proposed_plan",
-      }),
-    ).toBe("Works once. Expires in 7 days. View on Replay fixture: proposed_plan.");
-  });
-
-  it("counts the people who joined through a join link", () => {
-    expect(joinLinkMeta({ expiresAtMs: NOW + 6 * DAY, nowMs: NOW, joined: 2 })).toBe(
-      "Expires in 6 days. 2 people have joined.",
-    );
-    expect(joinLinkMeta({ expiresAtMs: NOW + 6 * DAY, nowMs: NOW, joined: 1 })).toBe(
-      "Expires in 6 days. 1 person has joined.",
-    );
-    expect(joinLinkMeta({ expiresAtMs: NOW + 6 * DAY, nowMs: NOW, joined: 0 })).toBe(
-      "Expires in 6 days. Nobody has joined yet.",
-    );
-  });
-});
-
-describe("a thread's join link", () => {
-  it("is the one still in force for that thread", () => {
-    const links = [
-      openLink({ linkId: "revoked", revoked: true }),
-      openLink({ linkId: "expired", expiresAt: DateTime.makeUnsafe(NOW - 1) }),
-      openLink({ linkId: "other-thread", threadId: "thread-2" as SharingOpenLink["threadId"] }),
-      openLink({ linkId: "live" }),
-    ];
-    expect(activeOpenLinkFor(links, "thread-1", NOW)?.linkId).toBe("live");
-  });
-
-  it("is none when every link was revoked or has expired", () => {
-    expect(activeOpenLinkFor([openLink({ revoked: true })], "thread-1", NOW)).toBeNull();
-  });
-});
-
-describe("matching a typed name to someone already here", () => {
-  const people = [
-    person({}),
-    person({ personId: "person-2", displayName: "Priya K." }),
-    person({ personId: "member", kind: "member", displayName: "Marco the member" }),
-  ];
-
-  it("finds guests by any part of the name, whatever the case", () => {
-    expect(guestsMatchingName(people, "  marc").map((match) => match.personId)).toEqual([
-      "person-1",
-    ]);
-  });
-
-  it("offers no one before anything is typed, and never a member", () => {
-    expect(guestsMatchingName(people, " ")).toEqual([]);
-    expect(guestsMatchingName(people, "member")).toEqual([]);
   });
 });

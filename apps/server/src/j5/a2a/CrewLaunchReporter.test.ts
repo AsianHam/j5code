@@ -51,6 +51,7 @@ import {
 import { crewSeatBriefMessageId, crewSeatThreadId } from "./crewSeatIds.ts";
 import { participantIdForThread } from "./HomeRegistrar.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
+import { runMigrations } from "../../persistence/Migrations.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
 
@@ -145,6 +146,8 @@ const makeFixture = Effect.fn("test.j5.crewLaunchReporter.fixture")(function* (
     Layer.provideMerge(database),
   );
   const context = yield* Layer.build(storage);
+  // Upstream's tables too: whether the Captain's thread is shared reads its projection.
+  yield* runMigrations().pipe(Effect.provide(context));
   yield* runJ5A2AMigrations().pipe(Effect.provide(context));
   yield* Effect.provide(
     Effect.gen(function* () {

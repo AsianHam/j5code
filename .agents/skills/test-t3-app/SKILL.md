@@ -43,7 +43,7 @@ a subagent left running in the background; it is not a browser fault.
   while the splash screen still shows, and a cold dev server can take longer
   than the default 15 seconds. If the token was consumed or expired, mint a
   fresh one with the `pair` command the setup script printed, or with
-  `node apps/server/src/bin.ts pair` for a plain dev server. Keep using the
+  `node apps/server/src/bin.ts pair --person "<owner name>"` for a plain dev server. Keep using the
   same tab.
 - **Wait.** A URL changes before its page does, and the composer shows before
   a thread's timeline loads. After moving to a new page or opening a thread,

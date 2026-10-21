@@ -70,8 +70,11 @@ it("maps each ledger event to the reads it puts out of date", () => {
   );
 });
 
-it("counts an approval among the turn items, and no other turn item", () => {
+it("refreshes Inbox requests for approval and native-question items", () => {
   assert.isTrue(changesRuntimeRequests(storedEvent("runtime-request.updated")));
+  assert.isTrue(
+    changesRuntimeRequests(storedEvent("turn-item.updated", { type: "user_input_request" })),
+  );
   assert.isTrue(
     changesRuntimeRequests(storedEvent("turn-item.updated", { type: "approval_request" })),
   );

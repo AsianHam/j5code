@@ -36,7 +36,7 @@ export function useCanOperateThread(
 const guestEnvironmentIdsAtom = Atom.make((get) => {
   const ids = new Set<EnvironmentId>();
   for (const id of get(environmentCatalog.catalogValueAtom).entries.keys()) {
-    if (get(j5Sharing.isGuest(id))) ids.add(id);
+    if (get(j5Sharing.isNarrow(id))) ids.add(id);
   }
   return ids as ReadonlySet<EnvironmentId>;
 });

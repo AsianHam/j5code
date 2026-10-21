@@ -1,8 +1,10 @@
 import {
+  AuthSessionId,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   CLIENT_GUARDED_RPC_SCOPES,
   J5_AGENT_PERSONA_WS_METHODS,
   J5_ARTIFACT_WS_METHODS,
@@ -14,10 +16,16 @@ import {
   WsRpcGroup,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
-import { J5_CLIENT_ACTION_WS_METHODS, J5_PLAYBOOK_WS_METHODS } from "@t3tools/contracts/j5";
+import {
+  J5_ACCESS_WS_METHODS,
+  J5_CLIENT_ACTION_WS_METHODS,
+  J5_PEOPLE_WS_METHODS,
+  J5_PLAYBOOK_WS_METHODS,
+} from "@t3tools/contracts/j5";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
@@ -28,7 +36,10 @@ import { CrewRuntimeRequestConflictError } from "./a2a/CrewRuntimeRequestService
 import { CrewStopNotFoundError, CrewStopOperationError } from "./a2a/CrewStopService.ts";
 import { ArchiveCrewPartialFailureError } from "./a2a/ArchiveCrewService.ts";
 import { A2AExchangeNotOpenError } from "./a2a/SendService.ts";
-import { ExchangeId, LedgerMessageId } from "./a2a/contracts.ts";
+import { ExchangeId, LedgerMessageId, ParticipantId } from "./a2a/contracts.ts";
+import { PersonAccess } from "./sharing/PersonAccess.ts";
+import { SharedConversation } from "./sharing/SharedConversation.ts";
+import { SharedThreads } from "./sharing/SharedThreads.ts";
 import {
   PeerAdminOperationError,
   PeerAdminService,
@@ -60,6 +71,7 @@ const UNGUARDED_QUERIES = [
   J5_SKILL_LINK_WS_METHODS.list,
   J5_SKILL_LINK_WS_METHODS.inspect,
   J5_SKILL_LINK_WS_METHODS.deletePreview,
+  J5_PLAYBOOK_WS_METHODS.readSources,
 ] as const satisfies ReadonlyArray<keyof typeof J5_RPC_SCOPES>;
 const group = WsRpcGroup.omit(
   ...[...WsRpcGroup.requests.keys()].filter(
@@ -181,6 +193,26 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
             label: "Work VM",
           }),
       }),
+      // The operator's own device: an answer is theirs.
+      Layer.mock(PersonAccess)({
+        sessionReach: () =>
+          Effect.succeed({
+            kind: "person" as const,
+            person: {
+              personId: ParticipantId.make("human:local"),
+              displayName: null,
+              firstOwner: true,
+            },
+            levels: [],
+            serverLevel: "owner" as const,
+            highest: "owner" as const,
+            ceiling: null,
+          }),
+      }),
+      // Written to wherever the operator writes: nothing here is looked up for them.
+      Layer.mock(SharedThreads)({}),
+      Layer.succeed(SqlClient.SqlClient, {} as SqlClient.SqlClient),
+      Layer.mock(SharedConversation)({ rosterDecider: () => Effect.succeed(null) }),
       Layer.mock(ArtifactDeletion)({
         delete: (input) =>
           input.path === "plan.md"
@@ -200,7 +232,10 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
             deletion: yield* ArtifactDeletion,
           });
           return {
-            ...(yield* makeClientActionRpcHandlers()),
+            ...(yield* makeClientActionRpcHandlers({
+              sessionId: AuthSessionId.make("session:operator"),
+              subject: "administrative-bootstrap",
+            })),
             [J5_ARTIFACT_WS_METHODS.deleteArtifact]:
               artifacts[J5_ARTIFACT_WS_METHODS.deleteArtifact],
             [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: () =>
@@ -218,7 +253,7 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   });
 
 const operator = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as const;
-const answer = { personId: "human:local", message: "Yes", clientRequestId: "reply:1" };
+const answer = { message: "Yes", clientRequestId: "reply:1" };
 
 /** How a call ended: served, or refused for want of a scope. */
 const outcome = <A, E extends { readonly _tag: string }>(call: Effect.Effect<A, E>) =>
@@ -298,20 +333,35 @@ const callEach = (client: Effect.Success<ReturnType<typeof clientFor>>["client"]
     ),
   }) satisfies Record<Tested, unknown>;
 
+const READ_SCOPED_COMMANDS = [
+  J5_ACCESS_WS_METHODS.claimDevice,
+  J5_ACCESS_WS_METHODS.setFirstOwnerName,
+  J5_ACCESS_WS_METHODS.leave,
+  J5_ACCESS_WS_METHODS.markRetiredLinksSeen,
+  J5_PEOPLE_WS_METHODS.renameSelf,
+] as const;
+
 describe("J5 client action RPC scopes", () => {
   it("guards every J5 method that needs more than read on the client, with the server's scope", () => {
     const guarded: Readonly<Record<string, AuthEnvironmentScope>> = CLIENT_GUARDED_RPC_SCOPES;
     for (const [method, scope] of Object.entries(J5_RPC_SCOPES)) {
       // A read needs no guard, whichever read scope it carries: the peer list is `access:read`.
+      // A command on the connection's own place needs only read, and is guarded all the same.
+      const readCommand = (READ_SCOPED_COMMANDS as ReadonlyArray<string>).includes(method);
       const unguarded =
-        scope === AuthOrchestrationReadScope ||
-        scope === AuthAccessReadScope ||
-        (UNGUARDED_QUERIES as ReadonlyArray<string>).includes(method);
+        !readCommand &&
+        (scope === AuthOrchestrationReadScope ||
+          scope === AuthAccessReadScope ||
+          (UNGUARDED_QUERIES as ReadonlyArray<string>).includes(method));
       assert.equal(guarded[method], unguarded ? undefined : scope, method);
     }
     // The allowlist names only methods it is needed for.
     for (const method of UNGUARDED_QUERIES) {
-      assert.equal(J5_RPC_SCOPES[method], AuthOrchestrationOperateScope, method);
+      assert.include(
+        [AuthOrchestrationOperateScope, AuthSettingsWriteScope],
+        J5_RPC_SCOPES[method],
+        method,
+      );
     }
     // The preview only reads, so a read-only session sees the roster it cannot approve.
     assert.equal(J5_RPC_SCOPES[ACTIONS.previewCrewProposal], AuthOrchestrationReadScope);
@@ -343,7 +393,9 @@ describe("J5 client action RPC scopes", () => {
                 tag: "EnvironmentAuthorizationError",
                 requiredPermission: method.startsWith("j5.peers.")
                   ? AuthAccessWriteScope
-                  : AuthOrchestrationOperateScope,
+                  : method.startsWith("j5.playbooks.")
+                    ? AuthSettingsWriteScope
+                    : AuthOrchestrationOperateScope,
               },
           method,
         );

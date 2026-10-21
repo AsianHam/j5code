@@ -34,6 +34,7 @@ import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -64,8 +65,9 @@ import {
   runDevDeliverySeed,
   validateIsolatedBaseDir,
 } from "../a2a/test-support/devDeliverySeed.ts";
-import { checkedPersonName } from "../sharing/People.ts";
+import { checkedPersonName } from "../sharing/personNames.ts";
 import * as PersonAccess from "../sharing/PersonAccess.ts";
+import { ensureLocalOperatorHumanPerson } from "../a2a/HumanPersonRegistry.ts";
 import {
   createLiveTestRepo,
   LIVE_TEST_HOLD_RELEASE_FILE,
@@ -464,13 +466,21 @@ function writeSettingsAndPersonas(home: string): void {
 
 /**
  * Names the home's owner the way the running server does, on the database alone: no server is
- * up yet, and a hand-written row would skip what `setOperatorName` keeps true.
+ * up yet, and a hand-written row would skip what `setName` keeps true.
  */
 const nameOwner = (databasePath: string, ownerName: string) =>
-  PersonAccess.PersonAccess.use((access) => access.setOperatorName(ownerName)).pipe(
+  PersonAccess.PersonAccess.use((access) =>
+    // The server records its first owner when it starts; this home has not started yet.
+    SqlClient.SqlClient.use(ensureLocalOperatorHumanPerson).pipe(
+      Effect.andThen(access.firstOwner),
+      Effect.flatMap((owner) =>
+        access.setName({ personId: owner.personId, displayName: ownerName }),
+      ),
+    ),
+  ).pipe(
     Effect.provide(
       PersonAccess.layer.pipe(
-        Layer.provide(SqlitePersistence.layerFromPath(databasePath)),
+        Layer.provideMerge(SqlitePersistence.layerFromPath(databasePath)),
         Layer.provide(NodeServices.layer),
       ),
     ),

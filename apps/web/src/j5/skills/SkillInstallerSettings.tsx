@@ -1,8 +1,4 @@
-import {
-  GUEST_SKILLS_UNAVAILABLE,
-  useGuestEnvironmentIds,
-  useIsGuestEverywhere,
-} from "../sharing/guestAccess";
+import { SKILLS_FOR_OWNERS, useIsOwnerSomewhere, useOwnedEnvironmentIds } from "../sharing/access";
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -73,14 +69,12 @@ function upstreamOf(
   return status?.git.upstream ?? null;
 }
 
-/** Skills belong to the person a server belongs to; a guest is not offered them (AC24). */
+/** Installing skills is for a server's Owners (People and access AC20). */
 export function SkillInstallerSettings() {
-  return useIsGuestEverywhere() ? (
+  return !useIsOwnerSomewhere() ? (
     <SettingsPageContainer>
       <SettingsSection title="Skills">
-        <SettingsUnavailableGroup message={GUEST_SKILLS_UNAVAILABLE}>
-          {null}
-        </SettingsUnavailableGroup>
+        <SettingsUnavailableGroup message={SKILLS_FOR_OWNERS}>{null}</SettingsUnavailableGroup>
       </SettingsSection>
     </SettingsPageContainer>
   ) : (
@@ -89,13 +83,13 @@ export function SkillInstallerSettings() {
 }
 
 function MemberSkillInstallerSettings() {
-  const guestEnvironmentIds = useGuestEnvironmentIds();
+  const ownedEnvironmentIds = useOwnedEnvironmentIds();
   const { environments: everyEnvironment } = useEnvironments();
-  // A server this person is a guest on is left out: its skills are not theirs to manage.
+  // A server this person does not own is left out: its skills are not theirs to manage.
   const environments = useMemo(
     () =>
-      everyEnvironment.filter((environment) => !guestEnvironmentIds.has(environment.environmentId)),
-    [everyEnvironment, guestEnvironmentIds],
+      everyEnvironment.filter((environment) => ownedEnvironmentIds.has(environment.environmentId)),
+    [everyEnvironment, ownedEnvironmentIds],
   );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const orderedEnvironments = useMemo(

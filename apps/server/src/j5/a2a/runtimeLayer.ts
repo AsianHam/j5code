@@ -16,6 +16,7 @@ import { manualLayer as crewLaunchReporterLayer } from "./CrewLaunchReporter.ts"
 import { layer as crewLaunchLayer } from "./CrewLaunchService.ts";
 import { layer as crewProposalLayer } from "./CrewProposalService.ts";
 import { layer as crewSeatFinishNotifierLayer } from "./CrewSeatFinishNotifier.ts";
+import * as NativeQuestionNotifier from "./NativeQuestionNotifier.ts";
 import { layer as captainArchiveCascadeLayer } from "./CrewCaptainArchiveCascade.ts";
 import { layer as crewStopLayer } from "./CrewStopService.ts";
 import { layer as crewRuntimeRequestLayer } from "./CrewRuntimeRequestService.ts";
@@ -49,6 +50,8 @@ import { layer as threadRegistrationLayer } from "./ThreadRegistration.ts";
 import { layer as spawnCompositionLayer } from "./SpawnCompositionService.ts";
 import { layer as spawnWorkspaceLayer } from "./spawnWorkspace.ts";
 import { layer as requestReplayLayer } from "./RequestReplayService.ts";
+import { layer as sharedConversationLayer } from "../sharing/SharedConversation.ts";
+import { layer as sharedThreadsLayer } from "../sharing/SharedThreads.ts";
 import { layer as agentHandoffArtifactDeleteLayer } from "../agents/agentHandoffArtifactDelete.ts";
 import { layer as agentHandoffNudgeQueueLayer } from "../agents/agentHandoffNudgeQueue.ts";
 import { layer as agentHandoffNudgeWorkerLayer } from "../agents/agentHandoffNudgeWorker.ts";
@@ -235,6 +238,7 @@ export const makeJ5A2AAuxiliaryLayer = (
     crewStopProvided,
     crewRuntimeRequestProvided,
     crewSeatFinishNotifierProvided,
+    NativeQuestionNotifier.layer.pipe(Layer.provide(agentCrewInstanceLayer)),
     threadAnalyticsLayer.pipe(Layer.provide(agentCrewInstanceLayer)),
     exchangeAnalyticsLayer,
     fleetSnapshotLayer,
@@ -244,7 +248,10 @@ export const makeJ5A2AAuxiliaryLayer = (
     readChangeFeedsLayer.pipe(Layer.provide(readChangesLayer), Layer.provide(playbookStoreLayer)),
     // Moves the one store's revision when the YAML of an active run changes on disk.
     playbookDefinitionWatchLayer.pipe(Layer.provide(playbookStoreLayer)),
-  ).pipe(Layer.provideMerge(peerRegistryProvided));
+    // Shared conversations: what a person's message carries to the agent, and who wrote it. It
+    // ends a person's asks through the one lifecycle service, whose permit orders every drop.
+    sharedConversationLayer.pipe(Layer.provide(lifecycleServiceProvided)),
+  ).pipe(Layer.provideMerge(sharedThreadsLayer), Layer.provideMerge(peerRegistryProvided));
   // The person's permanent artifact delete, which also marks a handoff that pointed at the file.
   const artifactDeletionProvided = artifactDeletionLayer.pipe(
     Layer.provide(agentHandoffArtifactDeleteLayer),

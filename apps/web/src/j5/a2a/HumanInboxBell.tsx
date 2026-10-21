@@ -9,9 +9,10 @@ import { cn } from "../../lib/utils";
 import { inboxCrewRequests } from "../crew/crewProposals.logic";
 import { mergeCrewProposalSources, useCrewProposalsRefresh } from "../crew/crewProposalsClient";
 import { inboxBadgeCount } from "../crew/crewRuntimeRequests.logic";
-import { useCrewRuntimeRequests } from "../crew/crewRuntimeRequestsClient";
+import { useCrewRuntimeRequests, useNativeQuestionInbox } from "../crew/crewRuntimeRequestsClient";
 import {
   crewProposalSourcesAtom,
+  crewRuntimeRequestSourcesAtom,
   inboxCountQueryAtom,
   inboxCountSourcesAtom,
   refreshJ5Sources,
@@ -33,9 +34,15 @@ export function HumanInboxBell({ onBackdrop }: { readonly onBackdrop: boolean })
   // them beside open questions. The initial roster and the Captain's own requests are answered
   // inline in the Captain's thread and stay off the inbox badge.
   const crewRequests = inboxCrewRequests(mergeCrewProposalSources(crewSources)).length;
-  const runtimeRequests = useCrewRuntimeRequests().length;
+  const runtimeRequests = useCrewRuntimeRequests().length + useNativeQuestionInbox().length;
   const count = inboxBadgeCount(merged.count, crewRequests, runtimeRequests);
-  const incomplete = merged.incomplete;
+  const runtimeSources = useAtomValue(crewRuntimeRequestSourcesAtom);
+  const incomplete =
+    merged.incomplete ||
+    !runtimeSources.isReady ||
+    runtimeSources.sources.some(
+      (source) => source.status !== "ready" && source.status !== "unsupported",
+    );
   useCountRefresh();
   useCrewProposalsRefresh();
 

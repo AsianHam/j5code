@@ -38,6 +38,8 @@ import {
   formatPeerEnvelope,
 } from "./EnvelopeFormatter.ts";
 import { outsideAgentNameRows } from "./outsideAgentNames.ts";
+import { authorLabel, personNameInLine } from "../sharing/authorLabel.ts";
+import type { WriterLevel } from "@t3tools/contracts/j5";
 import { PeerDeliveryRefusalCode } from "./PeerInboundService.ts";
 import { PeerRegistryService } from "./PeerRegistryService.ts";
 import { peerProtocolHeaders, responseProtocolMismatch } from "./peerProtocol.ts";
@@ -309,6 +311,10 @@ export const formatAgentDeliveryEnvelope = (
     readonly originProjectTitle?: string | undefined;
     /** The label an outside agent signed in with. */
     readonly outsideAgentName?: string | undefined;
+    /** How a person who replies from the inbox is named, when the server holds a name. */
+    readonly humanSenderLabel?: string | undefined;
+    /** A shared conversation's note the reply carries. */
+    readonly humanNote?: string | null | undefined;
   },
 ): string => {
   switch (input.envelopeChannel) {
@@ -317,6 +323,8 @@ export const formatAgentDeliveryEnvelope = (
         ? isHumanParticipantId(input.senderId)
           ? formatClosedHumanEnvelope({
               senderId: input.senderId,
+              senderLabel: input.humanSenderLabel,
+              note: input.humanNote,
               message: input.message,
             })
           : formatClosedPeerEnvelope({
@@ -542,10 +550,47 @@ export const live: Layer.Layer<
                     new A2ADeliveryTransportError({ operation: "read outside agent", cause }),
                 ),
               );
+          // A person's reply names them once the server holds a name. In a shared conversation
+          // it was recorded as it was accepted, with their name and level then and any note due,
+          // as a typed message is; elsewhere it is named as the person is named now.
+          const humanSender = !isHumanParticipantId(input.senderId)
+            ? undefined
+            : yield* Effect.gen(function* () {
+                const recorded = yield* sql<{
+                  readonly display_name: string | null;
+                  readonly level: WriterLevel;
+                  readonly note: string | null;
+                }>`
+                  SELECT display_name, level, note FROM j5_a2a_message_author
+                  WHERE thread_id = ${target.thread.id}
+                    AND message_id = ${deliveryMessageId(input.messageId)}
+                `;
+                const row = recorded[0];
+                if (row !== undefined) {
+                  return {
+                    label: authorLabel({ displayName: row.display_name, level: row.level }),
+                    note: row.note,
+                  };
+                }
+                const people = yield* sql<{ readonly display_name: string | null }>`
+                  SELECT display_name FROM j5_a2a_human_person WHERE person_id = ${input.senderId}
+                `;
+                const displayName = people[0]?.display_name ?? null;
+                return displayName === null
+                  ? undefined
+                  : { label: personNameInLine(displayName), note: null };
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new A2ADeliveryTransportError({ operation: "read the person replying", cause }),
+                ),
+              );
           const envelope = formatAgentDeliveryEnvelope({
             ...input,
             originProjectTitle: originProject[0]?.title,
             outsideAgentName: outsideAgent[0]?.display_name,
+            humanSenderLabel: humanSender?.label,
+            humanNote: humanSender?.note ?? null,
           });
           // Upstream links an agent-authored message to its sending thread. A machine and an
           // outside agent have none.

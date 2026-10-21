@@ -1,7 +1,11 @@
 import type { J5ReadSources } from "@t3tools/client-runtime/j5/readSources";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { CrewRuntimeRequestItem } from "@t3tools/contracts/j5";
+import type {
+  CrewRuntimeRequestItem,
+  CrewRuntimeRequestsResponse,
+  NativeQuestionInboxItem,
+} from "@t3tools/contracts/j5";
 
 import type { PendingApproval } from "../../session-logic";
 
@@ -11,11 +15,34 @@ export type ScopedCrewRuntimeRequest = CrewRuntimeRequestItem & {
 
 /** Every environment's seat approvals, each tagged with the environment that must answer it. */
 export const mergeCrewRuntimeRequestSources = (
-  sources: J5ReadSources<ReadonlyArray<CrewRuntimeRequestItem>>,
+  sources: J5ReadSources<CrewRuntimeRequestsResponse>,
 ): ReadonlyArray<ScopedCrewRuntimeRequest> =>
   sources.sources.flatMap((source) =>
-    (source.data ?? []).map((request) => ({ ...request, environmentId: source.environmentId })),
+    (source.data?.requests ?? []).map((request) => ({
+      ...request,
+      environmentId: source.environmentId,
+    })),
   );
+
+export type ScopedNativeQuestionInboxItem = NativeQuestionInboxItem & {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly connected: boolean;
+};
+
+export const mergeNativeQuestionInboxSources = (
+  sources: J5ReadSources<CrewRuntimeRequestsResponse>,
+): ReadonlyArray<ScopedNativeQuestionInboxItem> =>
+  sources.sources
+    .flatMap((source) =>
+      (source.data?.questions ?? []).map((question) => ({
+        ...question,
+        environmentId: source.environmentId,
+        environmentLabel: source.environmentLabel,
+        connected: source.connected,
+      })),
+    )
+    .toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
 
 /** The composer's approval shape; the server lists only approvals the provider can still take. */
 export const toPendingApproval = (request: CrewRuntimeRequestItem): PendingApproval => ({
@@ -29,27 +56,36 @@ export const toPendingApproval = (request: CrewRuntimeRequestItem): PendingAppro
 });
 
 export interface CrewApprovalReadPlan {
-  /** Changes whenever a thread's pending approval appears or clears; empty when none is pending. */
+  /** Changes when pending request flags or the raw summary change; empty when none is pending. */
   readonly key: string;
-  /** The environments worth reading: only those with a thread waiting on an approval. */
+  /** The environments with a pending request worth checking for Inbox items. */
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
 }
 
 /**
- * Which environments the Inbox reads for seat approvals. A seat approval always raises its
- * thread's `hasPendingApprovals`, so an environment with no such thread has nothing to list and
- * costs no request.
+ * Which environments the Inbox reads for seat approvals and placed agents' native questions.
+ * Any pending flag or raw summary starts the read, even on a person-created thread: the server
+ * alone decides placement. Auth refresh and tool-call summaries can trigger an empty read.
  */
 export const crewApprovalReadPlan = (
   shells: ReadonlyArray<
-    Pick<EnvironmentThreadShell, "environmentId" | "id" | "hasPendingApprovals" | "archivedAt">
+    Pick<
+      EnvironmentThreadShell,
+      "environmentId" | "id" | "hasPendingApprovals" | "hasPendingUserInput" | "archivedAt"
+    > & { readonly source?: Pick<EnvironmentThreadShell["source"], "pendingRuntimeRequest"> }
   >,
 ): CrewApprovalReadPlan => {
   const pending = shells
-    .filter((shell) => shell.hasPendingApprovals && shell.archivedAt === null)
+    .filter(
+      (shell) =>
+        (shell.hasPendingApprovals ||
+          shell.hasPendingUserInput ||
+          shell.source?.pendingRuntimeRequest != null) &&
+        shell.archivedAt === null,
+    )
     .map((shell) => ({
       environmentId: shell.environmentId,
-      entry: `${shell.environmentId}/${shell.id}`,
+      entry: `${shell.environmentId}/${shell.id}/${shell.hasPendingApprovals}/${shell.hasPendingUserInput}/${shell.source?.pendingRuntimeRequest?.id ?? ""}`,
     }))
     .toSorted((left, right) => left.entry.localeCompare(right.entry));
   return {

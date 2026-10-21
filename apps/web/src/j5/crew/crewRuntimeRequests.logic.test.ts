@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import type { CrewRuntimeRequestItem } from "@t3tools/contracts/j5";
 
@@ -6,6 +7,7 @@ import {
   crewApprovalReadPlan,
   inboxBadgeCount,
   mergeCrewRuntimeRequestSources,
+  mergeNativeQuestionInboxSources,
   toPendingApproval,
 } from "./crewRuntimeRequests.logic";
 
@@ -31,7 +33,12 @@ const sources = (
 ) =>
   ({
     isReady: true,
-    sources: byEnvironment.map(([environmentId, data]) => ({ environmentId, data })),
+    sources: byEnvironment.map(([environmentId, data]) => ({
+      environmentId,
+      data: { requests: data },
+      environmentLabel: environmentId,
+      connected: true,
+    })),
   }) as never;
 
 const shell = (
@@ -39,7 +46,14 @@ const shell = (
   id: string,
   hasPendingApprovals: boolean,
   archivedAt: string | null = null,
-) => ({ environmentId, id: ThreadId.make(id), hasPendingApprovals, archivedAt });
+  hasPendingUserInput = false,
+) => ({
+  environmentId,
+  id: ThreadId.make(id),
+  hasPendingApprovals,
+  hasPendingUserInput,
+  archivedAt,
+});
 
 describe("Crew seat approvals in the Inbox", () => {
   it("tags each approval with the environment that must answer it", () => {
@@ -109,4 +123,65 @@ describe("Crew seat approvals in the Inbox", () => {
     expect(inboxBadgeCount(null, 0, 1)).toBe(1);
     expect(inboxBadgeCount(null, 0, 0)).toBeNull();
   });
+});
+
+it("reads question-only environments and drops the read when the question resolves", () => {
+  const pending = crewApprovalReadPlan([shell(envA, "peer", false, null, true)]);
+  expect(pending.environmentIds).toEqual([envA]);
+  expect(crewApprovalReadPlan([shell(envA, "peer", false)]).environmentIds).toEqual([]);
+  expect(crewApprovalReadPlan([shell(envA, "peer", false)]).key).not.toBe(pending.key);
+});
+
+it("keeps native question links scoped to the owning environment without adding approvals", () => {
+  const question = {
+    threadId: seatThread,
+    requestId: RuntimeRequestId.make("native"),
+    projectId: "project:1",
+    threadTitle: "Builder",
+    responseCapability: "live" as const,
+    createdAt: "2026-10-19T12:00:00Z",
+  };
+  const input = {
+    isReady: true,
+    sources: [
+      {
+        environmentId: envA,
+        environmentLabel: "A",
+        connected: true,
+        data: { requests: [], questions: [question] },
+      },
+      {
+        environmentId: envB,
+        environmentLabel: "B",
+        connected: false,
+        data: { requests: [], questions: [question] },
+      },
+    ],
+  } as never;
+  expect(
+    mergeNativeQuestionInboxSources(input).map((row) => [row.environmentId, row.connected]),
+  ).toEqual([
+    [envA, true],
+    [envB, false],
+  ]);
+  expect(mergeCrewRuntimeRequestSources(input)).toEqual([]);
+  expect(mergeNativeQuestionInboxSources(sources([[envA, []]]))).toEqual([]);
+  expect(inboxBadgeCount(0, 0, mergeNativeQuestionInboxSources(input).length)).toBe(2);
+});
+
+it("reads an async question summary even when presentation keeps the thread working", () => {
+  const row = {
+    ...shell(envA, "async-peer", false),
+    source: {
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("async"),
+        kind: "user_input" as const,
+        createdAt: DateTime.makeUnsafe("2026-10-19T12:00:00Z"),
+      },
+    },
+  };
+  expect(crewApprovalReadPlan([row]).environmentIds).toEqual([envA]);
+  expect(
+    crewApprovalReadPlan([{ ...row, source: { pendingRuntimeRequest: null } }]).environmentIds,
+  ).toEqual([]);
 });

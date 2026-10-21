@@ -20,7 +20,7 @@ import {
   useThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
-import { GuestLanding } from "../j5/sharing/GuestLanding";
+import { SharedWithYouLanding } from "../j5/sharing/SharedWithYouLanding";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 
@@ -34,9 +34,9 @@ function ChatIndexRouteView() {
   }
 
   return (
-    <GuestLanding>
+    <SharedWithYouLanding>
       <IndexDraftLanding />
-    </GuestLanding>
+    </SharedWithYouLanding>
   );
 }
 

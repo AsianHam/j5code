@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/j5/readSources";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { CrewRuntimeRequestItem } from "@t3tools/contracts/j5";
+import type { CrewRuntimeRequestsResponse } from "@t3tools/contracts/j5";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -13,17 +13,36 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { serverEnvironment } from "../state/server";
 import { environmentThreadShells } from "../state/threads";
-import { j5Sharing } from "./sharing/guestAccess";
+import { createSharingEnvironmentAtoms } from "@t3tools/client-runtime/j5/sharing";
 import { crewApprovalReadPlan, type CrewApprovalReadPlan } from "./crew/crewRuntimeRequests.logic";
 
 export const j5Environment = createJ5EnvironmentAtoms(connectionAtomRuntime);
 
+/** What this client's connection is on each server; read again when people or levels change. */
+export const j5Sharing = createSharingEnvironmentAtoms(connectionAtomRuntime, {
+  rereadOn: j5Environment.rereadOn("sharing"),
+});
+
+/** A server's own reads, which a person who reaches less than the whole server is not sent. */
 const sourcesInput = {
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   stateAtom: environmentCatalog.stateAtom,
   configValueAtom: serverEnvironment.configValueAtom,
-  guestAtom: j5Sharing.isGuest,
+  guestAtom: j5Sharing.isNarrow,
 };
+
+// A person's inbox and the Crew requests in it hold asks from the threads they can write to, at
+// any scope; a Viewer, who can answer none, has none (Inbox AC14).
+const writesNowhere = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const access = get(j5Sharing.connectionAccess(environmentId));
+    return (
+      access?.kind === "unknown" ||
+      (access?.kind === "person" && access.levels.every((held) => held.level === "viewer"))
+    );
+  }),
+);
+const inboxSourcesInput = { ...sourcesInput, guestAtom: writesNowhere };
 
 export const openInboxQueryAtom = (environmentId: EnvironmentId) =>
   j5Environment.inbox({ environmentId, input: { status: "open" } });
@@ -43,33 +62,36 @@ export const peersQueryAtom = (environmentId: EnvironmentId) =>
   j5Environment.peers({ environmentId, input: {} });
 
 export const openInboxSourcesAtom = createJ5ReadSourcesAtom({
-  ...sourcesInput,
+  ...inboxSourcesInput,
   label: "web-j5:inbox-sources",
   capability: "j5ProjectLedger",
   queryAtom: openInboxQueryAtom,
 });
 export const answeredInboxSourcesAtom = createJ5ReadSourcesAtom({
-  ...sourcesInput,
+  ...inboxSourcesInput,
   label: "web-j5:answered-inbox-sources",
   capability: "j5ProjectLedger",
   queryAtom: answeredInboxQueryAtom,
 });
 export const crewProposalSourcesAtom = createJ5ReadSourcesAtom({
-  ...sourcesInput,
+  ...inboxSourcesInput,
   label: "web-j5:crew-proposal-sources",
   capability: "j5ProjectLedger",
   queryAtom: crewProposalsQueryAtom,
 });
 let lastCrewApprovalRead: CrewApprovalReadPlan = { key: "", environmentIds: [] };
-/** The environments with a thread waiting on an approval; the same object until that changes. */
+/** The environments with pending requests; the same object until that changes. */
 export const crewApprovalReadAtom = Atom.make((get) => {
   const next = crewApprovalReadPlan(get(environmentThreadShells.threadShellsAtom));
   if (next.key !== lastCrewApprovalRead.key) lastCrewApprovalRead = next;
   return lastCrewApprovalRead;
 }).pipe(Atom.withLabel("web-j5:crew-approval-read"));
-const NO_CREW_RUNTIME_REQUESTS = AsyncResult.success<ReadonlyArray<CrewRuntimeRequestItem>>([]);
-// An environment with no thread waiting on an approval has no seat approval to list, so it is
-// not asked; the read starts when one of its threads raises the flag.
+const NO_CREW_RUNTIME_REQUESTS = AsyncResult.success<CrewRuntimeRequestsResponse>({
+  requests: [],
+  questions: [],
+});
+// No pending request means no Inbox approval or question to list. Placement is checked by the
+// server after a pending summary or flag starts the read.
 const gatedCrewRuntimeRequestsAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) =>
     get(crewApprovalReadAtom).environmentIds.includes(environmentId)
@@ -79,7 +101,7 @@ const gatedCrewRuntimeRequestsAtom = Atom.family((environmentId: EnvironmentId) 
 );
 // A server without the read fails its source alone; the Inbox shows the rest.
 export const crewRuntimeRequestSourcesAtom = createJ5ReadSourcesAtom({
-  ...sourcesInput,
+  ...inboxSourcesInput,
   label: "web-j5:crew-runtime-request-sources",
   capability: "j5ProjectLedger",
   queryAtom: gatedCrewRuntimeRequestsAtom,
@@ -97,7 +119,7 @@ export const fleetDetailSourcesAtom = createJ5ReadSourcesAtom({
   queryAtom: fleetDetailQueryAtom,
 });
 export const inboxCountSourcesAtom = createJ5ReadSourcesAtom({
-  ...sourcesInput,
+  ...inboxSourcesInput,
   label: "web-j5:inbox-count-sources",
   capability: "j5ProjectLedger",
   queryAtom: inboxCountQueryAtom,
