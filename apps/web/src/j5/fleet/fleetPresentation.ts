@@ -24,7 +24,11 @@ export const fleetProblemNotices = (summary: FleetProblemSummary): ReadonlyArray
 ];
 
 export const fleetBadgeLabel = (summary: FleetProblemSummary) =>
-  `Open fleet, ${summary.agentsWithProblems} ${summary.agentsWithProblems === 1 ? "agent has" : "agents have"} measured problems. ${fleetProblemNotices(summary).join(" ")}`.trim();
+  `${
+    summary.hasReadableSource
+      ? `Open fleet, ${summary.agentsWithProblems} ${summary.agentsWithProblems === 1 ? "agent has" : "agents have"} measured problems.`
+      : "Open fleet, problem count unavailable."
+  } ${fleetProblemNotices(summary).join(" ")}`.trim();
 
 export const fleetSourceIsLive = (
   source: Pick<J5ReadSource<unknown>, "connected" | "status">,

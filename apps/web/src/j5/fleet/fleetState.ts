@@ -72,21 +72,26 @@ export const fleetLiveAgentAtom = Atom.family((key: string) =>
 export const fleetProblemSummaryAtom = Atom.make((get) => {
   const sources = get(fleetSourcesAtom);
   const environments = get(fleetEnvironmentLivenessAtom);
+  const readable = sources.sources.filter(
+    (source) => environments.get(source.environmentId) === true,
+  );
   const summary = summarizeFleetProblems(
     get(fleetFactsAtom),
     get(fleetLiveRowsAtom),
-    sources.isReady &&
-      sources.sources.length > 0 &&
-      sources.sources.every(
-        (source) =>
-          environments.get(source.environmentId) === true && source.data?.asOf !== undefined,
-      ),
+    readable.length === 0
+      ? "unavailable"
+      : sources.isReady &&
+          readable.length === sources.sources.length &&
+          readable.every((source) => source.data?.asOf !== undefined)
+        ? "complete"
+        : "partial",
   );
   const previous = Option.getOrUndefined(get.self<typeof summary>());
   return previous !== undefined &&
     previous.agentsWithProblems === summary.agentsWithProblems &&
     previous.unmeasuredAgents === summary.unmeasuredAgents &&
-    previous.incompleteSources === summary.incompleteSources
+    previous.incompleteSources === summary.incompleteSources &&
+    previous.hasReadableSource === summary.hasReadableSource
     ? previous
     : summary;
 });

@@ -85,7 +85,7 @@ describe("Fleet problem badge", () => {
     expect(registry.get(facts).get("env:sender")?.asks?.awaited).toEqual([ask]);
     expect(registry.get(facts).get("env:sender")?.problems).toEqual([deliveryProblem(true)]);
     expect(
-      summarizeFleetProblems(registry.get(facts), new Map([["env:sender", true]]), true)
+      summarizeFleetProblems(registry.get(facts), new Map([["env:sender", true]]), "complete")
         .agentsWithProblems,
     ).toBe(1);
     stop();
@@ -120,17 +120,18 @@ describe("Fleet problem badge", () => {
       ],
     ]);
     const live = new Map([...facts.keys()].map((key) => [key, key !== "offline:sender"]));
-    expect(summarizeFleetProblems(facts, live, false)).toEqual({
+    expect(summarizeFleetProblems(facts, live, "partial")).toEqual({
       agentsWithProblems: 2,
       unmeasuredAgents: 0,
       incompleteSources: true,
+      hasReadableSource: true,
     });
     // Silence and platform notices have no problem fact; absence must not manufacture one.
     expect(
       summarizeFleetProblems(
         new Map([["notice", derive(shell()).facts]]),
         new Map([["notice", true]]),
-        true,
+        "complete",
       ).agentsWithProblems,
     ).toBe(0);
   });
@@ -139,22 +140,26 @@ describe("Fleet problem badge", () => {
     const unrecordedSeat = deriveFleetFacts({ shell: undefined, ledger, now }).facts;
     const facts = new Map([["seat-without-thread", unrecordedSeat]]);
     const live = new Map([["seat-without-thread", true]]);
-    expect(summarizeFleetProblems(facts, live, true)).toEqual({
+    expect(summarizeFleetProblems(facts, live, "complete")).toEqual({
       agentsWithProblems: 0,
       unmeasuredAgents: 1,
       incompleteSources: false,
+      hasReadableSource: true,
     });
     facts.set("seat-without-thread", { ...unrecordedSeat, problems: [deliveryProblem(true)] });
-    expect(summarizeFleetProblems(facts, live, true).agentsWithProblems).toBe(1);
+    expect(summarizeFleetProblems(facts, live, "complete").agentsWithProblems).toBe(1);
     facts.set("seat-without-thread", { ...unrecordedSeat, asks: undefined });
-    expect(summarizeFleetProblems(facts, live, true)).toEqual({
+    expect(summarizeFleetProblems(facts, live, "complete")).toEqual({
       agentsWithProblems: 0,
       unmeasuredAgents: 1,
       incompleteSources: true,
+      hasReadableSource: true,
     });
-    expect(summarizeFleetProblems(new Map(), new Map(), false).incompleteSources).toBe(true);
+    expect(summarizeFleetProblems(new Map(), new Map(), "unavailable").incompleteSources).toBe(
+      true,
+    );
     live.set("seat-without-thread", false);
-    expect(summarizeFleetProblems(facts, live, false).unmeasuredAgents).toBe(0);
+    expect(summarizeFleetProblems(facts, live, "partial").unmeasuredAgents).toBe(0);
   });
 
   it("updates the badge at the shared deadline, then clears on dispatch, healthy run and Exchange close", () => {
@@ -168,7 +173,7 @@ describe("Fleet problem badge", () => {
       summarizeFleetProblems(
         get(facts),
         new Map(get(rows).map((row) => [row.key, row.live])),
-        true,
+        get(rows).some((row) => row.live) ? "complete" : "unavailable",
       ),
     );
     const registry = AtomRegistry.make({ defaultIdleTTL: 0 });
@@ -213,6 +218,7 @@ describe("Fleet problem badge", () => {
       agentsWithProblems: 0,
       unmeasuredAgents: 0,
       incompleteSources: true,
+      hasReadableSource: false,
     });
     update(healthy, { ...ledger, problems: [deliveryProblem(true)] });
     expect(count()).toBe(1);

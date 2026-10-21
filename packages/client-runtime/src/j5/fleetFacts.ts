@@ -26,17 +26,18 @@ export interface FleetProblemSummary {
   readonly agentsWithProblems: number;
   readonly unmeasuredAgents: number;
   readonly incompleteSources: boolean;
+  readonly hasReadableSource: boolean;
 }
 
 /** Keys identify environment + participant, so repeated project placements count once. */
 export const summarizeFleetProblems = (
   facts: ReadonlyMap<string, FleetDerivedFacts>,
   liveRows: ReadonlyMap<string, boolean>,
-  sourcesComplete: boolean,
+  sourceCoverage: "complete" | "partial" | "unavailable",
 ): FleetProblemSummary => {
   let agentsWithProblems = 0;
   let unmeasuredAgents = 0;
-  let incompleteSources = !sourcesComplete;
+  let incompleteSources = sourceCoverage !== "complete";
   for (const [key, live] of liveRows) {
     if (!live) {
       incompleteSources = true;
@@ -56,7 +57,12 @@ export const summarizeFleetProblems = (
     )
       agentsWithProblems++;
   }
-  return { agentsWithProblems, unmeasuredAgents, incompleteSources };
+  return {
+    agentsWithProblems,
+    unmeasuredAgents,
+    incompleteSources,
+    hasReadableSource: sourceCoverage !== "unavailable",
+  };
 };
 
 export const deriveFleetFacts = (input: {
