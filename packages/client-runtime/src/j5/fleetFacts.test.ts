@@ -191,6 +191,32 @@ describe("Fleet runtime measurements", () => {
     });
   });
 
+  it("measures a steering message without changing the running turn", () => {
+    const receivedAt = "2026-10-19T10:10:00.000Z";
+    const source = shell({
+      status: "running",
+      activityRunStatus: "running",
+      latestRunStartedAt: date,
+      latestVisibleMessage: null,
+      latestUserMessageAt: DateTime.makeUnsafe(receivedAt),
+    });
+    expect(derive(source).facts.lastActivity).toEqual({
+      state: "known",
+      label: "Message received",
+      at: receivedAt,
+    });
+    expect(derive(source).facts.runtime).toMatchObject({ state: "known", status: "working" });
+    const completedAt = "2026-10-19T10:11:00.000Z";
+    expect(
+      derive({
+        ...source,
+        status: "completed",
+        activityRunStatus: null,
+        latestRunCompletedAt: DateTime.makeUnsafe(completedAt),
+      }).facts.lastActivity,
+    ).toEqual({ state: "known", label: "Turn ended", at: completedAt });
+  });
+
   it("ignores bookkeeping updatedAt and labels the latest measured event", () => {
     const source = shell({
       status: "completed",
