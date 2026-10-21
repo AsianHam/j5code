@@ -21,11 +21,11 @@ A person's attention splits across three surfaces, each with one job:
 
 **The Fleet page** is a full-width page in the main view, reached from an entry at the foot of the rail that carries a badge, and from the command palette. It shows **every project of every connected environment on one page**, in three sections that answer three different questions. The sidebar stays as it was; the page does not replace it.
 
-- **Active**, at the top, is one table: what is in motion. Every agent that is running, failed, waiting on a person, idle, or unknown, and every Crew that still has such a seat.
+- **Active**, at the top, is one table: what is in motion. Every agent that is running, failed, waiting on a person, idle, not started, or unknown, and every Crew that still has such a seat.
 - **Settled**, beneath it and collapsed by default, holds the agents and Crews that upstream's settle mechanic has marked done (upstream settles by hand, by merged PR, or by idle days, and the platform settles nothing on its own). Nothing here is running and nothing needs anyone; it is kept in reach, not in view.
 - **Retired**, at the bottom and collapsed by default, lists the Crews that were archived, across every project.
 
-The rows of the Active and Settled tables are **agents**: every agent participant, arranged as the placement tree with siblings in creation order. Each tree's root row names its **project**, and when several environments are merged, the environment beside it; the rows beneath a root belong to the same project, because a placement tree never crosses one. Roots are grouped by upstream's logical project, so the copies of one project on two machines sit together. People are never rows; they appear as counterparties in an agent's asks. Provider-native Subagents never appear; upstream's own panel is their home. Rows keep their positions. A problem marks a row; it never moves one.
+The rows of the Active and Settled tables are **agents**: every agent participant, arranged as the placement tree with siblings in creation order. Each tree's root row names its **project**, and when several environments are merged, the environment beside it; the rows beneath a root belong to the same project, because a placement tree never crosses one. Roots are grouped by upstream's logical project, so the copies of one project on two machines sit together. People are never rows; they appear as counterparties in an agent's asks. Provider-native Subagents never appear; upstream's own panel is their home. A Crew seat's helpers, the Subagents and delegated tasks it starts, are not rows either: they count on the seat's row, as how many are running and how many failed, because a seat's helpers are part of the seat. Rows keep their positions. A problem marks a row; it never moves one.
 
 An agent's **placement** is where it sits in that tree: under its spawner, and at its project's root when no agent in that project spawned it. An agent started from another project, or by an [outside agent](../a2a/index.md#participants), is at the root. Whoever briefs an agent commands it, so the tree shows who is running what. An agent's **provenance** is the recorded fact of how it came to exist — spawned by a named agent, forked from another, or unrecorded — written once and never changed. The named spawner may be an outside agent, which is in no project and is shown by the label it signed in with. Neither restricts who may message whom; the tree carries decisions, never messages.
 
@@ -44,7 +44,9 @@ The **badge** on the rail entry counts agents with a measured problem across eve
 
 A retired agent is never a row. The agents placed beneath it keep working and render at their project's root; a Crew's seats retire with their Crew, and what retired is read in the Retired section rather than in the tree.
 
-Cost is a product surface: what a project costs, and what each of its agents contributed, rolls up on this page and nowhere in between ([fleet vision](../fleet-vision.md)).
+A Crew's header links its notepad, the pages its Captain and seats keep current, so the person can see where the Crew stands without opening every seat; a retired Crew keeps that link.
+
+Cost is a product surface: what a project costs, and what each of its agents contributed, a seat's helpers included, rolls up on this page and nowhere in between ([fleet vision](../fleet-vision.md)).
 
 The Fleet page is **not** the inbox: it never demands a reply. It is **not** a permission or visibility boundary: any agent stays reachable and messageable whatever surface it appears on.
 
@@ -115,6 +117,13 @@ The Fleet page is **not** the inbox: it never demands a reply. It is **not** a p
 34. An agent's placement equals its spawner at creation and changes only by a person's action; a placement tree lives entirely within one project. An agent whose spawner is in another project, or is an outside agent, is placed at the root.
 35. An agent's provenance is recorded at creation and never changes.
 
+### Crews as a team
+
+36. A Crew seat's row counts its running and failed helpers (the delegated tasks it started, and its provider-native Subagents where the provider reports them) from measured state, and a helper never has a row of its own.
+37. A seat's cost includes the cost of the delegated tasks it started.
+38. A seat set to start when called that has not taken a turn reads "Not started", distinct from idle, and keeps its Crew in Active.
+39. A Crew's header links its notepad, and a retired Crew's row links the notepad it left ([Crews](crews.md)).
+
 ## Scenarios
 
 - **Reading the fleet.** The user opens the Fleet page. The Active table lists Billing Migration's coordinator with the two builders it spawned indented beneath it in the order they were created, then Website Redesign's lone reviewer; each root row names its project, and each row shows status, owed and awaited asks, and last activity. Clicking a builder opens its thread. (AC5, AC7, AC8, AC9, AC12, AC14)
@@ -146,3 +155,4 @@ The Fleet page is **not** the inbox: it never demands a reply. It is **not** a p
 - 2026-09-25 — a retired Crew comes back with its Captain when it retired because the Captain was archived, so AC28 no longer says it can never be reactivated; the roster snapshot shows why each seat joined, since the roster records no approver (Bryant; [#312](https://github.com/Jacksondr5/j5code/issues/312)).
 - 2026-10-07 — Squadrons retired: the page reads every project and groups roots by upstream's logical project, the sidebar is upstream's project sidebar, and every thread but a provider Subagent is a participant, so AC1 (the Squadron scope) and AC13 (the footer for threads without a home) are retired. Placement and provenance moved here from the retired Squadron definition: its AC10, AC12 and AC13 are AC34 and AC35 (Jackson, 2026-10-05; [#412](https://github.com/Jacksondr5/j5code/issues/412)).
 - 2026-10-12 — an outside agent can be a spawner: the agent it starts is placed at its project's root and its provenance names the outside agent by its label; AC12 and AC34 (Jackson, 2026-10-11; [#498](https://github.com/Jacksondr5/j5code/issues/498)).
+- 2026-10-21 — Crews as a team: a seat's helpers count on its row and in its cost without rows of their own, a seat that starts when called reads Not started, and a Crew's header and retired row link its notepad; AC36–AC39 (Bryant; [record](../../worklog/2026-10-21-crew-teamwork-session.md)).

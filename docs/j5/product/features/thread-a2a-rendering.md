@@ -21,6 +21,8 @@ A **reply that arrived through the inbox** is rendered as the person who sent it
 
 A **silence notice** is one muted platform line — "⚠ Platform notice · ⟨counterpart⟩'s turn ended without replying · ⟨age⟩" — visibly not a letter from anyone.
 
+A **catch-up turn**, the one turn in which a busy agent reads every message that arrived while it worked ([delivery](../a2a/index.md#delivery)), renders as one card per message, oldest first, each exactly as if it had arrived alone. A **roster-changed notice**, telling a Crew seat who joined its Crew, is one muted platform line naming the seats that joined.
+
 A **sent message** gets no card. In the sender's own thread it is one of the agent's tool calls and renders as upstream renders any tool call; the message itself is a card in the receiver's thread.
 
 Cards are quiet. Cards carry the app's faint block fill, and **badges are the only colorful elements**: amber for something still waiting, quiet green for something resolved. All A2A cards sit on the left; only the person's own messages sit on the right. Long bodies clamp to a couple of lines with the app's usual "more lines" affordance — a display limit, never a content limit. Times are time-since-sent, from the delivery record.
@@ -67,6 +69,11 @@ This is **not** a change to what agents receive, **not** a summary layer, and **
 
 13. Everything that is not A2A traffic — conversation, tool calls, work logs — renders exactly as upstream renders it.
 
+### Crews as a team
+
+14. A catch-up turn renders one card per message it carries, oldest first, each card as AC1–AC3 describe for a message that arrived alone.
+15. A roster-changed notice renders as one muted platform line naming the seats that joined the Crew, visibly distinct from any message card.
+
 ## Scenarios
 
 - **An ask arrives.** An agent in Billing Migration receives "which schema version do we target?" from its Captain: a card with the Captain's name, an amber "Expects reply" badge, "2m", and the question. The agent replies; the Captain's thread shows the reply as a card that says "Replied" and quotes the question, and the agent's own thread shows the send as an ordinary tool call. (AC1, AC3, AC6, AC11)
@@ -83,3 +90,4 @@ This is **not** a change to what agents receive, **not** a summary layer, and **
 - 2026-09-08 — rewritten into the definition shape. Former identifiers: TA1 → AC1–AC3; TA2 → AC4; TA3 → AC5; TA4, TA8 → AC6, AC8; TA5 → AC13; TA6 → AC7; TA7 → AC9; TA9 → Definition (time); TA10 → AC11–AC12. The v0 rendering of the person's inbox reply as `Via Inbox · ⟨person⟩` (the "You" claim needs a person binding the auth principal does not yet have) is build status and lives in the dogfood plan.
 - 2026-10-10 — sent messages no longer get a card (AC6). Upstream's V2 orchestrator sends clients a trimmed tool call, without the message body or the Exchange state the card was drawn from, so the card had not rendered since J5 moved to it; Jackson chose to retire it over exempting sends from the trimming (#522).
 - 2026-10-17 — the sender's name links only when this client can open the sender's thread, on its own server or a connected peer; automations, outside agents and people have no thread to open (AC1). The 2026-08-31 clickable name had not been built (#625).
+- 2026-10-21 — Crews as a team: a catch-up turn renders as one card per message, and a roster-changed notice as one platform line; AC14–AC15 (Bryant; [record](../../worklog/2026-10-21-crew-teamwork-session.md)).

@@ -15,7 +15,7 @@ The inbox is the one place a person looks to find everything that is waiting on 
 
 The **inbox** is a person's queue of open asks, live Crew-seat provider approvals, and placed agents' pending native questions. It is **person-scoped, not project-scoped**: a person has one inbox across every environment the client connects to, every item wears the project it came from and, when more than one environment is connected, its environment, and no project selection elsewhere in the app hides an item.
 
-The Inbox holds requests the person can act on: agent-addressed Exchanges, live Crew-seat provider approvals, pending Crew-member requests, and native questions on J5-spawned Peer Agents and live Crew seats. Native questions are links to the agent's original question form, not Exchanges or another answering form. A pending question counts whether it blocks the agent or the provider lets it continue working. Resolved, expired or cancelled questions leave the list as the server reports the change. Captains' own requests stay inline in the thread the person watches, and native or delegated Subagents use upstream's parent routing.
+The Inbox holds requests the person can act on: agent-addressed Exchanges, live Crew-seat provider approvals, pending Crew-member requests, and native questions on J5-spawned Peer Agents and live Crew seats. Native questions are links to the agent's original question form, not Exchanges or another answering form. A pending question counts whether it blocks the agent or the provider lets it continue working. Resolved, expired or cancelled questions leave the list as the server reports the change. Captains' own requests stay inline in the thread the person watches. A pending Crew-member request is also shown inline above its Captain's composer, where the person is often already watching, and the first answer from either place settles it. A live Crew seat's helpers are part of the seat, so a provider approval pending on a delegated task a seat started is listed under that seat; other native or delegated Subagents use upstream's parent routing.
 
 A plain message to a person is refused; agents send an ask when a reply is owed. The person never opens an ask through the platform: their channel to an agent is its thread, and their only act on the ledger is the answer that closes an Exchange.
 
@@ -69,6 +69,11 @@ The inbox is **not** a backlog (a non-blocking note an agent wants to keep is a 
 16. The first reply to an ask to everyone closes it for all of them, and for the others it moves to the Replied shelf naming who answered; a later reply is refused and changes nothing.
 17. An open item a person has typed an answer into stays in place when it closes, with their text and a line saying who answered or that the agent withdrew it, until they clear the text or leave the page.
 
+### Crews
+
+18. A provider approval pending on a delegated task that a live Crew seat started is listed under that seat and its Crew, counted on the bell, and answerable there; an answer to one already resolved elsewhere is refused and changes nothing.
+19. A pending Crew-member request is shown with the same card in the Inbox and above its Captain's composer, and the first answer from either place settles it in both.
+
 ## Scenarios
 
 - **Two questions, one agent.** An agent in Billing Migration asks the user "merge now or after the audit?" (urgency _soon_) and, separately, "may I delete the old branch?" Two items appear, the _soon_ one first. The agent later follows up on the first by name; the follow-up text appears beneath it. The user answers each in place; each agent-side Exchange closes with the exact text; both items move to the Replied shelf. (AC3, AC5, AC6, AC8, AC10)
@@ -89,3 +94,4 @@ The inbox is **not** a backlog (a non-blocking note an agent wants to keep is a 
 - 2026-10-10 — a server adds nothing to a guest's inbox (AC14); an ask in a shared conversation is defined by [shared conversations](shared-conversations.md) (Jackson; [record](../../worklog/2026-10-09-multi-player-session.md)).
 - 2026-10-17 — several people (Jackson; [record](../../worklog/2026-10-16-people-and-access-session.md)): asks go to the people who can write to the asking agent's thread, and Viewers have none (AC14 rewritten from the guest rule); an agent can ask everyone here, the first reply closing it for all (AC15, AC16); an item being answered stays in place when it closes (AC17).
 - 2026-10-18 — "everyone here" is offered, and taken, only while more than one person can write to the asking agent's thread; from a thread only one person can write to, the agent asks that person (AC15; Jackson, in the review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).
+- 2026-10-21 — Crews as a team: a seat's delegated tasks' provider approvals are listed under the seat, and a Crew-member request is also answerable above its Captain's composer; AC18–AC19 (Bryant; [record](../../worklog/2026-10-21-crew-teamwork-session.md)).
