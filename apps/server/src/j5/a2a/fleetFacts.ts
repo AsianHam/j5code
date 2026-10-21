@@ -39,7 +39,9 @@ export const readFleetLedgerFacts = Effect.fn("readFleetLedgerFacts")(function* 
   for (const batch of batches) {
     for (const column of ["sender_id", "receiver_id"]) {
       const rows = yield* sql<ExchangeRow>`
-        SELECT project_id, exchange_id, sender_id, receiver_id, intent, created_at
+        SELECT project_id, exchange_id, sender_id, receiver_id,
+          CASE WHEN length(intent) > 200 THEN substr(intent, 1, 199) || '…' ELSE intent END AS intent,
+          created_at
         FROM j5_a2a_exchange
         WHERE status = 'open' AND ${sql(column)} IN ${sql.in(batch)}
           AND exchange_id NOT LIKE ${`${CREW_ALERT_EXCHANGE_PREFIX}%`}
