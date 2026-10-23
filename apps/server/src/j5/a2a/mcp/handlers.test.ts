@@ -2,6 +2,7 @@ import { stringify as toYaml } from "yaml";
 import { makeAgentPersonaLibrary } from "../../agents/agentPersonaLibrary.ts";
 import { resolveAgentPersonaRuntime } from "../../agents/agentPersonaRuntime.ts";
 import { BUILT_IN_AGENT_PERSONAS } from "../../agents/agentPersonas.ts";
+import { personaLibraryLayer } from "../../test-support/personaLibrary.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
@@ -1670,7 +1671,7 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
             deletedAt: null,
           }),
       }),
-      ServerConfig.layerTest(process.cwd(), { prefix: "j5-mcp-spawn-persona-" }),
+      personaLibraryLayer("j5-mcp-spawn-persona-", Object.values(BUILT_IN_AGENT_PERSONAS)),
     ).pipe(Layer.provideMerge(NodeServices.layer));
     const layer = J5ToolkitHandlersLive.pipe(
       Layer.provideMerge(fakeSpawnWorkspaceLayer({ checkout: noRepository })),
@@ -2091,7 +2092,7 @@ it.effect("lists saved agents with purpose, policy, availability, and route", ()
       Layer.mock(ArchiveCrewService)({}),
       Layer.mock(CrewStopService)({}),
       Layer.mock(CrewProposalService)({}),
-      ServerConfig.layerTest(process.cwd(), { prefix: "j5-mcp-list-agents-" }),
+      personaLibraryLayer("j5-mcp-list-agents-", Object.values(BUILT_IN_AGENT_PERSONAS)),
     ).pipe(Layer.provideMerge(NodeServices.layer));
     const layer = J5ToolkitHandlersLive.pipe(
       Layer.provideMerge(fakeSpawnWorkspaceLayer({ checkout: noRepository })),

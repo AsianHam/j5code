@@ -35,6 +35,7 @@ import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../../scheduledTasks/ScheduledTaskService.ts";
 import { BUILT_IN_AGENT_PERSONAS } from "./agentPersonas.ts";
+import { personaLibraryLayer } from "../test-support/personaLibrary.ts";
 import { delegateTask } from "./agentDelegation.ts";
 import { invokeAgent } from "./agentInvocation.ts";
 
@@ -112,6 +113,8 @@ const testLayer = Layer.mergeAll(
   mcp,
   Projections.layer.pipe(Layer.provide(database)),
   NodeServices.layer,
+).pipe(
+  Layer.provideMerge(personaLibraryLayer("j5-saved-subagent-", [BUILT_IN_AGENT_PERSONAS.scout])),
 );
 
 it.effect("persists the saved persona on a nested child and reuses that child on retry", () =>

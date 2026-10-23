@@ -26,7 +26,7 @@ import { stringify as toYaml } from "yaml";
 import { resolveAgentPersonaRuntime } from "../agents/agentPersonaRuntime.ts";
 import { guardAgentPersonaThreadCreate } from "../agents/agentPersonaOrchestration.ts";
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
-import { ServerConfig } from "../../config.ts";
+import { personaLibraryLayer } from "../test-support/personaLibrary.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import {
   OrchestratorDispatchError,
@@ -285,7 +285,9 @@ it.effect("launches an approved roster whole, records it, briefs each seat, then
       ),
       Layer.provideMerge(dependencies(commands, [codex])),
       Layer.provideMerge(Layer.succeedContext(context)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-crew-launch-" })),
+      Layer.provideMerge(
+        personaLibraryLayer("j5-crew-launch-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
     yield* Effect.gen(function* () {
@@ -419,7 +421,9 @@ it.effect(
       const layer = crewLaunchLayer.pipe(
         Layer.provideMerge(dependencies(commands, [codex])),
         Layer.provideMerge(Layer.succeedContext(context)),
-        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-crew-custom-" })),
+        Layer.provideMerge(
+          personaLibraryLayer("j5-crew-custom-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+        ),
         Layer.provideMerge(NodeServices.layer),
       );
       yield* Effect.gen(function* () {
@@ -532,7 +536,9 @@ it.effect(
       const layer = crewLaunchLayer.pipe(
         Layer.provideMerge(dependencies(commands, [signedOut])),
         Layer.provideMerge(Layer.succeedContext(context)),
-        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-crew-launch-" })),
+        Layer.provideMerge(
+          personaLibraryLayer("j5-crew-launch-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+        ),
         Layer.provideMerge(NodeServices.layer),
       );
       yield* Effect.gen(function* () {
@@ -575,7 +581,7 @@ it.effect("custom seats refuse unavailable providers before recording or spawnin
         Layer.provideMerge(dependencies(commands, providers)),
         Layer.provideMerge(Layer.succeedContext(context)),
         Layer.provideMerge(
-          ServerConfig.layerTest(process.cwd(), { prefix: "j5-custom-unavailable-" }),
+          personaLibraryLayer("j5-custom-unavailable-", Object.values(BUILT_IN_AGENT_PERSONAS)),
         ),
         Layer.provideMerge(NodeServices.layer),
       );
@@ -641,7 +647,7 @@ it.effect(
         ),
         Layer.provideMerge(Layer.succeedContext(context)),
         Layer.provideMerge(
-          ServerConfig.layerTest(process.cwd(), { prefix: "j5-preview-runtime-" }),
+          personaLibraryLayer("j5-preview-runtime-", Object.values(BUILT_IN_AGENT_PERSONAS)),
         ),
         Layer.provideMerge(NodeServices.layer),
       );
@@ -799,7 +805,9 @@ it.effect(
           dependencies(commands, providers, new Set(), new Set(), new Set(), true),
         ),
         Layer.provideMerge(Layer.succeedContext(context)),
-        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-custom-runtime-" })),
+        Layer.provideMerge(
+          personaLibraryLayer("j5-custom-runtime-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+        ),
         Layer.provideMerge(NodeServices.layer),
       );
       yield* Effect.gen(function* () {
@@ -1029,7 +1037,9 @@ it.effect(
           ]),
         ),
         Layer.provideMerge(Layer.succeedContext(context)),
-        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-custom-access-" })),
+        Layer.provideMerge(
+          personaLibraryLayer("j5-custom-access-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+        ),
         Layer.provideMerge(NodeServices.layer),
       );
       yield* Effect.gen(function* () {
@@ -1102,7 +1112,9 @@ it.effect("a full-access persona seat runs full access unless the seat overrides
         ]),
       ),
       Layer.provideMerge(Layer.succeedContext(context)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-full-access-seat-" })),
+      Layer.provideMerge(
+        personaLibraryLayer("j5-full-access-seat-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
     yield* Effect.gen(function* () {
@@ -1177,7 +1189,9 @@ it.effect("refuses persona seats whose effective ACP access the harness cannot e
         dependencies(commands, [provider("acp", "acpRegistry", [{ slug: "model", options: [] }])]),
       ),
       Layer.provideMerge(Layer.succeedContext(context)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-persona-acp-" })),
+      Layer.provideMerge(
+        personaLibraryLayer("j5-persona-acp-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
     yield* Effect.gen(function* () {
@@ -1236,7 +1250,9 @@ it.effect("pins non-reasoning provider defaults for persona seats without overri
     const layer = crewLaunchLayer.pipe(
       Layer.provideMerge(dependencies(commands, providers)),
       Layer.provideMerge(Layer.succeedContext(context)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-persona-defaults-" })),
+      Layer.provideMerge(
+        personaLibraryLayer("j5-persona-defaults-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
     yield* Effect.gen(function* () {
@@ -1330,7 +1346,9 @@ const unitFixture = Effect.gen(function* () {
       ),
     ),
     Layer.provideMerge(Layer.succeedContext(context)),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-crew-unit-" })),
+    Layer.provideMerge(
+      personaLibraryLayer("j5-crew-unit-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
   const archiveInput = (crewInstanceId: string) => ({
@@ -1735,7 +1753,9 @@ it.effect("records a playbook Crew's step owners and surfaces a taken step unwra
     const layer = crewLaunchLayer.pipe(
       Layer.provideMerge(dependencies(commands, [codex])),
       Layer.provideMerge(Layer.succeedContext(context)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-crew-steps-" })),
+      Layer.provideMerge(
+        personaLibraryLayer("j5-crew-steps-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
     yield* Effect.gen(function* () {
@@ -1812,7 +1832,9 @@ it.effect("a relaunch after a failed link stores the re-approved seat's steps", 
     const layer = crewLaunchLayer.pipe(
       Layer.provideMerge(dependencies(commands, [codex])),
       Layer.provideMerge(Layer.succeedContext(context)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-crew-relaunch-" })),
+      Layer.provideMerge(
+        personaLibraryLayer("j5-crew-relaunch-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
     yield* Effect.gen(function* () {
@@ -1888,7 +1910,9 @@ it.effect("launches each seat in the workspace it names, and refuses one git can
           ),
         ),
         Layer.provideMerge(Layer.succeedContext(context)),
-        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-crew-launch-" })),
+        Layer.provideMerge(
+          personaLibraryLayer("j5-crew-launch-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+        ),
         Layer.provideMerge(NodeServices.layer),
       );
     const seat = (name: string, workspace: SpawnWorkspaceChoice) => ({
@@ -2042,7 +2066,9 @@ it.effect("binds an existing worktree's live branch, so a stale preview can't ap
         ),
       ),
       Layer.provideMerge(Layer.succeedContext(context)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-crew-launch-" })),
+      Layer.provideMerge(
+        personaLibraryLayer("j5-crew-launch-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
     const reviewer = (worktreePath: string) => ({

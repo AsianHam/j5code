@@ -559,15 +559,14 @@ export function agentPersonaFolderNudges(
 }
 
 /**
- * A missing folder is an error once the user configured it, but the unconfigured default
- * folder is simply absent while the bundled examples fill in.
+ * A missing folder is an error once the user configured it. An absent default folder
+ * contributes no definitions; personal personas are stored separately.
  */
 export function agentPersonaFolderStatusLabel(
   folder: AgentPersonaLibraryFolder,
   configured: boolean | undefined = true,
 ): string {
-  if (!folder.exists)
-    return configured ? "Missing" : "Default · not created; bundled examples in use";
+  if (!folder.exists) return configured ? "Missing" : "Default · not created";
   return `${folder.definitionCount} ${folder.definitionCount === 1 ? "definition" : "definitions"}`;
 }
 

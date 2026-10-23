@@ -66,15 +66,38 @@ const assignmentFor = (digest: string | undefined): OrchestrationV2AgentPersonaA
 });
 
 describe("folder-backed persona library", () => {
-  it.effect("loads examples only when no library has been configured", () =>
+  it.effect("starts empty with no storage or user-authored definitions", () =>
     Effect.gen(function* () {
       const { library, fs, folder, stateDir, path } = yield* fixture;
-      assert.lengthOf(yield* library.load(), 11);
+      assert.deepEqual(yield* createAgentPersonaLibrary().load(), []);
+      assert.deepEqual(yield* library.load(), []);
       yield* fs.makeDirectory(folder);
       assert.deepEqual(yield* library.load(), []);
       yield* fs.writeFileString(path.join(stateDir, "agent-personas.json"), json({ folders: [] }));
       assert.deepEqual(yield* library.load(), []);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "keeps imports available without a default folder and never reveals bundled examples",
+    () =>
+      Effect.gen(function* () {
+        const { library, fs, path, stateDir } = yield* fixture;
+        yield* library.importFiles({
+          files: [{ name: "scout.yaml", content: yaml({ ...custom, id: "scout" }) }],
+          replaceExisting: false,
+        });
+        const restarted = createAgentPersonaLibrary({ fs, path, stateDir });
+        assert.deepEqual(
+          (yield* restarted.load()).map(({ id }) => id),
+          ["scout"],
+        );
+        yield* restarted.removeAgent("scout");
+        const catalog = yield* restarted.catalog();
+        assert.deepEqual(catalog.definitions, []);
+        assert.deepEqual(catalog.removedSources, []);
+        assert.deepEqual(yield* restarted.load(), []);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("loads arbitrary persona ids and custom artifacts without adding built-ins", () =>
@@ -220,7 +243,7 @@ describe("imported persona library", () => {
       const restarted = createAgentPersonaLibrary({ fs, path, stateDir });
       const catalog = yield* restarted.catalog();
       assert.deepEqual(catalog.importedIds, result.importedIds);
-      assert.lengthOf(catalog.definitions, 13);
+      assert.lengthOf(catalog.definitions, 2);
       assert.deepEqual(
         catalog.definitions.find(({ id }) => id === custom.id),
         custom,
@@ -954,7 +977,7 @@ describe("YAML agent definitions", () => {
 });
 
 describe("restoring removed agents", () => {
-  it.effect("lists removed bundled and folder agents for restore and brings them back", () =>
+  it.effect("lists removed folder agents for restore and brings them back", () =>
     Effect.gen(function* () {
       const { library, write, fs, path, stateDir } = yield* fixture;
       yield* write("agent.yaml", custom);
@@ -1033,17 +1056,20 @@ describe("personal agents", () => {
           })
           .pipe(Effect.flip);
         assert.include(String(duplicate), "already exists");
-        const bundled = yield* restarted
-          .createPersona({
-            id: "scout",
-            displayName: "Scout",
-            description: "Clash.",
-            instructions: "Clash.",
-            authorityPolicy: "read-only",
-            modelRoute: custom.modelRoute,
-          })
-          .pipe(Effect.flip);
-        assert.include(String(bundled), "already exists");
+        // Former bundled IDs are available to user-authored definitions.
+        const scout = yield* restarted.createPersona({
+          id: "scout",
+          displayName: "Scout",
+          description: "My research persona.",
+          instructions: "Collect evidence.",
+          authorityPolicy: "read-only",
+          modelRoute: custom.modelRoute,
+        });
+        assert.equal(scout.personaId, "scout");
+        assert.deepEqual(
+          (yield* restarted.load()).map(({ id }) => id),
+          ["my-reviewer", "scout"],
+        );
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
@@ -1210,7 +1236,7 @@ describe("nested source folders", () => {
   );
 });
 
-describe("switching source and bundled agents off", () => {
+describe("switching source agents off", () => {
   it.effect("disables a folder agent without an import, survives restarts, and re-enables", () =>
     Effect.gen(function* () {
       const { library, write, fs, path, stateDir } = yield* fixture;
@@ -1227,9 +1253,10 @@ describe("switching source and bundled agents off", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("disables a bundled example and lets an imported copy carry its own flag", () =>
+  it.effect("disables a folder agent and lets an imported copy carry its own flag", () =>
     Effect.gen(function* () {
-      const { library } = yield* fixture;
+      const { library, write } = yield* fixture;
+      yield* write("scout.yaml", BUILT_IN_AGENT_PERSONAS.scout);
       yield* library.setEnabled("scout", false);
       assert.include((yield* library.catalog()).disabledIds, "scout");
       assert.notInclude(

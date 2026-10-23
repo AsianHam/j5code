@@ -1111,9 +1111,7 @@ describe("blocked reasons and folder status", () => {
       definitionCount: 0,
       git: null,
     };
-    expect(agentPersonaFolderStatusLabel(folder, false)).toBe(
-      "Default · not created; bundled examples in use",
-    );
+    expect(agentPersonaFolderStatusLabel(folder, false)).toBe("Default · not created");
     expect(agentPersonaFolderStatusLabel(folder, true)).toBe("Missing");
   });
 });

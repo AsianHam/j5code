@@ -508,7 +508,7 @@ function MemberAgentLibrarySettings() {
         ) : personas.length === 0 ? (
           <SettingsRow
             title="No personas"
-            description="This environment’s library is empty. In a Codex or Claude conversation, type @persona:id, or @ and a persona’s name, to run one as a subagent."
+            description="Create or import a persona, or add a library source folder to get started."
           />
         ) : (
           personas.map((persona) => {

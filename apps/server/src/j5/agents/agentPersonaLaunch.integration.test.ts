@@ -19,10 +19,11 @@ import * as ThreadMessageIntake from "../../orchestration-v2/ThreadMessageIntake
 import * as ServerConfig from "../../config.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
-import { makeAgentPersonaLibrary } from "./agentPersonaLibrary.ts";
+import { definitionDigest, makeAgentPersonaLibrary } from "./agentPersonaLibrary.ts";
 import { BUILT_IN_AGENT_PERSONAS } from "./agentPersonas.ts";
 import { resolveAgentPersonaRuntime } from "./agentPersonaRuntime.ts";
 import { makeHarness, modelSelection, projectId } from "../test-support/threadLaunchHarness.ts";
+import { personaLibraryLayer } from "../test-support/personaLibrary.ts";
 
 function launchInput(input: {
   readonly command: string;
@@ -52,6 +53,23 @@ function launchInput(input: {
     creationSource: "web" as const,
   };
 }
+
+it.effect("refuses a former bundled persona when the library is empty", () => {
+  const harness = makeHarness({ providers: [] });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const threadId = "thread:unconfigured-persona";
+    const error = yield* launches
+      .launch({
+        ...launchInput({ command: "command:unconfigured-persona", thread: threadId }),
+        agentPersona: { personaId: "scout" },
+      })
+      .pipe(Effect.flip);
+    assert.equal(error.message, "Unknown persona in this environment.");
+    assert.isNull(yield* threads.getThreadShell(ThreadId.make(threadId)));
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect("launches one persona directly without requiring workflow sequencing", () =>
   Effect.gen(function* () {
@@ -107,6 +125,8 @@ it.effect("launches one persona directly without requiring workflow sequencing",
       const expectedAssignment = {
         personaId: "scout",
         definitionVersion: 1,
+        definitionDigest: definitionDigest(BUILT_IN_AGENT_PERSONAS.scout),
+        displayName: "Scout",
         authorityPolicy: "read-only",
         resolvedRoute: "primary",
         resolvedDriver: ProviderDriverKind.make("codex"),
@@ -185,7 +205,19 @@ it.effect("launches one persona directly without requiring workflow sequencing",
         invalidAuthorityError.message,
         "Authority policy publish-only is not allowed for scout.",
       );
-    }).pipe(Effect.provide(harness.layer));
+    }).pipe(
+      Effect.provide(
+        harness.layer.pipe(
+          Layer.provideMerge(
+            personaLibraryLayer("j5-direct-persona-", [
+              BUILT_IN_AGENT_PERSONAS.scout,
+              BUILT_IN_AGENT_PERSONAS.publisher,
+            ]),
+          ),
+        ),
+      ),
+      Effect.scoped,
+    );
   }),
 );
 it.effect("blocks a direct persona launch when both declared model routes are unavailable", () =>
@@ -214,7 +246,16 @@ it.effect("blocks a direct persona launch when both declared model routes are un
         error.message,
         "Persona scout is blocked because its primary and fallback models are unavailable: ",
       );
-    }).pipe(Effect.provide(harness.layer));
+    }).pipe(
+      Effect.provide(
+        harness.layer.pipe(
+          Layer.provideMerge(
+            personaLibraryLayer("j5-blocked-persona-", [BUILT_IN_AGENT_PERSONAS.scout]),
+          ),
+        ),
+      ),
+      Effect.scoped,
+    );
   }),
 );
 

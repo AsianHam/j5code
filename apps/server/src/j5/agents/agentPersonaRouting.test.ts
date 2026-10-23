@@ -420,13 +420,16 @@ describe("agent persona routing", () => {
   });
 
   it("builds the ordered presentation catalog with environment-specific availability", () => {
-    const catalog = buildAgentPersonaCatalog([
-      provider({
-        instanceId: "codex",
-        driver: ProviderDriverKind.make("codex"),
-        models: [model("gpt-5.6-terra", "reasoningEffort")],
-      }),
-    ]);
+    const catalog = buildAgentPersonaCatalog(
+      [
+        provider({
+          instanceId: "codex",
+          driver: ProviderDriverKind.make("codex"),
+          models: [model("gpt-5.6-terra", "reasoningEffort")],
+        }),
+      ],
+      listBuiltInAgentPersonas(),
+    );
 
     assert.equal(catalog.personas.length, 11);
     assert.equal(catalog.personas[0]?.personaId, "scout");

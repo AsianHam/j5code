@@ -26,7 +26,6 @@ import { ServerConfig } from "../../config.ts";
 import {
   decodeAgentPersonaDefinition,
   getBuiltInAgentPersona,
-  listBuiltInAgentPersonas,
   AgentPersonaDefinition,
 } from "./agentPersonas.ts";
 
@@ -65,7 +64,7 @@ const encodeImports = Schema.encodeEffect(Schema.fromJsonString(ImportedDefiniti
 const RemovedSourceIds = Schema.Array(AgentPersonaId);
 const decodeRemovedSourceIds = Schema.decodeUnknownEffect(Schema.fromJsonString(RemovedSourceIds));
 const encodeRemovedSourceIds = Schema.encodeEffect(Schema.fromJsonString(RemovedSourceIds));
-/** Source and bundled agents switched off in this environment; imported copies carry their own flag. */
+/** Folder agents switched off in this environment; imported copies carry their own flag. */
 const DISABLED_SOURCES_FILE = "disabled-source-agent-personas.json";
 // RPC layers are session-local; serialize library mutations across all sessions in this process.
 const importPermit = Semaphore.makeUnsafe(1);
@@ -229,8 +228,7 @@ export function createAgentPersonaLibrary(storage?: {
   });
 
   const loadSources = Effect.fn("AgentPersonaLibrary.loadSources")(function* () {
-    const bundled = { definitions: listBuiltInAgentPersonas(), paths: new Map<string, string>() };
-    if (storage === undefined) return bundled;
+    if (storage === undefined) return { definitions: [], paths: new Map<string, string>() };
     const { fs } = storage;
     const { configured, folders } = yield* resolveFolders();
     const definitions = new Map<string, AgentPersonaDefinition>();
@@ -248,7 +246,7 @@ export function createAgentPersonaLibrary(storage?: {
           return yield* new AgentPersonaLibraryError({
             message: `Configured persona folder does not exist: ${folder}`,
           });
-        return bundled;
+        continue;
       }
       for (const file of files) {
         const stat = yield* fs.stat(file);
@@ -438,7 +436,7 @@ export function createAgentPersonaLibrary(storage?: {
       removedSources: loaded.definitions.filter(
         ({ id }) => removed.has(id) && !definitions.has(id),
       ),
-      /** Source file per folder-loaded id; ids absent here are bundled or imported. */
+      /** Source file per folder-loaded id; ids absent here are imported. */
       sourcePaths: loaded.paths as ReadonlyMap<string, string>,
     };
   });
@@ -808,7 +806,7 @@ export function createAgentPersonaLibrary(storage?: {
   };
 }
 
-/** Capture the environment at service construction. Pure unit layers can use the bundled examples. */
+/** Capture the environment at service construction; no storage means an empty library. */
 export const makeAgentPersonaLibrary = Effect.gen(function* () {
   const config = yield* Effect.serviceOption(ServerConfig);
   if (Option.isNone(config)) return createAgentPersonaLibrary();

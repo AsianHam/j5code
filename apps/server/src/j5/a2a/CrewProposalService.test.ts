@@ -36,6 +36,8 @@ import {
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { createAgentPersonaLibrary } from "../agents/agentPersonaLibrary.ts";
+import { BUILT_IN_AGENT_PERSONAS } from "../agents/agentPersonas.ts";
+import { personaLibraryLayer } from "../test-support/personaLibrary.ts";
 import { buildAgentPersonaCatalog } from "../agents/agentPersonaRouting.ts";
 import { playbookTools } from "../playbooks/mcp.ts";
 import { makePlaybookCrewRelay } from "../playbooks/PlaybookCrewRelay.ts";
@@ -401,7 +403,9 @@ const fixture = Effect.gen(function* () {
     ),
     Layer.provideMerge(playbookStoreLayer),
     Layer.provideMerge(Layer.succeedContext(context)),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "j5-crew-proposal-" })),
+    Layer.provideMerge(
+      personaLibraryLayer("j5-crew-proposal-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
   return {
@@ -2223,8 +2227,7 @@ it.effect(
           path: yield* Path.Path,
           stateDir,
         });
-        // builder is bundled; planner and reviewer are added through the library's own API.
-        for (const id of ["planner", "reviewer"])
+        for (const id of ["planner", "builder", "reviewer"])
           yield* library.createPersona({
             id,
             displayName: id,

@@ -12,7 +12,6 @@ import {
 
 import {
   getBuiltInAgentPersona,
-  listBuiltInAgentPersonas,
   type AgentModelTarget,
   type AgentPersonaDefinition,
   type AgentPersonaId,
@@ -179,7 +178,7 @@ export function resolveAgentPersonaRoute(input: {
 
 export function buildAgentPersonaCatalog(
   providers: ReadonlyArray<ServerProvider>,
-  definitions: ReadonlyArray<AgentPersonaDefinition> = listBuiltInAgentPersonas(),
+  definitions: ReadonlyArray<AgentPersonaDefinition>,
 ): OrchestrationV2AgentPersonaCatalog {
   return {
     personas: definitions.map((definition) => {
