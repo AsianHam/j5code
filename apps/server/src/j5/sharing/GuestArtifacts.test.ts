@@ -295,17 +295,19 @@ it.layer(testLayer)("a project guest and the artifact requests on the socket", (
           assert.strictEqual(yield* authorized("member", method, { projectId: OTHER }), "ran");
         }
         // Deleting is not listed for a guest, whatever it holds on the project.
-        for (const who of ["project-guest", "thread-guest", "stray"] as const) {
-          assert.match(
-            yield* authorized(who, remove, { projectId: GRANTED, path: "plan.md" }),
-            /^refused: /,
-            who,
+        for (const method of [remove, J5_ARTIFACT_WS_METHODS.deleteAllArtifacts]) {
+          for (const who of ["project-guest", "thread-guest", "stray"] as const) {
+            assert.match(
+              yield* authorized(who, method, { projectId: GRANTED, path: "plan.md" }),
+              /^refused: /,
+              who,
+            );
+          }
+          assert.strictEqual(
+            yield* authorized("member", method, { projectId: OTHER, path: "plan.md" }),
+            "ran",
           );
         }
-        assert.strictEqual(
-          yield* authorized("member", remove, { projectId: OTHER, path: "plan.md" }),
-          "ran",
-        );
 
         // An open change feed ends when the grant on its project is removed.
         const open = yield* authorized(

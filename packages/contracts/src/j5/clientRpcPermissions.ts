@@ -46,6 +46,7 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_PLAYBOOK_WS_METHODS.deletePlaybook]: AuthSettingsWriteScope,
   [J5_PLAYBOOK_WS_METHODS.renamePlaybook]: AuthSettingsWriteScope,
   [J5_ARTIFACT_WS_METHODS.deleteArtifact]: AuthOrchestrationOperateScope,
+  [J5_ARTIFACT_WS_METHODS.deleteAllArtifacts]: AuthOrchestrationOperateScope,
 
   [J5_CLIENT_ACTION_WS_METHODS.resolveCrewProposal]: AuthOrchestrationOperateScope,
   [J5_CLIENT_ACTION_WS_METHODS.stopCrew]: AuthOrchestrationOperateScope,

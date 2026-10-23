@@ -13,7 +13,9 @@ choose a file to preview it. Markdown, text, source files, common image formats,
 documents can be previewed without opening an editor. HTML previews cannot run scripts or access
 J5 Code's page context.
 
-The selected file is permanently deleted from the environment host after confirmation.
+You can permanently delete the selected file, or use **Delete all** to remove every artifact in the
+selected project. Both actions require confirmation and cannot be undone. Deleting an artifact also
+removes any earlier versions kept inside it.
 
 From a project thread, you can also open the right panel and choose **Artifacts**. This view stays
 scoped to the current project workspace, so planning documents remain beside the conversation while

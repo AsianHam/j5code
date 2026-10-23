@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   type AuthEnvironmentScope,
   J5_AGENT_PERSONA_WS_METHODS,
+  J5_ARTIFACT_WS_METHODS,
   ORCHESTRATION_V2_WS_METHODS,
   RpcScopeAuthorization,
   WS_METHODS,
@@ -24,7 +25,14 @@ import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
 import * as AccessGate from "./AccessGate.ts";
 import { PAIRED_AS_SOMEONE_ELSE, PairingIntents } from "./PairingIntents.ts";
 import * as PersonAccess from "./PersonAccess.ts";
-import { PROJECT, accessLayer, device, person, thread } from "./test-support/accessHarness.ts";
+import {
+  PROJECT,
+  OTHER_PROJECT,
+  accessLayer,
+  device,
+  person,
+  thread,
+} from "./test-support/accessHarness.ts";
 
 it("names the few routes a narrowed connection keeps permissions on", () => {
   assert.deepStrictEqual(AccessGate.accessHttpRule("GET", "/ws"), { kind: "open" });
@@ -120,6 +128,45 @@ const call = Effect.fn("test.call")(function* (
 });
 
 it.layer(testLayer)("access gate", (it) => {
+  it.effect("allows artifact cleanup only within a project Collaborator's scope", () =>
+    Effect.gen(function* () {
+      const { session, person: builder } = yield* signed("Artifact builder", [
+        { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
+      ]);
+      for (const method of [
+        J5_ARTIFACT_WS_METHODS.deleteArtifact,
+        J5_ARTIFACT_WS_METHODS.deleteAllArtifacts,
+      ]) {
+        assert.strictEqual(
+          yield* call(session, method, { projectId: PROJECT, path: "plan.md" }),
+          "ran",
+        );
+        assert.match(
+          yield* call(session, method, { projectId: OTHER_PROJECT, path: "plan.md" }),
+          /^refused/,
+        );
+      }
+      const { session: viewer } = yield* signed(
+        "Artifact reader",
+        [{ scope: { kind: "project", projectId: PROJECT }, level: "viewer" }],
+        LEVEL_PERMISSIONS.viewer,
+      );
+      assert.match(
+        yield* call(viewer, J5_ARTIFACT_WS_METHODS.deleteAllArtifacts, { projectId: PROJECT }),
+        /^refused/,
+      );
+      const access = yield* PersonAccess.PersonAccess;
+      yield* access.removeLevel({
+        personId: builder.personId,
+        scope: { kind: "project", projectId: PROJECT },
+      });
+      assert.match(
+        yield* call(session, J5_ARTIFACT_WS_METHODS.deleteAllArtifacts, { projectId: PROJECT }),
+        /^refused/,
+      );
+    }),
+  );
+
   it.effect("leaves a session that writes to the whole server alone", () =>
     Effect.gen(function* () {
       const { session } = yield* signed("Wide", [

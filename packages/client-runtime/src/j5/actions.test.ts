@@ -141,6 +141,31 @@ describe("J5 action commands", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "deletes all artifacts only on the named environment and rechecks its operate grant",
+    () =>
+      Effect.gen(function* () {
+        const { atoms, calls, registry } = yield* fixture(() => Effect.succeed({ deleted: true }));
+        registry.set(sessions(work), AsyncResult.success(granting([AuthOrchestrationReadScope])));
+        registry.set(
+          sessions(home),
+          AsyncResult.success(granting([AuthOrchestrationOperateScope])),
+        );
+        const input = { projectId: ProjectId.make("project:artifacts") };
+        const deleted = yield* Effect.promise(() =>
+          atoms.deleteAllArtifacts.run(registry, { environmentId: home, input }),
+        );
+        expect(AsyncResult.isSuccess(deleted)).toBe(true);
+        expect(calls).toEqual([[home, J5_ARTIFACT_WS_METHODS.deleteAllArtifacts, input]]);
+        registry.set(sessions(home), AsyncResult.success(granting([AuthOrchestrationReadScope])));
+        const refused = yield* Effect.promise(() =>
+          atoms.deleteAllArtifacts.run(registry, { environmentId: home, input }),
+        );
+        expect(failureOf(refused)).toMatchObject({ _tag: "EnvironmentAuthorizationError" });
+        expect(calls).toHaveLength(1);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("needs access:write for peering, and only read to preview a roster", () =>
     Effect.gen(function* () {
       const { atoms, registry } = yield* fixture(() => Effect.succeed({}));
@@ -162,6 +187,7 @@ describe("J5 action commands", () => {
         atoms.respondCrewRuntimeRequest,
         atoms.answerHumanExchange,
         atoms.deleteArtifact,
+        atoms.deleteAllArtifacts,
       ]) {
         expect(command.requiredScopes()).toEqual([AuthOrchestrationOperateScope]);
         expect(registry.get(command.permissionAtom(work))).toBe(true);

@@ -45,11 +45,24 @@ export class ArtifactWorkspaceError extends Schema.TaggedError<ArtifactWorkspace
   }
 }
 
+export class ArtifactListTooLargeError extends Schema.TaggedError<ArtifactListTooLargeError>()(
+  "ArtifactListTooLargeError",
+  { maximumFiles: Schema.Number },
+) {
+  override get message(): string {
+    return `The artifacts directory is too large to browse (maximum ${this.maximumFiles} files).`;
+  }
+}
+
 export interface ArtifactWorkspaceShape {
   readonly prepare: (projectId: ProjectId) => Effect.Effect<void, ArtifactWorkspaceError>;
   readonly list: (
     projectId: ProjectId,
-  ) => Effect.Effect<ReadonlyArray<ArtifactEntry>, ArtifactWorkspaceError>;
+    options?: { readonly all: boolean },
+  ) => Effect.Effect<
+    ReadonlyArray<ArtifactEntry>,
+    ArtifactWorkspaceError | ArtifactListTooLargeError
+  >;
   readonly read: (input: {
     readonly projectId: ProjectId;
     readonly relativePath: string;
@@ -372,7 +385,7 @@ export const layer = Layer.effect(
     );
 
     const list: ArtifactWorkspaceShape["list"] = Effect.fn("ArtifactWorkspace.list")(
-      function* (projectId) {
+      function* (projectId, options) {
         yield* prepare(projectId);
         const workspace = yield* resolveExistingArtifactRoot(projectId);
         if (workspace.realArtifactRoot === null) return [];
@@ -385,11 +398,8 @@ export const layer = Layer.effect(
           );
         // Fail fast on an absurd directory rather than stat and sort tens of thousands of entries
         // for a 500-row page; the cap below still sorts before it truncates.
-        if (names.length > MAX_ARTIFACT_COUNT * 4) {
-          return yield* new ArtifactWorkspaceError({
-            operation: "list-artifacts",
-            detail: `The artifacts directory is too large to browse (maximum ${MAX_ARTIFACT_COUNT} files).`,
-          });
+        if (!options?.all && names.length > MAX_ARTIFACT_COUNT * 4) {
+          return yield* new ArtifactListTooLargeError({ maximumFiles: MAX_ARTIFACT_COUNT });
         }
         const entries = yield* Effect.forEach(
           names,
@@ -399,7 +409,9 @@ export const layer = Layer.effect(
               const realPath = yield* Effect.result(fileSystem.realPath(absolutePath));
               if (
                 Result.isFailure(realPath) ||
-                !isPathWithin(path, workspace.realArtifactRoot!, realPath.success)
+                !isPathWithin(path, workspace.realArtifactRoot!, realPath.success) ||
+                // Bulk deletion must not encounter links that the single-file delete refuses.
+                (options?.all && realPath.success !== absolutePath)
               ) {
                 return null;
               }
@@ -421,7 +433,7 @@ export const layer = Layer.effect(
         return entries
           .filter((entry): entry is ArtifactEntry => entry !== null)
           .toSorted((left, right) => left.path.localeCompare(right.path))
-          .slice(0, MAX_ARTIFACT_COUNT);
+          .slice(0, options?.all ? undefined : MAX_ARTIFACT_COUNT);
       },
     );
 

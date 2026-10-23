@@ -91,3 +91,15 @@ export async function deleteArtifact(input: {
   });
   if (result._tag === "Failure") throw Cause.squash(result.cause);
 }
+
+/** Permanently delete all artifacts on the environment that holds the project. */
+export async function deleteAllArtifacts(input: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+}): Promise<void> {
+  const result = await j5Environment.deleteAllArtifacts.run(appAtomRegistry, {
+    environmentId: input.environmentId,
+    input: { projectId: input.projectId },
+  });
+  if (result._tag === "Failure") throw Cause.squash(result.cause);
+}

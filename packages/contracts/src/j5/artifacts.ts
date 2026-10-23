@@ -33,6 +33,7 @@ export const J5_ARTIFACT_WS_METHODS = {
   subscribeArtifactChanges: "j5.artifacts.subscribeChanges",
   listArtifacts: "j5.artifacts.list",
   deleteArtifact: "j5.artifacts.delete",
+  deleteAllArtifacts: "j5.artifacts.deleteAll",
 } as const;
 
 export const WsJ5SubscribeArtifactChangesRpc = Rpc.make(
@@ -54,6 +55,11 @@ export const J5ArtifactRpcGroup = RpcGroup.make(
   }),
   Rpc.make(J5_ARTIFACT_WS_METHODS.deleteArtifact, {
     payload: ArtifactDeleteRequest,
+    success: ArtifactDeleteResponse,
+    error: Schema.Union([J5ActionError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(J5_ARTIFACT_WS_METHODS.deleteAllArtifacts, {
+    payload: ArtifactListRequest,
     success: ArtifactDeleteResponse,
     error: Schema.Union([J5ActionError, EnvironmentAuthorizationError]),
   }),

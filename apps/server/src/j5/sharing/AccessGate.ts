@@ -337,6 +337,7 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [J5_ARTIFACT_WS_METHODS.listArtifacts]: onProject("viewer"),
   [J5_ARTIFACT_WS_METHODS.subscribeArtifactChanges]: onProject("viewer"),
   [J5_ARTIFACT_WS_METHODS.deleteArtifact]: onProject("collaborator"),
+  [J5_ARTIFACT_WS_METHODS.deleteAllArtifacts]: onProject("collaborator"),
   [J5_SKILL_LINK_WS_METHODS.inspect]: onProject("viewer"),
   [J5_SKILL_LINK_WS_METHODS.preview]: onProject("collaborator"),
   [J5_SKILL_LINK_WS_METHODS.create]: onProject("collaborator"),
