@@ -26,7 +26,7 @@ import { cn } from "../../lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useAllEnvironmentShellsBootstrapped, useThreadShells } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { formatElapsedDurationLabel } from "../../timestampFormat";
+import { RelativeAge } from "../RelativeAge";
 import { CaptainMark } from "../crew/CaptainMark";
 import { PlaybookRunsSection } from "../playbooks/PlaybookRunsSection";
 import { fleetDetailSourcesAtom, j5Environment } from "../state";
@@ -570,7 +570,7 @@ function RetiredCrewItem(props: FleetRowsProps & FleetProjectCrew<ScopedFleetLed
               "?"
             ) : (
               <time dateTime={crew.archivedAt}>
-                {formatElapsedDurationLabel(crew.archivedAt) || "just now"}
+                <RelativeAge timestamp={crew.archivedAt} fallback="?" />
               </time>
             )}
           </span>
@@ -683,8 +683,6 @@ function FleetRowItem(
   const thread = threadFor(props.threadsByKey, environmentId, agent);
   const status = thread === undefined ? null : resolveThreadStatusPill({ thread });
   const title = thread?.title ?? agent.displayName ?? agent.participantId;
-  const lastActivity =
-    thread === undefined ? "?" : formatElapsedDurationLabel(thread.updatedAt) || "just now";
   return (
     <li>
       <button
@@ -753,7 +751,7 @@ function FleetRowItem(
           {agent.openAsks}
         </span>
         <span className="text-right text-xs text-muted-foreground tabular-nums">
-          {lastActivity}
+          <RelativeAge timestamp={thread?.updatedAt ?? null} fallback="?" />
         </span>
       </button>
     </li>

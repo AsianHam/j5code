@@ -1,7 +1,7 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../../components/ui/tooltip";
 import { InboxIcon, SendIcon } from "lucide-react";
 
-import { formatElapsedDurationLabel } from "../../timestampFormat";
+import { RelativeAge } from "../RelativeAge";
 import { Badge } from "../../components/ui/badge";
 
 export type ArchiveWarningUrgency = "blocking" | "soon" | "fyi" | null;
@@ -89,9 +89,6 @@ const urgencyPresentation = {
   none: { label: "No urgency", variant: "secondary" as const },
 };
 
-const openAgeLabel = (openedAt: string) =>
-  formatElapsedDurationLabel(openedAt) || "couldn't check age";
-
 function ArchiveWarningParticipantName({
   participant,
 }: {
@@ -125,7 +122,7 @@ function ArchiveWarningRowView({ row }: { readonly row: ArchiveWarningRow }) {
         </span>
         <ArchiveWarningParticipantName participant={row.participant} />
         <time className="ml-auto shrink-0 tabular-nums" dateTime={row.openedAt}>
-          open {openAgeLabel(row.openedAt)}
+          open <RelativeAge timestamp={row.openedAt} fallback="couldn't check age" />
         </time>
       </div>
       <Tooltip>

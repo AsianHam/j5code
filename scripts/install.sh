@@ -227,6 +227,10 @@ step "Setting up the j5 command..."
 mkdir -p "$bin_dir"
 if [ -e "${target_dir}/j5" ]; then exe=j5; else exe=t3; fi
 ln -sfn "${target_dir}/${exe}" "${bin_dir}/j5"
+# Pruning keeps what this launcher points at; a background service cannot see bin_dir otherwise.
+launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/j5"
+launchers="${t3_home}/runtime/launchers"
+grep -qxF "$launcher" "$launchers" 2>/dev/null || printf '%s\n' "$launcher" >> "$launchers"
 if "$interactive"; then printf '\r\033[2K' >&2; fi
 printf '  %sInstalled J5 Code %s%s\n\n' "$green" "$version" "$reset" >&2
 case ":${PATH}:" in

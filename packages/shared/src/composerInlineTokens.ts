@@ -1,4 +1,5 @@
 import { isJ5MentionPath } from "./j5/agentMention.ts";
+import { markdownMathRanges } from "./markdownMath.ts";
 
 export type ComposerInlineToken =
   | {
@@ -42,6 +43,7 @@ const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
+const DECORATOR_CALL_REFERENCE_REGEX = /^[\p{ID_Start}_$][\p{ID_Continue}.$\u200c\u200d]*\(/u;
 
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
@@ -80,7 +82,9 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     if (
       !path ||
       (quotedPath === undefined &&
-        (isJ5MentionPath(path) || SCOPED_PACKAGE_REFERENCE_REGEX.test(path)))
+        (isJ5MentionPath(path) ||
+          SCOPED_PACKAGE_REFERENCE_REGEX.test(path) ||
+          DECORATOR_CALL_REFERENCE_REGEX.test(path)))
     ) {
       continue;
     }
@@ -96,6 +100,32 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   }
 
   return matches;
+}
+
+/**
+ * Formulas in composer text, ignoring the `$` and `\[` that file names such as
+ * `posts.$postId.tsx` or `[id].tsx` put into a file link. File links are masked with letters,
+ * not spaces, so a link at the start of a line cannot become an indented code block.
+ * Bare `@path` mentions are not masked: one such as `@README.md$` can run into a formula's
+ * closing delimiter, and a mention written inside a real formula stays covered by it.
+ */
+export function composerMathRanges(
+  text: string,
+  mentions: ReadonlyArray<ComposerInlineToken> = collectMentionTokens(text),
+) {
+  let masked = text;
+  for (const mention of mentions) {
+    if (mention.type !== "mention" || !mention.source.startsWith("[")) continue;
+    masked =
+      masked.slice(0, mention.start) +
+      "x".repeat(mention.end - mention.start) +
+      masked.slice(mention.end);
+  }
+  return markdownMathRanges(masked).map(({ start, end }) => ({
+    start,
+    end,
+    source: text.slice(start, end),
+  }));
 }
 
 export function collectComposerInlineTokens(
@@ -135,5 +165,13 @@ export function collectComposerInlineTokens(
     }
   }
 
-  return [...matches].sort((left, right) => left.start - right.start);
+  // TeX can contain literal skill and file tokens, especially inside \text{}.
+  // They remain formula source rather than becoming composer context chips.
+  // Confirmed trailing file links are masked too, so a kept chip is not read as TeX.
+  const math = matches.length > 0 ? composerMathRanges(text, matches) : [];
+  return matches
+    .filter(
+      (match) => !math.some((formula) => match.start < formula.end && match.end > formula.start),
+    )
+    .sort((left, right) => left.start - right.start);
 }

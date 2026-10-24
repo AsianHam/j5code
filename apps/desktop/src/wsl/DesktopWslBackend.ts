@@ -136,7 +136,7 @@ export const layer = Layer.effect(
                 Ref.set(
                   preflightErrorRef,
                   Option.some(
-                    "Another J5 Code server is using this distro's J5 home. Stop it, or pair with it instead.",
+                    "Another J5 Code server is using this distro's J5 home, or an older background service is set up for it. Stop that server or pair with it, or try `j5 update` in the distro. If the older launcher cannot update, run `j5 service uninstall` and optionally reinstall with `j5 service install` from a current CLI in the distro. Run J5 Code's installer if `j5` is missing or outdated, and pass `--base-dir` with the service's J5 home to each command.",
                   ),
                 ),
               ),

@@ -1,10 +1,16 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 
-// J5: every consumer of this constant gets J5's text (FORK.md case 8). Upstream's literal is
-// removed, so an upstream edit to it conflicts here; port it into the J5 file by hand.
-import { J5_ORCHESTRATION_INSTRUCTIONS } from "../j5/orchestrationInstructions.ts";
+import { J5_ORCHESTRATION_SECTIONS } from "../j5/orchestrationInstructions.ts";
 
-export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = J5_ORCHESTRATION_INSTRUCTIONS;
+// J5: every consumer of these sections, and of the instructions joined from them below, gets J5's
+// text (FORK.md case 8). Upstream's literal is removed, so an upstream edit to it conflicts here;
+// port it into the J5 file by hand.
+export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = J5_ORCHESTRATION_SECTIONS;
+
+export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
+
+${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
+`;
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 

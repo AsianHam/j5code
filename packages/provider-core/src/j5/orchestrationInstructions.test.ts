@@ -1,11 +1,104 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../server/orchestrationInstructions.ts";
-import { J5_ORCHESTRATION_INSTRUCTIONS } from "./orchestrationInstructions.ts";
+import {
+  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  T3_CODE_ORCHESTRATION_SECTIONS,
+  t3AcpPromptWithInstructions,
+  t3OrchestrationPromptForFirstRun,
+  t3OrchestrationSystemPrompt,
+} from "../server/orchestrationInstructions.ts";
+import {
+  J5_ORCHESTRATION_INSTRUCTIONS,
+  J5_ORCHESTRATION_SECTIONS,
+} from "./orchestrationInstructions.ts";
+import { PLAYBOOK_INSTRUCTIONS } from "./playbookInstructions.ts";
+
+// Codex cuts the middle out of any additionalContext entry over this many UTF-8 bytes; it gets
+// each section as its own entry (upstream's CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES).
+const CODEX_ENTRY_MAX_BYTES = 4_000;
 
 describe("J5 orchestration instructions", () => {
-  it("are what upstream's exported constant carries to every harness", () => {
+  it("are what upstream's exported constants carry to every harness", () => {
+    assert.strictEqual(T3_CODE_ORCHESTRATION_SECTIONS, J5_ORCHESTRATION_SECTIONS);
     assert.strictEqual(T3_CODE_ORCHESTRATION_INSTRUCTIONS, J5_ORCHESTRATION_INSTRUCTIONS);
+    assert.strictEqual(t3OrchestrationSystemPrompt(true), J5_ORCHESTRATION_INSTRUCTIONS);
+    assert.isUndefined(t3OrchestrationSystemPrompt(false));
+    assert.include(
+      t3OrchestrationPromptForFirstRun({ prompt: "Inspect.", runOrdinal: 1, hasT3Mcp: true }),
+      J5_ORCHESTRATION_INSTRUCTIONS.trim(),
+    );
+  });
+
+  it("fit each section whole into one Codex context entry", () => {
+    assert.isAbove(J5_ORCHESTRATION_SECTIONS.length, 1);
+    for (const [index, section] of J5_ORCHESTRATION_SECTIONS.entries()) {
+      const bytes = Buffer.byteLength(section, "utf8");
+      assert.isAtMost(
+        bytes,
+        CODEX_ENTRY_MAX_BYTES,
+        `section ${index + 1}: ${bytes} UTF-8 bytes exceeds Codex's ${CODEX_ENTRY_MAX_BYTES}-byte per-entry cap; split it`,
+      );
+      assert.strictEqual(
+        section,
+        section.trim(),
+        `section ${index + 1} has stray outer whitespace`,
+      );
+    }
+  });
+
+  it("keep every playbook bullet when the playbook guidance is split across sections", () => {
+    const bullets = PLAYBOOK_INSTRUCTIONS.trim().split("\n");
+    assert.isAbove(bullets.length, 1);
+    for (const bullet of bullets) {
+      assert.isTrue(
+        J5_ORCHESTRATION_SECTIONS.some((section) => section.includes(bullet)),
+        bullet.slice(0, 60),
+      );
+    }
+    assert.isTrue(
+      J5_ORCHESTRATION_SECTIONS.some((section) =>
+        section.startsWith("Playbooks in a Crew:\n\n- As a Captain"),
+      ),
+    );
+  });
+
+  it("brand the ACP mode, browser, and orchestration guidance as J5 Code", () => {
+    const prompt = "Inspect the repository.";
+    const injected = t3AcpPromptWithInstructions({
+      prompt,
+      state: { interactionMode: "default", hasT3Mcp: true },
+    });
+    assert.include(injected, "J5 Code interaction mode: Default");
+    assert.include(injected, "J5 Code collaborative browser");
+    assert.include(injected, "You are running inside J5 Code.");
+    assert.include(injected, J5_ORCHESTRATION_INSTRUCTIONS.trim());
+    assert.notInclude(injected, "T3 Code");
+    assert.include(
+      t3AcpPromptWithInstructions({
+        prompt,
+        state: { interactionMode: "plan", hasT3Mcp: false },
+      }),
+      "J5 Code interaction mode: Plan",
+    );
+  });
+
+  it("carry upstream's model-option and model search rules", () => {
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "or when model options are requested or inherited",
+    );
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "nonempty `inheritedOptions`");
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "put settings in `target.options`");
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "report a capability mismatch");
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "[] or {} clears them");
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "Native subagents cannot reliably apply J5 model options",
+    );
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "It lists a short set of models per provider; pass `search` to find others.",
+    );
   });
 
   it("steers to provider-native Subagents and platform Peer Agents", () => {

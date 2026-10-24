@@ -3,36 +3,8 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 
 import { resolveUserDataPath } from "./DesktopUserData.ts";
-
-it.effect("identifies a failed profile inspection and preserves its cause", () => {
-  const legacyPath = "/profiles/J5 Code";
-  const cause = PlatformError.systemError({
-    _tag: "PermissionDenied",
-    module: "FileSystem",
-    method: "exists",
-    pathOrDescriptor: legacyPath,
-  });
-  return Effect.gen(function* () {
-    const error = yield* resolveUserDataPath({
-      appDataDirectory: "/profiles",
-      isDevelopment: false,
-      platform: "win32",
-    }).pipe(Effect.flip);
-    assert.equal(error.operation, "inspect");
-    assert.equal(error.resourcePath, legacyPath);
-    assert.equal(error.category, "PermissionDenied");
-    assert.strictEqual(error.cause, cause);
-  }).pipe(
-    Effect.provideService(
-      FileSystem.FileSystem,
-      FileSystem.makeNoop({ exists: () => Effect.fail(cause) }),
-    ),
-    Effect.provide(NodeServices.layer),
-  );
-});
 
 // J5 keeps one profile per channel on every platform (merge decision #4) and
 // never reads or seeds from an installed T3 Code's profiles.

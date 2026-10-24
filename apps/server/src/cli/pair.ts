@@ -1,9 +1,11 @@
 import {
   AuthStandardClientScopes,
   ExecutionEnvironmentDescriptor,
+  ORCHESTRATION_PROTOCOL_VERSION,
   PortSchema,
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import {
@@ -14,7 +16,6 @@ import {
 } from "@t3tools/tailscale";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
-import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -53,24 +54,12 @@ import { baseDirFlag, DurationFromString } from "./config.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
-// The runtime file is deliberately written only once the server accepts
-// commands. A just-started server can therefore be listening before this file
-// exists; give activation a small, bounded chance to finish.
-const RUNTIME_FILE_RETRY_ATTEMPTS = 4;
-const RUNTIME_FILE_RETRY_DELAY = Duration.seconds(1);
 // Tailscale provisions an HTTPS certificate on the first request to a fresh
 // serve mapping, which can take a few seconds.
 const TAILSCALE_PROBE_ATTEMPTS = 5;
 const TAILSCALE_PROBE_RETRY_DELAY = Duration.seconds(1);
 
 export type PairStateVariant = "userdata" | "dev";
-
-/** The activation wait is overridable so callers can test it without wall-clock time. */
-export const RuntimeFileActivationDelay = Context.Reference<
-  (duration: Duration.Duration) => Effect.Effect<void>
->("t3/cli/RuntimeFileActivationDelay", {
-  defaultValue: () => Effect.sleep,
-});
 
 // deriveServerPaths only checks devUrl for undefined-ness when picking the
 // dev-vs-userdata state directory; the value itself is not used.
@@ -80,36 +69,30 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
   "NoRunningServerError",
   {
     checkedStatePaths: Schema.Array(Schema.String),
+    inLinkedWorktree: Schema.Boolean,
   },
 ) {
   override get message(): string {
     return [
       "No running J5 Code server found.",
       ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
+      ...(this.inLinkedWorktree
+        ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
+        : []),
       "Start one with `j5 serve`, or connect this machine with T3 Connect: `j5 connect`.",
     ].join("\n");
   }
 }
 
-export class NoRuntimeFileUnderBaseError extends Schema.TaggedError<NoRuntimeFileUnderBaseError>()(
-  "NoRuntimeFileUnderBaseError",
-  {
-    baseDir: Schema.String,
-  },
+export class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
+  "IncompatibleServerProtocolError",
+  { serverVersion: Schema.String, serverProtocolVersion: Schema.Number },
 ) {
   override get message(): string {
-    return `No runtime file under ${this.baseDir} — either no server is running, or one is still starting. The file appears at activation; wait for the printed pairing URL, then retry.`;
-  }
-}
-
-export class WorktreePairingRefusedError extends Schema.TaggedError<WorktreePairingRefusedError>()(
-  "WorktreePairingRefusedError",
-  {
-    worktreeHome: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `No running server found under worktree home ${this.worktreeHome}. Refusing to fall through to another home; start one here, or pass --base-dir <path> to target another server explicitly.`;
+    return [
+      `The running J5 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
+      `Pair with the \`j5\` CLI from J5 Code ${this.serverVersion} instead.`,
+    ].join("\n");
   }
 }
 
@@ -128,6 +111,15 @@ export class MagicDnsNameMissingError extends Schema.TaggedError<MagicDnsNameMis
 ) {
   override get message(): string {
     return "This machine has no MagicDNS name. Run `tailscale up` and enable MagicDNS.";
+  }
+}
+
+export class TailscaleServeNotEnabledError extends Schema.TaggedError<TailscaleServeNotEnabledError>()(
+  "TailscaleServeNotEnabledError",
+  {},
+) {
+  override get message(): string {
+    return "Tailscale Serve is not enabled on your tailnet. Enable HTTPS certificates at https://login.tailscale.com/admin/dns, then run this command again.";
   }
 }
 
@@ -158,7 +150,7 @@ export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupied
   }
 }
 
-export const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
+const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
   state.devUrl ?? resolveHeadlessConnectionString(state.host, state.port);
 
 export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotProxiableError>()(
@@ -190,7 +182,7 @@ export const resolveTailscaleLocalTarget = (
       ? { localPort }
       : { localPort, localHost: devUrl.hostname };
   }
-  if (state.host !== undefined && !isWildcardHost(state.host) && !isLoopbackHost(state.host)) {
+  if (state.host !== undefined && !isWildcardHost(state.host)) {
     return { localPort: state.port, localHost: formatHostForUrl(state.host) };
   }
   return { localPort: state.port };
@@ -221,10 +213,12 @@ type EnvironmentProbeResult =
   | { readonly _tag: "unreachable" }
   | { readonly _tag: "not-a-t3-server" };
 
-const probeEnvironmentDescriptor = (
+const probeEnvironmentDescriptor: (
   baseUrl: string,
-): Effect.Effect<EnvironmentProbeResult, never, HttpClient.HttpClient> =>
-  Effect.gen(function* () {
+) => Effect.Effect<EnvironmentProbeResult, never, HttpClient.HttpClient> = Effect.fn(
+  "pair.probeEnvironmentDescriptor",
+)(
+  function* (baseUrl: string) {
     const client = yield* HttpClient.HttpClient;
     const request = HttpClientRequest.get(new URL(WELL_KNOWN_ENVIRONMENT_PATH, baseUrl).toString());
     const response = yield* client.execute(request).pipe(
@@ -243,7 +237,9 @@ const probeEnvironmentDescriptor = (
       Effect.mapError(() => ({ _tag: "not-a-t3-server" }) as const),
     );
     return { _tag: "descriptor", descriptor } as const;
-  }).pipe(Effect.catch((outcome) => Effect.succeed(outcome)));
+  },
+  Effect.catch((outcome) => Effect.succeed(outcome)),
+);
 
 interface DiscoveredPairTarget {
   readonly baseDir: string;
@@ -252,15 +248,29 @@ interface DiscoveredPairTarget {
   readonly descriptor: ExecutionEnvironmentDescriptor;
 }
 
-interface PairTargetScan {
-  readonly checkedStatePaths: ReadonlyArray<string>;
-  readonly foundRuntimeFile: boolean;
-  readonly target: DiscoveredPairTarget | undefined;
-}
+const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
+  explicitBaseDir: string | undefined,
+) {
+  const bases: Array<string> = [];
+  let inLinkedWorktree = false;
+  if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
+    bases.push(yield* resolveBaseDir(explicitBaseDir));
+  } else {
+    // Same precedence as dev-runner: inside a linked worktree only its own
+    // `.t3` counts. Minting opens the target database with this checkout's
+    // migrations, so falling back to the shared home could migrate the live
+    // install with unreleased schema.
+    const worktreeHome = yield* resolveWorktreeT3Home(yield* HostProcess.WorkingDirectory);
+    if (worktreeHome !== undefined) {
+      bases.push(worktreeHome);
+      inLinkedWorktree = true;
+    } else {
+      const envHome = yield* Config.String("J5CODE_HOME").pipe(Config.option);
+      bases.push(yield* resolveBaseDir(Option.getOrUndefined(envHome)));
+    }
+  }
 
-const scanPairTargets = Effect.fn("pair.scanPairTargets")(function* (bases: ReadonlyArray<string>) {
   const checkedStatePaths: Array<string> = [];
-  let foundRuntimeFile = false;
   for (const baseDir of new Set(bases)) {
     for (const variant of ["userdata", "dev"] as const) {
       const derivedPaths = yield* ServerConfig.deriveServerPaths(
@@ -274,7 +284,6 @@ const scanPairTargets = Effect.fn("pair.scanPairTargets")(function* (bases: Read
       if (Option.isNone(state)) {
         continue;
       }
-      foundRuntimeFile = true;
       // The pid check guards against a dead server's state file whose port
       // was since reused by a different server: pairing would then mint a
       // token in the old database while the QR code points at the new server.
@@ -286,61 +295,14 @@ const scanPairTargets = Effect.fn("pair.scanPairTargets")(function* (bases: Read
         continue;
       }
       return {
-        checkedStatePaths,
-        foundRuntimeFile,
-        target: {
-          baseDir,
-          variant,
-          state: state.value,
-          descriptor: probed.descriptor,
-        } satisfies DiscoveredPairTarget,
-      } satisfies PairTargetScan;
+        baseDir,
+        variant,
+        state: state.value,
+        descriptor: probed.descriptor,
+      } satisfies DiscoveredPairTarget;
     }
   }
-  return { checkedStatePaths, foundRuntimeFile, target: undefined } satisfies PairTargetScan;
-});
-
-const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
-  explicitBaseDir: string | undefined,
-) {
-  if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
-    const baseDir = yield* resolveBaseDir(explicitBaseDir);
-    const waitForActivation = yield* RuntimeFileActivationDelay;
-    let scan = yield* scanPairTargets([baseDir]);
-    for (
-      let attempt = 1;
-      scan.target === undefined && !scan.foundRuntimeFile && attempt < RUNTIME_FILE_RETRY_ATTEMPTS;
-      attempt += 1
-    ) {
-      yield* waitForActivation(RUNTIME_FILE_RETRY_DELAY);
-      scan = yield* scanPairTargets([baseDir]);
-    }
-    if (scan.target !== undefined) {
-      return scan.target;
-    }
-    if (!scan.foundRuntimeFile) {
-      return yield* new NoRuntimeFileUnderBaseError({ baseDir });
-    }
-    return yield* new NoRunningServerError({ checkedStatePaths: [...scan.checkedStatePaths] });
-  }
-
-  // A linked worktree is an isolation boundary. Its home must never silently
-  // fall through to an ambient or default shared home.
-  const worktreeHome = yield* resolveWorktreeT3Home(process.cwd());
-  if (worktreeHome !== undefined) {
-    const scan = yield* scanPairTargets([worktreeHome]);
-    if (scan.target !== undefined) {
-      return scan.target;
-    }
-    return yield* new WorktreePairingRefusedError({ worktreeHome });
-  }
-
-  const envHome = yield* Config.String("J5CODE_HOME").pipe(Config.option);
-  const scan = yield* scanPairTargets([yield* resolveBaseDir(Option.getOrUndefined(envHome))]);
-  if (scan.target !== undefined) {
-    return scan.target;
-  }
-  return yield* new NoRunningServerError({ checkedStatePaths: [...scan.checkedStatePaths] });
+  return yield* new NoRunningServerError({ checkedStatePaths, inLinkedWorktree });
 });
 
 /**
@@ -420,6 +382,11 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     );
     if (status.magicDnsName === null) {
       return yield* new MagicDnsNameMissingError();
+    }
+    // Without the capability `tailscale serve` blocks on an enablement URL
+    // until it times out, which names neither the setting nor where to change it.
+    if (status.httpsServeEnabled === false) {
+      return yield* new TailscaleServeNotEnabledError();
     }
     const baseUrl = buildTailscaleHttpsBaseUrl({
       magicDnsName: status.magicDnsName,
@@ -555,6 +522,16 @@ export const pairCommand = Command.make("pair", {
       const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
 
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
+      // Each protocol keeps auth in its own database, so a token minted here
+      // for another protocol's server would never be accepted by it. Refuse
+      // before any local layer opens (and migrates) that database.
+      const serverProtocolVersion = target.descriptor.orchestrationProtocolVersion ?? 1;
+      if (serverProtocolVersion !== ORCHESTRATION_PROTOCOL_VERSION) {
+        return yield* new IncompatibleServerProtocolError({
+          serverVersion: target.descriptor.serverVersion,
+          serverProtocolVersion,
+        });
+      }
 
       const notes: Array<string> = [];
       let pairingBaseUrl: string;

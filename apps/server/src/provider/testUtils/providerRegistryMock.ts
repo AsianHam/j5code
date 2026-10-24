@@ -11,6 +11,7 @@ export const makeProviderRegistryMock = (
   getProviders: Effect.succeed(providers),
   refresh: () => Effect.succeed(providers),
   refreshInstance: () => Effect.succeed(providers),
+  refreshAfterUpdate: () => Effect.succeed(providers),
   getPendingWorkspaceCwds: () => Effect.succeed([]),
   refreshWorkspaceSnapshot: () => Effect.succeed(providers),
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>

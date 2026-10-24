@@ -6,8 +6,12 @@ import {
 import {
   createThreadSearchResultsAtomFamily,
   makeThreadSearchKey,
+  visibleThreadSearch,
   type EnvironmentThreadSearchMatch,
+  type SettledThreadSearch,
 } from "@t3tools/client-runtime/state/thread-search";
+import { THREAD_SEARCH_QUERY_MAX_LENGTH } from "@t3tools/contracts";
+import { messageSearchTokens } from "@t3tools/shared/paletteSearch";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
@@ -36,7 +40,7 @@ const PROJECT_PATH_SEARCH_DEBOUNCE_MS = 120;
 const COMPOSER_PATH_SEARCH_LIMIT = 80;
 const PROJECT_CONTENT_SEARCH_DEBOUNCE_MS = 120;
 const PROJECT_CONTENT_SEARCH_LIMIT = 500;
-const THREAD_SEARCH_DEBOUNCE_MS = 200;
+const THREAD_SEARCH_DEBOUNCE_MS = 120;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
 const EMPTY_PROJECT_ENTRIES: ReadonlyArray<ProjectEntry> = [];
@@ -80,77 +84,83 @@ export function useThreadSearch(
   readonly query: string;
   readonly isPending: boolean;
 } {
-  const normalizedQuery = query.trim();
+  // A pasted wall of text searches by its start rather than failing the request.
+  const normalizedQuery = query.trim().slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH).trim();
   const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_SEARCH_DEBOUNCE_MS);
-  const canSearch = environmentIds.length > 0 && normalizedQuery.length >= 2;
+  // The server needs a word of three or more letters; shorter queries would always come back empty.
+  const canSearch =
+    environmentIds.length > 0 && messageSearchTokens(normalizedQuery).long.length > 0;
   const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
   const searchKey =
     settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery);
   const result = useAtomValue(
     searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearchResultsAtom(searchKey),
   );
-  const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
+  const isPending = canSearch && (normalizedQuery !== debouncedQuery || result.isLoading);
+  // What fast environments returned shows without waiting for a slow one;
+  // callers keep shown rows in place with `nextShownOrder`.
+  const ready =
+    settledQuery !== null && (!result.isLoading || result.matches.length > 0)
+      ? { query: settledQuery, matches: result.matches }
+      : null;
+  // Kept from earlier renders: React's pattern for information from previous renders.
+  const [previous, setPrevious] = useState<SettledThreadSearch | null>(null);
+  if (ready !== null && previous?.matches !== ready.matches) setPrevious(ready);
+  const visible = canSearch
+    ? visibleThreadSearch(normalizedQuery, ready, previous)
+    : { query: "", matches: EMPTY_THREAD_SEARCH_MATCHES };
   return {
-    matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
-    query: settledQuery ?? "",
-    isPending: canSearch && (isDebouncing || result.isLoading),
+    matches: visible.matches,
+    query: visible.query,
+    isPending,
   };
 }
 
-// A hook so its result is frozen: `refresh` hands a page atom to the registry,
-// which the compiler would treat as a mutation and leave pagesAtom uncached,
-// resubscribing every render.
-function useBranchPageAtoms(
-  environmentId: EnvironmentId | null,
-  cwd: string | null,
-  query: string,
-  cursors: ReadonlyArray<number | undefined>,
-  targetKey: string | null,
-) {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
-  "use memo";
-  const pageAtoms =
-    environmentId !== null && cwd !== null
-      ? cursors.map((cursor) =>
-          vcsEnvironment.listRefs({
-            environmentId,
-            input: {
-              cwd,
-              ...(query.length > 0 ? { query } : {}),
-              ...(cursor === undefined ? {} : { cursor }),
-              limit: VCS_REF_LIST_LIMIT,
-            },
-          }),
-        )
-      : [];
-  const pagesAtom = Atom.make((get) => pageAtoms.map((atom) => get(atom))).pipe(
-    Atom.withLabel(`web:vcs-ref-pages:${targetKey ?? "empty"}`),
-  );
-  return { pageAtoms, pagesAtom };
+function vcsRefPageAtom(targetKey: string, cursor: number | undefined) {
+  const [environmentId, cwd, query] = JSON.parse(targetKey) as [EnvironmentId, string, string];
+  return vcsEnvironment.listRefs({
+    environmentId,
+    input: {
+      cwd,
+      ...(query.length > 0 ? { query } : {}),
+      ...(cursor === undefined ? {} : { cursor }),
+      limit: VCS_REF_LIST_LIMIT,
+    },
+  });
 }
 
+const EMPTY_VCS_REF_PAGES_ATOM = Atom.make<
+  ReadonlyArray<Atom.Type<ReturnType<typeof vcsRefPageAtom>>>
+>([]).pipe(Atom.withLabel("web:vcs-ref-pages:empty"));
+
+// Keyed by target and cursors so every render of the same pages reads the same atom.
+const vcsRefPagesAtom = Atom.family((pagesKey: string) => {
+  const [targetKey, cursors] = JSON.parse(pagesKey) as [string, Array<number | null>];
+  const pageAtoms = cursors.map((cursor) => vcsRefPageAtom(targetKey, cursor ?? undefined));
+  return Atom.make((get) => pageAtoms.map((atom) => get(atom))).pipe(
+    Atom.withLabel(`web:vcs-ref-pages:${pagesKey}`),
+  );
+});
+
 export function usePaginatedBranches(target: VcsRefTarget) {
-  const query = target.query?.trim() ?? "";
-  const targetKey =
-    target.environmentId !== null && target.cwd !== null
-      ? JSON.stringify([target.environmentId, target.cwd, query])
-      : null;
+  // Starts unkeyed: a key mismatch already resolves to the initial cursors, and seeding
+  // the key here would make every derivation below straddle this hook call.
   const [pagination, setPagination] = useState<{
     readonly targetKey: string | null;
     readonly cursors: ReadonlyArray<number | undefined>;
   }>({
-    targetKey,
+    targetKey: null,
     cursors: INITIAL_BRANCH_CURSORS,
   });
+  const { environmentId, cwd } = target;
+  const query = target.query?.trim() ?? "";
+  const targetKey =
+    environmentId !== null && cwd !== null ? JSON.stringify([environmentId, cwd, query]) : null;
   const cursors = pagination.targetKey === targetKey ? pagination.cursors : INITIAL_BRANCH_CURSORS;
-  const { pageAtoms, pagesAtom } = useBranchPageAtoms(
-    target.environmentId,
-    target.cwd,
-    query,
-    cursors,
-    targetKey,
+  const pagesKey = targetKey === null ? null : JSON.stringify([targetKey, cursors]);
+  const results = useAtomValue(
+    pagesKey === null ? EMPTY_VCS_REF_PAGES_ATOM : vcsRefPagesAtom(pagesKey),
   );
-  const results = useAtomValue(pagesAtom);
   const values = results.flatMap((result) => {
     const value = Option.getOrNull(AsyncResult.value(result));
     return value === null ? [] : [value];
@@ -185,10 +195,9 @@ export function usePaginatedBranches(target: VcsRefTarget) {
         })()
       : null;
   const refresh = () => {
-    const firstPage = pageAtoms[0];
     setPagination({ targetKey, cursors: INITIAL_BRANCH_CURSORS });
-    if (firstPage !== undefined) {
-      appAtomRegistry.refresh(firstPage);
+    if (targetKey !== null) {
+      appAtomRegistry.refresh(vcsRefPageAtom(targetKey, undefined));
     }
   };
   const nextCursor = data?.nextCursor;
@@ -221,7 +230,7 @@ type ProjectPathSearchTarget = ComposerPathSearchTarget & {
   readonly imageOnly?: boolean | undefined;
 };
 
-export function areProjectPathSearchTargetsEqual(
+function areProjectPathSearchTargetsEqual(
   left: ProjectPathSearchTarget,
   right: ProjectPathSearchTarget,
 ): boolean {
@@ -282,6 +291,7 @@ export function useProjectPathSearch(
     isPending:
       !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) ||
       (hasTarget && (fileAccess.isPending || result.isPending)),
+    searchedTarget: debouncedTarget,
     searchedQuery: debouncedTarget.query ?? "",
     truncated: result.data?.truncated ?? false,
     refresh: result.refresh,

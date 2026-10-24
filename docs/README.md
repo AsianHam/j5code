@@ -24,6 +24,7 @@
 - [Connecting two J5 servers](./j5/user/j5-peering.md)
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
+- [T3 Connect troubleshooting](./user/t3-connect-troubleshooting.md)
 - [People and sharing](./j5/user/people-and-sharing.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)

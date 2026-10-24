@@ -14,11 +14,15 @@ import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
-import { pinnedRuntimeVersionsDir } from "../cloud/pinnedRuntime.ts";
+import {
+  launcherOwnsVersionsDir,
+  pinnedRuntimeVersionsDir,
+  windowsShimTarget,
+} from "../cloud/pinnedRuntime.ts";
 import { planShellCleanup, removeAppLinks, removeJ5PathLines } from "../j5/cli/shellProfile.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
-import { findWindowsShim, launcherOwnsVersionsDir, resolveLauncherPath } from "./update.ts";
+import { findWindowsShim, resolveLauncherPath } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
   "CliUninstallError",
@@ -52,7 +56,7 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
     const shimPath = yield* findWindowsShim(input.launchedAs);
     if (shimPath === undefined) return undefined;
     const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
-    const target = Option.isSome(contents) ? /^"([^"]+)"/m.exec(contents.value)?.[1] : undefined;
+    const target = Option.isSome(contents) ? windowsShimTarget(contents.value) : undefined;
     return target !== undefined && launcherOwnsVersionsDir(path, input.versionsDir, target)
       ? shimPath
       : undefined;

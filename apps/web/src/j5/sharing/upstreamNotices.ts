@@ -1,21 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  AuthProvidersManageScope,
-  type AuthSessionState,
-  type EnvironmentId,
-  sessionGrantsScope,
-} from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { type EnvironmentId } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { environmentSession } from "../../state/session";
 import { j5Sharing } from "../state";
 import { permissionNoticeApplies } from "./upstreamNotices.logic";
-
-const NO_SESSION = Atom.make(AsyncResult.initial<AuthSessionState>());
 
 const noticeEnvironmentIdsAtom = Atom.make((get) => {
   const ids = new Set<EnvironmentId>();
@@ -41,26 +31,4 @@ export function useEnvironmentsForPermissionNotice<
     () => environments.filter((environment) => noticed.has(environment.environmentId)),
     [environments, noticed],
   );
-}
-
-/**
- * Whether upstream's provider update notice is mounted: where upstream mounts it, until the
- * session is known not to hold Manage providers. Anyone without it is told nothing they can act
- * on. It mounts as early as upstream's does, before the session is read: mounted only once the
- * updates are known, a remount (React's development replay among them) would close the notice
- * and count it as already shown.
- */
-export function useProviderUpdateNoticeShown(primaryEnvironmentAuthenticated: boolean): boolean {
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const session = useAtomValue(
-    primaryEnvironmentId === null
-      ? NO_SESSION
-      : environmentSession.sessionStateAtom(primaryEnvironmentId),
-  );
-  const value = Option.getOrNull(AsyncResult.value(session));
-  const knownWithout =
-    session._tag === "Success" &&
-    value !== null &&
-    !sessionGrantsScope(value, AuthProvidersManageScope);
-  return primaryEnvironmentAuthenticated && !knownWithout;
 }

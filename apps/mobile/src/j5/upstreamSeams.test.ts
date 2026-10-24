@@ -47,7 +47,7 @@ const SEAMS: ReadonlyArray<Seam> = [
     from: "../../j5/agents/useDraftAgentAssignment",
     reaches: [
       "useDraftAgentAssignment(",
-      "<AgentPersonaAssignmentControls",
+      "agentPersonaAssignment: draftAgent.assignment",
       "<AgentDraftPicker",
       "clearDraftAgent(draftKey)",
       "expandPlaybookPrompt(draft.text.trim())",
@@ -85,13 +85,19 @@ const SEAMS: ReadonlyArray<Seam> = [
     file: "features/threads/ThreadDetailScreen.tsx",
     record: "case 45: native playbook composer control",
     from: "../../j5/playbooks/PlaybookComposerControl",
-    reaches: ["<PlaybookComposerControl"],
+    reaches: ["<PlaybookComposerControl", "hasServerThread={"],
   },
   {
     file: "features/threads/ThreadComposer.tsx",
-    record: "PR #75–#86 role library; saved-agent mentions: handoff artifacts",
+    record:
+      "PR #75–#86 role library; saved-agent mentions: handoff artifacts, draft-as-agent; case 49",
     from: "../../j5/agents/AgentPersonaAssignmentControls",
-    reaches: ["<AgentPersonaAssignmentControls"],
+    reaches: [
+      "<AgentPersonaAssignmentControls",
+      "draftKey: composerDraftKey",
+      "projectId: props.selectedThread.projectId",
+      'composerMenu.trigger.kind === "slash-playbook"',
+    ],
   },
   {
     file: "features/threads/thread-list-v2-items.tsx",

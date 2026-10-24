@@ -35,7 +35,8 @@ import { isElectron } from "../../env";
 import { randomUUID } from "../../lib/utils";
 import { useProject, useThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { formatElapsedDurationLabel } from "../../timestampFormat";
+import { RelativeTime } from "../../components/RelativeTime";
+import { RelativeAge } from "../RelativeAge";
 import { answerHumanExchange } from "./humanInboxClient";
 import { useScopedParticipantLabels } from "./ParticipantIdentitiesClient";
 import { presentParticipantIdentity } from "./ParticipantIdentity";
@@ -130,9 +131,6 @@ const urgencyPresentation = {
   soon: { label: "Soon", variant: "warning" as const },
   fyi: { label: "FYI", variant: "secondary" as const },
 };
-
-export const formatAnsweredAgeLabel = (elapsed: string) =>
-  elapsed === "just now" ? "answered just now" : elapsed ? `answered ${elapsed} ago` : "answered";
 
 export function captureHumanInboxAnswer(
   event: { readonly currentTarget: { readonly value: string } },
@@ -295,7 +293,6 @@ function OpenInboxItem({
   readonly onOpenThread: (item: HumanInboxItem) => void;
 }) {
   const urgency = urgencyPresentation[item.urgency];
-  const openDuration = formatElapsedDurationLabel(item.openedAt);
   const mayAnswer = useAtomValue(
     j5Environment.answerHumanExchange.permissionAtom(item.environmentId),
   );
@@ -328,11 +325,11 @@ function OpenInboxItem({
                   </span>
                 </>
               ) : null}
-              {openDuration && closed === undefined ? (
+              {closed === undefined ? (
                 <>
                   <span aria-hidden>·</span>
                   <time className="tabular-nums" dateTime={item.openedAt}>
-                    open {openDuration}
+                    open <RelativeAge timestamp={item.openedAt} fallback="" />
                   </time>
                 </>
               ) : null}
@@ -416,9 +413,6 @@ function AnsweredShelf({
       </summary>
       <ol className="mt-1 divide-y divide-border/60 ps-6">
         {items.map((item) => {
-          const answeredDuration = item.terminalAt
-            ? formatElapsedDurationLabel(item.terminalAt)
-            : "";
           return (
             <li className="flex min-w-0 items-start gap-3 py-3" key={scopedInboxItemKey(item)}>
               <CheckCircle2Icon aria-hidden className="mt-0.5 size-4 shrink-0 text-success" />
@@ -428,7 +422,13 @@ function AnsweredShelf({
                   <SenderName item={item} senderLabels={senderLabels} /> · {projectNameOf(item)}
                   {showEnvironment ? ` · ${item.environmentLabel}` : ""}
                   {item.forEveryone === true ? " · for everyone here" : ""}
-                  {` · ${formatAnsweredAgeLabel(answeredDuration)}`}
+                  {" · answered"}
+                  {item.terminalAt ? (
+                    <>
+                      {" "}
+                      <RelativeTime timestamp={item.terminalAt} />
+                    </>
+                  ) : null}
                   <AnsweredBy item={item} />
                 </p>
               </div>

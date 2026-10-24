@@ -22,7 +22,7 @@ import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../..
 import { useThreadShells } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { formatElapsedDurationLabel } from "../../timestampFormat";
+import { RelativeAge } from "../RelativeAge";
 import { stopCrew } from "../crew/crewStopClient";
 import { j5Environment } from "../state";
 import { useSpawnedChildren, type SpawnedChild } from "./SpawnedChildrenClient";
@@ -246,7 +246,6 @@ function SpawnedChildGroupRows(
                 </li>
               );
             const status = resolveThreadStatusPill({ thread });
-            const elapsed = formatElapsedDurationLabel(thread.updatedAt);
             const providerEntry =
               props.providerEntries.get(
                 thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId,
@@ -273,11 +272,9 @@ function SpawnedChildGroupRows(
                   ) : (
                     <span className="truncate text-foreground">{thread.title}</span>
                   )}
-                  {elapsed ? (
-                    <span className="ms-auto shrink-0 text-2xs text-muted-foreground tabular-nums">
-                      {elapsed}
-                    </span>
-                  ) : null}
+                  <span className="ms-auto shrink-0 text-2xs text-muted-foreground tabular-nums">
+                    <RelativeAge timestamp={thread.updatedAt} fallback="" />
+                  </span>
                 </span>
                 <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
                   {status === null ? (

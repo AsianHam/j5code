@@ -32,8 +32,14 @@ export function runServicePreflight(input: {
     return {
       status: "blocked",
       version,
-      reason:
-        "This release requires a newer J5 Code service launcher. Update it on the server machine.",
+      // A stale `j5` earlier on PATH (an old npm/nvm global) makes `j5 service install`
+      // reinstall itself and report success, so name the exact install and the path check.
+      reason: [
+        `The installed service launcher speaks protocol ${input.launcherProtocol}, but j5@${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
+        `On the server machine, install this exact CLI: \`curl -fsSL https://github.com/Jacksondr5/j5code/releases/download/v${version}/install.sh | T3CODE_VERSION=${version} sh\`.`,
+        `Check that \`j5 --version\` prints ${version} and that \`which -a j5\` lists no older j5 (such as an npm or nvm install) first, then run \`~/.local/bin/j5 service install\` (the installer's default path).`,
+        "Updating the desktop app does not update this CLI, and `j5 service update` only repairs the service with whichever CLI runs it.",
+      ].join(" "),
     };
   }
 
