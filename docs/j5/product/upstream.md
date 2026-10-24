@@ -475,6 +475,18 @@ Recorded in `FORK.md` cases 69 to 73, 78 and 80.
 
 **Decided:** Jackson, 2026-10-19. Recorded in FORK.md's temporary patches.
 
+#### D38. Completion sounds can use a local MP3
+
+**Upstream:** web and desktop play a bundled completion sound through the notification audio helper.
+
+**J5:** Settings › General can choose, preview, replace and reset a completion MP3, persisted as bytes in this browser profile or Electron installation for the app origin. Files must decode, fit within 5 MiB and last at most 30 seconds. Missing or unreadable custom data falls back to the bundled sound. Input and approval audio, notification modes and gesture unlocking keep their existing behavior.
+
+**Why:** Abraham requested a personal “work done” sound and explicitly chose the assessed device-local web/desktop scope over following upstream’s bundled-only behavior or leaving customization unsupported.
+
+**Consequences:** three small upstream integration sites are carried (FORK.md case 82). Check audio selection, gesture unlocking and mode cancellation at each advance. Until the next advance it also carries upstream's burst guard, which this needs (FORK.md's temporary patches). The sound does not sync, reach providers or agents through MCP, or customize mobile push sounds. Clearing local site data removes it. No server storage or contract changes.
+
+**Decided:** proposed by Abraham, 2026-10-21; accepted by Jackson, 2026-10-24. Recorded in FORK.md case 82 and its temporary patches.
+
 ### Awaiting a decision
 
 These already diverge on `j5/main`, but no human ruling is on record. Each landed as an implementer's call inside a merged PR. The person rules on each one; an approved entry moves up into its section, and a rejected one becomes a fix.
@@ -589,4 +601,5 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-18 — D36: a bare `j5 auth pairing create` makes a link for a device the server asks about, so upstream's desktop app still connects over SSH; `j5 pair` still refuses (confirmed by Jackson 2026-10-19; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
 - 2026-10-19 — D33: T3 Connect's sessions are the first owner's, as they were full access before levels (review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).
 - 2026-10-19 — D37 added: a connection that keeps failing can be retried at once on web and desktop (Jackson).
+- 2026-10-24 — D38 added: a completion sound can be a local MP3 on web and desktop (proposed by Abraham, accepted by Jackson).
 - 2026-10-20 — D2 clarifies that native-question answers retain upstream access and attribution behavior, and placed-agent notices replace raw thread waiting ([#674](https://github.com/Jacksondr5/j5code/pull/674), [#281](https://github.com/Jacksondr5/j5code/issues/281), [existing access decision](https://github.com/Jacksondr5/j5code/issues/345#issuecomment-6092125478)).
