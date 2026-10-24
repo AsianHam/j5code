@@ -817,6 +817,9 @@ explicitly marked.
 | `packages/contracts/src/settings.ts`                                     | N       | 42, B                                              |
 | `packages/shared/package.json`                                           | N       | 43, 46, 49, 52                                     |
 | `packages/shared/src/devHome.test.ts`                                    | R       | H                                                  |
+| `packages/shared/src/paletteSearch.test.ts`                              | N       | B                                                  |
+| `apps/mobile/src/features/settings/environment-maintenance.test.ts`      | N       | 40                                                 |
+| `apps/server/src/provider/testing/ProviderInstanceRegistryLive.fixture.mjs` | N       | 43                                                 |
 | `packages/shared/src/devHome.ts`                                         | R       | H                                                  |
 | `packages/ssh/src/tunnel.ts`                                             | R       | H, 50                                              |
 | `pnpm-lock.yaml`                                                         | N       | 45                                                 |

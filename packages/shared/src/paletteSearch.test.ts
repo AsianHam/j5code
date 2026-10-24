@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { WORKTREE_BRANCH_PREFIX } from "./git.ts";
 import {
   findSearchTokenRanges,
   foldSearchQuery,
@@ -173,7 +174,7 @@ describe("scoreThreadSearch", () => {
       rankTitles("t3 connect", [
         thread("Diagnose Connect provisioning failures", {
           ...busy,
-          branch: "t3/diagnose-connect",
+          branch: `${WORKTREE_BRANCH_PREFIX}/diagnose-connect`,
           projectTitle: "t3code",
         }),
         thread("T3 Connect Tunnel Lifecycle Review", { projectTitle: "t3code" }),
@@ -279,7 +280,7 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
 
   it("says which field matched when the title does not", () => {
     const subject = thread("Trim model lists", {
-      branch: "t3/cleanup-payloads",
+      branch: `${WORKTREE_BRANCH_PREFIX}/cleanup-payloads`,
       pullRequests: [{ number: 22889, title: "Smaller MCP payloads" }],
     });
     for (const query of ["#22889", "pr 22889", "pr22889", "pull request #22889"]) {

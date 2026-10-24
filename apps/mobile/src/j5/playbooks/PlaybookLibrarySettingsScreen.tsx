@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
 import { playbookStepLabel } from "@t3tools/client-runtime/j5/playbooks";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { PlaybookSource } from "@t3tools/contracts/j5";
 import { useCallback, useState } from "react";
@@ -101,15 +101,15 @@ function PlaybookLibrary({
     if (busy) return;
     setBusy(true);
     setError(null);
-    try {
-      await operation();
-      query.refresh();
-      sources.refresh();
-    } catch (cause) {
+    const result = await settlePromise(operation);
+    setBusy(false);
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
       setError(cause instanceof Error ? cause.message : "Playbook action failed.");
-    } finally {
-      setBusy(false);
+      return;
     }
+    query.refresh();
+    sources.refresh();
   }
   async function changeFolders(folders: string[]) {
     const result = await setFolders({ environmentId, input: { folders } });

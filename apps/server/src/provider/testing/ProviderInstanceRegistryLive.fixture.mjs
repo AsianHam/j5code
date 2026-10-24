@@ -68,6 +68,20 @@ lines.on("line", (line) => {
     );
     return;
   }
+  // J5: the capability probe also reloads skills to report Claude's bundled ones.
+  if (message.request?.subtype === "reload_skills") {
+    process.stdout.write(
+      JSON.stringify({
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: message.request_id,
+          response: { skills: [] },
+        },
+      }) + "\n",
+    );
+    return;
+  }
   if (message.request?.subtype !== "initialize") return;
   process.stdout.write(
     JSON.stringify({

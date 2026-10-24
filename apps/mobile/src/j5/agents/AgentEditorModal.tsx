@@ -50,23 +50,22 @@ export function AgentEditorModal(props: {
     if (saving || instructions === null) return;
     setSaving(true);
     setError(null);
-    try {
-      const result = await save({
-        environmentId: props.environmentId,
-        input: {
-          ...draft,
-          displayName: draft.displayName.trim(),
-          description: draft.description.trim(),
-          instructions,
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      props.onSaved();
-    } catch (cause) {
+    const result = await save({
+      environmentId: props.environmentId,
+      input: {
+        ...draft,
+        displayName: draft.displayName.trim(),
+        description: draft.description.trim(),
+        instructions,
+      },
+    });
+    setSaving(false);
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
       setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSaving(false);
+      return;
     }
+    props.onSaved();
   }
   return (
     <Modal

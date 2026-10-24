@@ -1659,7 +1659,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.equal(mac.identity, "-");
       assert.equal(mac.hardenedRuntime, false);
-      assert.notProperty(config, "publish");
+      assert.isNull(config.publish);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
