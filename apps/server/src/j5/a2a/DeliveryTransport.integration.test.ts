@@ -1072,6 +1072,51 @@ it.effect("lands a message the way its sender asked, on any model", () =>
   }),
 );
 
+// Upstream refuses a steer to a run that Stop has reached, and keeps the refusal for its command.
+it.effect("queues a message for a GPT 6 run that is stopping instead of failing it for good", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const threads = yield* ThreadManagementService;
+      const transport = yield* A2ADeliveryTransport;
+      const worker = yield* OrchestrationEffectWorkerV2;
+      const target = yield* seedTarget("gpt6-stopping", "gpt-6-astra");
+      yield* startBusyTurn(target);
+      const running = (yield* threads.getThreadProjection(target.threadId)).runs[0]!;
+      // Until the worker runs Stop's interrupt, the run still reads as running and steerable.
+      yield* threads.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("command:gpt6-stopping:stop"),
+        threadId: target.threadId,
+      });
+      const stopping = yield* threads.getThreadProjection(target.threadId);
+      assert.equal(gpt6PeerSteeringRun(stopping, "peer")?.id, running.id);
+
+      // The refused steer falls back to the queue, and a retry finds the queued message.
+      const ownRuns = threads
+        .getThreadProjection(target.threadId)
+        .pipe(
+          Effect.map((projection) =>
+            projection.runs
+              .filter((run) => run.userMessageId === deliveryMessageId(target.messageId))
+              .map((run) => run.status),
+          ),
+        );
+      for (let attempt = 0; attempt < 2; attempt++) yield* transport.deliverAgent(target.delivery);
+      assert.deepStrictEqual(yield* ownRuns, ["queued"]);
+      // Once Stop lands, it starts, as upstream's own send in that window does.
+      yield* worker.drain();
+      assert.deepStrictEqual(yield* ownRuns, ["running"]);
+      const after = yield* threads.getThreadProjection(target.threadId);
+      assert.lengthOf(
+        after.messages.filter((message) => message.id === deliveryMessageId(target.messageId)),
+        1,
+      );
+      assert.lengthOf(yield* Ref.get(harness.steerInputs), 0);
+    }).pipe(Effect.provide(makeTestLayer(harness)));
+  }),
+);
+
 it.effect("measures the backlog a send waits behind on a busy receiver", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;

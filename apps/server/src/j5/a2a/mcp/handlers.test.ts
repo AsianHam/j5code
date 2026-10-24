@@ -1230,55 +1230,49 @@ it.effect("preflights home before creation and records facts before the one stab
               { discard: true },
             ).pipe(Effect.as({ events: [], effects: [] } as never)),
     });
+    const capabilitySearches: Array<string | undefined> = [];
     const orchestrator = Layer.mock(OrchestratorMcpService)({
-      capabilities: () =>
-        Effect.succeed({
-          parentThreadId: invocation.threadId,
-          inheritedProviderInstanceId: invocation.providerInstanceId,
-          inheritedModel: "gpt-5.6-sol",
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          providers: [
-            {
-              providerInstanceId: ProviderInstanceId.make("codex-luna"),
-              driverKind: ProviderDriverKind.make("codex"),
-              displayName: "Codex Luna",
-              models: [
-                {
-                  id: "gpt-5.6-luna",
-                  label: "GPT-5.6 Luna",
-                  options: [
-                    {
-                      id: "reasoningEffort",
-                      label: "Reasoning",
-                      type: "select" as const,
-                      options: [
-                        { id: "medium", label: "Medium" },
-                        { id: "high", label: "High" },
-                      ],
-                    },
-                  ],
-                },
-                {
-                  id: "grok-custom-optionless",
-                  label: "Grok Custom Optionless",
-                },
-              ],
-              canRunChildTask: true,
-              canRunCrossProviderChildTask: true,
-              constraints: [],
+      capabilities: (_scope, input) =>
+        Effect.suspend(() => {
+          capabilitySearches.push(input?.search);
+          return Effect.succeed({
+            parentThreadId: invocation.threadId,
+            inheritedProviderInstanceId: invocation.providerInstanceId,
+            inheritedModel: "gpt-5.6-sol",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            providers: [
+              {
+                providerInstanceId: ProviderInstanceId.make("codex-luna"),
+                driverKind: ProviderDriverKind.make("codex"),
+                displayName: "Codex Luna",
+                models: [
+                  {
+                    id: "gpt-5.6-luna",
+                    label: "GPT-5.6 Luna",
+                    options: [{ id: "reasoningEffort", values: ["medium", "high"] }],
+                  },
+                  {
+                    id: "grok-custom-optionless",
+                    label: "Grok Custom Optionless",
+                  },
+                ],
+                canRunChildTask: true,
+                canRunCrossProviderChildTask: true,
+                constraints: [],
+              },
+            ],
+            features: {
+              appOwnedSubagents: true,
+              asyncPolling: true,
+              cancellation: true,
+              batchThreadCreation: true,
+              threadManagement: true,
+              incrementalThreadRead: true,
+              scheduledTasks: true,
+              maxBatchThreads: 8,
             },
-          ],
-          features: {
-            appOwnedSubagents: true,
-            asyncPolling: true,
-            cancellation: true,
-            batchThreadCreation: true,
-            threadManagement: true,
-            incrementalThreadRead: true,
-            scheduledTasks: true,
-            maxBatchThreads: 8,
-          },
+          });
         }),
     });
     const dependencies = Layer.mergeAll(
@@ -1386,6 +1380,8 @@ it.effect("preflights home before creation and records facts before the one stab
         assert.equal(replayTurn.text, firstTurn.text);
       }
       assert.equal(capturedFacts[0]?.spawnedByParticipantId, callerParticipantId);
+      // orchestrator_capabilities lists a short set by default; a spawn searches the whole catalog.
+      assert.equal(capabilitySearches[0], "gpt-5.6-luna");
       const invalidReasoning = yield* call({
         ...args,
         reasoning: "ultra",
@@ -1538,9 +1534,7 @@ const personaCapabilityProvider = (provider: ServerProvider) => ({
     label: model.name,
     options: model.capabilities?.optionDescriptors?.map((descriptor) => ({
       id: descriptor.id,
-      label: descriptor.label,
-      type: "select" as const,
-      options: descriptor.type === "select" ? descriptor.options : [],
+      values: descriptor.type === "select" ? descriptor.options.map((option) => option.id) : [],
     })),
   })),
   canRunChildTask: true,
@@ -2415,9 +2409,9 @@ it.effect(
       const targetProjectId = ProjectId.make("project:j5:mcp-stop-target");
       const stopped = yield* Ref.make<
         ReadonlyArray<{
-          readonly via: "thread.stop" | "stopDelegatedTasks";
           readonly commandId: string;
           readonly threadId: ThreadId;
+          readonly reason: string | undefined;
         }>
       >([]);
       const targetRunning = yield* Ref.make(true);
@@ -2494,9 +2488,9 @@ it.effect(
               ? Ref.update(stopped, (items) => [
                   ...items,
                   {
-                    via: "thread.stop" as const,
                     commandId: command.commandId,
                     threadId: command.threadId,
+                    reason: command.reason,
                   },
                 ]).pipe(
                   // The limit upstream re-checks under the target's lock rides with the Stop.
@@ -2511,15 +2505,9 @@ it.effect(
                   Effect.as({ sequence: 1, storedEvents: [] }),
                 )
               : Effect.die(`j5_stop_agent must only dispatch thread.stop, not ${command.type}`),
-          stopDelegatedTasks: (input) =>
-            Ref.update(stopped, (items) => [
-              ...items,
-              {
-                via: "stopDelegatedTasks" as const,
-                commandId: input.commandId,
-                threadId: input.threadId,
-              },
-            ]),
+          // Upstream's thread.stop stops the target's delegated tasks itself.
+          stopDelegatedTasks: () =>
+            Effect.die("j5_stop_agent leaves delegated tasks to thread.stop"),
           interruptThread: () =>
             Effect.die("j5_stop_agent sends upstream's Stop, not an interrupt"),
         }),
@@ -2579,24 +2567,13 @@ it.effect(
         });
         assert.equal(idle.result, "already_idle");
         const calls = yield* Ref.get(stopped);
-        assert.deepStrictEqual(
-          calls.map((call) => call.via),
-          [
-            "thread.stop",
-            "stopDelegatedTasks",
-            "thread.stop",
-            "stopDelegatedTasks",
-            "thread.stop",
-            "stopDelegatedTasks",
-          ],
-        );
+        assert.lengthOf(calls, 3);
         assert.isTrue(calls.every((call) => call.threadId === targetThreadId));
-        // A replay reuses the command id, and the delegated-task stops derive theirs from it.
-        assert.deepStrictEqual(
-          calls.slice(0, 4).map((call) => call.commandId),
-          Array.from({ length: 4 }, () => calls[0]!.commandId),
-        );
-        assert.notEqual(calls[4]?.commandId, calls[0]?.commandId);
+        // An agent's Stop says so; without a reason the timeline reads "Stopped by user".
+        assert.isTrue(calls.every((call) => call.reason === "Stopped by an agent"));
+        // A replay reuses the command id.
+        assert.equal(calls[1]?.commandId, calls[0]?.commandId);
+        assert.notEqual(calls[2]?.commandId, calls[0]?.commandId);
         assert.notInclude(
           calls.map((call) => call.threadId),
           siblingThreadId,
@@ -2616,7 +2593,7 @@ it.effect(
         yield* Ref.set(targetIsCallersSeat, true);
         const commanded = yield* call({ ...args, client_request_id: "stop-seat-1" });
         assert.equal(commanded.result, "already_idle");
-        assert.lengthOf(yield* Ref.get(stopped), calls.length + 2);
+        assert.lengthOf(yield* Ref.get(stopped), calls.length + 1);
         // Each Stop carries its caller's limit, except the Captain's, which has none.
         assert.deepStrictEqual(yield* Ref.get(stopLimits), [
           "full-access",

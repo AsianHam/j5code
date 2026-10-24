@@ -6,7 +6,7 @@ import { CONTACT_EMAIL } from "../lib/site";
 <Document
   title="Privacy"
   description="What J5 Code sends from your machines, who receives it, and how to turn it off."
-  updated="2026-10-10"
+  updated="2026-10-24"
 >
   <p>
     J5 Code is open-source software maintained by Jackson Miller. It runs on your own machines.
@@ -61,12 +61,30 @@ import { CONTACT_EMAIL } from "../lib/site";
     </li>
     <li>
       a turn finishing, with the provider, model, reasoning effort, permission mode, result,
-      duration, and token totals.
+      duration, and token totals;
+    </li>
+    <li>
+      a feature being used, such as restoring a checkpoint, forking a thread, opening a terminal,
+      or creating a worktree, with the feature's name, a fixed option where the feature has one
+      (for example which kind of restore), and the kind of client used. Paths, names, IDs, and
+      text are never sent;
+    </li>
+    <li>
+      an agent calling one of J5 Code's tools, with the tool's name, the kind of provider that
+      called it, whether it succeeded, a fixed error code if it failed, and how long it took.
+      Calls that hand work to another thread also carry the provider, model, and modes on each
+      side and the fixed settings the agent chose; other tools are reported only when a call
+      fails. A model is named only when it is one of a provider's own published models;
+    </li>
+    <li>
+      a task an agent handed to another agent ending, with how it ended, the provider and model on
+      each side, and how long it took.
     </li>
   </ul>
   <p>
-    Each event also carries the J5 Code version, the server's operating system and processor
-    architecture, and the WSL distribution name if there is one.
+    Each event also carries the J5 Code version, its release channel (stable, nightly, preview, or
+    a development build), the server's operating system and processor architecture, and the WSL
+    distribution name if there is one.
   </p>
   <p>
     If you set <code>J5CODE_TELEMETRY_TAG</code> in the server's environment, its value is sent with
@@ -75,8 +93,17 @@ import { CONTACT_EMAIL } from "../lib/site";
   <p>
     Events are tied to an identifier: a one-way hash of your Codex account ID, or of your Claude
     user ID if there is no Codex account, or of a random ID created on your machine if there is
-    neither. The original ID is never sent. IP addresses are not stored.
+    neither. Each event also carries an install ID: a one-way hash of a random ID created when the
+    server is installed, which stays the same for that install.
   </p>
+  <p>
+    To count how many installs one person runs, the server also sends an event naming who an
+    install belongs to, once for each owner it sees while it runs. An owner is a one-way hash of
+    one of: your T3 Connect account, your OpenAI user ID and your Claude account ID when you are
+    signed in to those providers, and a random ID that each web, desktop, or mobile client creates
+    for its device when it connects. Clients send the server only these hashes.
+  </p>
+  <p>The original IDs are never sent. IP addresses are not stored.</p>
   <p>
     Events never include prompts, responses, file contents, file or project names, authentication
     tokens, or conversation IDs.
@@ -102,7 +129,9 @@ import { CONTACT_EMAIL } from "../lib/site";
   <h2>The mobile app</h2>
   <p>
     The mobile app connects to J5 Code servers you add and stores those connection details on your
-    device. It contains no analytics and sends nothing to the maintainer.
+    device. It contains no analytics and sends nothing to the maintainer itself. When it connects,
+    it gives the server a hash of its device ID and of your T3 Connect account if you are signed in,
+    and the server reports them as described under Usage data.
   </p>
 
   <h2>Contact</h2>

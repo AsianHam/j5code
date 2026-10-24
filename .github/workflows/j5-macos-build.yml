@@ -49,7 +49,7 @@ jobs:
 
       - uses: pnpm/action-setup@v6
         with:
-          version: 11.10.0
+          version: 12.14.0
           run_install: false
 
       - uses: actions/setup-node@v6
@@ -71,6 +71,20 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: pnpm exec node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
+
+      # The bundled server stamps its telemetry channel at build time and reports
+      # "dev" without one (apps/server/vite.config.ts). Same version patterns as
+      # J5 Release's resolve job; a branch build at any other version stays "dev".
+      - name: Resolve the telemetry channel
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./apps/server/package.json').version")"
+          channel=dev
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then channel=stable
+          elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-preview\.[0-9]{8}\.[0-9]+$ ]]; then channel=preview
+          elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$ ]]; then channel=nightly
+          fi
+          echo "T3CODE_TELEMETRY_CHANNEL=$channel" >> "$GITHUB_ENV"
 
       - name: Prepare Apple signing credentials
         env:

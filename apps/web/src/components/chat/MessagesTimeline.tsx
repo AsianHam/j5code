@@ -113,12 +113,8 @@ import { V2EventTimelineRow } from "./TimelineV2EventRow";
 import { useTimelinePositionRestore } from "./useTimelinePositionRestore";
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
-import { formatDayAwareTimestamp } from "../../timestampFormat";
 import { useSharedConversationEntries } from "../../j5/sharing/sharedTimeline";
-import {
-  participantIdsForThreadA2ADelivery,
-  renderThreadA2ADelivery,
-} from "../../j5/a2a/ThreadA2ARenderer";
+import { participantIdsForThreadA2ADelivery } from "../../j5/a2a/ThreadA2ARenderer";
 import { useParticipantIdentities } from "../../j5/a2a/ParticipantIdentitiesClient";
 import {
   participantIdsForSpawnBrief,
@@ -1292,18 +1288,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" || row.kind === "work-live" || row.kind === "thinking") &&
     row.expanded === true;
-  const ctx = use(TimelineRowCtx);
-  const a2aDelivery =
-    row.kind === "message" && row.message.role === "user"
-      ? renderThreadA2ADelivery({
-          message: row.message,
-          timestampLabel: formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat),
-          participantLabels: ctx.participantLabels,
-          participantThreads: ctx.participantThreads,
-          threadRef: ctx.threadRef,
-          markdownCwd: ctx.markdownCwd,
-        })
-      : null;
 
   return (
     <div
@@ -1361,10 +1345,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
-      {a2aDelivery}
-      {row.kind === "message" && row.message.role === "user" && a2aDelivery === null ? (
-        <UserMessageRow row={row} />
-      ) : null}
+      {row.kind === "message" && row.message.role === "user" ? <UserMessageRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}

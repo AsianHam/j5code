@@ -10,9 +10,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { launcherOwnsVersionsDir } from "../../cli/update.ts";
 import { agentCliDirectory } from "./agentPath.ts";
-import { pinnedRuntimeVersionsDir } from "../../cloud/pinnedRuntime.ts";
+import { launcherOwnsVersionsDir, pinnedRuntimeVersionsDir } from "../../cloud/pinnedRuntime.ts";
 
 // Profiles needn't be UTF-8. Reading each byte as one latin1 character keeps
 // every byte through the edit; the marker itself is ASCII.

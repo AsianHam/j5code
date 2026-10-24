@@ -31,6 +31,7 @@ export function retainFailedWorkspaceSnapshot(
     workspaceSnapshots: [
       ...(provider.workspaceSnapshots ?? []).filter((snapshot) => snapshot.cwd !== cwd),
       {
+        ...previous,
         cwd,
         checkedAt: previous?.checkedAt ?? scopedSnapshot.checkedAt,
         slashCommands: previous?.slashCommands ?? [],
@@ -41,18 +42,14 @@ export function retainFailedWorkspaceSnapshot(
   };
 }
 
-// Upstream's rule: an error snapshot still carries a slash command result when it says so.
-const isFailedScan = (snapshot: ProviderWorkspaceSnapshot) =>
-  snapshot.status === "error" && snapshot.slashCommandsPending === undefined;
-
 /**
  * The registry's workspace scan. It follows upstream's `refreshWorkspaceSnapshot`
- * (TTL, `fresh`, writing only over the snapshot the scan started from) and adds
- * J5's failure retention, link-target resolution and request supersession: the
- * latest `fresh` or `force` request for a cwd is the only one that may write.
- * `force` rescans one cwd without upstream's `fresh` side effects (the machine
- * refresh and dropping other instances' snapshots), for callers that already
- * refresh every affected instance.
+ * (TTL, `fresh`, the latest claim for a cwd is the only one that may write, and
+ * only over the snapshot the scan started from) and adds J5's failure retention,
+ * link-target resolution and `force`: a rescan of one cwd that supersedes a
+ * pending one without upstream's `fresh` side effects (the machine refresh and
+ * dropping other instances' snapshots), for callers that already refresh every
+ * affected instance.
  */
 export const makeSkillWorkspaceRefresh = Effect.fn("j5.skills.makeWorkspaceRefresh")(function* ({
   instanceRegistry,
@@ -134,57 +131,62 @@ export const makeSkillWorkspaceRefresh = Effect.fn("j5.skills.makeWorkspaceRefre
     return yield* refreshMachineSnapshot.pipe(
       Effect.andThen(
         snapshotForCwd(input.cwd).pipe(
-          Effect.catchCause((cause) => {
-            if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
-            return Effect.succeed<ProviderWorkspaceSnapshot>({
-              ...provider,
-              status: "error",
-              message: "Workspace discovery failed.",
-            });
-          }),
-        ),
-      ),
-      Effect.flatMap((snapshot) =>
-        isFailedScan(snapshot)
-          ? Effect.succeed(snapshot)
-          : resolveProviderSkillPaths(snapshot.skills).pipe(
+          Effect.flatMap((snapshot) =>
+            resolveProviderSkillPaths(snapshot.skills).pipe(
               Effect.provideService(FileSystem.FileSystem, fs),
               Effect.provideService(Path.Path, path),
               Effect.map((skills): ProviderWorkspaceSnapshot => ({ ...snapshot, skills })),
             ),
+          ),
+          // Upstream lets a failed scan fail this effect. J5 records it on the cwd instead,
+          // so Settings → Skills can say discovery failed while keeping the last inventory.
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.succeed(undefined),
+          ),
+        ),
       ),
+      // A returned snapshot is a real inventory even while the provider's health check reports
+      // an error.
       Effect.flatMap((scopedSnapshot) =>
         instanceRegistry.getInstance(input.instanceId).pipe(
-          Effect.flatMap(
-            Effect.fn(function* (currentInstance) {
-              const requests = yield* Ref.get(workspaceRefreshesRef);
-              if (
-                currentInstance !== instance ||
-                requests.get(instance)?.get(input.cwd) !== request
-              ) {
-                return yield* Ref.get(providersRef);
+          Effect.flatMap((currentInstance) => {
+            if (currentInstance !== instance) return Ref.get(providersRef);
+            // A first scan that failed left no commands for a pending scan to keep.
+            const withoutFailedPlaceholder = (candidate: ServerProvider) =>
+              scannedFrom?.refreshError && scannedFrom.slashCommands.length === 0
+                ? dropProviderWorkspaceSnapshot(candidate, input.cwd)
+                : candidate;
+            return updateProviders((currentProviders) => {
+              // Read ownership inside the update so a newer claim cannot race publication.
+              if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== request) {
+                return currentProviders;
               }
-              // A first scan that failed left no commands for a pending scan to keep.
-              const withoutFailedPlaceholder = (candidate: ServerProvider) =>
-                scannedFrom?.refreshError && scannedFrom.slashCommands.length === 0
-                  ? dropProviderWorkspaceSnapshot(candidate, input.cwd)
-                  : candidate;
-              return yield* updateProviders((currentProviders) =>
-                currentProviders.map((candidate) =>
-                  candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                    ? isFailedScan(scopedSnapshot)
-                      ? retainFailedWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
-                      : upsertProviderWorkspaceSnapshot(
-                          withoutFailedPlaceholder(candidate),
-                          input.cwd,
-                          { ...scopedSnapshot, checkedAt: scannedAt },
-                        )
-                    : candidate,
-                ),
+              return currentProviders.map((candidate) =>
+                candidate.instanceId !== input.instanceId ||
+                !Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
+                  ? candidate
+                  : scopedSnapshot === undefined
+                    ? retainFailedWorkspaceSnapshot(candidate, input.cwd, {
+                        checkedAt: scannedAt,
+                        message: "Workspace discovery failed.",
+                      })
+                    : upsertProviderWorkspaceSnapshot(
+                        withoutFailedPlaceholder(candidate),
+                        input.cwd,
+                        {
+                          ...scopedSnapshot,
+                          checkedAt: scannedAt,
+                          // Unless the driver reports its own command discovery,
+                          // commands come from the health check. A failed check
+                          // leaves them unknown, so keep the last ones and retry.
+                          slashCommandsPending:
+                            scopedSnapshot.slashCommandsPending ??
+                            scopedSnapshot.status === "error",
+                        },
+                      ),
               );
-            }),
-          ),
+            });
+          }),
         ),
       ),
       Effect.ensuring(

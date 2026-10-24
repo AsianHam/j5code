@@ -72,13 +72,12 @@ import {
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
 import { resolvePreviewAnnotationImage } from "./TimelineUserMessageRow.logic";
 import { APP_BASE_NAME } from "../../branding";
-import { SharedMessageAuthorLine } from "../../j5/sharing/SharedConversationCards";
 import { useSharedMessageAuthor } from "../../j5/sharing/sharedTimeline";
 import {
-  presentSpawnBrief,
-  resolvedSpawnBriefContext,
-  SpawnBriefAttribution,
-} from "../../j5/a2a/SpawnBrief";
+  J5MessageAuthorLine,
+  renderThreadA2ADelivery,
+  useJ5UserMessagePresentation,
+} from "../../j5/a2a/ThreadA2ARenderer";
 
 function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
   const ctx = use(TimelineRowCtx);
@@ -126,6 +125,15 @@ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
 
 export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  // J5 (case 7): J5's platform notices draw in place of the row.
+  const j5Notice = renderThreadA2ADelivery({
+    message: row.message,
+    timestampLabel: formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat),
+    participantLabels: ctx.participantLabels,
+    threadRef: ctx.threadRef,
+    markdownCwd: ctx.markdownCwd,
+  });
+  if (j5Notice !== null) return j5Notice;
   return ctx.workflowOpening?.messageId === row.message.id ? (
     <WorkflowOpeningBlock
       opening={ctx.workflowOpening}
@@ -248,7 +256,9 @@ function FoldedMessageHeader(props: {
       className="flex w-full min-w-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring"
     >
       <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
-      <span className="max-w-1/2 shrink-0 truncate text-muted-foreground">{props.label}</span>
+      {props.label ? (
+        <span className="max-w-1/2 shrink-0 truncate text-muted-foreground">{props.label}</span>
+      ) : null}
       <span className="min-w-0 flex-1 truncate">{props.summary}</span>
       <ChevronDownIcon
         className={cn(
@@ -301,15 +311,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const unknownAttachments = (row.message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
-  const userMessage = resolveUserMessagePresentation(row.message);
+  // J5 (case 7): who is speaking, and their words without J5's envelope.
+  const userMessage = useJ5UserMessagePresentation(row.message);
   // J5 (case 80): another person's message in a shared conversation sits on the left, named.
   const sharedAuthor = useSharedMessageAuthor(ctx.threadRef, row.message);
-  // A spawn brief shows only the spawner's words; the platform identity block
-  // is already reflected in the thread header and the "Spawned by" divider.
-  // It is literal text, so legacy composer-context upgrades skip it (J5).
-  const spawnBrief = presentSpawnBrief(row.message);
   // Messages from other agents fold to one line so the user's own messages stay easy to find.
-  const folded = userMessage.attribution === "agent" && spawnBrief === null;
+  const folded = userMessage.attribution === "agent";
   const [expanded, setExpanded] = useState(false);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
   const senderShell = useQuietThreadShell(
@@ -317,10 +324,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ? { environmentId: ctx.activeThreadEnvironmentId, threadId: senderThreadId }
       : null,
   );
-  const resolvedContext =
-    spawnBrief === null
-      ? resolveUserMessageContext(row.message)
-      : resolvedSpawnBriefContext(spawnBrief.brief);
+  const resolvedContext = userMessage.literalContext ?? resolveUserMessageContext(row.message);
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
   const chippedAttachmentIds = new Set(
@@ -433,15 +437,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div
-      className={cn("group flex flex-col gap-1", sharedAuthor ? "items-start" : "items-end")}
+      className={cn(
+        "group flex flex-col gap-1",
+        sharedAuthor || userMessage.side === "left" ? "items-start" : "items-end",
+      )}
       data-user-message-attribution={folded ? "agent" : undefined}
     >
-      {spawnBrief !== null ? (
-        <SpawnBriefAttribution
-          spawnedBy={spawnBrief.spawnedBy}
-          participantLabels={ctx.participantLabels}
-        />
-      ) : userMessage.attribution === "t3code" ? (
+      {userMessage.attribution === "t3code" ? (
         <p
           className="me-1 text-2xs text-muted-foreground/70"
           data-user-message-attribution="t3code"
@@ -449,7 +451,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           Sent by {APP_BASE_NAME}
         </p>
       ) : null}
-      <SharedMessageAuthorLine threadRef={ctx.threadRef} message={row.message} />
+      <J5MessageAuthorLine message={row.message} presentation={userMessage} />
       {row.message.inputIntent === "steer" ||
       row.message.inputIntent === "promoted_queued_to_steer" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
@@ -464,8 +466,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         {folded ? (
           <FoldedMessageHeader
             icon={MessagesSquareIcon}
-            label={senderShell?.title.trim() || "Agent"}
-            summary={foldSummary}
+            label={userMessage.j5 ? "" : senderShell?.title.trim() || "Agent"}
+            summary={userMessage.preview ?? foldSummary}
             expanded={expanded}
             onToggle={() => setExpanded((value) => !value)}
           />
@@ -480,7 +482,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               folded && !ctx.findActive && "max-h-96 overflow-auto",
             )}
           >
-            <MessageAuthorHeading>{sharedAuthor?.name ?? "You"}</MessageAuthorHeading>
+            <MessageAuthorHeading>
+              {sharedAuthor?.name ?? userMessage.authorName ?? "You"}
+            </MessageAuthorHeading>
             {(regularImages.length > 0 || userVideos.length > 0) && (
               <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
                 {regularImages.map((image) => (

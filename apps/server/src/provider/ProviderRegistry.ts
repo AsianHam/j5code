@@ -608,7 +608,7 @@ export const layer = Layer.effect(
             Effect.flatMap(syncProvider),
           ),
         ),
-        Effect.catchCause((cause) =>
+        Effect.tapCause((cause) =>
           recordSkillDiscoveryFailure(
             providerSource.instanceId,
             cause,

@@ -3,8 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { launcherOwnsVersionsDir, repointLauncher } from "../../cli/update.ts";
-import { pinnedRuntimeVersionsDir } from "../../cloud/pinnedRuntime.ts";
+import { repointLauncher } from "../../cli/update.ts";
+import { launcherOwnsVersionsDir, pinnedRuntimeVersionsDir } from "../../cloud/pinnedRuntime.ts";
 
 /**
  * Points the `j5` command at the running executable. Called once a background

@@ -196,8 +196,20 @@ const reduceProject = (project: OrchestrationProjectShell): OrchestrationProject
   updatedAt: project.updatedAt,
 });
 
-const reduceThread = (thread: OrchestrationV2ThreadShell): OrchestrationV2ThreadShell =>
-  thread.worktreePath === null ? thread : { ...thread, worktreePath: PLACEHOLDER_PATH };
+/**
+ * A thread as any narrowed connection is told of it. `opens` holds the last Cmd+K queries that
+ * picked the thread, which are the owner's searches (decision 6, 2026-10-24).
+ */
+const narrowThread = ({
+  opens: _opens,
+  ...thread
+}: OrchestrationV2ThreadShell): OrchestrationV2ThreadShell => thread;
+
+/** A thread as a Viewer's client is told of it: no folder of the host. */
+const reduceThread = (shell: OrchestrationV2ThreadShell): OrchestrationV2ThreadShell => {
+  const thread = narrowThread(shell);
+  return thread.worktreePath === null ? thread : { ...thread, worktreePath: PLACEHOLDER_PATH };
+};
 
 type ShellSubscribeInput = {
   readonly afterSequence?: number;
@@ -254,7 +266,7 @@ const makeShellFilter = (access: PersonAccess["Service"], reach: SessionReach, r
       ? Effect.succeed(false)
       : access.projectLevel(personId, projectId).pipe(Effect.map((level) => level !== null));
   const project = reduce ? reduceProject : identity<OrchestrationProjectShell>;
-  const thread = reduce ? reduceThread : identity<OrchestrationV2ThreadShell>;
+  const thread = reduce ? reduceThread : narrowThread;
 
   /** The threads a person reaches, and the projects those threads or a level name. */
   const snapshot = Effect.fn("j5.sharing.guestView.shellSnapshot")(function* (

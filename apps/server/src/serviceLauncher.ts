@@ -90,6 +90,8 @@ async function pathExists(target: string): Promise<boolean> {
 const MANAGED_SERVICE_ENV_NAMES = new Set([
   "PATH",
   "T3CODE_HOME",
+  // J5: the unit names its home with J5CODE_HOME (cloud/bootService.ts).
+  "J5CODE_HOME",
   "T3_BOOT_SERVICE_UNIT",
   SERVICE_LAUNCHER_CONTEXT_ENV,
 ]);

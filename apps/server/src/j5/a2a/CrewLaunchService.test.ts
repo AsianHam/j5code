@@ -280,6 +280,7 @@ it.effect("launches an approved roster whole, records it, briefs each seat, then
             record: (event, properties = {}) =>
               Effect.sync(() => void launches.push({ event, ...properties })),
             flush: Effect.void,
+            recordOwners: () => Effect.void,
           }),
         ),
       ),

@@ -11,7 +11,7 @@ import {
 import { AgentCrewInstanceService, type AgentCrewMember } from "./AgentCrewInstanceService.ts";
 import { A2AArchiveFacts } from "./ArchiveFactsService.ts";
 import type { ParticipantId, LedgerProjectId } from "./contracts.ts";
-import { stopThread } from "./stopThread.ts";
+import { AGENT_STOP_REASON, stopThread } from "./stopThread.ts";
 import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
 
 /** `never_created`: the seat's row was recorded but its thread never came to exist. */
@@ -167,6 +167,8 @@ export const layer = Layer.effect(
               yield* stopThread(threads, {
                 commandId: input.commandIds(member.seatName).interruptCommandId,
                 threadId: member.threadId,
+                // A person's stop keeps upstream's "Stopped by user".
+                ...(input.callerParticipantId === null ? {} : { reason: AGENT_STOP_REASON }),
               }).pipe(
                 Effect.mapError(
                   (cause) =>

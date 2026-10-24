@@ -1,22 +1,20 @@
 import { assert, describe, it } from "@effect/vitest";
-import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 import { codexApplicationContext } from "./codexApplicationContext.ts";
 
 describe("codexApplicationContext", () => {
-  it("spreads J5's orchestration text over numbered keys that each fit Codex's entry cap", () => {
-    const entries = codexApplicationContext(
-      "t3_code_orchestration",
-      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-    );
+  it("spreads long persona instructions over numbered keys that each fit Codex's entry cap", () => {
+    const instructions = Array.from(
+      { length: 200 },
+      (_, index) => `${index + 1}. Review each change against the brief before reporting it.`,
+    ).join("\n");
+    const entries = codexApplicationContext("j5_agent_persona", instructions);
     const keys = Object.keys(entries);
 
     assert.isAbove(keys.length, 1);
     assert.deepEqual(
       keys,
-      keys.map((_, index) =>
-        index === 0 ? "t3_code_orchestration" : `t3_code_orchestration_${index + 1}`,
-      ),
+      keys.map((_, index) => (index === 0 ? "j5_agent_persona" : `j5_agent_persona_${index + 1}`)),
     );
     for (const entry of Object.values(entries)) {
       assert.equal(entry.kind, "application");
@@ -26,7 +24,7 @@ describe("codexApplicationContext", () => {
       Object.values(entries)
         .map((entry) => entry.value)
         .join("\n"),
-      T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
+      instructions,
     );
   });
 

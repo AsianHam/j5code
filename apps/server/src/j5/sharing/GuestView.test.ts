@@ -7,6 +7,7 @@ import {
   EnvironmentId,
   EventId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadOpens,
   type OrchestrationV2ShellStreamItem,
   ProjectId,
   type ScheduledTaskListResult,
@@ -80,6 +81,8 @@ const layerManagement = Layer.unwrap(
       getThreadShell: (id) => projections.getThreadShell(id).pipe(Effect.orDie),
       readShellSnapshot: (options) =>
         projections.readShellSnapshot(options).pipe(Effect.map(Effect.orDie), Effect.orDie),
+      listActiveSubagentThreadIds: () =>
+        projections.listActiveSubagentThreadIds().pipe(Effect.orDie),
     });
   }),
 );
@@ -184,6 +187,7 @@ const threadEvent = (
     readonly projectId: ProjectId;
     readonly title?: string;
     readonly parent?: ThreadId;
+    readonly opens?: OrchestrationV2ThreadOpens;
   },
 ): OrchestrationV2DomainEvent => {
   const id = ThreadId.make(input.id);
@@ -220,6 +224,7 @@ const threadEvent = (
       settledOverride: null,
       settledAt: null,
       lastVisitedAt: null,
+      ...(input.opens === undefined ? {} : { opens: input.opens }),
       deletedAt: null,
     },
   };
@@ -1018,6 +1023,39 @@ live(
     // The feed fails rather than guessing: the thread the guest does hold is not sent either.
     assert.isTrue(Exit.isFailure(exit));
     assert.deepStrictEqual(sent, []);
+  }).pipe(Effect.scoped),
+);
+
+// Decision 6 (2026-10-24): what someone searched for in Cmd+K to open a thread stays theirs.
+live(
+  "a narrowed person's sidebar carries no record of how others opened a thread",
+  Effect.gen(function* () {
+    const access = yield* PersonAccess.PersonAccess;
+    const shared = yield* project("project:opened");
+    const opened = ThreadId.make("thread:opened");
+    const opens = {
+      openedAt: 1,
+      score: 2,
+      picks: [{ query: "salary review", at: 1 }],
+    } satisfies OrchestrationV2ThreadOpens;
+    yield* write("thread.created", { id: opened, projectId: shared, opens });
+    const personId = yield* guest({ kind: "thread", threadId: opened });
+    const opensSent = (who: keyof typeof SESSIONS) =>
+      firstSnapshot(who).pipe(
+        Effect.map((sent) => sent.threads.map((thread) => Object.hasOwn(thread, "opens"))),
+      );
+
+    const stored = yield* (yield* ThreadManagementService.ThreadManagementService).getThreadShell(
+      opened,
+    );
+    assert.deepStrictEqual(stored?.opens, opens);
+    assert.deepStrictEqual(yield* opensSent("guest"), [false]);
+    yield* access.setLevel({
+      personId,
+      scope: { kind: "thread", threadId: opened },
+      level: "collaborator",
+    });
+    assert.deepStrictEqual(yield* opensSent("guest"), [false]);
   }).pipe(Effect.scoped),
 );
 

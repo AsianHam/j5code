@@ -54,6 +54,7 @@ const rawCapabilities = {
   parentThreadId: threadId,
   inheritedProviderInstanceId: providerInstanceId,
   inheritedModel: "gpt-5.6-sol",
+  inheritedOptions: [{ id: "effort", value: "xhigh" }],
   runtimeMode: "full-access" as const,
   interactionMode: "default" as const,
   providers: [
@@ -65,19 +66,10 @@ const rawCapabilities = {
         {
           id: "gpt-5.6-sol",
           label: "GPT-5.6 Sol",
-          options: [
-            {
-              id: "effort",
-              label: "Reasoning effort",
-              type: "select" as const,
-              options: [
-                { id: "high", label: "High", isDefault: true },
-                { id: "xhigh", label: "Extra high" },
-              ],
-            },
-          ],
+          options: [{ id: "effort", values: ["high", "xhigh"], default: "high" }],
         },
       ],
+      omittedModels: 3,
       runtimeModes: ["approval-required", "full-access"] as const,
       canRunChildTask: false,
       canRunCrossProviderChildTask: false,
@@ -96,6 +88,8 @@ const rawCapabilities = {
   },
 };
 
+const searches: Array<string | undefined> = [];
+
 const TestLayer = McpHttpServer.toolkitRegistration(
   J5OrchestratorSurface,
   J5OrchestratorSurfaceHandlers.layer,
@@ -103,7 +97,10 @@ const TestLayer = McpHttpServer.toolkitRegistration(
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(OrchestratorMcpService)({
-        capabilities: () => Effect.succeed(rawCapabilities),
+        capabilities: (_scope, input) => {
+          searches.push(input?.search);
+          return Effect.succeed(rawCapabilities);
+        },
       }),
       Layer.mock(ThreadManagementService)({}),
       Layer.mock(ProviderRegistry)({}),
@@ -135,19 +132,23 @@ it.effect("registers the two orchestrator tools J5 declares, with a factual desc
   }).pipe(Effect.provide(TestLayer)),
 );
 
-it.effect("maps capabilities without inherited or delegation claims", () =>
+it.effect("maps capabilities without inherited model or delegation claims", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
+    searches.length = 0;
     const result = yield* server
-      .callTool({ name: "orchestrator_capabilities", arguments: {} })
+      .callTool({ name: "orchestrator_capabilities", arguments: { search: "sonnet 4.6" } })
       .pipe(
         Effect.provideService(McpInvocationContext, invocation),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
 
     expect(result.isError).toBe(false);
+    expect(searches).toEqual(["sonnet 4.6"]);
     expect(result.structuredContent).toEqual({
       parentThreadId: threadId,
+      // J5's instructions send same-model children through delegate_task when this is nonempty.
+      inheritedOptions: [{ id: "effort", value: "xhigh" }],
       runtimeMode: "full-access",
       interactionMode: "default",
       providers: [
@@ -156,6 +157,7 @@ it.effect("maps capabilities without inherited or delegation claims", () =>
           driverKind: "codex",
           displayName: "Codex",
           models: rawCapabilities.providers[0]!.models,
+          omittedModels: 3,
           // Delegation refuses a runtime mode the provider does not list, so the caller sees them.
           runtimeModes: ["approval-required", "full-access"],
           constraints: ["Provider authentication is required."],

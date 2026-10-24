@@ -111,6 +111,8 @@ export const NARROWED_COMMAND_SCOPES: {
   "notification.delivery.accept": onThread,
   "subagent.stop": onThread,
   "run.interrupt": onThread,
+  // Upstream's Stop button; it also stops the thread's delegated tasks.
+  "thread.stop": onThread,
   "queued-message.promote-to-steer": onThread,
   "queue.resume": onThread,
   "queued-run.reorder": onThread,

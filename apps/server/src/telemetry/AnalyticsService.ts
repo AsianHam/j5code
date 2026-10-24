@@ -1,6 +1,6 @@
 /**
- * Events go to the T3 Code ingest endpoint, which keeps a copy and forwards
- * them to PostHog. Each event carries a uuid, so PostHog can tell a retried
+ * Events go to J5's PostHog project (upstream sends them to its own ingest
+ * endpoint instead). Each event carries a uuid, so PostHog can tell a retried
  * copy from a new event.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -75,8 +75,9 @@ const TelemetryEnvConfig = Config.all({
   posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(
     Config.withDefault("phc_BSjtyFQBUZoDkwGKpgCT24devkjfiR9uhK9U7Qme5xcf"),
   ),
+  // J5 (register D27): straight to J5's PostHog project, not upstream's ingest relay.
   posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
-    Config.withDefault("https://ingest.t3.codes"),
+    Config.withDefault("https://us.i.posthog.com"),
   ),
   enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
   flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),

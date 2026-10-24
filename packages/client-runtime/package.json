@@ -431,6 +431,14 @@
       "types": "./src/j5/highlights.ts",
       "default": "./src/j5/highlights.ts"
     },
+    "./j5/user-message": {
+      "types": "./src/j5/userMessagePresentation.ts",
+      "default": "./src/j5/userMessagePresentation.ts"
+    },
+    "./j5/crew-notices": {
+      "types": "./src/j5/crewNotices.ts",
+      "default": "./src/j5/crewNotices.ts"
+    },
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"

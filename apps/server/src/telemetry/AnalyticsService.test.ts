@@ -282,6 +282,52 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
     }),
   );
 
+  // J5 (register D27): released builds report to J5's PostHog project, never upstream's relay.
+  it.effect("sends to J5's PostHog project by default", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly url: string; readonly apiKey: unknown }> = [];
+      const client = HttpClient.make((request) =>
+        Effect.sync(() => {
+          if (request.body._tag === "Uint8Array") {
+            const body: unknown = JSON.parse(new TextDecoder().decode(request.body.body));
+            sent.push({
+              url: request.url,
+              apiKey:
+                typeof body === "object" && body !== null ? Reflect.get(body, "api_key") : null,
+            });
+          }
+          return HttpClientResponse.fromWeb(request, new Response(null, { status: 204 }));
+        }),
+      );
+      const layerRuntime = AnalyticsService.layer.pipe(
+        Layer.provideMerge(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "j5-telemetry-default-" }),
+        ),
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(HostProcess.Platform, "linux"),
+            Layer.succeed(HostProcess.Architecture, "x64"),
+            Layer.succeed(HttpClient.HttpClient, client),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const analytics = yield* AnalyticsService.AnalyticsService;
+        yield* analytics.record("test.default.destination");
+        yield* analytics.flush;
+      }).pipe(Effect.provide(layerRuntime));
+
+      assert.deepEqual(sent, [
+        {
+          url: "https://us.i.posthog.com/batch/",
+          apiKey: "phc_BSjtyFQBUZoDkwGKpgCT24devkjfiR9uhK9U7Qme5xcf",
+        },
+      ]);
+    }),
+  );
+
   it.effect("does not send batch requests when telemetry is disabled", () =>
     Effect.gen(function* () {
       const capturedPaths: Array<string> = [];

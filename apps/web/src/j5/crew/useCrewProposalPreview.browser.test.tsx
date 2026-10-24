@@ -1,12 +1,16 @@
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { CrewProposalPreviewResponse, type CrewProposalSeat } from "@t3tools/contracts/j5";
 import * as Schema from "effect/Schema";
-import { act, useEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useEffect } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const { previewCrewProposal } = vi.hoisted(() => ({ previewCrewProposal: vi.fn() }));
-vi.mock("./crewProposalsClient", () => ({ previewCrewProposal }));
+vi.mock(import("./crewProposalsClient"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  previewCrewProposal,
+}));
+
+import { act, render } from "../../../test/render";
 import { useCrewProposalPreview } from "./useCrewProposalPreview";
 
 const environmentId = EnvironmentId.make("crew-preview");
@@ -49,7 +53,6 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-let renderer: ReactTestRenderer | null;
 let result: ReturnType<typeof useCrewProposalPreview>;
 function Surface(props: {
   seats: ReadonlyArray<CrewProposalSeat>;
@@ -68,37 +71,28 @@ function Surface(props: {
   }, [preview]);
   return null;
 }
-async function render(
+function surface(
   nextSeats = seats,
   nextEnvironment: EnvironmentId | null = environmentId,
   busy = false,
 ) {
-  await act(async () => {
-    const element = <Surface seats={nextSeats} environmentId={nextEnvironment} busy={busy} />;
-    if (renderer) renderer.update(element);
-    else renderer = create(element);
-  });
+  return <Surface seats={nextSeats} environmentId={nextEnvironment} busy={busy} />;
 }
-beforeEach(() => {
-  renderer = null;
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   previewCrewProposal.mockReset();
-});
-afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  vi.unstubAllGlobals();
-});
+}
 
 describe("crew runtime preview lifecycle", () => {
   it("withholds approval while loading and ignores a response for a previous roster", async () => {
+    setup();
     const first = deferred<CrewProposalPreviewResponse>();
     const second = deferred<CrewProposalPreviewResponse>();
     previewCrewProposal.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    await render();
+    await using screen = await render(surface(), { router: false });
     expect(result.loading).toBe(true);
     expect(result.data).toBeNull();
     const changed = [{ ...seats[0]!, instructions: "Review only authentication" }];
-    await render(changed);
+    await screen.rerender(surface(changed));
     await act(async () => first.resolve(response));
     expect(result.data).toBeNull();
     await act(async () => second.resolve({ ...response, approvalToken: "preview:2" }));
@@ -131,12 +125,13 @@ describe("crew runtime preview lifecycle", () => {
     ],
     ["access", { runtimeMode: "approval-required" as const }],
   ])("invalidates approval when the custom %s changes", async (_field, change) => {
+    setup();
     const next = deferred<CrewProposalPreviewResponse>();
     previewCrewProposal.mockResolvedValueOnce(response).mockReturnValueOnce(next.promise);
-    await render();
+    await using screen = await render(surface(), { router: false });
     expect(result.data).toEqual(response);
     const edited = [{ ...seats[0]!, ...change }];
-    await render(edited);
+    await screen.rerender(surface(edited));
     expect(result.data).toBeNull();
     expect(result.runtimeSeats).toBeNull();
     expect(result.loading).toBe(true);
@@ -149,13 +144,14 @@ describe("crew runtime preview lifecycle", () => {
   });
 
   it("invalidates displayed runtime on environment changes and failed previews can retry", async () => {
+    setup();
     previewCrewProposal
       .mockResolvedValueOnce(response)
       .mockRejectedValueOnce(new Error("Provider unavailable"))
       .mockResolvedValueOnce(response);
-    await render();
+    await using screen = await render(surface(), { router: false });
     expect(result.data).toEqual(response);
-    await render(seats, EnvironmentId.make("another-environment"));
+    await screen.rerender(surface(seats, EnvironmentId.make("another-environment")));
     expect(result.data).toBeNull();
     expect(result.error).toBe("Provider unavailable");
     await act(async () => result.refresh());
@@ -163,19 +159,20 @@ describe("crew runtime preview lifecycle", () => {
   });
 
   it("retains runtime disclosure while approving but requires a fresh token afterward", async () => {
+    setup();
     const next = deferred<CrewProposalPreviewResponse>();
     previewCrewProposal.mockResolvedValueOnce(response).mockReturnValueOnce(next.promise);
-    await render();
+    await using screen = await render(surface(), { router: false });
     // Match the card: invalidate the approval token, then enter busy in the same event.
     await act(async () => {
       result.refresh();
-      renderer!.update(<Surface seats={seats} environmentId={environmentId} busy />);
+      await screen.rerender(<Surface seats={seats} environmentId={environmentId} busy />);
     });
     expect(result.data).toBeNull();
     expect(result.runtimeSeats).toEqual(response.seats);
     expect(result.loading).toBe(false);
     expect(previewCrewProposal).toHaveBeenCalledTimes(1);
-    await render(seats, environmentId, false);
+    await screen.rerender(surface(seats, environmentId, false));
     expect(previewCrewProposal).toHaveBeenCalledTimes(2);
     expect(result.data).toBeNull();
     expect(result.runtimeSeats).toBeNull();
@@ -186,23 +183,23 @@ describe("crew runtime preview lifecycle", () => {
   });
 
   it("never retains busy runtime disclosure for a changed roster, environment, or proposal", async () => {
+    setup();
     previewCrewProposal.mockResolvedValueOnce(response);
-    await render();
-    await render([{ ...seats[0]!, instructions: "Changed instructions" }], environmentId, true);
+    await using screen = await render(surface(), { router: false });
+    await screen.rerender(surface([{ ...seats[0]!, instructions: "Changed instructions" }], environmentId, true));
     expect(result.runtimeSeats).toBeNull();
     expect(result.data).toBeNull();
-    await render(seats, EnvironmentId.make("another-environment"), true);
+    await screen.rerender(surface(seats, EnvironmentId.make("another-environment"), true));
     expect(result.runtimeSeats).toBeNull();
-    await act(async () => {
-      renderer!.update(
-        <Surface seats={seats} environmentId={environmentId} proposalId="proposal:2" busy />,
-      );
-    });
+    await screen.rerender(
+      <Surface seats={seats} environmentId={environmentId} proposalId="proposal:2" busy />,
+    );
     expect(result.runtimeSeats).toBeNull();
     expect(previewCrewProposal).toHaveBeenCalledTimes(1);
   });
 
   it("accepts a preview from a server that predates seat workspaces", async () => {
+    setup();
     // An older server sends neither the card's workspace options nor a seat's workspace.
     const { workspaceOptions: _options, ...withoutOptions } = response;
     const older = decodePreviewResponse({
@@ -210,7 +207,7 @@ describe("crew runtime preview lifecycle", () => {
       seats: response.seats.map(({ workspace: _workspace, ...row }) => row),
     });
     previewCrewProposal.mockResolvedValue(older);
-    await render();
+    await using _screen = await render(surface(), { router: false });
     expect(result.error).toBeNull();
     expect(result.data?.seats.map((row) => row.seat)).toEqual(["reviewer"]);
     expect(result.data?.seats[0]?.workspace).toBeUndefined();
@@ -219,11 +216,12 @@ describe("crew runtime preview lifecycle", () => {
   });
 
   it("never accepts incomplete runtime rows or an unavailable environment", async () => {
+    setup();
     previewCrewProposal.mockResolvedValue({ ...response, seats: [] });
-    await render();
+    await using screen = await render(surface(), { router: false });
     expect(result.data).toBeNull();
     expect(result.error).toContain("incomplete");
-    await render(seats, null);
+    await screen.rerender(surface(seats, null));
     expect(result.data).toBeNull();
     expect(result.loading).toBe(false);
     expect(result.error).toContain("Connect");

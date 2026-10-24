@@ -366,6 +366,7 @@ it.effect("reports each run's start and its end once, with how far it got", () =
             record: (event, properties = {}) =>
               Effect.sync(() => void recorded.push({ event, ...properties })),
             flush: Effect.void,
+            recordOwners: () => Effect.void,
           }),
         ),
       ),

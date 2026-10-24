@@ -3,21 +3,20 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import type { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 
-/** Keep a failed inventory probe separate from the provider's ability to run turns. */
+/**
+ * Keep a failed inventory probe separate from the provider's ability to run turns. Only records:
+ * the failure still reaches upstream's recovery, which reports a failed post-update refresh.
+ */
 export const recordSkillDiscoveryFailure = Effect.fn("j5.skills.recordDiscoveryFailure")(function* (
   instanceId: ProviderInstanceId,
   cause: Cause.Cause<unknown>,
   getProviders: ProviderRegistry["Service"]["getProviders"],
   syncProvider: (provider: ServerProvider) => Effect.Effect<ReadonlyArray<ServerProvider>>,
 ) {
-  if (Cause.hasInterruptsOnly(cause)) return yield* Effect.interrupt;
+  if (Cause.hasInterruptsOnly(cause)) return;
   const previous = (yield* getProviders).find((provider) => provider.instanceId === instanceId);
   if (previous)
     yield* syncProvider({ ...previous, skillDiscoveryError: "Provider discovery failed." });
-  yield* Effect.logWarning("Provider discovery failed; retaining cached provider health", {
-    cause,
-  });
-  return yield* getProviders;
 });
 
 /** Explicit refresh and mutations replace cached and pending workspace discovery. */

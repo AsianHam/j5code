@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import {
   ensurePlaybookAuthor,
   playbookAuthorLaunch,
@@ -75,15 +75,16 @@ export function PlaybookConversationModal({
     try {
       if (name !== null) {
         const draftId = preparePlaybookDraft(workspace, `Start playbook ${name}`);
-        navigation.navigate("NewTaskSheet", {
-          screen: "NewTaskDraft",
-          params: {
-            environmentId,
-            projectId: workspace.projectId,
-            title: workspace.title,
-            draftId,
-          },
-        });
+        navigation.dispatch(
+          StackActions.push("Thread", {
+            draft: {
+              environmentId,
+              projectId: workspace.projectId,
+              title: workspace.title,
+              draftId,
+            },
+          }),
+        );
       } else {
         if (launch.current?.key !== workspace.key) {
           const modelSelection = await ensurePlaybookAuthor({

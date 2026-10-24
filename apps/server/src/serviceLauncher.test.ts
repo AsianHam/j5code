@@ -316,7 +316,8 @@ if (context.update?.status === "pending") {
       const observationsPath = path.join(root, "environment-observations.jsonl");
       const envPath = path.join(root, SERVICE_ENV_FILE);
       yield* fs.writeFileString(envPath, "T3CODE_TEST_SERVICE_TOKEN=initial\n");
-      vi.stubEnv("T3CODE_HOME", root);
+      // J5: the launcher reads its home from J5CODE_HOME.
+      vi.stubEnv("J5CODE_HOME", root);
       vi.stubEnv("T3CODE_TEST_SERVICE_TOKEN", "inherited");
       yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });

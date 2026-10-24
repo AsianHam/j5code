@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  participantIdsForCrewNotice,
+  presentCrewNotice,
+} from "@t3tools/client-runtime/j5/crew-notices";
+
+import {
   artifactPanelPath,
   crewGateFooter,
   crewGateTitle,
   crewSeatsTitle,
-  participantIdsForCrewNotice,
-  presentCrewNotice,
   seatRunStatusLabel,
 } from "./crewNotices.logic";
 

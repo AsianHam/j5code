@@ -185,10 +185,10 @@ export const deliveryCommandId = (messageId: LedgerMessageId) =>
   CommandId.make(`command:j5:a2a:delivery:${stablePart(messageId)}`);
 
 /**
- * The command an asked-for steer or restart is dispatched under. It is not the delivery's own:
- * upstream records a rejected command for good, and a restart is rejected when the turn it was
- * aimed at has just ended, so the plain delivery that follows must keep a command id that nothing
- * has refused.
+ * The command an asked-for steer or restart, or a steer into a GPT 6 run, is dispatched under. It
+ * is not the delivery's own: upstream records a rejected command for good, and rejects a restart
+ * aimed at a turn that has just ended and a steer to a run that Stop has reached, so the plain
+ * delivery that follows must keep a command id that nothing has refused.
  */
 export const askedDeliveryCommandId = (
   messageId: LedgerMessageId,
@@ -669,30 +669,29 @@ export const live: Layer.Layer<
                     commandId: CommandId.make(`${deliveryCommandId(input.messageId)}:resume`),
                     threadId: participant.threadId,
                   });
+          // Whether the message is in the thread, steered under `commandId` or accepted otherwise.
+          const landed = Effect.fn("j5.a2a.delivery.landed")(function* (commandId: CommandId) {
+            const steer = (yield* outbox.listByCommandId(commandId)).find(
+              (effect) => effect.request.type === "provider-turn.steer",
+            );
+            if (steer !== undefined) {
+              yield* awaitSteeringOutcome(steer.id);
+              return true;
+            }
+            // A restart, and a steer the provider takes by interrupting and restarting, leave
+            // no steer effect: the message in the thread is the proof.
+            const accepted = yield* orchestrator.getThreadProjection(participant.threadId);
+            if (!accepted.messages.some((message) => message.id === sendInput.messageId)) {
+              return false;
+            }
+            yield* heldRun(accepted.runs.find((run) => run.userMessageId === sendInput.messageId));
+            return true;
+          });
           const mode = input.mode ?? "queue";
           if (mode !== "queue") {
             // The sender asked for a steer or a restart (see `askedDeliveryCommandId`).
             const askedCommandId = askedDeliveryCommandId(input.messageId, mode);
-            const landed = Effect.fn("j5.a2a.delivery.landedAsAsked")(function* () {
-              const steer = (yield* outbox.listByCommandId(askedCommandId)).find(
-                (effect) => effect.request.type === "provider-turn.steer",
-              );
-              if (steer !== undefined) {
-                yield* awaitSteeringOutcome(steer.id);
-                return true;
-              }
-              // A restart, and a steer the provider takes by interrupting and restarting, leave
-              // no steer effect: the message in the thread is the proof.
-              const accepted = yield* orchestrator.getThreadProjection(participant.threadId);
-              if (!accepted.messages.some((message) => message.id === sendInput.messageId)) {
-                return false;
-              }
-              yield* heldRun(
-                accepted.runs.find((run) => run.userMessageId === sendInput.messageId),
-              );
-              return true;
-            });
-            if (yield* landed()) return;
+            if (yield* landed(askedCommandId)) return;
             const askedRun = requestedSteeringRun(target, input.envelopeChannel, mode);
             if (askedRun !== undefined) {
               // Through ThreadManagement, so a project's disabled provider is refused as upstream's
@@ -729,48 +728,60 @@ export const live: Layer.Layer<
                     }),
                   ),
                 );
-              if (yield* landed()) return;
+              if (yield* landed(askedCommandId)) return;
             }
             yield* queueBehindHeld;
             return yield* heldRun((yield* threads.sendToThread(sendInput)).run);
           }
-          if (steeringRun === undefined) {
-            yield* queueBehindHeld;
-            yield* heldRun((yield* threads.sendToThread(sendInput)).run);
-          } else {
+          // A GPT 6 run's steer has the asked-for steer's command id, not the delivery's own:
+          // upstream refuses a steer to a run that Stop has reached and keeps that refusal for the
+          // command id, and the message then queues under the delivery's id.
+          const runSteerCommandId = askedDeliveryCommandId(input.messageId, "steer");
+          // A retry after that steer was taken or refused finds the message without sending it again.
+          if (
+            alreadyAccepted &&
+            (yield* threads.hasReceipt(runSteerCommandId)) &&
+            (yield* landed(runSteerCommandId))
+          ) {
+            return;
+          }
+          if (steeringRun !== undefined) {
             // Pin the checked run and model. If it completed before admission,
             // upstream can accept this same message as a queued follow-up.
-            yield* threads.dispatch({
-              type: "message.dispatch",
-              commandId: sendInput.commandId,
-              threadId: sendInput.threadId,
-              messageId: sendInput.messageId,
-              text: sendInput.text,
-              attachments: sendInput.attachments,
-              ...(sendInput.senderThreadId === undefined
-                ? {}
-                : { senderThreadId: sendInput.senderThreadId }),
-              createdBy: sendInput.createdBy,
-              creationSource: sendInput.creationSource,
-              modelSelection: steeringRun.modelSelection,
-              dispatchMode: { type: "steer_active", targetRunId: steeringRun.id },
-            });
+            yield* threads
+              .dispatch({
+                type: "message.dispatch",
+                commandId: runSteerCommandId,
+                threadId: sendInput.threadId,
+                messageId: sendInput.messageId,
+                text: sendInput.text,
+                attachments: sendInput.attachments,
+                ...(sendInput.senderThreadId === undefined
+                  ? {}
+                  : { senderThreadId: sendInput.senderThreadId }),
+                createdBy: sendInput.createdBy,
+                creationSource: sendInput.creationSource,
+                modelSelection: steeringRun.modelSelection,
+                dispatchMode: { type: "steer_active", targetRunId: steeringRun.id },
+              })
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logInfo("J5 A2A delivery could not steer into the running turn", {
+                    messageId: input.messageId,
+                    cause,
+                  }),
+                ),
+              );
+            if (yield* landed(runSteerCommandId)) return;
           }
-          // Re-read even after queue dispatch: a concurrent attempt may have
-          // committed this same command as a steer before our projection read.
-          const effects = yield* outbox.listByCommandId(sendInput.commandId);
-          const steer = effects.find((effect) => effect.request.type === "provider-turn.steer");
-          if (steer !== undefined) {
-            yield* awaitSteeringOutcome(steer.id);
-          } else if (steeringRun !== undefined) {
-            const accepted = yield* orchestrator.getThreadProjection(participant.threadId);
-            const followUp = accepted.runs.find((run) => run.userMessageId === sendInput.messageId);
-            if (followUp !== undefined) return yield* heldRun(followUp);
-            return yield* new A2ADeliveryTransportError({
-              operation: "await peer steering",
-              cause: "The committed command has no steering effect.",
-            });
-          }
+          yield* queueBehindHeld;
+          yield* heldRun((yield* threads.sendToThread(sendInput)).run);
+          // Re-read even after queue dispatch: a delivery from before the steer had its own id
+          // may have committed this same command as a steer before our projection read.
+          const steer = (yield* outbox.listByCommandId(sendInput.commandId)).find(
+            (effect) => effect.request.type === "provider-turn.steer",
+          );
+          if (steer !== undefined) yield* awaitSteeringOutcome(steer.id);
         }).pipe(
           Effect.mapError((cause) =>
             isHeldError(cause)

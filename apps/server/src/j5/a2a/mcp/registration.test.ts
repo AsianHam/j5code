@@ -1,3 +1,4 @@
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
@@ -151,6 +152,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         disableLogger: true,
       }).pipe(
         Layer.provideMerge(McpSessionRegistry.layer),
+        Layer.provide(McpProviderSessions.layer),
         Layer.provide(
           Layer.mock(ServerEnvironment.ServerEnvironment)({
             getEnvironmentId: Effect.succeed("environment-scratch" as never),

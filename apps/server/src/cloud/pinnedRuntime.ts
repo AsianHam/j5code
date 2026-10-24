@@ -22,6 +22,7 @@ import {
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { agentCliDirectory } from "../j5/cli/agentPath.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { isExactServiceVersion, parseServiceState, SERVICE_STATE_FILE } from "./serviceProtocol.ts";
 
@@ -395,7 +396,10 @@ export function launcherOwnsVersionsDir(
 /** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */
 export const windowsShimTarget = (contents: string) => /^"([^"]+)"/m.exec(contents)?.[1];
 
-/** Where the `t3` launchers written by the install scripts and `t3 update` point. */
+/**
+ * Where the `j5` launchers written by the install scripts, `j5 update`, and a release server's
+ * `<home>/bin/j5` for its agents point (J5: upstream's are named `t3`).
+ */
 const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targets")(function* (
   baseDir: string,
 ) {
@@ -404,13 +408,14 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
   const home = yield* HostProcess.HomeDirectory;
-  const launcherName = platform === "win32" ? "t3.cmd" : "t3";
+  const launcherName = platform === "win32" ? "j5.cmd" : "j5";
   const launchersFile = path.join(baseDir, PINNED_RUNTIME_DIR, PINNED_RUNTIME_LAUNCHERS_FILE);
   const recorded = (yield* fs.readFileString(launchersFile).pipe(Effect.orElseSucceed(() => "")))
     .split(/\r?\n/)
     .filter((launcher) => launcher.trim().length > 0);
   const found = [
     environment["T3CODE_INSTALL_BIN_DIR"] || path.join(home, ".local", "bin"),
+    agentCliDirectory(path, baseDir),
     ...(environment["PATH"] ?? environment["Path"] ?? "").split(platform === "win32" ? ";" : ":"),
   ]
     .filter((directory) => path.isAbsolute(directory))

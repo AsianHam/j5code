@@ -41,6 +41,7 @@ const testLayer = (recorded: Queue.Queue<Recorded>) => {
       record: (event, properties = {}) =>
         Queue.offer(recorded, { event, ...properties }).pipe(Effect.asVoid),
       flush: Effect.void,
+      recordOwners: () => Effect.void,
     }),
   );
   // The daemon layer: it subscribes to the ledger's committed events as production does.

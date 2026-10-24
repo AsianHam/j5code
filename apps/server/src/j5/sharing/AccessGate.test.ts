@@ -231,6 +231,7 @@ it.layer(testLayer)("access gate", (it) => {
         WS_METHODS.previewOpen,
         WS_METHODS.terminalOpen,
         WS_METHODS.projectsReadFile,
+        WS_METHODS.projectsListIgnoredFiles,
         WS_METHODS.filesystemBrowse,
         WS_METHODS.vcsPull,
         J5_CLIENT_READ_WS_METHODS.readFleet,
@@ -250,10 +251,19 @@ it.layer(testLayer)("access gate", (it) => {
       ]);
       for (const method of [
         WS_METHODS.projectsReadFile,
+        WS_METHODS.projectsListIgnoredFiles,
         WS_METHODS.vcsPull,
         WS_METHODS.filesystemBrowse,
       ]) {
         assert.strictEqual(yield* call(session, method, { cwd: "/anywhere" }), "ran", method);
+      }
+      // Pull request lists are the server's, and checking an Expo account needs settings.
+      for (const method of [
+        WS_METHODS.pullRequestsFilterOptions,
+        WS_METHODS.pullRequestsChangeBreakdown,
+        WS_METHODS.deviceEasAccount,
+      ]) {
+        assert.match(yield* call(session, method, { threadId: mine }), /^refused/, method);
       }
       assert.strictEqual(yield* call(session, WS_METHODS.terminalOpen, { threadId: mine }), "ran");
       assert.match(yield* call(session, WS_METHODS.terminalOpen, { threadId: other }), /^refused/);

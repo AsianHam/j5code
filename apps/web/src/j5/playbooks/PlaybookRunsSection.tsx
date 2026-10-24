@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { presentPlaybook, sortPlaybookRuns } from "@t3tools/client-runtime/j5/playbooks";
@@ -5,7 +6,7 @@ import { j5LedgerSupported } from "@t3tools/client-runtime/j5/readSources";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { PLAYBOOK_RUNS_PAGE_SIZE, type PlaybookProgress } from "@t3tools/contracts/j5";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { resolveThreadStatusPill } from "../../components/Sidebar.logic";
 import { Badge } from "../../components/ui/badge";
@@ -15,6 +16,7 @@ import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../..
 import { useThreadShells } from "../../state/entities";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
+import { providersIgnoringCheckedAtAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { formatElapsedDurationLabel } from "../../timestampFormat";
@@ -196,16 +198,10 @@ function EnvironmentRuns({
       ]),
     ]),
   );
-  const runs = useMemo(() => sortPlaybookRuns(data?.runs ?? []), [data?.runs]);
-  const providerEntries = useMemo(
-    () =>
-      new Map(
-        deriveProviderInstanceEntries(environment.serverConfig?.providers ?? []).map((entry) => [
-          entry.instanceId as string,
-          entry,
-        ]),
-      ),
-    [environment.serverConfig?.providers],
+  const runs = sortPlaybookRuns(data?.runs ?? []);
+  const providers = useAtomValue(providersIgnoringCheckedAtAtom(environment.environmentId));
+  const providerEntries = new Map(
+    deriveProviderInstanceEntries(providers).map((entry) => [entry.instanceId as string, entry]),
   );
   const nowMs = Date.parse(`${useNowMinute()}:00Z`);
   return (
@@ -309,15 +305,12 @@ export function PlaybookRunsSection(props: PlaybookRunCrewLinks = {}) {
   const { environments, isReady } = useEnvironments();
   const threads = useThreadShells();
   const [status, setStatus] = useState<"active" | "all">("active");
-  const threadsByEnvironment = useMemo(() => {
-    const groups = new Map<string, Map<string, EnvironmentThreadShell>>();
-    for (const thread of threads) {
-      let group = groups.get(thread.environmentId);
-      if (!group) groups.set(thread.environmentId, (group = new Map()));
-      group.set(thread.id, thread);
-    }
-    return groups;
-  }, [threads]);
+  const threadsByEnvironment = new Map<string, Map<string, EnvironmentThreadShell>>();
+  for (const thread of threads) {
+    let group = threadsByEnvironment.get(thread.environmentId);
+    if (!group) threadsByEnvironment.set(thread.environmentId, (group = new Map()));
+    group.set(thread.id, thread);
+  }
   return (
     <section aria-label="Playbook runs" className="mt-8 space-y-4 border-t border-border pt-6">
       <h2 className="text-lg font-semibold">Playbook runs</h2>

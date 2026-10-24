@@ -105,6 +105,8 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import { PersonAccess } from "./j5/sharing/PersonAccess.ts";
+import { SharedConversation } from "./j5/sharing/SharedConversation.ts";
 import {
   layerWsRpc,
   subscribeOrchestrationV2Shell,
@@ -413,6 +415,9 @@ it.effect(
           scratchRoot: Effect.succeedNone,
           namedProjectsRoot: process.cwd(),
         }),
+        // J5: a service session gets upstream's own answers (FORK.md case 69).
+        Layer.mock(PersonAccess)({ sessionReach: () => Effect.succeed({ kind: "service" }) }),
+        Layer.mock(SharedConversation)({}),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getDescriptor: Effect.succeed({
             environmentId: EnvironmentId.make("config-test"),
@@ -468,6 +473,7 @@ it.effect(
             {},
             yield* PreviewAutomationBroker.PreviewAutomationBroker,
             yield* ServerBrowser.ServerBrowser,
+            () => Effect.void,
           ).pipe(Layer.provide(configRpcServices)),
         ),
       );

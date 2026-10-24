@@ -308,14 +308,7 @@ const spawnHarness = (input: {
                   {
                     id: "gpt-5.6-sol",
                     label: "GPT-5.6 Sol",
-                    options: [
-                      {
-                        id: "reasoningEffort",
-                        label: "Reasoning",
-                        type: "select" as const,
-                        options: [{ id: "high", label: "High" }],
-                      },
-                    ],
+                    options: [{ id: "reasoningEffort", values: ["high"] }],
                   },
                 ],
                 canRunChildTask: true,

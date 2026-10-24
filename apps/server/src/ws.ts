@@ -3222,8 +3222,8 @@ export const layerWsRpc = (
         [WS_METHODS.scheduledTasksUpsert]: (input: ScheduledTaskUpsertInput) =>
           j5Commands.upsertScheduledTask(input, handlers[WS_METHODS.scheduledTasksUpsert]),
       };
-      const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = admittedHandlers;
-      const otherHandlers: Pick<typeof handlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> =
+      const splitHandlers: Pick<typeof admittedHandlers, SplitWsRpc["_tag"]> = admittedHandlers;
+      const otherHandlers: Pick<typeof admittedHandlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> =
         admittedHandlers;
       return Context.merge(
         yield* SplitWsRpcGroup.toHandlers(splitHandlers),

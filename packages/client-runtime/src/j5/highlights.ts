@@ -25,6 +25,21 @@ export interface Highlight {
 /** Newest first. Add an entry at the top. */
 export const HIGHLIGHTS: ReadonlyArray<Highlight> = [
   {
+    id: "2026-10-timeline-fold",
+    title: "Your messages stay in view",
+    description:
+      "Messages from agents now fold to one line showing who sent them and whether they expect a reply. Click one to read it.",
+    clients: ["web", "desktop"],
+  },
+  {
+    id: "2026-10-upstream-0-1-3",
+    title: "Also new: search inside your messages",
+    description:
+      "Cmd+K now finds text inside messages, not just titles. Pull requests show what kind of code changed, approvals no longer block the composer, and busy threads scroll more smoothly.",
+    learnMoreUrl: "https://j5.codes/whats-new/0-1-3",
+    clients: ["web", "desktop"],
+  },
+  {
     id: "2026-10-peering",
     title: "Agents across your machines",
     description:

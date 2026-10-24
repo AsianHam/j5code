@@ -81,12 +81,14 @@ The most common defect in this repo is a change that works on the path you teste
 ## Dev servers
 
 - `vp i` installs. Worktrees get this from the t3.json setup script; if module resolution looks broken, it probably did not run.
+- Setup runs in the background. While `.t3/setup-running` names a live PID, wait for it and do not run `vp i`. It ends with `.t3/setup-done` or `.t3/setup-failed` (with the error tail). With no marker at all, setup never ran here, so run `vp i` yourself.
 - `vp run dev` starts server and web (with the variables from rule 3 unset). In a worktree, state defaults to that worktree's gitignored `.j5code`, which deliberately outranks an ambient `J5CODE_HOME` so you cannot land on shared state by accident. An explicit `--home-dir` still wins.
 - Ports derive from the worktree path and are stable across restarts, but read the real ones from the `[dev-runner]` line since occupied ports shift. Confirm its `baseDir=` points inside your worktree.
 - Sharing over the tailnet is three steps: run `env -u T3CODE_PORT -u T3CODE_HOST -u J5CODE_HOME vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair --person "<owner name>"`. It carries the same permissions as the startup URL, Connections settings included.
 - To reuse web dev auth across worktrees, configure one fixed `T3CODE_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `t3.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
 - A dev server sends its usage events to the "J5 Code Dev" PostHog project by default, not the real one. A `T3CODE_POSTHOG_KEY` in your shell or `.env` overrides that, so leave it unset. To find your own run's events there, start the server with `J5CODE_TELEMETRY_TAG=<a unique label>` and filter on the `telemetryTag` property.
 - Stop what you started, by the PID you tracked. See rule 1.
+- Need a second checkout? `git worktree add` it next to this worktree, not in `/tmp`. Remove it when done.
 
 ## Test data
 
@@ -94,6 +96,7 @@ For a live test, run `node scripts/j5/setup-agent-live-test.ts` and follow its o
 
 A copy of real data is for a server the developer will use, or for rehearsing a migration. Take no agent turns on one: its threads point at the real checkouts and resume the real provider sessions.
 
+- A new worktree's first `vp run dev` starts on an empty database. Upstream seeds it from the live install; J5 turns that off, so real data only enters a worktree when you ask for it.
 - `vp run migrate-dev-db` from a worktree makes a copy that is safe to start a server on, in one command: recent stopped threads only, with pending work, schedules, peer servers and their credentials, undelivered agent messages and live Crews stood down. Its threads still point at the real checkouts, so a message you send to one runs a real agent there.
 - For a whole database, copy it yourself. Nothing in a raw copy is stood down: a server started on it resumes real deliveries and polls real peers.
 - Copy from `~/.j5code/userdata` (the developer's real data, the most realistic test set) or `~/.j5code/dev`. Worktree state lives at `<worktree>/.j5code/userdata`.
@@ -117,11 +120,40 @@ A copy of real data is for a server the developer will use, or for rehearsing a 
 
 ## Verifying
 
-- Smallest proof that the change works. `vp test run <files>` for the tests you touched, targeted lint and typecheck for the scope you changed.
+- Smallest proof that the change works. While you iterate, run `vp test run <files>` for the tests you touched; for big files, add `-t "<name>"`.
+- Before you push, run `vp run check:changed origin/j5/main`. It runs CI's fast checks for changed files: format, lint, knip, typecheck of affected packages and dependents, and tests beside changes. Pass J5's trunk: without it the script compares against `origin/main`, which the fork does not have.
+- Use `vp run typecheck` in the package you changed, not `npx tsc`; it caches per package. Both run tsc-rs (`typescript` is the `@tsc-rs/typescript` drop-in).
+- Run `node -e` snippets from `apps/server` or the owning package. `effect` does not resolve from the repo root.
+- Proof for a bug fix depends on the bug. Logic, data, state, and protocol bugs get a failing test first (the fewest that fail on `j5/main` for that reason, in the module's existing test file), then the fix. Purely visual bugs (spacing, colour, alignment, a layout shift) get before/after captures as their proof and no test: do not add UI tests for nitpicks, and do not ask for one in review when a capture already shows it. A server-only fix with no visible surface ships the test plus a short runtime transcript.
 - Test meaningful logic or observable behavior. Do not render components to static markup to assert props or attributes, or add tests that merely assert callback wiring or mirror the implementation.
 - **Do not run repo-wide checks.** No `vp check`, no `vp run -r test`, no `vp run -r typecheck` unless asked. CI owns the full suite.
 - Backend behavior changes ship with focused tests for that behavior.
-- The server is event-sourced, and side effects run after the command commits. Wait on typed receipts, drain the effect worker (`OrchestrationEffectWorkerV2.drain`), or await the specific persisted event or `Deferred` that marks the milestone. Never wait on sleeps or polling. A test that needs a timeout to pass is wrong.
+- The server is event-sourced, and side effects run after the command commits. Wait on typed receipts, drain the effect worker (`OrchestrationEffectWorkerV2.drain`), or await the specific persisted event or `Deferred` that marks the milestone. Never wait on sleeps or polling. A test that needs a timeout to pass is wrong. Concretely:
+  - `it.effect` runs on a `TestClock`; `Effect.sleep` only advances through `TestClock.adjust`. `it.live` is wall-clock and only for subprocess or network fixtures.
+  - No `yieldNow` or `sleep` polling loops. Await the `Deferred`, take from the `Queue`, or drain the worker.
+  - No per-test timeout argument or `retry`. The project timeout is the ceiling, and flaky tests are fixed, not retried.
+  - No `performance.now()` or `Date.now()` deltas. Assert on events and counts, not elapsed time.
+  - Browser tests assert through `expect.element` or `vi.waitFor`, never `requestAnimationFrame` or `transitionend`.
+  - `vi.mock` factories must not spread a real module that pulls in Shiki or the diff workers.
+  - `it.skip` and friends need a tracking issue on the line above: `// quarantine: #1234 <why>`.
+  - Lint enforces this: `t3code/no-test-timeout-or-unreasoned-skip`, `t3code/no-frame-waits-in-browser-tests`, `t3code/no-wall-clock-in-tests`, `t3code/no-real-time-wait-in-tests`, `t3code/no-polling-loop-in-tests`.
+- Web browser tests are `*.browser.test.tsx` or `*.browser.test.ts` and render with `await using screen = await render(...)` from `apps/web/test/render.tsx`. `t3code/require-disposable-render` errors on the old patterns.
+  - Acquire what the test drives after mounting (fake timers it advances, spies it sets up after mounting) after the render, so it disposes before the unmount. Anything the first render reads comes before it.
+  - A helper that renders and then waits or clicks puts the screen in an `AsyncDisposableStack` and `move()`s it out only on success, so a failed wait still unmounts.
+  - `rerender` needs a fresh element on every call.
+  - No lifecycle hooks and no module-level mutable state. Shared mock state that `vi.mock` factories read is reset by a `setup()` call at the top of the test.
+  - `router` is on by default. Pass `router: false` only with a one-line comment saying why.
+
+  ```tsx
+  it("saves on Enter", async () => {
+    const onSave = vi.fn();
+    using _now = vi.spyOn(Date, "now").mockReturnValue(0);
+    await using screen = await render(<TitleEditor onSave={onSave} />, { router: "/threads/1" });
+    await userEvent.type(screen.getByRole("textbox"), "Title{Enter}");
+    expect(onSave).toHaveBeenCalledWith("Title");
+  });
+  ```
+
 - Upon request, user-visible frontend changes should get one integrated pass in a real client: `test-t3-app` for web, `test-t3-mobile` for mobile. The primary agent does this once after integrating. Subagents do not launch their own dev servers. Ask permission before doing computer use or spinning up browsers.
 - When you are asked or authorized to live-test, the `j5-live-test` skill sets up a safe server and says what to cover and how to report.
 
@@ -137,7 +169,7 @@ For authorized mobile verification, a missing or outdated native client is a bui
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - One concern per PR. If the description says "also", split it.
-- When babysitting: poll checks and comments newer than the last push, verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when the bots are green on the latest commit.
+- When babysitting: call `watch_pull_request` and end your turn. J5 Code wakes you on checks, comments, or conflicts. Do not poll or sleep. Verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when the bots are green on the latest commit.
 
 ## Documentation
 
@@ -171,7 +203,7 @@ Upstream's architecture and its constraints: `docs/internals/overview.md`. Upstr
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic. J5 contracts are `packages/contracts/src/j5`.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
 - `packages/client-runtime` - client code shared by web and mobile.
-- `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency.
+- `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency. If it is missing (sparse checkout), read a file with `git show origin/j5/main:.repos/<path>`.
 - `FORK.md` - every place J5 edits an upstream-owned file, and the runbook for advancing to a new upstream version.
 
 ## Taste
@@ -180,6 +212,9 @@ Upstream's architecture and its constraints: `docs/internals/overview.md`. Upstr
 - Client mutations use `createEnvironmentRpcCommand`. Add protected methods to `CLIENT_GUARDED_RPC_SCOPES` in contracts and use the command's `permissionAtom` for UI availability. Grants are checked at execution against the destination environment; the server remains authoritative. Keep raw RPC clients inside `rpc/`, and extend the permission behavior tests when adding a protected method.
 - Server features are services; transports stay thin. A `ws.ts` RPC handler, HTTP route, or MCP tool decodes input, calls one service method, and maps errors. See [Effect services](docs/internals/effect-services.md).
 - `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations. See [Web UI](docs/internals/web-ui.md).
+- Reusable Effect functions use `Effect.fn("Service.operation")` with a stable span name, not a function wrapping `Effect.gen`. Keep `Effect.gen` for inline programs and layer construction. Use `Effect.fnUntraced` only when spans would be too frequent (stream chunks, per-event projection, tight loops) or duplicate an existing tracing boundary; explain that choice nearby. Named `Effect.fn` creates a span; the unnamed form does not. Preserve existing span names and options, and pass combinators as additional function-builder arguments. `t3code/prefer-effect-fn` enforces it.
+- Every web file compiles under the React Compiler, so do not write `useMemo`, `useCallback`, or `memo` there (`t3code/no-manual-memo`); its bailout rules are lint errors. Mobile is still ratcheting toward full coverage and allows the memo hooks for now.
+- No em dashes in strings or JSX text that people or agents read (`t3code/no-em-dash-copy`). Use a period, comma, colon, or parentheses.
 - Inferred types over annotations. `any` is the enemy.
 - Comments say why: a constraint, an external quirk, or an invariant the code can't show. Don't restate names or signatures, narrate steps, or record history. `t3code/no-low-value-comments` catches the mechanical cases.
 - Our users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations; they peg the GPU on high-refresh displays.

@@ -12,12 +12,12 @@ Connections**, sign in, and enable **T3 Connect** for that environment.
 For a command-line host, run:
 
 ```bash
-t3 connect
+j5 connect
 ```
 
 Follow the sign-in instructions. Setup offers a
 [background service](./background-service.md); if you decline it, start the
-server with `t3 serve`. Saving your sign-in alone does not make the machine
+server with `j5 serve`. Saving your sign-in alone does not make the machine
 reachable.
 
 On your other device, sign in to the same T3 Connect account and choose the
@@ -44,13 +44,13 @@ For a command-line host, replace `<private-ip>` with the host's LAN or tailnet
 address:
 
 ```bash
-t3 serve --host <private-ip>
+j5 serve --host <private-ip>
 ```
 
 If a server is already running, generate a fresh link without restarting it:
 
 ```bash
-t3 pair
+j5 pair
 ```
 
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
@@ -129,13 +129,13 @@ HTTPS** in **Settings → Connections**. Turn it off there to remove that route.
 To start a command-line server with Tailscale HTTPS:
 
 ```bash
-t3 serve --tailscale-serve
+j5 serve --tailscale-serve
 ```
 
 For an already-running server:
 
 ```bash
-t3 pair --tailscale
+j5 pair --tailscale
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
@@ -147,7 +147,7 @@ tailscale serve --https=443 off
 ```
 
 If that port is already in use, choose another with
-`--tailscale-serve-port`. See `t3 pair --help` for other pairing options.
+`--tailscale-serve-port`. See `j5 pair --help` for other pairing options.
 
 ### Hosted web app
 
@@ -168,8 +168,9 @@ credentials, and agent work stay on the remote machine.
 
 The remote host must be Linux or an Apple Silicon Mac with `curl` or `wget`,
 `tar`, `sha256sum` or `shasum`, and [provider setup](./install.md#providers).
-The first launch downloads T3 Code's server to `~/.t3/runtime` on the host, so
-it takes longer than later ones.
+The first launch downloads the J5 Code server release for the desktop app's
+version to `~/.j5code/runtime` on the host, so it takes longer than later ones.
+The host must be Linux x64 or an Apple Silicon Mac, the platforms J5 publishes.
 Provider CLIs must be on the `PATH` of a non-interactive login shell there;
 check with:
 
@@ -183,8 +184,8 @@ running is left alone.
 
 Each desktop app keeps one session on the host for its SSH connection and reuses
 it when it reconnects. Revoke sessions you no longer use in **Settings →
-Connections** on the host, or on a headless host with `t3 auth session list` and
-`t3 auth session revoke <id>`. A desktop that can still sign in over SSH pairs
+Connections** on the host, or on a headless host with `j5 auth session list` and
+`j5 auth session revoke <id>`. A desktop that can still sign in over SSH pairs
 again on its next connect.
 
 For Antigravity's Google callback on a remote host, see
@@ -251,7 +252,7 @@ threads on an environment through its MCP server. See
 On the host, **Settings → Connections** lets authorized administrators create
 pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
-management is available through `t3 auth --help`.
+management is available through `j5 auth --help`.
 
 A session with an open connection stays listed after its access credential
 expires.
@@ -322,8 +323,8 @@ T3 Code once it has been offline for seven days. That environment shows a messag
 asking you to update. Start T3 Code on that computer and update it to the latest
 version; it reconnects at the same address without pairing again.
 
-On a command-line host, `t3 connect unlink` disables exposure while retaining
-your login; `t3 connect logout` also clears that login. Background-service
+On a command-line host, `j5 connect unlink` disables exposure while retaining
+your login; `j5 connect logout` also clears that login. Background-service
 [removal](./background-service.md#manage-the-service) is separate.
 
 Treat pairing URLs and authorization codes as passwords. Do not include them in

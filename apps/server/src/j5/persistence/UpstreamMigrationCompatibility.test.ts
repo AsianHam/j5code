@@ -27,6 +27,8 @@ import {
 const memory = () => NodeSqliteClient.layer({ filename: ":memory:" });
 const atFile = (filename: string) => NodeSqliteClient.layer({ filename });
 const ids = (rows: ReadonlyArray<readonly [number, string]>) => rows.map(([id]) => id);
+/** A pin database runs upstream's new 054 and every migration after the renumbered 055–056. */
+const pinUpgradeIds = [54, ...ids(migrationManifest).filter((id) => id > 56)];
 
 const readHistory = Effect.fn("readHistory")(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -135,7 +137,7 @@ it.effect("upstream renumbers a pin database without replaying V2 or touching J5
     const rows = yield* snapshotRows();
 
     const executed = yield* runJ5CompatibleUpstreamMigrations();
-    assert.deepStrictEqual(ids(executed), [54, 57, 58, 59, 60, 61, 62]);
+    assert.deepStrictEqual(ids(executed), pinUpgradeIds);
     const upgraded = yield* readHistory();
     assert.deepStrictEqual(
       upgraded.map(({ migration_id, name }) => [migration_id, name] as const),
@@ -166,10 +168,7 @@ it.effect("rolls the renumbering back when it fails, then a retry completes it",
     yield* assertRefused(/injected failure/);
     assert.deepStrictEqual(yield* readManifest(), pinMigrationHistory);
     yield* sql`DROP TRIGGER inject`;
-    assert.deepStrictEqual(
-      ids(yield* runJ5CompatibleUpstreamMigrations()),
-      [54, 57, 58, 59, 60, 61, 62],
-    );
+    assert.deepStrictEqual(ids(yield* runJ5CompatibleUpstreamMigrations()), pinUpgradeIds);
     assert.deepStrictEqual(yield* runJ5CompatibleUpstreamMigrations(), []);
   }).pipe(Effect.provide(memory())),
 );

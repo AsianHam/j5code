@@ -10,81 +10,82 @@ launch T3 Code and configure providers afterwards.
 
 ## Command line
 
+J5 Code publishes a self-contained server for macOS (Apple silicon) and Linux
+x64. It needs no Node.js or npm:
+
 ```bash
-curl -fsSL https://t3.codes/install.sh | sh
+curl -fsSL https://github.com/Jacksondr5/j5code/releases/latest/download/install.sh | sh
 ```
 
-On Windows, in PowerShell:
+This puts `j5` in `~/.local/bin` and keeps downloaded versions and your data in
+`~/.j5code` (set `J5CODE_HOME` to use another directory). If `~/.local/bin` isn't
+on your `PATH`, the installer adds one line to your shell's startup file (zsh,
+bash, or fish) that puts the directory at the end of `PATH`, so `j5` works in new
+terminals. `j5 uninstall` removes that line, and the `j5` link the desktop app's Settings
+placed in `/opt/homebrew/bin`, `/usr/local/bin` or `~/bin`. If it can't write to
+that folder it says so and leaves the link for you to delete. For other shells, add the directory
+yourself. To keep the installer away from your startup files, set
+`J5CODE_NO_MODIFY_PATH=1` when you run it; it prints the directory to add. Set
+`T3CODE_CHANNEL=nightly` to install the nightly train, or `T3CODE_VERSION` to pin an
+exact version.
 
-```powershell
-irm https://t3.codes/install.ps1 | iex
-```
-
-This installs the `t3` binary to `~/.local/bin`. If your shell reports `command not found`
-afterwards, that directory is not on your `PATH` yet; the installer prints the
-line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
-`T3CODE_VERSION` to pin an exact version.
+Upgrading a server that was installed from npm (`@jacksondr5/j5code` 0.0.43 or
+earlier)? Follow [Migrating to release archives](../j5/user/migrating-to-release-archives.md)
+once; later updates use `j5 update`.
 
 | Task                                             | Command                                                                 |
 | ------------------------------------------------ | ----------------------------------------------------------------------- |
-| Start the server and open the web app            | `t3`                                                                    |
-| Start the server without a browser               | `t3 serve`                                                              |
-| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md))               |
-| Move to the newest release                       | `t3 update`                                                             |
-| Reclaim database space                           | `t3 doctor` ([details](./background-service.md#reclaim-database-space)) |
-| Remove it again                                  | `t3 uninstall`                                                          |
+| Start the server and open the web app            | `j5`                                                                    |
+| Start the server without a browser               | `j5 serve`                                                              |
+| Keep it running in the background (macOS, Linux) | `j5 service install` ([details](./background-service.md))               |
+| Move to the newest release                       | `j5 update`                                                             |
+| Reclaim database space                           | `j5 doctor` ([details](./background-service.md#reclaim-database-space)) |
+| Remove it again                                  | `j5 uninstall`                                                          |
 
-Run `t3 help` or `t3 --help` for the full reference. To start in a new working
-directory, use an explicit path such as `t3 ./my-project`. A bare directory name
+Run `j5 --help` for the full reference. To start in a new working
+directory, use an explicit path such as `j5 ./my-project`. A bare directory name
 is accepted only if it already exists.
 
-If `t3` or `t3 start` reports an already running server, connect to that server
+If `j5` or `j5 start` reports an already running server, connect to that server
 instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.
 
-To try T3 Code once without installing it, run `npx t3@latest` instead (needs
-Node.js for `npx`).
+### Other platforms
 
-### Intel Macs
-
-There is no `t3` executable for Intel Macs (the desktop app is available). To
-run a server there, build it from source with `vp`, which provides the Node version it needs
-([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+There is no `j5` executable for Intel Macs, Linux on ARM, or Windows. To run a
+server there, build it from source with `vp`, which provides the Node version it needs
+([Install vp](https://github.com/Jacksondr5/j5code#install-vp)):
 
 ```bash
-git clone https://github.com/pingdotgg/t3code
-cd t3code && vp i && vp run build:desktop
+git clone https://github.com/Jacksondr5/j5code
+cd j5code && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
 
-`t3 update` and the background service do not apply to a server run this way;
+`j5 update` and the background service do not apply to a server run this way;
 update it with `git pull` and a rebuild.
 
 ## Desktop app
 
-Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),
-or use a package manager:
+Download the macOS (Apple silicon) app from
+[GitHub Releases](https://github.com/Jacksondr5/j5code/releases). J5 Code
+publishes no desktop build for other platforms and no package-manager listing;
+`winget`, Homebrew, and AUR packages named T3 Code install upstream T3 Code.
 
-| Platform           | Install                            |
-| ------------------ | ---------------------------------- |
-| Windows            | `winget install T3Tools.T3Code`    |
-| macOS              | `brew install --cask t3-code`      |
-| Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb` |
-| Arch Linux         | `yay -S t3code-bin`                |
-| Arch Linux nightly | `yay -S t3code-nightly-bin`        |
+Agents and terminals the app runs can use the `j5` command without any setup: the
+app keeps a launcher for its built-in CLI at `~/.j5code/bin/j5` and gives them that
+directory. The app doesn't change your own `PATH` or shell startup files unless
+you ask.
 
-The `.deb` updates itself like the other desktop builds. It asks for your
-password to install each update. If your desktop has no password prompt, the
-update fails. Download the new `.deb` and install it the same way.
+### The `j5` command
 
-### The `t3` command
-
-The desktop app includes the `t3` command-line tool. To run it from any
+The desktop app includes the `j5` command-line tool. To run it from your own
 terminal, open **Settings → General → About** and choose **Install** next to
-**t3 command**. On macOS and Linux it adds a `t3` link to a folder on your
-`PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
-terminal afterwards. **Remove** takes it off again. If you already have `t3`
-from npm, it stays as it is.
+**j5 command**. It adds a `j5` link to a folder on your `PATH`; on Windows it adds
+the app's command folder to your `PATH`. Open a new terminal afterwards.
+**Remove** takes it off again. If another `j5` already runs first in your
+terminal, such as one from the command-line installer, the app tells you and
+leaves it as it is.
 
 ### Windows Subsystem for Linux
 
@@ -98,11 +99,11 @@ take longer.
 With the desktop app already running on the same machine:
 
 ```bash
-t3 app
+j5 app
 ```
 
 This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
+Pass a path, such as `j5 app ../my-project`, to open another directory. It requires
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 

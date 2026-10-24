@@ -64,7 +64,7 @@ import { PeerRegistryService } from "../PeerRegistryService.ts";
 import { ParticipantPlacementService } from "../PlacementService.ts";
 import { withDeliveryNotice } from "../receiverBacklog.ts";
 import { A2ASendService } from "../SendService.ts";
-import { stopThread } from "../stopThread.ts";
+import { AGENT_STOP_REASON, stopThread } from "../stopThread.ts";
 import { sendClaimingAttachments } from "./attachments.ts";
 import {
   assertPersonaWithinApprovedLevel,
@@ -304,8 +304,9 @@ const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
   scope: McpInvocationScope,
   input: { readonly provider: string; readonly model: string; readonly reasoning: string },
 ) {
+  // The default listing is a short list; a search by the model id reaches the whole catalog.
   const capabilities = yield* (yield* OrchestratorMcpService)
-    .capabilities(scope)
+    .capabilities(scope, { search: input.model })
     .pipe(
       Effect.mapError((error) =>
         stateError(
@@ -333,22 +334,24 @@ const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
   if (model === undefined) {
     return yield* stateError(
       `Model ${input.model} is not listed for provider ${input.provider}.`,
-      "Call orchestrator_capabilities and retry j5_spawn_agent with a model listed for that provider.",
+      "Call orchestrator_capabilities, passing search to find models it leaves out, and retry j5_spawn_agent with a model id it lists for that provider.",
     );
   }
   const reasoningDescriptor = model.options?.find(
-    (descriptor) => descriptor.type === "select" && isAgentPersonaReasoningOptionId(descriptor.id),
+    (descriptor) =>
+      isAgentPersonaReasoningOptionId(descriptor.id) &&
+      descriptor.values.every((value) => typeof value === "string"),
   );
-  if (reasoningDescriptor === undefined || reasoningDescriptor.type !== "select") {
+  if (reasoningDescriptor === undefined) {
     return yield* stateError(
       `Model ${input.model} on provider ${input.provider} exposes no reasoning options; j5_spawn_agent requires explicit reasoning selection.`,
       "Call orchestrator_capabilities and choose a model that exposes reasoning options before retrying j5_spawn_agent.",
     );
   }
-  if (!reasoningDescriptor.options.some((option) => option.id === input.reasoning)) {
+  if (!reasoningDescriptor.values.includes(input.reasoning)) {
     return yield* stateError(
       `Reasoning ${input.reasoning} is not listed for model ${input.model} on provider ${input.provider}.`,
-      `Call orchestrator_capabilities and retry j5_spawn_agent with one of: ${reasoningDescriptor.options.map((option) => option.id).join(", ")}.`,
+      `Call orchestrator_capabilities and retry j5_spawn_agent with one of: ${reasoningDescriptor.values.join(", ")}.`,
     );
   }
   return {
@@ -1534,7 +1537,11 @@ const handlers = {
       // Upstream's Stop, delegated tasks included (see stopThread.ts). The limit goes with it:
       // the target's modes can be raised after the check above, and upstream checks again under
       // the thread's lock.
-      yield* stopThread(threadManagement, { commandId, threadId: target.threadId }, limits).pipe(
+      yield* stopThread(
+        threadManagement,
+        { commandId, threadId: target.threadId, reason: AGENT_STOP_REASON },
+        limits,
+      ).pipe(
         Effect.mapError((error) =>
           stateError(
             `Peer Agent ${input.participant_id} on thread ${target.threadId} could not be stopped: ${error.message}.`,

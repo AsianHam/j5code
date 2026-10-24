@@ -1,10 +1,8 @@
-// @vitest-environment jsdom
-
 import { ThreadId } from "@t3tools/contracts";
 import { PlaybookError, type PlaybookProgress } from "@t3tools/contracts/j5";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
+
+import { act, render as renderUi } from "../../../test/render";
 import { PlaybookStages } from "./PlaybookStages";
 
 const active: PlaybookProgress = {
@@ -27,51 +25,37 @@ const active: PlaybookProgress = {
   issue: null,
 };
 
-let container: HTMLDivElement;
-let root: Root;
 let viewKey = 0;
-beforeEach(() => {
-  viewKey += 1;
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  Object.defineProperty(Element.prototype, "getAnimations", {
-    configurable: true,
-    value: () => [],
-  });
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  Reflect.deleteProperty(Element.prototype, "getAnimations");
-  vi.unstubAllGlobals();
-});
 
-async function render(runs: readonly PlaybookProgress[], stale = false) {
-  await act(() =>
-    root.render(<PlaybookStages runs={runs} stale={stale} viewKey={`env:thread-${viewKey}`} />),
-  );
+// Each test gets its own view key so a disclosure remembered by an earlier test is not reused.
+async function mount() {
+  viewKey += 1;
+  const key = `env:thread-${viewKey}`;
+  const screen = await renderUi(null, { router: false });
+  const { container } = screen;
+  return {
+    screen,
+    container,
+    show: (runs: readonly PlaybookProgress[], stale = false) =>
+      screen.rerender(<PlaybookStages runs={runs} stale={stale} viewKey={key} />),
+    toggle: () => container.querySelector<HTMLButtonElement>("button[aria-expanded]")!,
+    stages: () => container.querySelector('ol[aria-label="Playbook stage list"]'),
+  };
 }
-function toggle() {
-  return container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
-}
-function stages() {
-  return container.querySelector('ol[aria-label="Playbook stage list"]');
+
+function option(text: string) {
+  return Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((node) =>
+    node.textContent?.includes(text),
+  )!;
 }
 
 it("starts collapsed, follows pointer changes, and preserves disclosure when moving backward", async () => {
-  await render([]);
+  const view = await mount();
+  await using _screen = view.screen;
+  const { container, show, toggle, stages } = view;
+  await show([]);
   expect(container.textContent).toBe("");
-  await render([active]);
+  await show([active]);
   expect(toggle().textContent).toContain("Release");
   expect(toggle().getAttribute("aria-label")).toContain("Build the change");
   expect(stages()).toBeNull();
@@ -88,7 +72,7 @@ it("starts collapsed, follows pointer changes, and preserves disclosure when mov
     active.title,
   );
 
-  await render([{ ...active, currentStepId: "plan", position: 1 }]);
+  await show([{ ...active, currentStepId: "plan", position: 1 }]);
   expect(stages()?.querySelector('[aria-current="step"]')?.textContent).toContain(
     "Plan the release",
   );
@@ -96,18 +80,21 @@ it("starts collapsed, follows pointer changes, and preserves disclosure when mov
   expect(toggle().textContent).toContain("0/3");
   await act(() => toggle().click());
   expect(stages()).toBeNull();
-  await render([{ ...active, currentStepId: "review", position: 3 }]);
+  await show([{ ...active, currentStepId: "review", position: 3 }]);
   expect(toggle().getAttribute("aria-label")).toContain("Step 3 of 3");
   expect(stages()).toBeNull();
 });
 
 it("keeps stale, unavailable, and terminal states visible while collapsed", async () => {
-  await render([active], true);
+  const view = await mount();
+  await using _screen = view.screen;
+  const { container, show, toggle, stages } = view;
+  await show([active], true);
   expect(toggle().textContent).toContain("Out of date");
   await act(() => toggle().click());
   expect(container.textContent).toContain("Showing the last received state");
 
-  await render([
+  await show([
     {
       ...active,
       currentStepId: "removed",
@@ -125,34 +112,35 @@ it("keeps stale, unavailable, and terminal states visible while collapsed", asyn
   expect(toggle().textContent).toContain("Needs attention");
   expect(toggle().getAttribute("aria-label")).toContain("Step unavailable");
 
-  await render([{ ...active, status: "completed" }]);
+  await show([{ ...active, status: "completed" }]);
   expect(toggle().textContent).toContain("Completed");
   expect(toggle().textContent).toContain("3/3");
   await act(() => toggle().click());
   expect(stages()?.textContent).toContain("Completed: 2. Build the change");
   expect(stages()?.querySelector('[aria-current="step"]')).toBeNull();
-  await render([{ ...active, currentStepId: "review", position: 3, status: "completed" }]);
+  await show([{ ...active, currentStepId: "review", position: 3, status: "completed" }]);
   expect(toggle().textContent).toContain("3/3");
   expect(stages()?.textContent).toContain("Completed: 3. Review the change");
   await act(() => toggle().click());
-  await render([{ ...active, status: "cancelled" }]);
+  await show([{ ...active, status: "cancelled" }]);
   expect(toggle().textContent).toContain("Cancelled");
 });
 
 it("inspects history without confusing it with the latest run, then returns to latest", async () => {
+  const view = await mount();
+  await using _screen = view.screen;
+  const { container, show, toggle } = view;
   const previous = {
     ...active,
     runId: "previous",
     title: "Earlier release",
     status: "completed" as const,
   };
-  await render([active, previous]);
+  await show([active, previous]);
   await act(() => toggle().click());
   const picker = () => container.querySelector<HTMLButtonElement>('[aria-label="Playbook run"]')!;
   await act(() => picker().click());
-  const oldOption = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
-    (node) => node.textContent?.includes("Earlier release"),
-  )!;
+  const oldOption = option("Earlier release");
   await act(() => oldOption.click());
   expect(toggle().textContent).toContain("Earlier release");
   expect(toggle().textContent).toContain("History");
@@ -160,33 +148,32 @@ it("inspects history without confusing it with the latest run, then returns to l
   expect(toggle().getAttribute("aria-label")).toContain("Earlier run");
   await act(() => toggle().click());
   await act(() => picker().click());
-  const latestOption = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
-    (node) => node.textContent?.includes("Latest:"),
-  )!;
+  const latestOption = option("Latest:");
   await act(() => latestOption.click());
   expect(toggle().textContent).not.toContain("History");
   expect(toggle().textContent).toContain("Release");
 
   const next = { ...active, runId: "next", title: "Next release" };
-  await render([next, active, previous]);
+  await show([next, active, previous]);
   expect(toggle().textContent).toContain("Next release");
   expect(toggle().textContent).not.toContain("History");
 });
 
 it("comes back expanded on the same run after the composer hides it for a question", async () => {
+  const view = await mount();
+  await using _screen = view.screen;
+  const { container, show, toggle, stages } = view;
   const previous = { ...active, runId: "previous", title: "Earlier release" };
-  await render([active, previous]);
+  await show([active, previous]);
   await act(() => toggle().click());
   await act(() =>
     container.querySelector<HTMLButtonElement>('[aria-label="Playbook run"]')!.click(),
   );
-  const oldOption = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
-    (node) => node.textContent?.includes("Earlier release"),
-  )!;
+  const oldOption = option("Earlier release");
   await act(() => oldOption.click());
 
-  await act(() => root.render(null));
-  await render([active, previous]);
+  await view.screen.rerender(null);
+  await show([active, previous]);
   expect(stages()).not.toBeNull();
   expect(toggle().textContent).toContain("Earlier release");
 });

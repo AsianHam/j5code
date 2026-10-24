@@ -280,6 +280,7 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
 
   // Files, git and the host's devices, keyed by a folder the client names: a Collaborator's.
   [WS_METHODS.projectsListEntries]: collaborator,
+  [WS_METHODS.projectsListIgnoredFiles]: collaborator,
   [WS_METHODS.projectsReadFile]: collaborator,
   [WS_METHODS.projectsSearchContents]: collaborator,
   [WS_METHODS.projectsSearchEntries]: collaborator,
@@ -314,6 +315,7 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   [WS_METHODS.deviceConfigure]: collaborator,
   [WS_METHODS.deviceList]: collaborator,
   [WS_METHODS.deviceTestHost]: collaborator,
+  [WS_METHODS.deviceEasAccount]: collaborator,
   [WS_METHODS.deviceShutdown]: collaborator,
   [WS_METHODS.deviceDetail]: collaborator,
   [WS_METHODS.deviceAction]: collaborator,

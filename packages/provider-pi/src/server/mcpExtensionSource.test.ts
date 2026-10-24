@@ -180,9 +180,9 @@ describe("Pi MCP tool exposure", () => {
       { systemPrompt: "Pi system prompt" },
       { ui: { notify: () => undefined } },
     );
-    assert.include(prompt.systemPrompt, "j5_propose_crew");
+    assert.include(prompt?.systemPrompt, "j5_propose_crew");
     for (const hidden of ["t3_thread_launch", "create_threads", "t3_thread_wait"]) {
-      assert.notInclude(prompt.systemPrompt, hidden);
+      assert.notInclude(prompt?.systemPrompt, hidden);
     }
   });
 

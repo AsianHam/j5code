@@ -115,10 +115,9 @@ const upstreamFavicon = Effect.fn("j5.sharing.guestProjectIcons.upstreamFavicon"
   return yield* issueAssetUrl({
     resource: { _tag: "project-favicon", cwd: project.value.workspaceRoot },
     ...(project.value.faviconPath ? { projectFaviconPath: project.value.faviconPath } : {}),
-    projectCheckoutPending:
-      clone !== null &&
-      clone.phase !== "done" &&
-      clone.destinationPath === project.value.workspaceRoot,
+    ...(clone !== null && clone.destinationPath === project.value.workspaceRoot
+      ? { projectCheckout: clone.phase === "done" ? ("cloned" as const) : ("pending" as const) }
+      : {}),
   });
 });
 

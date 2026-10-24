@@ -15,7 +15,7 @@ export const spansMultipleEnvironments = (
  * Whether a server has a J5 ledger to read: false for one that does not report it (plain T3 Code,
  * for one), and unknown until its config arrives. The only thing that makes a J5 view unsupported.
  */
-export const j5LedgerSupported = (config: ServerConfig | null | undefined) =>
+export const j5LedgerSupported = (config: Pick<ServerConfig, "environment"> | null | undefined) =>
   config == null ? undefined : config.environment.capabilities.j5ProjectLedger === true;
 
 export interface J5ReadSource<A> {

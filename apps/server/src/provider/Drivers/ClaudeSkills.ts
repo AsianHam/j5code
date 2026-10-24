@@ -11,6 +11,7 @@ import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { addClaudePluginIds } from "../../j5/skills/claudePluginSkills.ts";
 
 type ClaudeSkillScope = "user" | "project";
 
@@ -552,5 +553,10 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     }
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return yield* addClaudePluginIds(
+    [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    configDirPath,
+    cwd,
+    environment ?? process.env,
+  );
 });

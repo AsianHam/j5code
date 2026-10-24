@@ -1,3 +1,4 @@
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 // @effect-diagnostics nodeBuiltinImport:off - the redirect test needs a real HTTP server.
 import * as NodeHttp from "node:http";
 import { DeviceService } from "../../device/DeviceService.ts";
@@ -244,6 +245,7 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
               ),
             ),
             Layer.provide(McpSessionRegistry.layer),
+            Layer.provide(McpProviderSessions.layer),
             Layer.provide(PreviewAutomationBroker.layer),
             Layer.provide(
               Layer.mock(ServerEnvironment)({

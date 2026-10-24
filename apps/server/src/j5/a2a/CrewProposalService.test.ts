@@ -434,6 +434,7 @@ it.effect("reports what the person decided about a roster, and what they changed
         record: (event, properties = {}) =>
           Effect.sync(() => void recorded.push({ event, ...properties })),
         flush: Effect.void,
+        recordOwners: () => Effect.void,
       }),
     );
     yield* Effect.gen(function* () {
