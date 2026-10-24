@@ -116,8 +116,8 @@ export const layer = Layer.effect(
     });
 
     // Under the Crew's unit lock, like archive, so a seat mid-spawn is never read as missing.
-    const stop: CrewStopServiceShape["stop"] = (input) =>
-      Effect.gen(function* () {
+    const stop: CrewStopServiceShape["stop"] = Effect.fn("j5.a2a.crewStop.stop")(
+      function* (input) {
         const instance = yield* crews
           .read(input.crewInstanceId)
           .pipe(
@@ -191,7 +191,9 @@ export const layer = Layer.effect(
           { concurrency: 1 },
         );
         return { crewInstanceId: instance.id, members };
-      }).pipe((unit) => crews.serialize(input.crewInstanceId, unit));
+      },
+      (unit, input) => crews.serialize(input.crewInstanceId, unit),
+    );
 
     return CrewStopService.of({ stop });
   }),

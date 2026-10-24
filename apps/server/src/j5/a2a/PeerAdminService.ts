@@ -183,8 +183,8 @@ const make = Effect.gen(function* () {
   // credential that was just issued.
   const rotationPermit = yield* Semaphore.make(1);
 
-  const revokeSessionsForSubject = (subject: string, keep: string | null) =>
-    Effect.gen(function* () {
+  const revokeSessionsForSubject = Effect.fn("j5.a2a.peerAdmin.revokeSessionsForSubject")(
+    function* (subject: string, keep: string | null) {
       const sessions = yield* serverAuth.listSessions();
       let revoked = 0;
       for (const session of sessions) {
@@ -192,7 +192,8 @@ const make = Effect.gen(function* () {
         if (yield* serverAuth.revokeSession(session.sessionId)) revoked += 1;
       }
       return revoked;
-    });
+    },
+  );
 
   const issueCredential: PeerAdminService["Service"]["issueCredential"] = Effect.fn(
     "j5.a2a.peerAdmin.issueCredential",

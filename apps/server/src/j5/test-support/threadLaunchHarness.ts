@@ -147,6 +147,7 @@ export function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       namedProjectsRoot: "/projects",
       folderForThread: () => Effect.succeed(Option.none()),
+      isScratchProject: () => Effect.succeed(false),
     }),
   );
   const launch = ThreadLaunch.layer.pipe(

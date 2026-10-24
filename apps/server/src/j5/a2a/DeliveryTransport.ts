@@ -422,8 +422,8 @@ export const live: Layer.Layer<
     });
 
     return A2ADeliveryTransport.of({
-      cancelAgent: (input) =>
-        Effect.gen(function* () {
+      cancelAgent: Effect.fn("j5.a2a.delivery.cancelAgent")(
+        function* (input) {
           const rows =
             yield* sql<MembershipRow>`SELECT json_extract(payload, '$.participant') AS payload
           FROM j5_a2a_comm_event WHERE kind = 'participant.joined'
@@ -476,13 +476,13 @@ export const live: Layer.Layer<
             return "cancelled" as const;
           }
           return run.status === "cancelled" ? ("cancelled" as const) : ("delivered" as const);
-        }).pipe(
-          Effect.mapError(
-            (cause) => new A2ADeliveryTransportError({ operation: "cancel agent delivery", cause }),
-          ),
+        },
+        Effect.mapError(
+          (cause) => new A2ADeliveryTransportError({ operation: "cancel agent delivery", cause }),
         ),
-      deliverAgent: (input) =>
-        Effect.gen(function* () {
+      ),
+      deliverAgent: Effect.fn("j5.a2a.delivery.deliverAgent")(
+        function* (input) {
           const rows = yield* sql<MembershipRow>`
             SELECT payload
             FROM j5_a2a_membership
@@ -782,15 +782,15 @@ export const live: Layer.Layer<
             (effect) => effect.request.type === "provider-turn.steer",
           );
           if (steer !== undefined) yield* awaitSteeringOutcome(steer.id);
-        }).pipe(
-          Effect.mapError((cause) =>
-            isHeldError(cause)
-              ? cause
-              : new A2ADeliveryTransportError({ operation: "deliver agent", cause }),
-          ),
+        },
+        Effect.mapError((cause) =>
+          isHeldError(cause)
+            ? cause
+            : new A2ADeliveryTransportError({ operation: "deliver agent", cause }),
         ),
-      deliverPeer: (input) =>
-        Effect.gen(function* () {
+      ),
+      deliverPeer: Effect.fn("j5.a2a.delivery.deliverPeer")(
+        function* (input) {
           const receiverId = ParticipantId.make(input.body.receiverId);
           const peer = yield* peers.connection(input.receiverEnvironmentId);
           if (peer === null) {
@@ -861,13 +861,13 @@ export const live: Layer.Layer<
             operation: "deliver to peer",
             cause: `Peer ${peer.label} answered HTTP ${String(response.status)}: ${text.slice(0, 500)}`,
           });
-        }).pipe(
-          Effect.mapError((cause) =>
-            isRefusedError(cause)
-              ? cause
-              : new A2ADeliveryTransportError({ operation: "deliver to peer", cause }),
-          ),
+        },
+        Effect.mapError((cause) =>
+          isRefusedError(cause)
+            ? cause
+            : new A2ADeliveryTransportError({ operation: "deliver to peer", cause }),
         ),
+      ),
       deliverHuman: (input) =>
         input.envelopeChannel === "lifecycle_notice"
           ? Effect.gen(function* () {

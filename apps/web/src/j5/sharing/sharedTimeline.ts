@@ -1,7 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { MessageAuthor, PromptAnswer } from "@t3tools/contracts/j5";
 import { levelReaches } from "@t3tools/contracts/j5";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useState } from "react";
 
 import {
   authorIndex,
@@ -97,18 +97,46 @@ export function useSharedQueuedRuns<
   const { record, failed } = useThreadAuthorsResult(environmentId, threadId);
   const { authors } = authorIndex(record);
   const held = record === null && !failed;
-  return useMemo(
-    () =>
-      held
-        ? []
-        : authors.size === 0
-          ? queued
-          : queued.map((item) => {
-              const author = authors.get(item.run.userMessageId);
-              return author === undefined ? item : { ...item, text: typedText(item.text, author) };
-            }),
-    [authors, held, queued],
-  );
+  return held
+    ? []
+    : authors.size === 0
+      ? queued
+      : queued.map((item) => {
+          const author = authors.get(item.run.userMessageId);
+          return author === undefined ? item : { ...item, text: typedText(item.text, author) };
+        });
+}
+
+/**
+ * When this client first saw each server copy of a person's message, and what its person typed for
+ * the messages they sent from here, which are first drawn from what they typed.
+ */
+interface SeenMessages {
+  readonly firstSeen: ReadonlyMap<string, number>;
+  readonly typedHere: ReadonlyMap<string, string>;
+}
+
+const noneSeen: SeenMessages = { firstSeen: new Map(), typedHere: new Map() };
+
+/** `seen` itself when the entries hold nothing it lacks, so render stores a new record only then. */
+function observeMessages(seen: SeenMessages, entries: ReadonlyArray<MessageEntry>): SeenMessages {
+  let firstSeen: Map<string, number> | null = null;
+  let typedHere: Map<string, string> | null = null;
+  const now = Date.now();
+  for (const entry of entries) {
+    const message = entry.message;
+    if (message === undefined || message.role !== "user") continue;
+    if (message.createdBy === undefined) {
+      if ((typedHere ?? seen.typedHere).get(message.id) === message.text) continue;
+      typedHere ??= new Map(seen.typedHere);
+      typedHere.set(message.id, message.text);
+    } else if (!(firstSeen ?? seen.firstSeen).has(message.id)) {
+      firstSeen ??= new Map(seen.firstSeen);
+      firstSeen.set(message.id, now);
+    }
+  }
+  if (firstSeen === null && typedHere === null) return seen;
+  return { firstSeen: firstSeen ?? seen.firstSeen, typedHere: typedHere ?? seen.typedHere };
 }
 
 /**
@@ -128,10 +156,8 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
     threadRef?.environmentId ?? null,
     threadRef?.threadId ?? null,
   );
-  const threadScope = useMemo(
-    () => (threadRef === null ? null : { kind: "thread" as const, threadId: threadRef.threadId }),
-    [threadRef],
-  );
+  const threadScope =
+    threadRef === null ? null : { kind: "thread" as const, threadId: threadRef.threadId };
   // The header's pill already reads who reaches the thread; this is the same read.
   const people = useScopePeople(threadRef?.environmentId ?? null, threadScope);
   const writers = (people.data?.people ?? []).filter((person) =>
@@ -141,19 +167,11 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
   // that may carry lines for the agent.
   const mayBeShared = record?.shared === true || writers > 1 || (record === null && !failed);
 
-  // When this client first saw each server copy, and what its person typed for the messages they
-  // sent from here, which are first drawn from what they typed.
-  const firstSeen = useRef(new Map<string, number>());
-  const typedHere = useRef(new Map<string, string>());
-  const now = Date.now();
-  for (const entry of entries) {
-    const message = entry.message;
-    if (message === undefined || message.role !== "user") continue;
-    if (message.createdBy === undefined) typedHere.current.set(message.id, message.text);
-    else if (!firstSeen.current.has(message.id)) firstSeen.current.set(message.id, now);
-  }
+  const [stored, setStored] = useState(noneSeen);
+  const seen = observeMessages(stored, entries);
+  if (seen !== stored) setStored(seen);
 
-  const shown = useMemo(() => {
+  const shown = (() => {
     const { authors, answers } = authorIndex(record);
     const pending: string[] = [];
     const out = entries.flatMap((entry): ReadonlyArray<Entry> => {
@@ -184,9 +202,9 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
         answeredFor:
           !fromServer ||
           failed ||
-          readAnswersFor({ readAt, firstSeenAt: firstSeen.current.get(message.id) ?? Infinity }),
+          readAnswersFor({ readAt, firstSeenAt: seen.firstSeen.get(message.id) ?? Infinity }),
         mayBeShared,
-        typedHere: typedHere.current.get(message.id) ?? null,
+        typedHere: seen.typedHere.get(message.id) ?? null,
       });
       if (view.kind === "plain") return [entry];
       if (view.kind === "pending") {
@@ -201,7 +219,7 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
       return [{ ...entry, id: `${entry.id}:shared-note`, message: note }, typed];
     });
     return { entries: out, pendingKey: pending.join("|") };
-  }, [entries, failed, mayBeShared, readAt, record]);
+  })();
 
   // A message waiting on its author is asked about once more; the server's change feed usually
   // brings the answer first.

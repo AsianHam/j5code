@@ -27,6 +27,31 @@ vi.mock(import("~/state/query"), async (original) => ({
     refresh: () => {},
   })) as never,
 }));
+// J5 (case 80): shared-conversation authorship reads its own queries, which the mock above
+// would answer with the scheduled-task payload. Solo threads render their entries unchanged.
+vi.mock(import("../../j5/sharing/sharedTimeline"), async (original) => ({
+  ...(await original()),
+  useSharedConversationEntries: ((_thread: unknown, entries: unknown) => entries) as never,
+  useSharedMessageAuthor: (() => undefined) as never,
+}));
+// J5 (case 7) names the sender above the fold instead of in it; these tests cover upstream's row.
+vi.mock(import("../../j5/a2a/ThreadA2ARenderer"), async (original) => {
+  const { resolveUserMessagePresentation } = await import("@t3tools/client-runtime/user-message");
+  return {
+    ...(await original()),
+    useJ5UserMessagePresentation: ((
+      message: Parameters<typeof resolveUserMessagePresentation>[0],
+    ) => ({
+      ...resolveUserMessagePresentation(message),
+      j5: null,
+      literalContext: null,
+      authorName: null,
+      senderThreadRef: null,
+      side: "right",
+      preview: null,
+    })) as never,
+  };
+});
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const CREATED_AT = "2026-03-17T19:12:28.000Z";

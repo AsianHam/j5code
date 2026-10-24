@@ -3,7 +3,7 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { environmentSession } from "../../state/session";
@@ -28,31 +28,19 @@ export const threadReadConnectionsAtom = Atom.make((get) => {
   return connections;
 });
 
-/** A row set with the key that identifies it, so several reads share one serialization. */
-export interface KeyedThreadRefs {
-  readonly key: string;
-  readonly refs: ReadonlyArray<ScopedThreadRef>;
-}
-
-/**
- * Serializes a row set once per render and keeps one array identity while its contents are
- * unchanged. The sidebar's list spans every thread and re-renders while a turn streams, so the
- * reads that follow it take this instead of each serializing the list again.
- */
-export function useKeyedThreadRefs(refs: ReadonlyArray<ScopedThreadRef>): KeyedThreadRefs {
-  const key = JSON.stringify(refs);
-  return useMemo(() => ({ key, refs: JSON.parse(key) as ReadonlyArray<ScopedThreadRef> }), [key]);
-}
-
 /**
  * Keeps the Crew chips and spawned children of the sidebar's rows read. Incremental: only rows
  * not yet answered for are fetched here, and a Crew or Fleet change re-reads the involved rows
  * (`useFleetRefresh`). `ThreadCardIdentity` and `SpawnedChildren` render what these reads return.
  */
-export function useThreadRowReads({ refs: requested }: KeyedThreadRefs) {
+export function useThreadRowReads(refs: ReadonlyArray<ScopedThreadRef>) {
   const connections = useAtomValue(threadReadConnectionsAtom);
+  // The sidebar's list spans every thread and re-renders while a turn streams, so the effect keys
+  // on the serialized row set instead of the list's identity.
+  const key = JSON.stringify(refs);
   useEffect(() => {
+    const requested = JSON.parse(key) as ReadonlyArray<ScopedThreadRef>;
     requestCrewMemberships(requested, connections);
     requestSpawnedChildren(requested, connections);
-  }, [connections, requested]);
+  }, [connections, key]);
 }

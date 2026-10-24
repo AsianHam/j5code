@@ -558,8 +558,8 @@ export const layer = Layer.effect(
       });
     });
 
-    const archive: ArchiveAgentServiceShape["archive"] = (input) =>
-      Effect.gen(function* () {
+    const archive: ArchiveAgentServiceShape["archive"] = Effect.fn("j5.a2a.archiveAgent.archive")(
+      function* (input) {
         const decodedToken =
           input.confirmationToken === undefined
             ? undefined
@@ -645,25 +645,27 @@ export const layer = Layer.effect(
           return yield* error;
         }
         return "archived" as const;
-      });
+      },
+    );
 
-    const readFacts: ArchiveAgentServiceShape["readFacts"] = (target) =>
-      Effect.gen(function* () {
-        const facts = yield* readArchiveFacts(target);
-        if (facts.state === "not-an-a2a-participant") {
-          const projection = yield* getThreadProjectionIfPresent(
-            threadManagement,
-            target.threadId,
-          ).pipe(Effect.mapError(operationError("reading the target thread projection")));
-          if (projection === null) return null;
-        }
-        const state = yield* readStateWith(target, facts);
-        return {
-          facts: state.facts,
-          threadArchived: state.projection.thread.archivedAt !== null,
-          retired: state.retired,
-        };
-      });
+    const readFacts: ArchiveAgentServiceShape["readFacts"] = Effect.fn(
+      "j5.a2a.archiveAgent.readFacts",
+    )(function* (target) {
+      const facts = yield* readArchiveFacts(target);
+      if (facts.state === "not-an-a2a-participant") {
+        const projection = yield* getThreadProjectionIfPresent(
+          threadManagement,
+          target.threadId,
+        ).pipe(Effect.mapError(operationError("reading the target thread projection")));
+        if (projection === null) return null;
+      }
+      const state = yield* readStateWith(target, facts);
+      return {
+        facts: state.facts,
+        threadArchived: state.projection.thread.archivedAt !== null,
+        retired: state.retired,
+      };
+    });
 
     return ArchiveAgentService.of({ archive, readFacts });
   }),

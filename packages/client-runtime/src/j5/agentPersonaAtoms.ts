@@ -4,7 +4,11 @@ import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import { EnvironmentRpcUnavailableError, request } from "../rpc/client.ts";
+import {
+  EnvironmentRpcUnavailableError,
+  request,
+  type EnvironmentRpcInput,
+} from "../rpc/client.ts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -28,17 +32,18 @@ export function createAgentPersonaEnvironmentAtoms<R, E>(
       tag: J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaCatalog,
       // Pickers all over the chat view mount this. Personas are the server's (People and access
       // AC23), so once the connection is known to reach less than the server it is not sent.
-      execute: (input) =>
-        Effect.gen(function* () {
-          if (yield* connectionIsKnownNarrow) {
-            const supervisor = yield* EnvironmentSupervisor;
-            return yield* new EnvironmentRpcUnavailableError({
-              environmentId: supervisor.target.environmentId,
-              message: "Personas are not shared with you on this server.",
-            });
-          }
-          return yield* request(J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaCatalog, input);
-        }),
+      execute: Effect.fn("j5.agentPersonas.catalog")(function* (
+        input: EnvironmentRpcInput<typeof J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaCatalog>,
+      ) {
+        if (yield* connectionIsKnownNarrow) {
+          const supervisor = yield* EnvironmentSupervisor;
+          return yield* new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            message: "Personas are not shared with you on this server.",
+          });
+        }
+        return yield* request(J5_AGENT_PERSONA_WS_METHODS.getAgentPersonaCatalog, input);
+      }),
       staleTimeMs: 0,
     }),
     importAgentPersonas: createEnvironmentRpcCommand(runtime, {

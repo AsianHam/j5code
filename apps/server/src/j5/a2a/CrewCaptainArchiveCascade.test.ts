@@ -275,6 +275,7 @@ const seatProjection = (
             kind: "user_input",
             status: "pending",
             createdAt: DateTime.makeUnsafe(seatAt),
+            responseCapability: { type: "live", providerSessionId: "session:seat" },
           },
         ]
       : [],

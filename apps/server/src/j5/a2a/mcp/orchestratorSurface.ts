@@ -39,6 +39,8 @@ export const J5OrchestratorProviderCapability = Schema.Struct({
 export const J5OrchestratorCapabilitiesResult = Schema.Struct({
   /** The calling thread, or null when the caller is not a J5 thread. */
   parentThreadId: Schema.NullOr(ThreadId),
+  inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
+  inheritedModel: Schema.NullOr(Schema.String),
   inheritedOptions: Schema.optional(Schema.Array(ProviderOptionSelection)),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -53,6 +55,8 @@ export const mapJ5OrchestratorCapabilities = (
   capabilities: OrchestratorMcpCapabilitiesResult,
 ): typeof J5OrchestratorCapabilitiesResult.Type => ({
   parentThreadId: capabilities.parentThreadId,
+  inheritedProviderInstanceId: capabilities.inheritedProviderInstanceId,
+  inheritedModel: capabilities.inheritedModel,
   ...(capabilities.inheritedOptions === undefined
     ? {}
     : { inheritedOptions: capabilities.inheritedOptions }),
@@ -74,7 +78,7 @@ export const mapJ5OrchestratorCapabilities = (
 });
 
 export const J5_ORCHESTRATOR_CAPABILITIES_DESCRIPTION =
-  "List the provider instances, a short list of their models from the same live catalog as the composer with each model's selectable options, the model options this thread's own model runs with (inheritedOptions), provider constraints, and the runtime and interaction modes available to this caller. The list has the user's favorite and custom models, your own model, every current Codex, Claude, Muse and Grok model, and the first 8 current models of other providers. Other legacy models are left out. omittedModels counts models left out; pass search, such as 'sonnet 4.6', to find them. delegate_task and j5_spawn_agent accept any catalog model, listed or not.";
+  "List the provider instances, a short list of their models from the same live catalog as the composer with each model's selectable options, the provider instance, model and model options this thread runs with (inheritedProviderInstanceId, inheritedModel, inheritedOptions), provider constraints, and the runtime and interaction modes available to this caller. The list has the user's favorite and custom models, your own model, every current Codex, Claude, Muse and Grok model, and the first 8 current models of other providers. Other legacy models are left out. omittedModels counts models left out; pass search, such as 'sonnet 4.6', to find them. delegate_task and j5_spawn_agent accept any catalog model, listed or not.";
 
 export const J5OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description: J5_ORCHESTRATOR_CAPABILITIES_DESCRIPTION,

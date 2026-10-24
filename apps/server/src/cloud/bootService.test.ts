@@ -1,14 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -838,29 +837,30 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
   it.effect("waits a bounded time for a unit that is still activating", () =>
     Effect.gen(function* () {
       const { service, commands, control } = yield* makeHarness("darwin");
-      // Install does real file I/O between settle sleeps, so step the test
-      // clock one interval at a time until the fiber finishes.
+      // Settle sleeps are recorded and return at once: the wait is read from what
+      // install asked to sleep, so no clock has to be stepped around its file I/O.
+      const clock = yield* Clock.Clock;
+      const sleeps: Array<number> = [];
       const settle = <A, E>(effect: Effect.Effect<A, E>) =>
-        Effect.gen(function* () {
-          const fiber = yield* Effect.forkChild(effect);
-          while (fiber.pollUnsafe() === undefined) {
-            yield* TestClock.adjust(Duration.millis(500));
-            yield* TestClock.withLive(Effect.sleep(Duration.millis(1)));
-          }
-          return yield* Fiber.join(fiber);
+        Effect.provideService(effect, Clock.Clock, {
+          ...clock,
+          sleep: (duration) => Effect.sync(() => void sleeps.push(Duration.toMillis(duration))),
         });
 
       control.launchdStates = ["spawn scheduled", "spawn scheduled"];
       yield* settle(service.install());
       expect(commands.filter((command) => command.startsWith("launchctl print"))).toHaveLength(3);
+      expect(sleeps).toEqual([500, 500]);
 
+      sleeps.length = 0;
       control.launchdStates = Array.from({ length: 20 }, () => "not running");
       expect(yield* settle(service.install().pipe(Effect.flip))).toMatchObject({
         _tag: "BootServiceNotRunningError",
         state: "not running",
       });
-      // Bounded: ten probes, then it gives up.
+      // Bounded: ten probes with a half-second between each, then it gives up.
       expect(control.launchdStates).toHaveLength(10);
+      expect(sleeps).toEqual(Array.from({ length: 9 }, () => 500));
     }),
   );
 

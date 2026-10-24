@@ -1,7 +1,7 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { PersonScope, ProjectOrThreadScope, ScopePeople } from "@t3tools/contracts/j5";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useProject, useThreadShell, useThreadShells } from "../../state/entities";
@@ -64,13 +64,10 @@ export function useScopePeople(
   scope: ProjectOrThreadScope | null,
 ): { readonly data: ScopePeople | null; readonly error: string | null } {
   const key = scope === null || environmentId === null ? null : JSON.stringify(scope);
-  const target = useMemo(
-    () =>
-      key === null || environmentId === null
-        ? null
-        : { environmentId, input: { scope: JSON.parse(key) as ProjectOrThreadScope } },
-    [environmentId, key],
-  );
+  const target =
+    key === null || environmentId === null
+      ? null
+      : { environmentId, input: { scope: JSON.parse(key) as ProjectOrThreadScope } };
   const query = target === null ? null : sharingManage.scopePeople(target);
   const changes = target === null ? null : sharingManage.scopePeopleChanges(target);
   const people = useEnvironmentQuery(query);
@@ -100,17 +97,15 @@ export function useAccessRows(
   const everyone = useEnvironmentQuery(
     scope?.kind === "server" ? peopleQuery(environmentId) : null,
   );
-  return useMemo(() => {
-    if (scope === null) return { rows: null, error: null };
-    if (scope.kind === "server") {
-      return {
-        rows: everyone.data === null ? null : accessRowsForServer(everyone.data.people),
-        error: everyone.error,
-      };
-    }
+  if (scope === null) return { rows: null, error: null };
+  if (scope.kind === "server") {
     return {
-      rows: scoped.data === null ? null : accessRowsFromScope(scoped.data.people, scope),
-      error: scoped.error,
+      rows: everyone.data === null ? null : accessRowsForServer(everyone.data.people),
+      error: everyone.error,
     };
-  }, [everyone.data, everyone.error, scope, scoped.data, scoped.error]);
+  }
+  return {
+    rows: scoped.data === null ? null : accessRowsFromScope(scoped.data.people, scope),
+    error: scoped.error,
+  };
 }

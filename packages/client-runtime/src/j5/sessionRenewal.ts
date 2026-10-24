@@ -68,34 +68,35 @@ export const renewSavedSession = Effect.fn("j5.sessionRenewal.renewSavedSession"
  * Follows one saved server's connection, renewing each time it is refused for authentication. It
  * ends when the server is removed, which frees its place among those followed.
  */
-const follow = (environmentId: Parameters<EnvironmentRegistry["Service"]["stateChanges"]>[0]) =>
-  Effect.gen(function* () {
-    const registry = yield* EnvironmentRegistry;
-    yield* registry.stateChanges(environmentId).pipe(
-      Stream.filter(
-        (state) =>
-          state.phase === "blocked" &&
-          state.lastFailure?._tag === "ConnectionBlockedError" &&
-          state.lastFailure.reason === "authentication",
-      ),
-      Stream.mapEffect(() =>
-        Effect.gen(function* () {
-          const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
-          if (entry === undefined) return;
-          if (yield* renewSavedSession(entry)) yield* registry.retryNow(environmentId);
-        }).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("J5 could not renew a saved server's session", {
-              environmentId,
-              cause,
-            }),
-          ),
+const follow = Effect.fn("j5.sessionRenewal.follow")(function* (
+  environmentId: Parameters<EnvironmentRegistry["Service"]["stateChanges"]>[0],
+) {
+  const registry = yield* EnvironmentRegistry;
+  yield* registry.stateChanges(environmentId).pipe(
+    Stream.filter(
+      (state) =>
+        state.phase === "blocked" &&
+        state.lastFailure?._tag === "ConnectionBlockedError" &&
+        state.lastFailure.reason === "authentication",
+    ),
+    Stream.mapEffect(() =>
+      Effect.gen(function* () {
+        const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+        if (entry === undefined) return;
+        if (yield* renewSavedSession(entry)) yield* registry.retryNow(environmentId);
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("J5 could not renew a saved server's session", {
+            environmentId,
+            cause,
+          }),
         ),
       ),
-      Stream.runDrain,
-      Effect.catch(() => Effect.void),
-    );
-  });
+    ),
+    Stream.runDrain,
+    Effect.catch(() => Effect.void),
+  );
+});
 
 /**
  * For the web client's connection runtime: follows every saved server reached with a bearer token

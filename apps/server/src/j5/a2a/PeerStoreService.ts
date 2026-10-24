@@ -90,8 +90,8 @@ export const layer: Layer.Layer<
         }),
       );
 
-    const startPoll: PeerStoreServiceShape["startPoll"] = (input) =>
-      Effect.gen(function* () {
+    const startPoll: PeerStoreServiceShape["startPoll"] = Effect.fn("j5.a2a.peerStore.startPoll")(
+      function* (input) {
         yield* worker.acknowledgePeer(input.environmentId, input.request.acks);
         // What the poller tells is recorded at once, so the address book sees a
         // changed roster during the hold, and so is the heartbeat: a poll held
@@ -121,7 +121,8 @@ export const layer: Layer.Layer<
             ),
           ),
         );
-      });
+      },
+    );
 
     const poll: PeerStoreServiceShape["poll"] = (input) => Effect.flatten(startPoll(input));
 

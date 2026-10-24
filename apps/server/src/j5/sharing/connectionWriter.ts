@@ -17,36 +17,38 @@ const unreadable = () =>
   new J5ActionError({ code: "storage", message: "Could not read what is shared with you." });
 
 /** Whether the connection writes to, or only reaches, the thread an entry names. */
-const connectionAt = (session: SessionIdentity, needs: "write" | "read") =>
-  Effect.gen(function* () {
-    const people = yield* PersonAccess;
-    const shared = yield* SharedThreads;
-    const reach = yield* people.sessionReach(session).pipe(Effect.mapError(unreadable));
-    const everywhere =
-      isWide(reach) || (needs === "read" && reach.kind === "person" && reach.serverLevel !== null);
-    // A thread that is `null` names nothing that exists.
-    return <E>(thread: Effect.Effect<ThreadId | null, E>) =>
-      everywhere
-        ? Effect.succeed(true)
-        : reach.kind !== "person"
-          ? Effect.succeed(false)
-          : thread.pipe(
-              Effect.mapError(unreadable),
-              Effect.flatMap((threadId) =>
-                threadId === null
-                  ? Effect.succeed(false)
-                  : needs === "write"
-                    ? shared.writerLevel(reach.person.personId, threadId).pipe(
-                        Effect.map((level) => level !== null),
-                        Effect.mapError(unreadable),
-                      )
-                    : people.threadLevel(reach.person.personId, threadId).pipe(
-                        Effect.map((level) => level !== null),
-                        Effect.mapError(unreadable),
-                      ),
-              ),
-            );
-  });
+const connectionAt = Effect.fn("j5.sharing.connectionWriter.connectionAt")(function* (
+  session: SessionIdentity,
+  needs: "write" | "read",
+) {
+  const people = yield* PersonAccess;
+  const shared = yield* SharedThreads;
+  const reach = yield* people.sessionReach(session).pipe(Effect.mapError(unreadable));
+  const everywhere =
+    isWide(reach) || (needs === "read" && reach.kind === "person" && reach.serverLevel !== null);
+  // A thread that is `null` names nothing that exists.
+  return <E>(thread: Effect.Effect<ThreadId | null, E>) =>
+    everywhere
+      ? Effect.succeed(true)
+      : reach.kind !== "person"
+        ? Effect.succeed(false)
+        : thread.pipe(
+            Effect.mapError(unreadable),
+            Effect.flatMap((threadId) =>
+              threadId === null
+                ? Effect.succeed(false)
+                : needs === "write"
+                  ? shared.writerLevel(reach.person.personId, threadId).pipe(
+                      Effect.map((level) => level !== null),
+                      Effect.mapError(unreadable),
+                    )
+                  : people.threadLevel(reach.person.personId, threadId).pipe(
+                      Effect.map((level) => level !== null),
+                      Effect.mapError(unreadable),
+                    ),
+            ),
+          );
+});
 
 /** For a read that lists what belongs to many threads: whether the connection writes to one. */
 export const connectionWrites = (session: SessionIdentity) => connectionAt(session, "write");
@@ -90,18 +92,19 @@ export const requireReaches = requireAt("read");
  * Refuses anyone who is not an Owner of the server, for now, as command admission refuses them
  * archiving or deleting a thread (People and access AC14). A service session passes.
  */
-export const requireOwner = (session: SessionIdentity) =>
-  Effect.gen(function* () {
-    const reach = yield* (yield* PersonAccess)
-      .sessionReach(session)
-      .pipe(Effect.mapError(unreadable));
-    const owner =
-      reach.kind === "service" ||
-      (reach.kind === "person" && levelReaches(reach.serverLevel, "owner"));
-    if (!owner) {
-      return yield* new J5ActionError({
-        code: "OwnersOnly",
-        message: "Only an Owner of this server archives a Crew, for now. Ask an Owner to do it.",
-      });
-    }
-  });
+export const requireOwner = Effect.fn("j5.sharing.connectionWriter.requireOwner")(function* (
+  session: SessionIdentity,
+) {
+  const reach = yield* (yield* PersonAccess)
+    .sessionReach(session)
+    .pipe(Effect.mapError(unreadable));
+  const owner =
+    reach.kind === "service" ||
+    (reach.kind === "person" && levelReaches(reach.serverLevel, "owner"));
+  if (!owner) {
+    return yield* new J5ActionError({
+      code: "OwnersOnly",
+      message: "Only an Owner of this server archives a Crew, for now. Ask an Owner to do it.",
+    });
+  }
+});

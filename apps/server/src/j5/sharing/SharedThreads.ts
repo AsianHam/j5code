@@ -121,17 +121,18 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const recordShared = (threadIds: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      if (threadIds.length === 0) return;
-      const at = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
+  const recordShared = Effect.fn("j5.sharing.sharedThreads.recordShared")(function* (
+    threadIds: ReadonlyArray<string>,
+  ) {
+    if (threadIds.length === 0) return;
+    const at = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`
         INSERT INTO j5_a2a_shared_thread ${sql.insert(
           threadIds.map((thread_id) => ({ thread_id, shared_at: at })),
         )}
         ON CONFLICT (thread_id) DO NOTHING
       `;
-    });
+  });
 
   /** A thread and every agent beneath it: its Subagents and its placed Peer Agents, not forks. */
   const threadTree = (threadId: ThreadId) => sql<{ readonly thread_id: string }>`

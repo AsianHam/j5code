@@ -181,6 +181,54 @@ function JoinSurface({
   const [dead, setDead] = useState(false);
   const title = `Join ${description.serverName}`;
 
+  const attemptJoin = async (typed: string) => {
+    const response = await post(
+      J5_LINK_JOIN_PATH,
+      view.kind === "name" ? { token, name: typed } : { token },
+    );
+    const body = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok) {
+      const refusal = joinRefusal(response.status, body);
+      if (refusal === "dead") {
+        setDead(true);
+        return;
+      }
+      if (refusal === "invalid_request" && view.kind !== "name") setAskName(true);
+      // A request the server could not take says why in its own words.
+      const said = serverMessage(body);
+      setError(
+        refusal === "invalid_request" && said !== null
+          ? said
+          : refusal === null
+            ? (said ?? "The server could not let you in. Try again.")
+            : refusalWords(refusal, description),
+      );
+      return;
+    }
+    const result = body as { readonly kind?: unknown; readonly credential?: unknown };
+    if (result.kind === "joined") {
+      // Already paired: the app starts afresh, and the first screen shows what was added.
+      window.location.replace("/");
+      return;
+    }
+    if (result.kind !== "pair" || typeof result.credential !== "string") {
+      setError("The server could not let you in. Try again.");
+      return;
+    }
+    stripPairingTokenFromUrl();
+    // The link may have been revoked between the join and the pairing it allowed; the server
+    // then refuses the pairing, and the link no longer works.
+    const paired = await submitServerAuthCredential(result.credential).then(
+      () => true,
+      () => false,
+    );
+    if (!paired) {
+      setDead(true);
+      return;
+    }
+    onAuthenticated();
+  };
+
   const join = async () => {
     const typed = name.trim();
     if (view.kind === "name" && !isPersonName(typed)) {
@@ -189,57 +237,8 @@ function JoinSurface({
     }
     setBusy(true);
     setError(null);
-    try {
-      const response = await post(
-        J5_LINK_JOIN_PATH,
-        view.kind === "name" ? { token, name: typed } : { token },
-      );
-      const body = (await response.json().catch(() => null)) as unknown;
-      if (!response.ok) {
-        const refusal = joinRefusal(response.status, body);
-        if (refusal === "dead") {
-          setDead(true);
-          return;
-        }
-        if (refusal === "invalid_request" && view.kind !== "name") setAskName(true);
-        // A request the server could not take says why in its own words.
-        const said = serverMessage(body);
-        setError(
-          refusal === "invalid_request" && said !== null
-            ? said
-            : refusal === null
-              ? (said ?? "The server could not let you in. Try again.")
-              : refusalWords(refusal, description),
-        );
-        return;
-      }
-      const result = body as { readonly kind?: unknown; readonly credential?: unknown };
-      if (result.kind === "joined") {
-        // Already paired: the app starts afresh, and the first screen shows what was added.
-        window.location.replace("/");
-        return;
-      }
-      if (result.kind !== "pair" || typeof result.credential !== "string") {
-        setError("The server could not let you in. Try again.");
-        return;
-      }
-      stripPairingTokenFromUrl();
-      // The link may have been revoked between the join and the pairing it allowed; the server
-      // then refuses the pairing, and the link no longer works.
-      const paired = await submitServerAuthCredential(result.credential).then(
-        () => true,
-        () => false,
-      );
-      if (!paired) {
-        setDead(true);
-        return;
-      }
-      onAuthenticated();
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
+    await attemptJoin(typed).catch((cause: unknown) => setError(messageOf(cause)));
+    setBusy(false);
   };
 
   if (dead) return <DeadLink />;

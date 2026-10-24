@@ -4,7 +4,7 @@ import type {
   CrewProposalSeatRuntime,
   CrewWorkspaceOptions,
 } from "@t3tools/contracts/j5";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -54,18 +54,15 @@ export function CrewSeatDialog(props: {
       : undefined;
   // Resolve persona defaults before editing a new selection. This does not save the draft or
   // authorize approval; the full roster gets a fresh preview when the user saves the member.
-  const previewSeats = useMemo(
-    () => [
-      {
-        seat: props.previewSeatName,
-        agentId: draft.agentId === CUSTOM_AGENT ? null : draft.agentId,
-        reason: "Member runtime preview",
-        workspace: { type: "shared" as const },
-        ...(draft.agentId === CUSTOM_AGENT ? { instructions: "Crew member" } : {}),
-      },
-    ],
-    [props.previewSeatName, draft.agentId],
-  );
+  const previewSeats = [
+    {
+      seat: props.previewSeatName,
+      agentId: draft.agentId === CUSTOM_AGENT ? null : draft.agentId,
+      reason: "Member runtime preview",
+      workspace: { type: "shared" as const },
+      ...(draft.agentId === CUSTOM_AGENT ? { instructions: "Crew member" } : {}),
+    },
+  ];
   const preview = useCrewProposalPreview(
     props.environmentId,
     props.proposalId,

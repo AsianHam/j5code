@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useLocation } from "@tanstack/react-router";
 import { ScrollTextIcon } from "lucide-react";
-import { type ComponentType, type ReactNode, useMemo } from "react";
+import { type ComponentType, type ReactNode } from "react";
 
 import type { SettingsPath } from "../../components/settings/settingsSearch";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../../components/ui/empty";
@@ -111,8 +111,5 @@ export function useOwnedEnvironments<Environment extends { readonly environmentI
   environments: ReadonlyArray<Environment>,
 ): ReadonlyArray<Environment> {
   const owned = useOwnedEnvironmentIds();
-  return useMemo(
-    () => environments.filter((environment) => owned.has(environment.environmentId)),
-    [environments, owned],
-  );
+  return environments.filter((environment) => owned.has(environment.environmentId));
 }

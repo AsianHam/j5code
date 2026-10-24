@@ -10,8 +10,8 @@ import { playbookError } from "./PlaybookStore.ts";
 const isPlaybookError = Schema.is(PlaybookError);
 
 /** The directory a thread's playbooks live under: its worktree, else its project's root. */
-export const playbookWorkspaceRoot = (threadId: ThreadId) =>
-  Effect.gen(function* () {
+export const playbookWorkspaceRoot = Effect.fn("j5.playbooks.workspace.playbookWorkspaceRoot")(
+  function* (threadId: ThreadId) {
     const threads = yield* ThreadManagementService;
     const projects = yield* ProjectService;
     const { thread } = yield* threads.getThreadProjection(threadId);
@@ -21,8 +21,8 @@ export const playbookWorkspaceRoot = (threadId: ThreadId) =>
     if (Option.isNone(project))
       return yield* playbookError("project_not_found", "The thread's project was not found.");
     return thread.worktreePath ?? project.value.workspaceRoot;
-  }).pipe(
-    Effect.mapError((error) =>
-      isPlaybookError(error) ? error : playbookError("workspace_unavailable", error.message),
-    ),
-  );
+  },
+  Effect.mapError((error) =>
+    isPlaybookError(error) ? error : playbookError("workspace_unavailable", error.message),
+  ),
+);

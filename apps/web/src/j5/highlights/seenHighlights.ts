@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import {
   HIGHLIGHTS,
   highlightsForClient,
@@ -59,7 +59,7 @@ function subscribe(listener: () => void): () => void {
 /** The seen record. Snapshots are the raw string, so an unchanged record never re-renders. */
 export function useSeenHighlights(): ReadonlyArray<string> | null {
   const raw = useSyncExternalStore(subscribe, readRaw, () => null);
-  return useMemo(() => parse(raw), [raw]);
+  return parse(raw);
 }
 
 export function dismissHighlight(id: string): void {

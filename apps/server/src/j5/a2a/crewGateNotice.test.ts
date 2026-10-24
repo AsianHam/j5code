@@ -200,7 +200,7 @@ describe("crew launch report", () => {
     );
     assert.include(
       text,
-      "seat_failed: punchline | failed | provider_error — API Error: Can't reach the API server",
+      "seat_failed: punchline | failed | provider_error: API Error: Can't reach the API server",
     );
     assert.include(text, "seat_pending: prosecutor");
     assert.include(

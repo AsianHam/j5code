@@ -241,8 +241,10 @@ export const layer = Layer.effect(
       return involving.filter((instance) => instance.captainThreadId === threadId);
     });
 
-    const handleStoredEvent: CrewCaptainArchiveCascadeShape["handleStoredEvent"] = (stored) =>
-      Effect.gen(function* () {
+    const handleStoredEvent: CrewCaptainArchiveCascadeShape["handleStoredEvent"] = Effect.fn(
+      "j5.a2a.captainArchiveCascade.handleStoredEvent",
+    )(
+      function* (stored) {
         const event = stored.event;
         const threadId = event.threadId;
         const occurrence = String(event.id);
@@ -282,13 +284,11 @@ export const layer = Layer.effect(
           default:
             return null;
         }
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("J5 Captain lifecycle cascade skipped", { cause }).pipe(
-            Effect.as(null),
-          ),
-        ),
-      );
+      },
+      Effect.catchCause((cause) =>
+        Effect.logWarning("J5 Captain lifecycle cascade skipped", { cause }).pipe(Effect.as(null)),
+      ),
+    );
 
     /**
      * When the Captain's thread was archived or deleted, as an ISO timestamp; null while it is

@@ -717,13 +717,13 @@ describe("addRemoteUrl", () => {
 });
 
 describe("runInOwnGroup", () => {
-  const options = (deadline: number) => ({ cwd: NodeOS.tmpdir(), env: process.env, deadline });
+  const options = (timeoutMs: number) => ({ cwd: NodeOS.tmpdir(), env: process.env, timeoutMs });
 
   it("returns a finished command's status and what it printed", async () => {
     const done = await runInOwnGroup(
       process.execPath,
       ["-e", "console.log('built'); console.error('warned'); process.exit(3)"],
-      options(Date.now() + 20_000),
+      options(20_000),
     );
     assert.deepEqual(
       { status: done.status, timedOut: done.timedOut },
@@ -746,10 +746,8 @@ describe("runInOwnGroup", () => {
       require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(grandchild.pid));
       setInterval(() => {}, 1000);
     `;
-    const started = Date.now();
-    const cut = await runInOwnGroup(process.execPath, ["-e", step], options(Date.now() + 1_500));
+    const cut = await runInOwnGroup(process.execPath, ["-e", step], options(1_500));
     assert.isTrue(cut.timedOut);
-    assert.isBelow(Date.now() - started, 10_000);
     const grandchild = Number(NodeFS.readFileSync(pidFile, "utf8"));
     assert.isAbove(grandchild, 0);
     assert.isFalse(NodeFS.existsSync(`/proc/${grandchild}`), "the grandchild is still running");
@@ -758,17 +756,16 @@ describe("runInOwnGroup", () => {
 });
 
 describe("runInOwnGroup against a command that will not stop", () => {
+  // Half a second to the deadline, five more of grace, then the kill: a command that
+  // outlived the kill would hold this test past the project timeout.
   it("kills a command that ignores the request to end, and returns", async () => {
-    const started = Date.now();
     const cut = await runInOwnGroup(
       process.execPath,
       ["-e", 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'],
-      { cwd: NodeOS.tmpdir(), env: process.env, deadline: Date.now() + 500 },
+      { cwd: NodeOS.tmpdir(), env: process.env, timeoutMs: 500 },
     );
     assert.isTrue(cut.timedOut);
-    // Half a second to the deadline, five more of grace, then the kill.
-    assert.isBelow(Date.now() - started, 15_000);
-  }, 30_000);
+  });
 });
 
 describe("baseProgress", () => {
@@ -1208,7 +1205,7 @@ describe("upgradeRunner", () => {
     );
     const facts = readServerLog(`${dryRun.stdout}${dryRun.stderr}`);
     assert.deepEqual({ serverPort: facts.serverPort, webPort: facts.webPort }, ports);
-  }, 30_000);
+  });
 });
 
 describe("formatUpgrade", () => {

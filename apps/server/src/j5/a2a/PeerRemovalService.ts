@@ -83,8 +83,8 @@ export const layer: Layer.Layer<
     const worker = yield* A2ADeliveryWorker;
     const sql = yield* SqlClient.SqlClient;
 
-    const remove: PeerRemovalServiceShape["remove"] = (environmentId) =>
-      Effect.gen(function* () {
+    const remove: PeerRemovalServiceShape["remove"] = Effect.fn("j5.a2a.peer.remove")(
+      function* (environmentId) {
         const committed: Array<StoredCommEvent> = [];
         const append = (command: Parameters<typeof writer.appendEventsInTransaction>[0]) =>
           writer.appendEventsInTransaction(command).pipe(
@@ -259,7 +259,8 @@ export const layer: Layer.Layer<
         // The notices are queued here, outside the delivery worker: wake it.
         if (committed.length > 0) yield* worker.notify;
         return result;
-      }).pipe(Effect.withSpan("j5.a2a.peer.remove"));
+      },
+    );
 
     return PeerRemovalService.of({ remove });
   }),

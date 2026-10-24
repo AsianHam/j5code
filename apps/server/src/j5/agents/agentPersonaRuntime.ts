@@ -94,19 +94,18 @@ export interface AgentPersonaRuntimePolicyInput {
  * and maps failures through the caller-supplied error constructor, so the upstream file adds no
  * persona logic. A live Crew seat's policy is marked so adapters withhold native question tools.
  */
-export const makeAgentPersonaRuntimePolicyResolver = <E>(
-  toError: (input: AgentPersonaRuntimePolicyInput, cause: unknown) => E,
-) =>
-  Effect.gen(function* () {
-    const library = yield* makeAgentPersonaLibrary;
-    const isCrewSeat = yield* makeCrewSeatLookup;
-    return (input: AgentPersonaRuntimePolicyInput) =>
-      resolveAgentPersonaRuntimePolicy(input, library).pipe(
-        Effect.flatMap((policy) =>
-          isCrewSeat(input.thread).pipe(
-            Effect.map((seat) => (seat ? withCrewSeatQuestions(policy) : policy)),
-          ),
+export const makeAgentPersonaRuntimePolicyResolver = Effect.fn(
+  "j5.agents.agentPersonaRuntime.makeAgentPersonaRuntimePolicyResolver",
+)(function* <E>(toError: (input: AgentPersonaRuntimePolicyInput, cause: unknown) => E) {
+  const library = yield* makeAgentPersonaLibrary;
+  const isCrewSeat = yield* makeCrewSeatLookup;
+  return (input: AgentPersonaRuntimePolicyInput) =>
+    resolveAgentPersonaRuntimePolicy(input, library).pipe(
+      Effect.flatMap((policy) =>
+        isCrewSeat(input.thread).pipe(
+          Effect.map((seat) => (seat ? withCrewSeatQuestions(policy) : policy)),
         ),
-        Effect.mapError((cause) => toError(input, cause)),
-      );
-  });
+      ),
+      Effect.mapError((cause) => toError(input, cause)),
+    );
+});

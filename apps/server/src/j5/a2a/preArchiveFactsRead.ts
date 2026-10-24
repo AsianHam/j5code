@@ -36,18 +36,21 @@ export const makePreArchiveFactsRead = Effect.gen(function* () {
   const archiveFacts = yield* A2AArchiveFacts;
   const archiveCrews = yield* ArchiveCrewService;
   const crews = yield* AgentCrewInstanceService;
-  const readCrewSeat = (participantId: ParticipantId): Effect.Effect<PreArchiveCrewSeat | null> =>
-    Effect.gen(function* () {
-      const membership = yield* crews.findMembership(participantId);
-      if (membership === null) return null;
-      const instance = yield* crews.read(membership.crewInstanceId);
-      if (instance === null || instance.archivedAt !== null) return null;
-      return {
-        crewInstanceId: instance.id,
-        crewName: instance.displayName,
-        seat: membership.seatName,
-      };
-    }).pipe(Effect.orElseSucceed(() => null));
+  const readCrewSeat: (participantId: ParticipantId) => Effect.Effect<PreArchiveCrewSeat | null> =
+    Effect.fn("j5.a2a.preArchiveFactsRead.readCrewSeat")(
+      function* (participantId) {
+        const membership = yield* crews.findMembership(participantId);
+        if (membership === null) return null;
+        const instance = yield* crews.read(membership.crewInstanceId);
+        if (instance === null || instance.archivedAt !== null) return null;
+        return {
+          crewInstanceId: instance.id,
+          crewName: instance.displayName,
+          seat: membership.seatName,
+        };
+      },
+      Effect.orElseSucceed(() => null),
+    );
   const withLiveCrews = (facts: ThreadPreArchiveFacts): Effect.Effect<PreArchiveFacts> => {
     if (facts.state !== "registered") return Effect.succeed(facts);
     const { archived: _archived, ...registered } = facts;

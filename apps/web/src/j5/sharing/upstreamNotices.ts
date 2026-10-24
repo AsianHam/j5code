@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { type EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { j5Sharing } from "../state";
@@ -27,8 +26,5 @@ export function useEnvironmentsForPermissionNotice<
   Environment extends { readonly environmentId: EnvironmentId },
 >(environments: ReadonlyArray<Environment>): ReadonlyArray<Environment> {
   const noticed = useAtomValue(noticeEnvironmentIdsAtom);
-  return useMemo(
-    () => environments.filter((environment) => noticed.has(environment.environmentId)),
-    [environments, noticed],
-  );
+  return environments.filter((environment) => noticed.has(environment.environmentId));
 }

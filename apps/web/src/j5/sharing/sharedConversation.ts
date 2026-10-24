@@ -13,7 +13,7 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -71,11 +71,8 @@ export function useThreadAuthors(
   readonly failed: boolean;
   readonly refresh: () => void;
 } {
-  const target = useMemo(
-    () =>
-      environmentId === null || threadId === null ? null : { environmentId, input: { threadId } },
-    [environmentId, threadId],
-  );
+  const target =
+    environmentId === null || threadId === null ? null : { environmentId, input: { threadId } };
   const query = target === null ? null : threadAuthors(target);
   const changes = target === null ? null : threadAuthorsChanges(target);
   const authors = useEnvironmentQuery(query);

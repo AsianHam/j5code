@@ -20,8 +20,9 @@ const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version
   ? "nightly"
   : "latest";
 // Sent with every analytics event. Release workflows set it for pingdotgg/t3code
-// builds only, so local builds and forks report "dev". A typo fails the build
-// instead of mislabeling events.
+// builds and J5's release workflows for J5's (j5-release.yml, j5-macos-build.yml),
+// so local builds and other forks report "dev". A typo fails the build instead of
+// mislabeling events.
 const TELEMETRY_CHANNELS = ["stable", "nightly", "preview", "dev"];
 const telemetryChannel = process.env.T3CODE_TELEMETRY_CHANNEL?.trim() || "dev";
 if (!TELEMETRY_CHANNELS.includes(telemetryChannel)) {

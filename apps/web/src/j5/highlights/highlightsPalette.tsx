@@ -23,9 +23,7 @@ const WHATS_NEW_ITEM: CommandPaletteActionItem = {
 };
 
 /** The palette's "What's new": every highlight in the sidebar's popover, nothing to dismiss. */
-export function useHighlightsPaletteItems(): ReadonlyArray<CommandPaletteActionItem> {
-  return [WHATS_NEW_ITEM];
-}
+export const HIGHLIGHTS_PALETTE_ITEMS: ReadonlyArray<CommandPaletteActionItem> = [WHATS_NEW_ITEM];
 
 /**
  * The list opens from the sidebar's utility row, which a utility page replaces with Back and a

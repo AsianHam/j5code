@@ -37,48 +37,46 @@ export const layerGatedMcpOAuth = Layer.effect(
     );
     return McpOAuth.McpOAuth.of({
       ...inner,
-      approve: (input) =>
-        Effect.gen(function* () {
-          const generation = yield* access.ownersGeneration.pipe(
-            Effect.mapError(
-              () =>
-                new McpOAuth.McpOAuthPageError({
-                  description: "The approval could not be checked. Try again.",
-                }),
-            ),
-          );
-          const redirect = yield* inner.approve(input);
-          const code = new URL(redirect).searchParams.get("code");
-          const now = yield* Clock.currentTimeMillis;
-          if (code !== null) {
-            yield* Ref.update(approved, (current) => {
-              const next = new Map(
-                Array.from(current).filter(([, entry]) => now - entry.atMs < KEPT_MS),
-              );
-              next.set(code, { generation, atMs: now });
-              return next;
-            });
-          }
-          return redirect;
-        }),
-      exchangeCode: (input) =>
-        Effect.gen(function* () {
-          const code = input.token.code;
-          const entry =
-            code === undefined
-              ? undefined
-              : yield* Ref.modify(approved, (current) => {
-                  const found = current.get(code);
-                  if (found === undefined) return [undefined, current] as const;
-                  const next = new Map(current);
-                  next.delete(code);
-                  return [found, next] as const;
-                });
-          const exchange = inner.exchangeCode(input);
-          return yield* entry === undefined
-            ? exchange
-            : exchange.pipe(Effect.provideService(McpApprovalGeneration, entry.generation));
-        }),
+      approve: Effect.fn("j5.sharing.mcpApproval.approve")(function* (input) {
+        const generation = yield* access.ownersGeneration.pipe(
+          Effect.mapError(
+            () =>
+              new McpOAuth.McpOAuthPageError({
+                description: "The approval could not be checked. Try again.",
+              }),
+          ),
+        );
+        const redirect = yield* inner.approve(input);
+        const code = new URL(redirect).searchParams.get("code");
+        const now = yield* Clock.currentTimeMillis;
+        if (code !== null) {
+          yield* Ref.update(approved, (current) => {
+            const next = new Map(
+              Array.from(current).filter(([, entry]) => now - entry.atMs < KEPT_MS),
+            );
+            next.set(code, { generation, atMs: now });
+            return next;
+          });
+        }
+        return redirect;
+      }),
+      exchangeCode: Effect.fn("j5.sharing.mcpApproval.exchangeCode")(function* (input) {
+        const code = input.token.code;
+        const entry =
+          code === undefined
+            ? undefined
+            : yield* Ref.modify(approved, (current) => {
+                const found = current.get(code);
+                if (found === undefined) return [undefined, current] as const;
+                const next = new Map(current);
+                next.delete(code);
+                return [found, next] as const;
+              });
+        const exchange = inner.exchangeCode(input);
+        return yield* entry === undefined
+          ? exchange
+          : exchange.pipe(Effect.provideService(McpApprovalGeneration, entry.generation));
+      }),
     });
   }),
 );

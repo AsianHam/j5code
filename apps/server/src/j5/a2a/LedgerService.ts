@@ -878,27 +878,33 @@ export const layer: Layer.Layer<
     );
 
     const ledger = A2ALedger.of({
-      ensureProject: (command) =>
-        Effect.gen(function* () {
+      ensureProject: Effect.fn("j5.a2a.ledger.ensureProject")(
+        function* (command) {
           yield* sql`
             INSERT INTO j5_a2a_project_ledger (project_id, created_at)
             VALUES (${command.projectId}, ${command.createdAt})
             ON CONFLICT(project_id) DO NOTHING
           `;
-        }).pipe(Effect.mapError(preserveDomainError("ensure project ledger"))),
-      listProjectLedgers: () =>
-        Effect.gen(function* () {
+        },
+        Effect.mapError(preserveDomainError("ensure project ledger")),
+      ),
+      listProjectLedgers: Effect.fn("j5.a2a.ledger.listProjectLedgers")(
+        function* () {
           return yield* Effect.forEach(yield* selectProjectLedgers(null), projectLedgerFromRow, {
             concurrency: 1,
           });
-        }).pipe(Effect.mapError(preserveDomainError("list project ledgers"))),
-      readProjectLedger: (ledgerProjectId) =>
-        Effect.gen(function* () {
+        },
+        Effect.mapError(preserveDomainError("list project ledgers")),
+      ),
+      readProjectLedger: Effect.fn("j5.a2a.ledger.readProjectLedger")(
+        function* (ledgerProjectId) {
           const row = (yield* selectProjectLedgers(ledgerProjectId))[0];
           if (row === undefined)
             return yield* new ProjectLedgerNotFoundError({ projectId: ledgerProjectId });
           return yield* projectLedgerFromRow(row);
-        }).pipe(Effect.mapError(preserveDomainError("read project ledger"))),
+        },
+        Effect.mapError(preserveDomainError("read project ledger")),
+      ),
       append: (command) =>
         appendPermit
           .withPermit(
@@ -929,8 +935,8 @@ export const layer: Layer.Layer<
         appendPermit
           .withPermit(appendEventsIfExchangeOpenEffect(command, exchangeId))
           .pipe(Effect.mapError(preserveDomainError("append communication events if open"))),
-      readEvents: ({ projectId: ledgerProjectId, cursor, limit }) =>
-        Effect.gen(function* () {
+      readEvents: Effect.fn("j5.a2a.ledger.readEvents")(
+        function* ({ projectId: ledgerProjectId, cursor, limit }) {
           yield* ensureProjectLedger(ledgerProjectId);
           const highWaterRows = yield* sql<{ readonly high_water: number }>`
             SELECT COALESCE(MAX(seq), 0) AS high_water
@@ -989,7 +995,9 @@ export const layer: Layer.Layer<
             nextCursor: { afterSeq, snapshotEnd },
             complete: afterSeq === snapshotEnd,
           };
-        }).pipe(Effect.mapError(preserveDomainError("read communication events"))),
+        },
+        Effect.mapError(preserveDomainError("read communication events")),
+      ),
       listMembership: (ledgerProjectId) =>
         listMembershipEffect(ledgerProjectId).pipe(
           Effect.mapError(preserveDomainError("list project membership")),

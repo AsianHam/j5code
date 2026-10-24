@@ -111,32 +111,35 @@ export const makeSkillCatalogRpcHandlers = Effect.fn("j5.makeSkillCatalogRpcHand
     });
 
     return {
-      [METHODS.getSkillCatalogStatus]: (input: Input<"getSkillCatalogStatus">) =>
-        Effect.gen(function* () {
+      [METHODS.getSkillCatalogStatus]: Effect.fn("j5.skills.skillCatalogRpc.getSkillCatalogStatus")(
+        function* (input: Input<"getSkillCatalogStatus">) {
           const source = yield* matchingSource(input.expectedSource);
           const { tool } = yield* catalogContext();
           return yield* tool.status({ source });
-        }),
-      [METHODS.applySkillCatalogGroups]: (input: Input<"applySkillCatalogGroups">) =>
-        Effect.gen(function* () {
-          const source = yield* matchingSource(input.expectedSource);
-          const { tool, refresh } = yield* catalogContext();
-          // Partial failures can still change links. Preserve the apply result
-          // while publishing fresh discovery to every connected client.
-          return yield* tool
-            .apply({
-              source,
-              groups: input.groups,
-              ...(input.replacements ? { replacements: input.replacements } : {}),
-            })
-            .pipe(Effect.ensuring(refresh));
-        }),
-      [METHODS.updateSkillCatalog]: (input: Input<"updateSkillCatalog">) =>
-        Effect.gen(function* () {
+        },
+      ),
+      [METHODS.applySkillCatalogGroups]: Effect.fn(
+        "j5.skills.skillCatalogRpc.applySkillCatalogGroups",
+      )(function* (input: Input<"applySkillCatalogGroups">) {
+        const source = yield* matchingSource(input.expectedSource);
+        const { tool, refresh } = yield* catalogContext();
+        // Partial failures can still change links. Preserve the apply result
+        // while publishing fresh discovery to every connected client.
+        return yield* tool
+          .apply({
+            source,
+            groups: input.groups,
+            ...(input.replacements ? { replacements: input.replacements } : {}),
+          })
+          .pipe(Effect.ensuring(refresh));
+      }),
+      [METHODS.updateSkillCatalog]: Effect.fn("j5.skills.skillCatalogRpc.updateSkillCatalog")(
+        function* (input: Input<"updateSkillCatalog">) {
           const source = yield* matchingSource(input.expectedSource);
           const { tool, refresh } = yield* catalogContext();
           return yield* tool.update({ source }).pipe(Effect.ensuring(refresh));
-        }),
+        },
+      ),
     };
   },
 );

@@ -1905,14 +1905,14 @@ const STEP_KILL_GRACE_MS = 5_000;
 
 /**
  * Runs a command in the foreground, in a process group of its own, and waits
- * for it. If `deadline` passes first, the whole group is ended and waited for
+ * for it. If `timeoutMs` passes first, the whole group is ended and waited for
  * before this returns, so nothing the command started is left running. The
  * group was spawned here a moment ago, so signalling it needs no further proof.
  */
 export async function runInOwnGroup(
   command: string,
   args: ReadonlyArray<string>,
-  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv; readonly deadline: number },
+  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv; readonly timeoutMs: number },
 ): Promise<{
   readonly status: number | null;
   readonly output: string;
@@ -1951,7 +1951,7 @@ export async function runInOwnGroup(
       signalGroup("SIGTERM");
       hardKill = setTimeout(() => signalGroup("SIGKILL"), STEP_KILL_GRACE_MS);
     },
-    Math.max(0, options.deadline - Date.now()),
+    Math.max(0, options.timeoutMs),
   );
   // If this command is itself told to stop, the step it is waiting on goes too:
   // the step is in its own group and would otherwise carry on.
@@ -2008,7 +2008,11 @@ async function advanceBase(paths: LiveTestPaths, deadline: number): Promise<stri
     cwd: string,
   ): Promise<string | undefined> => {
     if (Date.now() >= deadline) return undefined;
-    const result = await runInOwnGroup(command, args, { cwd, env: environment, deadline });
+    const result = await runInOwnGroup(command, args, {
+      cwd,
+      env: environment,
+      timeoutMs: deadline - Date.now(),
+    });
     // Ended by the deadline: not a failure, just not finished.
     if (result.timedOut) return undefined;
     if (result.status !== 0) {

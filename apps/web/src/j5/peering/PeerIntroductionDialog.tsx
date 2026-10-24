@@ -17,7 +17,7 @@ import {
   type PeeringServer,
   type PeeringSide,
 } from "@t3tools/client-runtime/j5/peering";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
@@ -92,24 +92,17 @@ export function PeerIntroductionDialog({
   const { environments } = useEnvironments();
   const [thisServerId, setThisServerId] = useState(defaultServerId);
   const thisServer = useEnvironment(thisServerId);
-  const candidates = useMemo(
-    () =>
-      environments
-        .filter((environment) => environment.environmentId !== thisServerId)
-        .toSorted((left, right) => left.label.localeCompare(right.label)),
-    [environments, thisServerId],
-  );
   const [otherId, setOtherId] = useState<EnvironmentId | null>(null);
-  const other = candidates.find((environment) => environment.environmentId === otherId) ?? null;
   const thisServerBaseUrl = useEnvironmentHttpBaseUrl(thisServerId);
   const otherBaseUrl = useEnvironmentHttpBaseUrl(otherId);
   const otherCanWriteAccess = useAtomValue(j5Environment.addPeer.permissionAtom(otherId));
+  const candidates = environments
+    .filter((environment) => environment.environmentId !== thisServerId)
+    .toSorted((left, right) => left.label.localeCompare(right.label));
+  const other = candidates.find((environment) => environment.environmentId === otherId) ?? null;
 
-  const local = useMemo(
-    () => (thisServer === null ? null : peeringServerOf(thisServer)),
-    [thisServer],
-  );
-  const remote = useMemo(() => (other === null ? null : peeringServerOf(other)), [other]);
+  const local = thisServer === null ? null : peeringServerOf(thisServer);
+  const remote = other === null ? null : peeringServerOf(other);
   const otherReady =
     other !== null && other.connection.phase === "connected" && otherCanWriteAccess;
   const bothSupportPoll = local?.supportsPoll === true && remote?.supportsPoll === true;
@@ -224,9 +217,7 @@ export function PeerIntroductionDialog({
 
   const peer = async () => {
     if (!peerable || choice === null || local === null || remote === null) return;
-    setBusy(true);
-    setReport(null);
-    try {
+    const introduce = async () => {
       // An old record of this server on the other one is cleared first, so the pairing starts clean.
       const cleared: Array<StepReport> = [];
       if (leftover) {
@@ -306,9 +297,10 @@ export function PeerIntroductionDialog({
         onPeered(local.environmentId, remote.environmentId);
         onOpenChange(false);
       }
-    } finally {
-      setBusy(false);
-    }
+    };
+    setBusy(true);
+    setReport(null);
+    await introduce().finally(() => setBusy(false));
   };
 
   const tooOld = recommendation?.kind === "too-old" ? recommendation.server : null;

@@ -30,7 +30,8 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
 - Home resolution: `apps/server/src/cli/config.ts`, `app.ts`, `pair.ts`, `theme.ts`, `triage.ts`,
   `browser.ts`, `trace.ts`, `cloud/bootService.ts`, `serviceLauncher.ts`,
   `packages/shared/src/devHome.ts`, and `scripts/dev-runner.ts`. Explicit CLI home outranks worktree isolation; worktree dev
-  state outranks an ambient home. Pairing must target the same resolved state.
+  state outranks an ambient home. Pairing must target the same resolved state. The dev runner's
+  first-start seed reads `~/.j5code/userdata/statev2.sqlite` and runs only when asked (FORK.md case 83).
 - SSH runner homes: `packages/ssh/src/tunnel.ts` uses `~/.j5code` for both release-archive runtimes (under
   `~/.j5code/runtime/versions`) and node-script runners; `~/.t3/ssh-launch` remains transport bookkeeping.
   The device tools' state on a remote simulator host also keeps upstream's path, `~/.t3/device`
@@ -41,16 +42,25 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   (`apps/web/src/components/sidebar/useUpdateEverything.ts`) checks J5's GitHub release through
   `apps/web/src/j5/updates/releasePublished.ts` and says "J5 Code <version> is not released yet";
   `updateEverythingRun.tsx` names the app with `APP_BASE_NAME`.
-- One server per home (FORK.md case 25): the one-owner messages in `apps/server/src/serverOwnership.ts`,
+- One server per home (FORK.md cases 25 and 84): the one-owner messages in `apps/server/src/serverOwnership.ts`,
   `serviceLauncher.ts`, the desktop dialog in `apps/desktop/src/backend/DesktopBackendPool.ts` and
   the WSL refusal in `apps/desktop/src/wsl/DesktopWslBackend.ts` say J5 Code, J5 home and
-  `J5CODE_HOME`.
+  `J5CODE_HOME`. The message for a home whose background service predates the lock
+  (`OlderBootServiceError`, and the same advice in both desktop dialogs) names `j5` and J5's
+  installer where upstream's names `t3` and `npx t3@latest`, and the version it compares with is
+  J5's (`J5_FIRST_OWNERSHIP_LOCK_VERSION`).
 - Agent systemd units (FORK.md case 25): `apps/server/src/process/agentScope.ts` names the slices
   `app-j5code-agents.slice` and `app-j5code-agents-<hash>.slice` and the scopes
-  `j5code-<name>-<id>.scope`, so J5's agents never share a slice with an installed T3 Code's.
+  `j5code-<name>-<id>.scope`, so J5's agents never share a slice with an installed T3 Code's, and
+  the cleanup of an agent's leftover units stops `j5code-` scopes.
 - Background service and CLI copy (FORK.md case 41): `apps/server/src/cloud/bootService.ts` and
   `cloud/j5/legacyBootService.ts` (service names), and `apps/server/src/cli/update.ts`, `uninstall.ts`,
-  `updateProgress.ts`, and `service.ts` (`j5` strings, cgroup `/j5code.service`, `j5.cmd`).
+  `updateProgress.ts`, and `service.ts` (`j5` strings, cgroup `/j5code.service`, `j5.cmd`). The
+  recovery steps in `cloud/servicePreflight.ts` name `j5`, the release's `install.sh` on
+  `Jacksondr5/j5code` and `~/.local/bin/j5`; `cloud/ConnectReachability.ts` and
+  `cloud/CliTokenManager.ts` (with its test) say `j5 connect`; `cli/doctor.ts` names the database
+  from before J5's first archive release, 0.0.44, where upstream's says 0.1.0, and "a J5 Code
+  version"; and `cli/managedChatGptToken.ts` says to reconnect in J5 Code.
 - The command's name where the server looks it up or prints it: `apps/server/src/binCli.ts` (the
   root command and its help path), `cli/invocation.ts` (`isCommandAvailable("j5")` and the
   command it renders), `cli/browser.ts` (`j5 browser setup`), `cloud/CloudLink.ts`
@@ -123,13 +133,18 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
 - Web fallback identity: `apps/web/src/branding.ts` (including `CLI_COMMAND = "j5"`, the
   release-archive PATH command), `versionSkew.ts` `manualServerUpdateCommand` (`j5 update <version>`),
   the `components/ServerUpdateAction.tsx` success copy, the `components/desktopUpdate.logic.ts`
-  release history URL (`Jacksondr5/j5code/releases`), the pre-React boot shell in
+  release repository (`DEFAULT_DESKTOP_RELEASE_REPOSITORY`, `Jacksondr5/j5code`, which upstream made
+  configurable at the 2026-10-24 advance) and its Rosetta messages, the pre-React boot shell in
   `apps/web/index.html`, and the fork-owned `apps/web/src/j5/branding/J5Wordmark.tsx` connected at
   the sidebar's small `SidebarChrome.tsx` seam (it takes an optional `className`, so the brand uses
   upstream's `h-[1cap]` sizing), and the assistant author heading in
-  `components/chat/MessagesTimeline.tsx` `AssistantTimelineRow`, which reads `APP_BASE_NAME` from
-  `branding.ts` instead of upstream's literal "T3 Code", as does the "Sent by" label on a message
-  the app wrote itself.
+  `components/chat/TimelineAssistantRows.tsx`, which reads `APP_BASE_NAME` from `branding.ts`
+  instead of upstream's literal "T3 Code", as does the "Sent by" label on a message the app wrote
+  itself (`TimelineUserMessageRow.tsx`). `TimelineToolActivityIcon.tsx` draws `J5Wordmark` on
+  t3-code MCP tool rows. `branding.ts`'s `DESKTOP_DOWNLOAD_URL` is `https://j5.codes/download`;
+  `HostedEmptyState.tsx` builds its `j5 connect` and `j5 pair` commands on `CLI_COMMAND`;
+  `settings/SavedEnvironmentRows.tsx` says `j5 connect link`; and
+  `pullRequest/PullRequestsPage.tsx` asks to update J5 Code servers.
 - Shared client copy: `packages/client-runtime` has no branding import, so its user-visible
   strings stay product-neutral instead of naming T3 Code: `connection/compatibility.ts` ("Update the
   server on …"), `connection/outdatedHostUpdate.ts`, `relay/errorPresentation.ts`, and
@@ -140,12 +155,17 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   provider packages (`packages/provider-core`, `provider-pi`, `provider-muse`, `provider-cursor`
   and `provider-opencode`, including the Cursor Keychain message in `accountUsage.ts` and
   OpenCode's server-URL hint in `settings.ts`) and the source-control packages (GitCafe's
-  "from J5 Code"). Server copy upstream added since the last pin includes `j5 doctor`
+  "from J5 Code", and the Forgejo sign-in hint in
+  `packages/source-control-forgejo/src/server/ForgejoPullRequestProvider.ts`). Server copy upstream added since the last pin includes `j5 doctor`
   (`cli/doctor.ts`, `persistence/DatabaseMaintenance.ts`), the restart work-log rows
   (`orchestration-v2/RestartContinuation.ts`), the note an agent reads after a restart cut its
   background work (`RestartBackgroundNote.ts`), and in Settings "Open pull requests in J5 Code"
   (`IntegrationsSettings.tsx`, `settingsSearch.ts`, `SettingsPanels.logic.ts`), `scopedSettings.ts`
-  and the `j5 connect link` hint in `ConnectionsSettings.tsx`. Agent-visible MCP
+  and the `j5 connect link` hint in `ConnectionsSettings.tsx`. The 2026-10-24 advance added the
+  database error messages in `orchestration-v2/UserFacingErrors.ts`, the in-app browser's
+  messages and AppArmor comment (`j5 browser setup`) in `preview/PreviewBrowserHost.ts`, and
+  Claude's notice that it "could not confirm Claude bypass permissions", which says J5 in
+  `orchestration-v2/Adapters/ClaudeAdapterV2.ts`. Agent-visible MCP
   tool descriptions and errors say "J5 thread"; `THREAD_READ_OBJECT` in
   `apps/web/src/components/chat/MessagesTimeline.logic.ts` (`" a J5 thread"`) must keep matching
   the label in `packages/shared/src/t3McpToolPresentation.ts`.
@@ -193,7 +213,9 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
 - The GitHub and GitCafe API `user-agent: t3code` headers.
 - Documentation, including `docs/user/`: it keeps upstream's "T3 Code" wording, which marks what
   is upstream's and what is J5's for the agents that read it. Facts that J5 changes (paths, names,
-  defaults) are still corrected there.
+  defaults, the `j5` command) are still corrected there, in `t3-connect-troubleshooting.md` too
+  since upstream added it at the 2026-10-24 advance, until
+  [#494](https://github.com/Jacksondr5/j5code/issues/494) settles whether J5 edits upstream's user docs.
 - "T3 Connect" and "T3 Account": upstream's hosted relay and sign-in, named as upstream names
   them wherever they appear, along with `infra/relay` and the mobile legal links to `t3.codes`.
 - The `t3-code` MCP server key, its `T3 Code` MCP server `name` (`McpHttpServer.ts`), the Codex
@@ -207,6 +229,8 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
 - Linux packaging metadata, which J5 doesn't build: the `.deb` identity strings in
   `scripts/build-desktop-artifact.ts` (maintainer, description, `/usr/share/doc/t3code`) and
   `apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml`.
+- Upstream's `thread` command (`apps/server/src/cli/thread.ts`), which J5 does not register (FORK.md
+  case 82), so its copy is never shown.
 - Upstream's leftovers J5 has no use for: `resolveServerInstallation` in `cli/invocation.ts` still
   looks for an npm-global `t3` package, which never matches a J5 install; the AppArmor profile
   path keeps its `t3-` name (`preview/PreviewBrowserHost.ts`); and
@@ -228,15 +252,19 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   `GITHUB_REPOSITORY` is supplied; the fork does not hard-code an upstream update repository.
 - Mobile Expo updates are disabled until Jackson configures J5-owned update infrastructure.
 - Mobile builds use the J5-owned Expo project `@jacksondr5/j5-code`, defined in
-  `scripts/lib/j5-branding.ts`. `apps/mobile/eas.json` targets Apple team `46A73QH3S8`
+  `scripts/lib/j5-branding.ts`; `apps/mobile/app.config.ts` takes its owner from there, where
+  upstream's names `pingdotgg`. `apps/mobile/eas.json` targets Apple team `46A73QH3S8`
   and App Store Connect app `6809314460`; preserve these fork destinations during pin advances.
   See [iOS distribution](docs/j5/runbooks/mobile-distribution.md).
 - Clerk and relay remain optional and use the upstream `T3CODE_*` / `EXPO_PUBLIC_*`
   configuration names. No J5 relay or sign-in endpoints are provisioned by the build setup.
 - Product usage telemetry reports to J5's own PostHog project (US region): the default
   `T3CODE_POSTHOG_KEY` in `apps/server/src/telemetry/AnalyticsService.ts` is J5's project token,
-  not upstream's. Events, identifier, host and the `T3CODE_TELEMETRY_ENABLED=false` opt-out are
-  upstream's, unchanged. Keep J5's token when an upstream advance touches that default.
+  not upstream's, and the default `T3CODE_POSTHOG_HOST` is PostHog's US host, `https://us.i.posthog.com`,
+  where upstream's is its own relay, `https://ingest.t3.codes` (FORK.md case 86; a test pins it). Events,
+  identifiers and the `T3CODE_TELEMETRY_ENABLED=false` opt-out are upstream's, unchanged. J5's release
+  workflows stamp each build's `T3CODE_TELEMETRY_CHANNEL`, which upstream's set only in its own
+  repository. Keep J5's token and host when an upstream advance touches those defaults.
   Dev servers started by `scripts/dev-runner.ts` report to a second project, "J5 Code Dev"
   (`scripts/lib/j5-dev-telemetry.ts`).
 

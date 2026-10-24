@@ -132,7 +132,7 @@ it.effect("registers the two orchestrator tools J5 declares, with a factual desc
   }).pipe(Effect.provide(TestLayer)),
 );
 
-it.effect("maps capabilities without inherited model or delegation claims", () =>
+it.effect("maps capabilities with the inherited model and without delegation claims", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     searches.length = 0;
@@ -147,6 +147,9 @@ it.effect("maps capabilities without inherited model or delegation claims", () =
     expect(searches).toEqual(["sonnet 4.6"]);
     expect(result.structuredContent).toEqual({
       parentThreadId: threadId,
+      // J5's instructions compare a child's selection with the parent's instance and model.
+      inheritedProviderInstanceId: providerInstanceId,
+      inheritedModel: "gpt-5.6-sol",
       // J5's instructions send same-model children through delegate_task when this is nonempty.
       inheritedOptions: [{ id: "effort", value: "xhigh" }],
       runtimeMode: "full-access",
@@ -170,8 +173,6 @@ it.effect("maps capabilities without inherited model or delegation claims", () =
     });
 
     for (const excluded of [
-      "inheritedProviderInstanceId",
-      "inheritedModel",
       "canRunChildTask",
       "canRunCrossProviderChildTask",
       "appOwnedSubagents",

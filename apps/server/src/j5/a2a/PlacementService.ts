@@ -821,17 +821,19 @@ export const layer: Layer.Layer<
         mutationPermit
           .withPermit(sql.withTransaction(recordCreationInTransaction(input)))
           .pipe(Effect.mapError(preserveDomainError("record participant placement"))),
-      readPlacement: ({ projectId, participantId }) =>
-        Effect.gen(function* () {
+      readPlacement: Effect.fn("j5.a2a.placement.readPlacement")(
+        function* ({ projectId, participantId }) {
           yield* ensureProjectLedger(projectId);
           return yield* selectPlacement(projectId, participantId);
-        }).pipe(Effect.mapError(preserveDomainError("read participant placement"))),
+        },
+        Effect.mapError(preserveDomainError("read participant placement")),
+      ),
       listParticipants: (projectId) =>
         listParticipantsEffect(projectId).pipe(
           Effect.mapError(preserveDomainError("list participant placements")),
         ),
-      listSubtree: ({ projectId, participantId }) =>
-        Effect.gen(function* () {
+      listSubtree: Effect.fn("j5.a2a.placement.listSubtree")(
+        function* ({ projectId, participantId }) {
           yield* ensureProjectLedger(projectId);
           yield* ensureParticipant(projectId, participantId);
           const participants = yield* listParticipantsEffect(projectId);
@@ -850,24 +852,27 @@ export const layer: Layer.Layer<
           const visited = new Set<ParticipantId>();
           const path: Array<ParticipantId> = [];
           const ordered: Array<ParticipantPlacementView> = [];
-          const visit = (id: ParticipantId): Effect.Effect<void, PlacementGraphCorruptError> =>
-            Effect.gen(function* () {
-              if (visiting.has(id)) {
-                return yield* new PlacementGraphCorruptError({ projectId, path: [...path, id] });
-              }
-              if (visited.has(id)) return;
-              visiting.add(id);
-              path.push(id);
-              for (const childId of children.get(id) ?? []) yield* visit(childId);
-              path.pop();
-              visiting.delete(id);
-              visited.add(id);
-              const participant = byId.get(id);
-              if (participant !== undefined) ordered.push(participant);
-            });
+          const visit = Effect.fn("j5.a2a.placement.visit")(function* (
+            id: ParticipantId,
+          ): Effect.fn.Return<void, PlacementGraphCorruptError> {
+            if (visiting.has(id)) {
+              return yield* new PlacementGraphCorruptError({ projectId, path: [...path, id] });
+            }
+            if (visited.has(id)) return;
+            visiting.add(id);
+            path.push(id);
+            for (const childId of children.get(id) ?? []) yield* visit(childId);
+            path.pop();
+            visiting.delete(id);
+            visited.add(id);
+            const participant = byId.get(id);
+            if (participant !== undefined) ordered.push(participant);
+          });
           yield* visit(participantId);
           return ordered;
-        }).pipe(Effect.mapError(preserveDomainError("list placement subtree"))),
+        },
+        Effect.mapError(preserveDomainError("list placement subtree")),
+      ),
     });
     const transactionWriter = ParticipantPlacementTransactionWriter.of({
       withPermit: (effect) => mutationPermit.withPermit(effect),

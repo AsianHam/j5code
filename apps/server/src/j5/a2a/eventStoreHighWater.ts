@@ -17,15 +17,16 @@ const retrySchedule = Schedule.exponential("250 millis").pipe(
  * back to 0, because starting at 0 replays the whole event history and re-fires reactions to
  * old events, such as a Captain archive retiring live Crews (#349).
  */
-export const readEventStoreHighWater = (daemon: string) =>
-  Effect.gen(function* () {
-    const events = yield* EventSinkV2;
-    return yield* events.latestSequence().pipe(
-      Effect.tapError((cause) =>
-        Effect.logWarning(`${daemon} could not read the event store's latest sequence; retrying`, {
-          cause,
-        }),
-      ),
-      Effect.retry(retrySchedule),
-    );
-  });
+export const readEventStoreHighWater = Effect.fn(
+  "j5.a2a.eventStoreHighWater.readEventStoreHighWater",
+)(function* (daemon: string) {
+  const events = yield* EventSinkV2;
+  return yield* events.latestSequence().pipe(
+    Effect.tapError((cause) =>
+      Effect.logWarning(`${daemon} could not read the event store's latest sequence; retrying`, {
+        cause,
+      }),
+    ),
+    Effect.retry(retrySchedule),
+  );
+});

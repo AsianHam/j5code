@@ -878,12 +878,12 @@ const rawLayer: Layer.Layer<
       ];
     });
 
-    const listParticipantsWithoutCaller: A2ASendServiceShape["listParticipantsWithoutCaller"] = ({
-      includeArchived = false,
-      peopleProjectId,
-      peopleThreadId,
-    }) =>
-      Effect.gen(function* () {
+    const listParticipantsWithoutCaller: A2ASendServiceShape["listParticipantsWithoutCaller"] =
+      Effect.fn("j5.a2a.send.listParticipantsWithoutCaller")(function* ({
+        includeArchived = false,
+        peopleProjectId,
+        peopleThreadId,
+      }) {
         const rows = yield* membershipRows();
         const people =
           peopleProjectId === undefined
@@ -1230,8 +1230,8 @@ const rawLayer: Layer.Layer<
      * and since when it was last available. The send is already committed, so
      * a fact this server cannot read never turns it into a failure.
      */
-    const withReceiverServer = (result: SendMessageResult) =>
-      Effect.gen(function* () {
+    const withReceiverServer = Effect.fn("j5.a2a.send.withReceiverServer")(
+      function* (result: SendMessageResult) {
         const rows = yield* sql<{
           readonly receiver_environment_id: string | null;
           readonly receiver_id: string;
@@ -1271,60 +1271,59 @@ const rawLayer: Layer.Layer<
             : { recipientLastAvailableAt: server.lastAvailableAt }),
           note: `Recorded. ${receiver?.displayName ?? row.receiver_id} is on ${server.name}, which is offline, ${lastAvailable}; it receives this when ${server.name} is next available.`,
         } satisfies SendMessageResult;
-      }).pipe(
-        Effect.orElseSucceed(() => result),
-        Effect.withSpan("j5.a2a.send.withReceiverServer"),
+      },
+      (effect, result) => Effect.orElseSucceed(effect, () => result),
+    );
+
+    const send: A2ASendServiceShape["send"] = Effect.fn("j5.a2a.send.send")(function* (input) {
+      const committed: Array<StoredCommEvent> = [];
+      // The sender's standing is checked first so its errors win, then peers
+      // are reached before the writer permit and the transaction: holding
+      // either across the network would block every other send, including
+      // the peer's own send back to us. The transaction re-checks both.
+      const sender = yield* senderMembership(input.senderThreadId);
+      // A retry of a committed send replays whatever has happened to the
+      // receiver since; it never pays for, or fails on, a peer lookup.
+      const replayed = yield* replayedSend(messageIdFor(input.commandId), sender.participantId);
+      const remote = replayed === null ? yield* preResolveRemote(input.to) : null;
+      const result = yield* writer.withPermit(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const sender = yield* registeredSender(input.senderThreadId);
+            return yield* sendInternal(input, sender, committed, remote);
+          }),
+        ),
       );
+      yield* writer.publishCommitted(committed);
+      return yield* withReceiverServer(result);
+    });
 
-    const send: A2ASendServiceShape["send"] = (input) =>
-      Effect.gen(function* () {
-        const committed: Array<StoredCommEvent> = [];
-        // The sender's standing is checked first so its errors win, then peers
-        // are reached before the writer permit and the transaction: holding
-        // either across the network would block every other send, including
-        // the peer's own send back to us. The transaction re-checks both.
-        const sender = yield* senderMembership(input.senderThreadId);
-        // A retry of a committed send replays whatever has happened to the
-        // receiver since; it never pays for, or fails on, a peer lookup.
-        const replayed = yield* replayedSend(messageIdFor(input.commandId), sender.participantId);
-        const remote = replayed === null ? yield* preResolveRemote(input.to) : null;
-        const result = yield* writer.withPermit(
-          sql.withTransaction(
-            Effect.gen(function* () {
-              const sender = yield* registeredSender(input.senderThreadId);
-              return yield* sendInternal(input, sender, committed, remote);
-            }),
-          ),
-        );
-        yield* writer.publishCommitted(committed);
-        return yield* withReceiverServer(result);
-      });
-
-    const sendAsMachine: A2ASendServiceShape["sendAsMachine"] = (input) =>
-      Effect.gen(function* () {
-        const committed: Array<StoredCommEvent> = [];
-        const result = yield* writer.withPermit(
-          sql.withTransaction(
-            Effect.gen(function* () {
-              const sender = yield* machineSender(input.senderParticipantId);
-              // A machine sender reaches agents on this server only; peers are not resolved for it.
-              return yield* sendInternal(
-                {
-                  commandId: input.commandId,
-                  to: input.to,
-                  message: input.message,
-                  acceptedAt: input.acceptedAt,
-                },
-                sender,
-                committed,
-                null,
-              );
-            }),
-          ),
-        );
-        yield* writer.publishCommitted(committed);
-        return result;
-      });
+    const sendAsMachine: A2ASendServiceShape["sendAsMachine"] = Effect.fn(
+      "j5.a2a.send.sendAsMachine",
+    )(function* (input) {
+      const committed: Array<StoredCommEvent> = [];
+      const result = yield* writer.withPermit(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const sender = yield* machineSender(input.senderParticipantId);
+            // A machine sender reaches agents on this server only; peers are not resolved for it.
+            return yield* sendInternal(
+              {
+                commandId: input.commandId,
+                to: input.to,
+                message: input.message,
+                acceptedAt: input.acceptedAt,
+              },
+              sender,
+              committed,
+              null,
+            );
+          }),
+        ),
+      );
+      yield* writer.publishCommitted(committed);
+      return result;
+    });
 
     const outsideAgentReceiver = Effect.fn("j5.a2a.send.outsideAgentReceiver")(function* (
       to: ParticipantId,
@@ -1363,35 +1362,36 @@ const rawLayer: Layer.Layer<
       return { projectId: LedgerProjectId.make(row.project_id), threadId: participant.threadId };
     });
 
-    const sendAsOutsideAgent: A2ASendServiceShape["sendAsOutsideAgent"] = (input) =>
-      Effect.gen(function* () {
-        const committed: Array<StoredCommEvent> = [];
-        const { senderName, senderParticipantId, receiverProjectId, ...message } = input;
-        const result = yield* writer.withPermit(
-          sql.withTransaction(
-            Effect.gen(function* () {
-              // The name the envelope shows.
-              yield* recordOutsideAgentName(sql, {
-                participantId: senderParticipantId,
-                name: senderName,
-                at: input.acceptedAt,
-              });
-              // It replays a retry, and resolves the receiver again inside the transaction.
-              return yield* sendInternal(
-                message,
-                { projectId: receiverProjectId, participantId: senderParticipantId },
-                committed,
-                null,
-              );
-            }),
-          ),
-        );
-        yield* writer.publishCommitted(committed);
-        return result;
-      });
+    const sendAsOutsideAgent: A2ASendServiceShape["sendAsOutsideAgent"] = Effect.fn(
+      "j5.a2a.send.sendAsOutsideAgent",
+    )(function* (input) {
+      const committed: Array<StoredCommEvent> = [];
+      const { senderName, senderParticipantId, receiverProjectId, ...message } = input;
+      const result = yield* writer.withPermit(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            // The name the envelope shows.
+            yield* recordOutsideAgentName(sql, {
+              participantId: senderParticipantId,
+              name: senderName,
+              at: input.acceptedAt,
+            });
+            // It replays a retry, and resolves the receiver again inside the transaction.
+            return yield* sendInternal(
+              message,
+              { projectId: receiverProjectId, participantId: senderParticipantId },
+              committed,
+              null,
+            );
+          }),
+        ),
+      );
+      yield* writer.publishCommitted(committed);
+      return result;
+    });
 
-    const clearOwnAsk: A2ASendServiceShape["clearOwnAsk"] = (input) =>
-      Effect.gen(function* () {
+    const clearOwnAsk: A2ASendServiceShape["clearOwnAsk"] = Effect.fn("j5.a2a.send.clearOwnAsk")(
+      function* (input) {
         const sender = yield* senderMembership(input.senderThreadId);
         const replay = yield* sql<ExistingSenderClearedRow>`
             SELECT
@@ -1514,7 +1514,8 @@ const rawLayer: Layer.Layer<
           closedAt: closedEvent.createdAt,
           withdrawalQueued: result.committed && withdrawal.length > 0,
         } satisfies ClearOwnAskOutcome;
-      });
+      },
+    );
 
     return A2ASendService.of({
       send,

@@ -467,32 +467,31 @@ const narrowedView = (
  * anyone else. Whose the session is is read once, when the socket opens; a change that would
  * alter it renews the session, which closes the socket (`Access`).
  */
-export const connectionView = (
+export const connectionView = Effect.fn("j5.sharing.guestView.connectionView")(function* (
   session: SessionIdentity,
-): Effect.Effect<ConnectionView, never, PersonAccess> =>
-  Effect.gen(function* () {
-    const access = yield* PersonAccess;
-    const reach = yield* access.sessionReach(session).pipe(
-      Effect.catch((cause) =>
-        Effect.logError("J5 could not read whose a socket is; narrowing its view", {
-          cause,
-        }).pipe(Effect.as({ kind: "unknown" } as SessionReach)),
-      ),
-    );
-    if (isWide(reach)) return MEMBER_VIEW;
-    // A Viewer at server scope is told every provider's skills; one at a project, the skills in
-    // that project's own folders; anyone else, none.
-    const roots =
-      reach.kind !== "person"
-        ? []
-        : reach.levels.some((held) => held.scope.kind === "server")
-          ? null
-          : yield* access
-              .projectRoots(reach.person.personId)
-              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
-    const skillsShown: SkillsShown =
-      roots === null
-        ? () => true
-        : (skill) => roots.some((root) => skill.path.startsWith(`${root.replace(/\/+$/u, "")}/`));
-    return narrowedView(access, reach, skillsShown);
-  });
+): Effect.fn.Return<ConnectionView, never, PersonAccess> {
+  const access = yield* PersonAccess;
+  const reach = yield* access.sessionReach(session).pipe(
+    Effect.catch((cause) =>
+      Effect.logError("J5 could not read whose a socket is; narrowing its view", {
+        cause,
+      }).pipe(Effect.as({ kind: "unknown" } as SessionReach)),
+    ),
+  );
+  if (isWide(reach)) return MEMBER_VIEW;
+  // A Viewer at server scope is told every provider's skills; one at a project, the skills in
+  // that project's own folders; anyone else, none.
+  const roots =
+    reach.kind !== "person"
+      ? []
+      : reach.levels.some((held) => held.scope.kind === "server")
+        ? null
+        : yield* access
+            .projectRoots(reach.person.personId)
+            .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+  const skillsShown: SkillsShown =
+    roots === null
+      ? () => true
+      : (skill) => roots.some((root) => skill.path.startsWith(`${root.replace(/\/+$/u, "")}/`));
+  return narrowedView(access, reach, skillsShown);
+});

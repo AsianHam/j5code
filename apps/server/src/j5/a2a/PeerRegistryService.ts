@@ -565,78 +565,77 @@ export const layer: Layer.Layer<
       return rows[0] ?? null;
     });
 
-    const add: PeerRegistryServiceShape["add"] = (input) =>
-      Effect.gen(function* () {
-        const ourEnvironmentId: EnvironmentId = yield* identity.getEnvironmentId;
-        const hello = yield* helloAtOriginBounded({
+    const add: PeerRegistryServiceShape["add"] = Effect.fn("j5.a2a.peer.add")(function* (input) {
+      const ourEnvironmentId: EnvironmentId = yield* identity.getEnvironmentId;
+      const hello = yield* helloAtOriginBounded({
+        origin: input.origin,
+        credential: input.credential,
+      }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+      if (hello.environmentId === ourEnvironmentId) {
+        return yield* new PeerIsSelfError({
           origin: input.origin,
+          environmentId: ourEnvironmentId,
+        });
+      }
+      const expectedSubject = peerSubjectForEnvironment(ourEnvironmentId);
+      if (hello.subject !== expectedSubject) {
+        return yield* new PeerCredentialMismatchError({
+          origin: input.origin,
+          expectedSubject,
+          actualSubject: hello.subject,
+        });
+      }
+      // Refused before anything is recorded: the dialog never offers it, so this guards the CLI.
+      if (input.linkMode === "poll" && hello.capabilities?.poll !== true) {
+        return yield* new PeerPollUnsupportedError({ origin: input.origin });
+      }
+      const existing = yield* readRow(hello.environmentId);
+      if (existing !== null && existing.link_mode !== input.linkMode) {
+        return yield* new PeerLinkModeConflictError({
+          environmentId: hello.environmentId,
+          recorded: existing.link_mode,
+          requested: input.linkMode,
+        });
+      }
+      if (
+        existing !== null &&
+        existing.origin !== null &&
+        existing.origin !== input.origin &&
+        !input.replaceOrigin
+      ) {
+        // The hello there may have completed a rotation, retiring the credential
+        // recorded here, but only if that origin is the same server. Keep the
+        // new credential only once the recorded origin accepts it too.
+        const recordedHello = yield* helloAtOriginBounded({
+          origin: existing.origin,
           credential: input.credential,
-        }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
-        if (hello.environmentId === ourEnvironmentId) {
-          return yield* new PeerIsSelfError({
-            origin: input.origin,
-            environmentId: ourEnvironmentId,
-          });
-        }
-        const expectedSubject = peerSubjectForEnvironment(ourEnvironmentId);
-        if (hello.subject !== expectedSubject) {
-          return yield* new PeerCredentialMismatchError({
-            origin: input.origin,
-            expectedSubject,
-            actualSubject: hello.subject,
-          });
-        }
-        // Refused before anything is recorded: the dialog never offers it, so this guards the CLI.
-        if (input.linkMode === "poll" && hello.capabilities?.poll !== true) {
-          return yield* new PeerPollUnsupportedError({ origin: input.origin });
-        }
-        const existing = yield* readRow(hello.environmentId);
-        if (existing !== null && existing.link_mode !== input.linkMode) {
-          return yield* new PeerLinkModeConflictError({
-            environmentId: hello.environmentId,
-            recorded: existing.link_mode,
-            requested: input.linkMode,
-          });
-        }
-        if (
-          existing !== null &&
-          existing.origin !== null &&
-          existing.origin !== input.origin &&
-          !input.replaceOrigin
-        ) {
-          // The hello there may have completed a rotation, retiring the credential
-          // recorded here, but only if that origin is the same server. Keep the
-          // new credential only once the recorded origin accepts it too.
-          const recordedHello = yield* helloAtOriginBounded({
-            origin: existing.origin,
-            credential: input.credential,
-          }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.option);
-          const credentialKept =
-            Option.isSome(recordedHello) &&
-            recordedHello.value.environmentId === hello.environmentId &&
-            recordedHello.value.subject === expectedSubject;
-          if (credentialKept) {
-            yield* sql`
+        }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.option);
+        const credentialKept =
+          Option.isSome(recordedHello) &&
+          recordedHello.value.environmentId === hello.environmentId &&
+          recordedHello.value.subject === expectedSubject;
+        if (credentialKept) {
+          yield* sql`
               UPDATE j5_a2a_peer
               SET credential = ${input.credential},
                   credential_expires_at = ${recordedHello.value.credentialExpiresAt ?? null},
                   updated_at = ${input.acceptedAt}
               WHERE environment_id = ${hello.environmentId}
             `;
-            yield* listChanged;
-          }
-          return yield* new PeerOriginConflictError({
-            environmentId: hello.environmentId,
-            recordedOrigin: existing.origin,
-            requestedOrigin: input.origin,
-            credentialKept,
-          });
+          yield* listChanged;
         }
-        // The peer names itself; a server from before names omits it and the recorded name stands.
-        const label = reportedLabel(hello.label) ?? existing?.label ?? hello.environmentId;
-        const expiresAt = hello.credentialExpiresAt ?? null;
-        // One statement records or rotates; created_at survives an update.
-        const rows = yield* sql<PeerRow>`
+        return yield* new PeerOriginConflictError({
+          environmentId: hello.environmentId,
+          recordedOrigin: existing.origin,
+          requestedOrigin: input.origin,
+          credentialKept,
+        });
+      }
+      // The peer names itself; a server from before names omits it and the recorded name stands.
+      const label = reportedLabel(hello.label) ?? existing?.label ?? hello.environmentId;
+      const expiresAt = hello.credentialExpiresAt ?? null;
+      // One statement records or rotates; created_at survives an update.
+      const rows = yield* sql<PeerRow>`
           INSERT INTO j5_a2a_peer (
             environment_id, label, link_mode, origin, credential, credential_expires_at,
             peer_protocol_version, peer_capabilities, created_at, updated_at
@@ -658,38 +657,40 @@ export const layer: Layer.Layer<
           RETURNING environment_id, label, link_mode, origin, credential_expires_at, last_polled_at,
             last_error, created_at, updated_at
         `;
-        const row = rows[0]!;
-        yield* changed;
-        yield* listChanged;
-        const live = yield* liveSubjects;
-        const waiting = yield* waitingByEnvironment(row.environment_id);
-        return { peer: recordFromRow(row, live, waiting), created: existing === null };
-      });
+      const row = rows[0]!;
+      yield* changed;
+      yield* listChanged;
+      const live = yield* liveSubjects;
+      const waiting = yield* waitingByEnvironment(row.environment_id);
+      return { peer: recordFromRow(row, live, waiting), created: existing === null };
+    });
 
-    const get: PeerRegistryServiceShape["get"] = (environmentId) =>
-      Effect.gen(function* () {
+    const get: PeerRegistryServiceShape["get"] = Effect.fn("j5.a2a.peer.get")(
+      function* (environmentId) {
         const row = yield* readRow(environmentId);
         if (row === null) return null;
         return recordFromRow(row, yield* liveSubjects, yield* waitingByEnvironment(environmentId));
-      });
+      },
+    );
 
-    const connections: PeerRegistryServiceShape["connections"] = () =>
-      Effect.gen(function* () {
-        const rows = yield* sql<PeerConnectionRow>`
+    const connections: PeerRegistryServiceShape["connections"] = Effect.fn(
+      "j5.a2a.peer.connections",
+    )(function* () {
+      const rows = yield* sql<PeerConnectionRow>`
           SELECT environment_id, label, link_mode, origin, credential, credential_expires_at,
             last_polled_at, last_error, roster_json, created_at, updated_at
           FROM j5_a2a_peer
           ORDER BY label, environment_id
         `;
-        if (rows.length === 0) return [];
-        const live = yield* liveSubjects;
-        const waiting = yield* waitingByEnvironment();
-        return yield* Effect.forEach(rows, (row) => connectionFromRow(row, live, waiting));
-      });
+      if (rows.length === 0) return [];
+      const live = yield* liveSubjects;
+      const waiting = yield* waitingByEnvironment();
+      return yield* Effect.forEach(rows, (row) => connectionFromRow(row, live, waiting));
+    });
 
     /** One peer's connection for a delivery attempt: one row and its session status, not the whole registry. */
-    const connection: PeerRegistryServiceShape["connection"] = (environmentId) =>
-      Effect.gen(function* () {
+    const connection: PeerRegistryServiceShape["connection"] = Effect.fn("j5.a2a.peer.connection")(
+      function* (environmentId) {
         const rows = yield* sql<PeerConnectionRow>`
           SELECT environment_id, label, link_mode, origin, credential, credential_expires_at,
             last_polled_at, last_error, roster_json, created_at, updated_at
@@ -704,21 +705,21 @@ export const layer: Layer.Layer<
           yield* liveSubjects,
           yield* waitingByEnvironment(environmentId),
         );
-      });
+      },
+    );
 
-    const list: PeerRegistryServiceShape["list"] = () =>
-      Effect.gen(function* () {
-        const rows = yield* sql<PeerRow>`
+    const list: PeerRegistryServiceShape["list"] = Effect.fn("j5.a2a.peer.list")(function* () {
+      const rows = yield* sql<PeerRow>`
           SELECT environment_id, label, link_mode, origin, credential_expires_at, last_polled_at,
             last_error, created_at, updated_at
           FROM j5_a2a_peer
           ORDER BY label, environment_id
         `;
-        if (rows.length === 0) return [];
-        const live = yield* liveSubjects;
-        const waiting = yield* waitingByEnvironment();
-        return rows.map((row) => recordFromRow(row, live, waiting));
-      });
+      if (rows.length === 0) return [];
+      const live = yield* liveSubjects;
+      const waiting = yield* waitingByEnvironment();
+      return rows.map((row) => recordFromRow(row, live, waiting));
+    });
 
     const remove: PeerRegistryServiceShape["remove"] = (environmentId) =>
       sql
@@ -737,8 +738,8 @@ export const layer: Layer.Layer<
           Effect.tap(({ removed }) => (removed ? listChanged : Effect.void)),
         );
 
-    const probe: PeerRegistryServiceShape["probe"] = (origin) =>
-      Effect.gen(function* () {
+    const probe: PeerRegistryServiceShape["probe"] = Effect.fn("j5.a2a.peer.probe")(
+      function* (origin) {
         // The probe fetches that one path at that origin: a redirect is an
         // answer to report, never a second fetch somewhere else.
         const response = yield* httpClient
@@ -773,22 +774,23 @@ export const layer: Layer.Layer<
           environmentId: identity.environmentId,
           label: reportedLabel(identity.label) ?? identity.environmentId,
         } satisfies PeerProbeResponse;
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: PEER_PROBE_TIMEOUT,
-          orElse: () =>
-            new PeerProbeFailure({
-              reason: `connection timed out after ${Duration.format(PEER_PROBE_TIMEOUT)}`,
-            }),
-        }),
-        Effect.catch((cause) =>
+      },
+      Effect.timeoutOrElse({
+        duration: PEER_PROBE_TIMEOUT,
+        orElse: () =>
+          new PeerProbeFailure({
+            reason: `connection timed out after ${Duration.format(PEER_PROBE_TIMEOUT)}`,
+          }),
+      }),
+      (effect, origin) =>
+        Effect.catch(effect, (cause) =>
           Effect.succeed<PeerProbeResponse>({
             outcome: "failed",
             origin,
             error: `${hostOf(origin)}: ${reasonOf(cause)}`,
           }),
         ),
-      );
+    );
 
     const grantStore: PeerRegistryServiceShape["grantStore"] = (input) =>
       sql`
@@ -820,8 +822,8 @@ export const layer: Layer.Layer<
           Effect.map((outcome) => outcome !== "refused"),
         );
 
-    const recordPoll: PeerRegistryServiceShape["recordPoll"] = (facts) =>
-      Effect.gen(function* () {
+    const recordPoll: PeerRegistryServiceShape["recordPoll"] = Effect.fn("j5.a2a.peer.recordPoll")(
+      function* (facts) {
         const label = reportedLabel(facts.label);
         const capabilities =
           facts.capabilities === undefined ? null : encodeCapabilities(facts.capabilities);
@@ -845,7 +847,8 @@ export const layer: Layer.Layer<
         `;
         if (shows) yield* listChangedWhen(rows);
         return { rosterHash: rows[0]?.roster_hash ?? null };
-      });
+      },
+    );
 
     const recordPolled: PeerRegistryServiceShape["recordPolled"] = (environmentId, at) =>
       heartbeatShows(environmentId, at).pipe(
@@ -870,19 +873,20 @@ export const layer: Layer.Layer<
         RETURNING environment_id
       `.pipe(Effect.flatMap(listChangedWhen));
 
-    const recordLabel: PeerRegistryServiceShape["recordLabel"] = (environmentId, reported) =>
-      Effect.gen(function* () {
-        const label = reportedLabel(reported);
-        if (label !== undefined) {
-          const renamed = yield* sql`
+    const recordLabel: PeerRegistryServiceShape["recordLabel"] = Effect.fn(
+      "j5.a2a.peer.recordLabel",
+    )(function* (environmentId, reported) {
+      const label = reportedLabel(reported);
+      if (label !== undefined) {
+        const renamed = yield* sql`
             UPDATE j5_a2a_peer SET label = ${label}
             WHERE environment_id = ${environmentId} AND label <> ${label}
             RETURNING environment_id
           `;
-          yield* listChangedWhen(renamed);
-        }
-        return (yield* readRow(environmentId))?.label ?? null;
-      });
+        yield* listChangedWhen(renamed);
+      }
+      return (yield* readRow(environmentId))?.label ?? null;
+    });
 
     const recordCapabilities: PeerRegistryServiceShape["recordCapabilities"] = (
       environmentId,

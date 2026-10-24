@@ -142,9 +142,9 @@ function ArchiveWarningRowView({ row }: { readonly row: ArchiveWarningRow }) {
 export function ArchiveWarningContent({ payload }: { readonly payload: ArchiveWarningPayload }) {
   const askCount = payload.openAsks.length;
   const crews = payload.crews?.state === "known" ? payload.crews.crews : [];
-  const askHeader = `${askCount} open ask${askCount === 1 ? "" : "s"} will be terminated — ${
+  const askHeader = `${askCount} open ask${askCount === 1 ? "" : "s"} will be terminated (${
     askCount === 1 ? "counterparty is" : "counterparties are"
-  } notified`;
+  } notified)`;
   return (
     <div className="space-y-3 text-left">
       {payload.factsUnavailable ? <p>Couldn't check open asks or the placement subtree.</p> : null}

@@ -2,7 +2,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { CrewRuntimeRequestRespondRequest } from "@t3tools/contracts/j5";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
-import { useMemo } from "react";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import {
@@ -55,11 +54,11 @@ export const useCrewRuntimeRequestsRefresh = createVisibleRefreshHook(refreshAsk
 export function useCrewRuntimeRequests() {
   const sources = useAtomValue(crewRuntimeRequestSourcesAtom);
   useCrewRuntimeRequestsRefresh();
-  return useMemo(() => mergeCrewRuntimeRequestSources(sources), [sources]);
+  return mergeCrewRuntimeRequestSources(sources);
 }
 
 export function useNativeQuestionInbox() {
   const sources = useAtomValue(crewRuntimeRequestSourcesAtom);
   useCrewRuntimeRequestsRefresh();
-  return useMemo(() => mergeNativeQuestionInboxSources(sources), [sources]);
+  return mergeNativeQuestionInboxSources(sources);
 }

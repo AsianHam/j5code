@@ -745,26 +745,27 @@ export const makePlaybookStore = Effect.gen(function* () {
       );
     return result;
   }, Effect.mapError(storageError));
-  const progressRows = (rows: ReadonlyArray<RunRow>) =>
-    Effect.gen(function* () {
-      // Keep the cache inside the request, including failed reads; the next request sees live YAML.
-      const definitions = new Map<string, ReturnType<typeof readDefinition>>();
-      return yield* Effect.forEach(rows, (row) =>
-        Effect.gen(function* () {
-          let definition = definitions.get(row.definition_path);
-          if (!definition) {
-            definition = yield* Effect.cached(readDefinition(row.definition_path));
-            definitions.set(row.definition_path, definition);
-          }
-          const {
-            currentStep: _prompt,
-            replayed: _replayed,
-            ...progress
-          } = yield* view(fromRow(row), false, definition);
-          return progress;
-        }),
-      );
-    });
+  const progressRows = Effect.fn("j5.playbooks.playbookStore.progressRows")(function* (
+    rows: ReadonlyArray<RunRow>,
+  ) {
+    // Keep the cache inside the request, including failed reads; the next request sees live YAML.
+    const definitions = new Map<string, ReturnType<typeof readDefinition>>();
+    return yield* Effect.forEach(rows, (row) =>
+      Effect.gen(function* () {
+        let definition = definitions.get(row.definition_path);
+        if (!definition) {
+          definition = yield* Effect.cached(readDefinition(row.definition_path));
+          definitions.set(row.definition_path, definition);
+        }
+        const {
+          currentStep: _prompt,
+          replayed: _replayed,
+          ...progress
+        } = yield* view(fromRow(row), false, definition);
+        return progress;
+      }),
+    );
+  });
   const listForThread = Effect.fn("PlaybookStore.listForThread")(function* (owner: ThreadId) {
     yield* cancelOrphans();
     const rows = yield* sql<RunRow>`SELECT * FROM j5_playbook_run WHERE owner_thread_id = ${owner}

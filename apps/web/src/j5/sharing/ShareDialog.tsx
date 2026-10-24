@@ -516,52 +516,53 @@ function AddForm({
   const warn =
     mode === "person" && !addsDevice && raisesToWriting(existing === null ? null : heldHere, level);
 
+  const share = async () => {
+    if (existing !== null && raises) {
+      const result = await setLevel({
+        environmentId,
+        input: { personId: existing.personId, scope, level },
+      });
+      if (result._tag === "Failure") {
+        setError(refusalMessage(result));
+        return;
+      }
+      setName("");
+      onShared();
+      return;
+    }
+    if (mode === "person" && typed !== "" && !isPersonName(typed)) {
+      setError(NAME_NOT_USABLE);
+      return;
+    }
+    const result = await createLink({
+      environmentId,
+      input:
+        existing !== null
+          ? { kind: "device", personId: existing.personId, lifetime }
+          : mode === "anyone"
+            ? { kind: "invite", scope, level: "viewer", use: "many", name: null, lifetime }
+            : {
+                kind: "invite",
+                scope,
+                level,
+                use: "one",
+                name: typed === "" ? null : typed,
+                lifetime,
+              },
+    });
+    if (result._tag === "Failure") {
+      setError(`The link could not be made. ${refusalMessage(result)}`);
+      return;
+    }
+    onShared();
+    onMade(result.value);
+  };
+
   const submit = async () => {
     setBusy(true);
     setError(null);
-    try {
-      if (existing !== null && raises) {
-        const result = await setLevel({
-          environmentId,
-          input: { personId: existing.personId, scope, level },
-        });
-        if (result._tag === "Failure") {
-          setError(refusalMessage(result));
-          return;
-        }
-        setName("");
-        onShared();
-        return;
-      }
-      if (mode === "person" && typed !== "" && !isPersonName(typed)) {
-        setError(NAME_NOT_USABLE);
-        return;
-      }
-      const result = await createLink({
-        environmentId,
-        input:
-          existing !== null
-            ? { kind: "device", personId: existing.personId, lifetime }
-            : mode === "anyone"
-              ? { kind: "invite", scope, level: "viewer", use: "many", name: null, lifetime }
-              : {
-                  kind: "invite",
-                  scope,
-                  level,
-                  use: "one",
-                  name: typed === "" ? null : typed,
-                  lifetime,
-                },
-      });
-      if (result._tag === "Failure") {
-        setError(`The link could not be made. ${refusalMessage(result)}`);
-        return;
-      }
-      onShared();
-      onMade(result.value);
-    } finally {
-      setBusy(false);
-    }
+    await share();
+    setBusy(false);
   };
 
   return (

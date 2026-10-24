@@ -218,19 +218,20 @@ export const makePlaybookCrewRelay = Effect.gen(function* () {
   const withCrew = <A, E, R>(crewInstanceId: string, effect: Effect.Effect<A, E, R>) =>
     crews.serialize(crewInstanceId, effect);
 
-  const deliver = (runId: string, requestId: string) =>
-    Effect.gen(function* () {
-      const run = yield* store.runById(runId);
-      if (!run?.crewInstanceId) return null;
-      return yield* withCrew(run.crewInstanceId, deliverLocked(runId, requestId));
-    });
+  const deliver = Effect.fn("j5.playbooks.playbookCrewRelay.deliver")(function* (
+    runId: string,
+    requestId: string,
+  ) {
+    const run = yield* store.runById(runId);
+    if (!run?.crewInstanceId) return null;
+    return yield* withCrew(run.crewInstanceId, deliverLocked(runId, requestId));
+  });
 
-  const drainRun = (runId: string) =>
-    Effect.gen(function* () {
-      const run = yield* store.runById(runId);
-      if (!run?.crewInstanceId) return;
-      yield* withCrew(run.crewInstanceId, drainLocked(runId));
-    });
+  const drainRun = Effect.fn("j5.playbooks.playbookCrewRelay.drainRun")(function* (runId: string) {
+    const run = yield* store.runById(runId);
+    if (!run?.crewInstanceId) return;
+    yield* withCrew(run.crewInstanceId, drainLocked(runId));
+  });
 
   /** Who holds the run's current step, read-only: never dispatches, never drains. */
   const currentDelivery = Effect.fn("PlaybookCrewRelay.currentDelivery")(function* (
@@ -304,42 +305,45 @@ export const makePlaybookCrewRelay = Effect.gen(function* () {
    * Moves a run. A Crew-linked run first resolves every earlier hand-off, then moves, then hands
    * the new step to its owner, all under the Crew's lock. Cancel always works and never drains.
    */
-  const mutate = (owner: ThreadId, input: PlaybookMutation) =>
-    Effect.gen(function* () {
-      const run = yield* store.runById(input.runId);
-      // Only the owner's own call hands anything off; anyone else gets the store's refusal
-      // (not_owner) before a pending landing is touched.
-      const crewInstanceId = run?.ownerThreadId === owner ? run.crewInstanceId : undefined;
-      if (!crewInstanceId) {
-        // A thread run's response carries no delivery at all.
-        const response: PlaybookStepResponse = yield* store.mutate(owner, input);
-        return response;
-      }
-      if (input.operation === "cancel")
-        return withDelivery(yield* store.mutate(owner, input), null);
-      return yield* withCrew(
-        crewInstanceId,
-        Effect.gen(function* () {
-          yield* drainLocked(input.runId);
-          const response = yield* store.mutate(owner, input);
-          if (input.operation === "complete") return withDelivery(response, null);
-          return yield* respond(response, input.client_request_id);
-        }),
-      );
-    });
+  const mutate = Effect.fn("j5.playbooks.playbookCrewRelay.mutate")(function* (
+    owner: ThreadId,
+    input: PlaybookMutation,
+  ) {
+    const run = yield* store.runById(input.runId);
+    // Only the owner's own call hands anything off; anyone else gets the store's refusal
+    // (not_owner) before a pending landing is touched.
+    const crewInstanceId = run?.ownerThreadId === owner ? run.crewInstanceId : undefined;
+    if (!crewInstanceId) {
+      // A thread run's response carries no delivery at all.
+      const response: PlaybookStepResponse = yield* store.mutate(owner, input);
+      return response;
+    }
+    if (input.operation === "cancel") return withDelivery(yield* store.mutate(owner, input), null);
+    return yield* withCrew(
+      crewInstanceId,
+      Effect.gen(function* () {
+        yield* drainLocked(input.runId);
+        const response = yield* store.mutate(owner, input);
+        if (input.operation === "complete") return withDelivery(response, null);
+        return yield* respond(response, input.client_request_id);
+      }),
+    );
+  });
 
   /** The run's live prompt and progress, with who holds a Crew-linked run's current step. */
-  const current = (owner: ThreadId, runId?: string) =>
-    Effect.gen(function* () {
-      const response: PlaybookStepResponse = yield* store.current(owner, runId);
-      if (!response.crewInstanceId) return response;
-      return withDelivery(
-        response,
-        response.status === "active"
-          ? yield* currentDelivery(response.runId, response.currentStepId)
-          : null,
-      );
-    });
+  const current = Effect.fn("j5.playbooks.playbookCrewRelay.current")(function* (
+    owner: ThreadId,
+    runId?: string,
+  ) {
+    const response: PlaybookStepResponse = yield* store.current(owner, runId);
+    if (!response.crewInstanceId) return response;
+    return withDelivery(
+      response,
+      response.status === "active"
+        ? yield* currentDelivery(response.runId, response.currentStepId)
+        : null,
+    );
+  });
 
   /** Where a Crew's active run is and who holds its step, as Fleet shows it; null when none. */
   const fleetRun = Effect.fn("PlaybookCrewRelay.fleetRun")(function* (crewInstanceId: string) {

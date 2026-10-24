@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { CrewProposalPreviewResponse, CrewProposalSeat } from "@t3tools/contracts/j5";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { previewCrewProposal } from "./crewProposalsClient";
 
@@ -22,8 +22,10 @@ export function useCrewProposalPreview(
   const [state, setState] = useState<PreviewState | null>(null);
   const scopeKey = JSON.stringify([environmentId, proposalId, seats]);
   const requestJson = JSON.stringify([scopeKey, revision, busy]);
-  const requestKey = useMemo(() => ({ value: requestJson }), [requestJson]);
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  // The identity, not the text, marks one request: after an approval attempt the same text asks
+  // again, and the earlier answer's approval token must not count for it.
+  const requestKey = { value: requestJson };
+  const refresh = () => setRevision((value) => value + 1);
 
   useEffect(() => {
     if (environmentId === null || busy) return;

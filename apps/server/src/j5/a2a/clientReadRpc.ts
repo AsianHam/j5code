@@ -91,22 +91,21 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
           clientReads.openInboxCount(personId).pipe(Effect.catch(inboxFailure)),
         ),
       ),
-    [METHODS.listCrewProposals]: () =>
-      Effect.gen(function* () {
-        const listed = yield* clientReads.crewProposals.pipe(
-          Effect.catch(failed("Reading crew proposals failed.")),
-        );
-        // Listed to whoever reaches the Captain: a Viewer sees a roster's prompt and how it was
-        // answered, with nothing to press (Shared conversations AC11).
-        const reachesCaptain = yield* reaches;
-        return {
-          proposals: yield* Effect.filter(listed.proposals, (proposal) =>
-            reachesCaptain(Effect.succeed(ThreadId.make(proposal.captainThreadId))),
-          ),
-        };
-      }),
-    [METHODS.listCrewRuntimeRequests]: () =>
-      Effect.gen(function* () {
+    [METHODS.listCrewProposals]: Effect.fn("j5.a2a.clientReadRpc.listCrewProposals")(function* () {
+      const listed = yield* clientReads.crewProposals.pipe(
+        Effect.catch(failed("Reading crew proposals failed.")),
+      );
+      // Listed to whoever reaches the Captain: a Viewer sees a roster's prompt and how it was
+      // answered, with nothing to press (Shared conversations AC11).
+      const reachesCaptain = yield* reaches;
+      return {
+        proposals: yield* Effect.filter(listed.proposals, (proposal) =>
+          reachesCaptain(Effect.succeed(ThreadId.make(proposal.captainThreadId))),
+        ),
+      };
+    }),
+    [METHODS.listCrewRuntimeRequests]: Effect.fn("j5.a2a.clientReadRpc.listCrewRuntimeRequests")(
+      function* () {
         const listed = yield* clientReads.crewRuntimeRequests.pipe(
           Effect.catch(failed("Reading crew requests failed.")),
         );
@@ -121,18 +120,20 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
           mayAnswer(Effect.succeed(question.threadId)),
         );
         return { requests, questions };
-      }),
-    [METHODS.listCrewMemberships]: (input: ThreadHomesRequest) =>
-      Effect.gen(function* () {
-        // A narrowed person is told the Crews of the threads they reach, and no others.
-        const reachesThread = yield* reaches;
-        const threadIds = yield* Effect.filter(input.threadIds, (threadId) =>
-          reachesThread(Effect.succeed(threadId)),
-        );
-        return yield* clientReads
-          .crewMemberships(threadIds)
-          .pipe(Effect.catch(failed("Crew membership read failed.")));
-      }),
+      },
+    ),
+    [METHODS.listCrewMemberships]: Effect.fn("j5.a2a.clientReadRpc.listCrewMemberships")(function* (
+      input: ThreadHomesRequest,
+    ) {
+      // A narrowed person is told the Crews of the threads they reach, and no others.
+      const reachesThread = yield* reaches;
+      const threadIds = yield* Effect.filter(input.threadIds, (threadId) =>
+        reachesThread(Effect.succeed(threadId)),
+      );
+      return yield* clientReads
+        .crewMemberships(threadIds)
+        .pipe(Effect.catch(failed("Crew membership read failed.")));
+    }),
     [METHODS.readFleet]: (input: FleetReadRequest) =>
       clientReads
         .fleet(input.includeRetired === true)

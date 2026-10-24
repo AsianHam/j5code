@@ -181,7 +181,7 @@ import {
 import { archiveWithPreflight } from "../j5/a2a/archiveFlow";
 import { useAgentSpawnedThreadKeys } from "../j5/threads/SpawnedChildrenClient";
 import { isSidebarMember } from "../j5/threads/sidebarMembership";
-import { useKeyedThreadRefs, useThreadRowReads } from "../j5/threads/useThreadRowReads";
+import { useThreadRowReads } from "../j5/threads/useThreadRowReads";
 import {
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
@@ -380,10 +380,7 @@ function useSidebarThreads(input: {
   const threads = useQuietThreadShells();
   // J5 (case 23): Crew chips and spawned children for the listed rows. The same read says which
   // rows an agent spawned, which decides sidebar membership (register D22).
-  const threadRefs = useKeyedThreadRefs(
-    threads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
-  );
-  useThreadRowReads(threadRefs);
+  useThreadRowReads(threads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)));
   const agentSpawnedThreadKeys = useAgentSpawnedThreadKeys();
   const routeRowThreadKey =
     routeThreadRef === null

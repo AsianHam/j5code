@@ -146,19 +146,17 @@ function databaseBytes(): number {
   );
 }
 
-function timedDispatch(
+const timedDispatch = Effect.fn("j5.fleetLoad.timedDispatch")(function* (
   orchestrator: OrchestratorV2Shape,
   command: Parameters<OrchestratorV2Shape["dispatch"]>[0],
 ) {
-  return Effect.gen(function* () {
-    const startedAt = performance.now();
-    const events = yield* orchestrator.dispatch(command);
-    return {
-      elapsedMs: performance.now() - startedAt,
-      storedEvents: events.storedEvents.length,
-    };
-  });
-}
+  const startedAt = performance.now();
+  const events = yield* orchestrator.dispatch(command);
+  return {
+    elapsedMs: performance.now() - startedAt,
+    storedEvents: events.storedEvents.length,
+  };
+});
 
 const program = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;

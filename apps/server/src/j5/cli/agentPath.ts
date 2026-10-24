@@ -50,19 +50,21 @@ export const exposeOwnCliToAgents = Effect.fn("j5.cli.expose_own_cli_to_agents")
  * inside J5, `<home>/bin` is first on PATH, and repointing the agents' `j5`
  * would leave the installer's link on the old version.
  */
-export const withoutAgentCliOnPath = <A, E, R>(baseDir: string, lookup: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const environment = yield* HostProcess.Environment;
-    const delimiter = (yield* HostProcess.Platform) === "win32" ? ";" : ":";
-    const directory = agentCliDirectory(path, baseDir);
-    return yield* lookup.pipe(
-      Effect.provideService(HostProcess.Environment, {
-        ...environment,
-        PATH: (environment["PATH"] ?? "")
-          .split(delimiter)
-          .filter((entry) => entry !== directory)
-          .join(delimiter),
-      }),
-    );
-  });
+export const withoutAgentCliOnPath = Effect.fn("j5.cli.withoutAgentCliOnPath")(function* <A, E, R>(
+  baseDir: string,
+  lookup: Effect.Effect<A, E, R>,
+) {
+  const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
+  const delimiter = (yield* HostProcess.Platform) === "win32" ? ";" : ":";
+  const directory = agentCliDirectory(path, baseDir);
+  return yield* lookup.pipe(
+    Effect.provideService(HostProcess.Environment, {
+      ...environment,
+      PATH: (environment["PATH"] ?? "")
+        .split(delimiter)
+        .filter((entry) => entry !== directory)
+        .join(delimiter),
+    }),
+  );
+});

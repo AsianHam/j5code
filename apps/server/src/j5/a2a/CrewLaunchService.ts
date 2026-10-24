@@ -514,65 +514,67 @@ export const layer = Layer.effect(
     const detailOf = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
     /** Create one seat's thread and commit its home and placement. */
-    const startSeat = (captain: CrewCaptain, member: Planned) =>
-      Effect.gen(function* () {
-        const seatName = member.seat.name;
-        const create = yield* Effect.result(
-          threadManagement.dispatch({
-            type: "thread.create",
-            createdBy: "agent",
-            creationSource: "mcp",
-            commandId: spawnCreateCommandId(member.stableInput, member.workspace.type),
-            threadId: member.threadId,
-            projectId: captain.thread.projectId,
-            // The seat's name alone: the sidebar group and the Crew chip already say which Crew.
-            title: spawnTitle(seatName, undefined),
-            modelSelection: member.modelSelection,
-            runtimeMode: member.runtimeMode,
-            interactionMode: captain.thread.interactionMode,
-            ...(member.assignment === null ? {} : { agentPersonaAssignment: member.assignment }),
-            ...spawnThreadCheckout(member.workspace, captain.thread),
-          }),
-        );
-        const child = yield* Effect.result(
-          getThreadProjectionIfPresent(threadManagement, member.threadId),
-        );
-        if (Result.isFailure(child))
-          return {
-            seatName,
-            kind: "not_started",
-            detail: `reading the seat thread failed: ${detailOf(child.failure)}`,
-          } satisfies CrewSeatLaunchOutcome;
-        if (child.success === null)
-          return {
-            seatName,
-            kind: "not_created",
-            detail: Result.isFailure(create)
-              ? detailOf(create.failure)
-              : "the thread did not appear after it was created",
-          } satisfies CrewSeatLaunchOutcome;
-        const facts = yield* Effect.result(
-          composition.recordFacts({
-            homeCommandId: spawnHomeCommandId(member.stableInput),
-            placementCommandId: spawnPlacementCommandId(member.stableInput),
-            projectId: captain.projectId,
-            threadId: member.threadId,
-            provenance: {
-              kind: "spawned-by",
-              spawnedByParticipantId: captain.participantId,
-              source: "j5_spawn",
-            },
-            createdAt: DateTime.formatIso(child.success.thread.createdAt),
-          }),
-        );
-        if (Result.isFailure(facts))
-          return {
-            seatName,
-            kind: "not_started",
-            detail: `recording its home and placement failed: ${detailOf(facts.failure)}`,
-          } satisfies CrewSeatLaunchOutcome;
-        return { seatName, kind: "created" } satisfies CrewSeatLaunchOutcome;
-      });
+    const startSeat = Effect.fn("j5.a2a.crewLaunch.startSeat")(function* (
+      captain: CrewCaptain,
+      member: Planned,
+    ) {
+      const seatName = member.seat.name;
+      const create = yield* Effect.result(
+        threadManagement.dispatch({
+          type: "thread.create",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: spawnCreateCommandId(member.stableInput, member.workspace.type),
+          threadId: member.threadId,
+          projectId: captain.thread.projectId,
+          // The seat's name alone: the sidebar group and the Crew chip already say which Crew.
+          title: spawnTitle(seatName, undefined),
+          modelSelection: member.modelSelection,
+          runtimeMode: member.runtimeMode,
+          interactionMode: captain.thread.interactionMode,
+          ...(member.assignment === null ? {} : { agentPersonaAssignment: member.assignment }),
+          ...spawnThreadCheckout(member.workspace, captain.thread),
+        }),
+      );
+      const child = yield* Effect.result(
+        getThreadProjectionIfPresent(threadManagement, member.threadId),
+      );
+      if (Result.isFailure(child))
+        return {
+          seatName,
+          kind: "not_started",
+          detail: `reading the seat thread failed: ${detailOf(child.failure)}`,
+        } satisfies CrewSeatLaunchOutcome;
+      if (child.success === null)
+        return {
+          seatName,
+          kind: "not_created",
+          detail: Result.isFailure(create)
+            ? detailOf(create.failure)
+            : "the thread did not appear after it was created",
+        } satisfies CrewSeatLaunchOutcome;
+      const facts = yield* Effect.result(
+        composition.recordFacts({
+          homeCommandId: spawnHomeCommandId(member.stableInput),
+          placementCommandId: spawnPlacementCommandId(member.stableInput),
+          projectId: captain.projectId,
+          threadId: member.threadId,
+          provenance: {
+            kind: "spawned-by",
+            spawnedByParticipantId: captain.participantId,
+            source: "j5_spawn",
+          },
+          createdAt: DateTime.formatIso(child.success.thread.createdAt),
+        }),
+      );
+      if (Result.isFailure(facts))
+        return {
+          seatName,
+          kind: "not_started",
+          detail: `recording its home and placement failed: ${detailOf(facts.failure)}`,
+        } satisfies CrewSeatLaunchOutcome;
+      return { seatName, kind: "created" } satisfies CrewSeatLaunchOutcome;
+    });
 
     /**
      * Create each seat's thread and commit its home and placement, carrying on past a seat that
@@ -751,8 +753,8 @@ export const layer = Layer.effect(
       return { instance: current, seats } satisfies CrewLaunchResult;
     });
 
-    const launch: CrewLaunchServiceShape["launch"] = (input) =>
-      Effect.gen(function* () {
+    const launch: CrewLaunchServiceShape["launch"] = Effect.fn("j5.a2a.crewLaunch.launch")(
+      function* (input) {
         const resolved = input.resolvedSeats ?? (yield* resolveSeats(input.captain, input.seats));
         const planned = plan(input.providerSessionId, input.requestKey, resolved);
         const recordError = (phase: string) => (cause: unknown) =>
@@ -811,7 +813,8 @@ export const layer = Layer.effect(
           input.playbook ?? null,
           false,
         );
-      }).pipe((launch) =>
+      },
+      (launch, input) =>
         // One unit step from the record through the briefs, so a unit archive waits for every
         // seat to exist before it reads the roster.
         crews.serialize(
@@ -821,11 +824,11 @@ export const layer = Layer.effect(
           }),
           launch,
         ),
-      );
+    );
 
     // One unit step from the reservation through the briefs, like a launch.
-    const addSeats: CrewLaunchServiceShape["addSeats"] = (input) =>
-      Effect.gen(function* () {
+    const addSeats: CrewLaunchServiceShape["addSeats"] = Effect.fn("j5.a2a.crewLaunch.addSeats")(
+      function* (input) {
         const resolved = input.resolvedSeats ?? (yield* resolveSeats(input.captain, input.seats));
         const planned = plan(input.providerSessionId, input.requestKey, resolved);
         // Reserve the seats before anything spawns: the store decides the cap and the version in
@@ -903,7 +906,9 @@ export const layer = Layer.effect(
           input.playbook ?? null,
           true,
         );
-      }).pipe((addition) => crews.serialize(input.instance.id, addition));
+      },
+      (addition, input) => crews.serialize(input.instance.id, addition),
+    );
 
     // Only the card's select lists; every seat's workspace is bound from a fresh read above, at
     // preview and again at approval, where the token refuses a launch that no longer matches.

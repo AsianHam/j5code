@@ -171,15 +171,15 @@ export interface CommandAdmission {
  * session, which closes the socket (`Access`). A wide session's commands then cost nothing more;
  * a narrowed one's read the level at each command's scope.
  */
-export const makeCommandAdmission = (
-  crewSeatArchiveGuard: CrewSeatArchiveGuard,
-  session: SessionIdentity,
-): Effect.Effect<
-  CommandAdmission,
-  never,
-  PersonAccess | SharedConversation | SqlClient.SqlClient
-> =>
-  Effect.gen(function* () {
+export const makeCommandAdmission = Effect.fn("j5.sharing.commandAdmission.makeCommandAdmission")(
+  function* (
+    crewSeatArchiveGuard: CrewSeatArchiveGuard,
+    session: SessionIdentity,
+  ): Effect.fn.Return<
+    CommandAdmission,
+    never,
+    PersonAccess | SharedConversation | SqlClient.SqlClient
+  > {
     const sql = yield* SqlClient.SqlClient;
     const access = yield* PersonAccess;
     const conversation = yield* SharedConversation;
@@ -196,30 +196,36 @@ export const makeCommandAdmission = (
       }).pipe(Effect.andThen(Effect.fail(refused("Could not read what is shared with you."))));
 
     /** The level the person holds at a command's target, or `null` when they reach none of it. */
-    const levelAt = (personId: Parameters<typeof access.threadLevel>[0], scope: CommandScope) =>
-      Effect.gen(function* () {
-        switch (scope.kind) {
-          case "thread":
-            return yield* access.threadLevel(personId, scope.threadId);
-          case "project":
-            return yield* access.projectLevel(personId, scope.projectId);
-          case "projectOfThread": {
-            const projectId = yield* access.threadProject(scope.threadId);
-            return projectId === null ? null : yield* access.projectLevel(personId, projectId);
-          }
+    const levelAt = Effect.fn("j5.sharing.commandAdmission.levelAt")(function* (
+      personId: Parameters<typeof access.threadLevel>[0],
+      scope: CommandScope,
+    ) {
+      switch (scope.kind) {
+        case "thread":
+          return yield* access.threadLevel(personId, scope.threadId);
+        case "project":
+          return yield* access.projectLevel(personId, scope.projectId);
+        case "projectOfThread": {
+          const projectId = yield* access.threadProject(scope.threadId);
+          return projectId === null ? null : yield* access.projectLevel(personId, projectId);
         }
-      });
+      }
+    });
 
-    const requireLevel = (
+    const requireLevel: (
       scope: CommandScope,
       level: PersonLevel,
-    ): Effect.Effect<void, EnvironmentAuthorizationError> =>
-      Effect.gen(function* () {
+    ) => Effect.Effect<void, EnvironmentAuthorizationError> = Effect.fn(
+      "j5.sharing.commandAdmission.requireLevel",
+    )(
+      function* (scope, level) {
         if (isWide(reach)) return;
         if (reach.kind !== "person") return yield* refused(NOT_SHARED);
         const held = yield* levelAt(reach.person.personId, scope);
         if (!levelReaches(held, level)) return yield* refused(NOT_SHARED);
-      }).pipe(Effect.catchTags({ PersonAccessStorageError: refuseUnreadable }));
+      },
+      Effect.catchTags({ PersonAccessStorageError: refuseUnreadable }),
+    );
 
     const checked: CommandAdmission["admit"] = Effect.fn("j5.sharing.commandAdmission.checked")(
       function* (command) {
@@ -308,4 +314,5 @@ export const makeCommandAdmission = (
     };
 
     return { admit, admitLaunch, upsertScheduledTask };
-  });
+  },
+);

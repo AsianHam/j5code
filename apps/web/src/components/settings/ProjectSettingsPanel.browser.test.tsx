@@ -121,6 +121,12 @@ vi.mock(import("./ProjectActionsSettings"), async (original) => ({
   ProjectActionsSettings: (() => null) as never,
 }));
 
+// J5 (case 72): ownership is not under test; the person owns every listed server.
+vi.mock(import("../../j5/sharing/settingsAccess"), async (original) => ({
+  ...(await original()),
+  useOwnedEnvironments: ((environments: unknown) => environments) as never,
+}));
+
 vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
   ...(await original()),
   getProjectFileQueryAtom: () => missingProjectFile,

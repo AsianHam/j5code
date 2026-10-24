@@ -143,8 +143,10 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const placement = yield* A2AArchivePlacementFactsProvider;
 
-    const readForThread: A2AArchiveFactsShape["readForThread"] = (threadId) =>
-      Effect.gen(function* () {
+    const readForThread: A2AArchiveFactsShape["readForThread"] = Effect.fn(
+      "j5.a2a.archiveFacts.readForThread",
+    )(
+      function* (threadId) {
         const resolution = yield* resolveThreadHome(sql, threadId).pipe(
           Effect.catchTags({ A2AHomeNotFoundError: () => Effect.succeed(null) }),
         );
@@ -212,7 +214,9 @@ export const layer = Layer.effect(
           openExchanges,
           placementSubtree,
         } as const;
-      }).pipe(Effect.mapError(archiveFactsError("read pre-archive facts")));
+      },
+      Effect.mapError(archiveFactsError("read pre-archive facts")),
+    );
 
     return A2AArchiveFacts.of({ readForThread });
   }),

@@ -417,18 +417,18 @@ const makeLayer = (daemon: boolean) =>
         ),
       );
 
-      const handleStoredEvent: CrewSeatFinishNotifierShape["handleStoredEvent"] = (stored) =>
-        Effect.gen(function* () {
+      const handleStoredEvent: CrewSeatFinishNotifierShape["handleStoredEvent"] = Effect.fn(
+        "j5.a2a.crewSeatFinish.handleStoredEvent",
+      )(
+        function* (stored) {
           const run = finishedRun(stored);
           if (run === undefined) return null;
           return yield* notifyIfFinished(run.threadId, run);
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("J5 crew seat finish notice skipped", { cause }).pipe(
-              Effect.as(null),
-            ),
-          ),
-        );
+        },
+        Effect.catchCause((cause) =>
+          Effect.logWarning("J5 crew seat finish notice skipped", { cause }).pipe(Effect.as(null)),
+        ),
+      );
 
       if (daemon) {
         // The stream starts from the event store's current high-water mark, so everything that

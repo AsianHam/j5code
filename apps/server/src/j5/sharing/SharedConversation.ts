@@ -385,13 +385,13 @@ const make = Effect.gen(function* () {
    * an earlier answer name no one; a command id upstream already took makes no claim. The first
    * claim for a command stands. A failure to record is logged and does not stop the answer.
    */
-  const recordAnswer = (
-    personId: ParticipantId,
-    answer: Parameters<SharedConversationShape["claimAnswer"]>[1],
-    /** Whether the answer is in words, which carry the answer line. */
-    marked: boolean,
-  ) =>
-    Effect.gen(function* () {
+  const recordAnswer = Effect.fn("j5.sharing.sharedConversation.recordAnswer")(
+    function* (
+      personId: ParticipantId,
+      answer: Parameters<SharedConversationShape["claimAnswer"]>[1],
+      /** Whether the answer is in words, which carry the answer line. */
+      marked: boolean,
+    ) {
       if (!(yield* shared.isShared(answer.threadId))) return;
       // A command upstream already took settled nothing now: its prompt, if it settled one, was
       // settled before this, by whoever sent it first. Only a claim made before its command is
@@ -417,13 +417,13 @@ const make = Effect.gen(function* () {
         )
         ON CONFLICT (thread_id, request_id, command_id) DO NOTHING
       `;
-    }).pipe(
-      Effect.catch((cause) =>
-        Effect.logError("J5 shared conversation could not record who answered a prompt", {
-          cause,
-        }),
-      ),
-    );
+    },
+    Effect.catch((cause) =>
+      Effect.logError("J5 shared conversation could not record who answered a prompt", {
+        cause,
+      }),
+    ),
+  );
 
   const stampCommand = Effect.fn("j5.sharing.sharedConversation.stampCommand")(function* (
     personId: ParticipantId,
@@ -475,8 +475,8 @@ const make = Effect.gen(function* () {
           cause,
         }).pipe(Effect.andThen(Effect.fail(notAdmitted)));
 
-  const admit: SharedConversationShape["admit"] = (personId, command) =>
-    Effect.gen(function* () {
+  const admit: SharedConversationShape["admit"] = Effect.fn("j5.sharing.sharedConversation.admit")(
+    function* (personId, command) {
       if (
         (command.type === "message.dispatch" || command.type === "queued-run.edit") &&
         carriesPlatformRecord(command.context)
@@ -495,45 +495,45 @@ const make = Effect.gen(function* () {
         yield* recordAnswer(personId, admitted, marked);
       }
       return admitted;
-    });
+    },
+  );
 
-  const admitLaunch: SharedConversationShape["admitLaunch"] = (personId, input) =>
-    Effect.gen(function* () {
-      const first = input.initialMessage;
-      if (first !== undefined && carriesPlatformRecord(first.context)) {
-        return yield* refused("A message cannot carry a record of the platform's own.");
+  const admitLaunch: SharedConversationShape["admitLaunch"] = Effect.fn(
+    "j5.sharing.sharedConversation.admitLaunch",
+  )(function* (personId, input) {
+    const first = input.initialMessage;
+    if (first !== undefined && carriesPlatformRecord(first.context)) {
+      return yield* refused("A message cannot carry a record of the platform's own.");
+    }
+    // A launch into a thread that exists writes to it; otherwise its project's writers write.
+    const launchingIn =
+      input.reuseExistingThread === true && input.threadId !== undefined ? null : input.projectId;
+    if (first === undefined || personId === null) {
+      // A thread started under a scope already shared is shared from its start (AC6), with or
+      // without a first message.
+      if (input.threadId !== undefined) {
+        yield* shared.isShared(input.threadId, launchingIn).pipe(Effect.catch(failClosed));
       }
-      // A launch into a thread that exists writes to it; otherwise its project's writers write.
-      const launchingIn =
-        input.reuseExistingThread === true && input.threadId !== undefined ? null : input.projectId;
-      if (first === undefined || personId === null) {
-        // A thread started under a scope already shared is shared from its start (AC6), with or
-        // without a first message.
-        if (input.threadId !== undefined) {
-          yield* shared.isShared(input.threadId, launchingIn).pipe(Effect.catch(failClosed));
-        }
-        return input;
-      }
-      if (input.threadId === undefined) {
-        // No thread is named, so the message cannot be recorded under one; on a project more
-        // than one person writes to, that is a launch J5 cannot take in.
-        const writers = yield* shared
-          .projectWriters(input.projectId)
-          .pipe(Effect.catch(failClosed));
-        if (writers.length < 2) return input;
-        return yield* refused("A thread in a shared project is started with its id.");
-      }
-      const threadId = input.threadId;
-      return yield* Effect.gen(function* () {
-        if (!(yield* shared.isShared(threadId, launchingIn))) return input;
-        const author = yield* authorOn(personId, threadId, launchingIn);
-        if (author === null) return input;
-        const messageId =
-          first.messageId ?? MessageId.make(`message:j5:launch:${NodeCrypto.randomUUID()}`);
-        const text = yield* stampMessage(threadId, messageId, first.text, author, launchingIn);
-        return { ...input, initialMessage: { ...first, messageId, text } };
-      }).pipe(Effect.catch(failClosed));
-    });
+      return input;
+    }
+    if (input.threadId === undefined) {
+      // No thread is named, so the message cannot be recorded under one; on a project more
+      // than one person writes to, that is a launch J5 cannot take in.
+      const writers = yield* shared.projectWriters(input.projectId).pipe(Effect.catch(failClosed));
+      if (writers.length < 2) return input;
+      return yield* refused("A thread in a shared project is started with its id.");
+    }
+    const threadId = input.threadId;
+    return yield* Effect.gen(function* () {
+      if (!(yield* shared.isShared(threadId, launchingIn))) return input;
+      const author = yield* authorOn(personId, threadId, launchingIn);
+      if (author === null) return input;
+      const messageId =
+        first.messageId ?? MessageId.make(`message:j5:launch:${NodeCrypto.randomUUID()}`);
+      const text = yield* stampMessage(threadId, messageId, first.text, author, launchingIn);
+      return { ...input, initialMessage: { ...first, messageId, text } };
+    }).pipe(Effect.catch(failClosed));
+  });
 
   const threadAuthors: SharedConversationShape["threadAuthors"] = Effect.fn(
     "j5.sharing.sharedConversation.threadAuthors",
@@ -635,8 +635,10 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const endUnanswerableAsks: SharedConversationShape["endUnanswerableAsks"] = (personId) =>
-    Effect.gen(function* () {
+  const endUnanswerableAsks: SharedConversationShape["endUnanswerableAsks"] = Effect.fn(
+    "j5.sharing.sharedConversation.endUnanswerableAsks",
+  )(
+    function* (personId) {
       const endedAt = DateTime.formatIso(yield* DateTime.now);
       yield* lifecycle.endAsksOf({
         personId,
@@ -647,17 +649,16 @@ const make = Effect.gen(function* () {
             projectId: asker.projectId,
           }),
       });
-    }).pipe(
-      Effect.catch((cause) =>
-        Effect.logError(
-          "J5 shared conversation could not end the asks a person can no longer answer",
-          {
-            cause,
-          },
-        ),
+    },
+    Effect.catch((cause) =>
+      Effect.logError(
+        "J5 shared conversation could not end the asks a person can no longer answer",
+        {
+          cause,
+        },
       ),
-      Effect.withSpan("j5.sharing.sharedConversation.endUnanswerableAsks"),
-    );
+    ),
+  );
 
   // A person who can no longer write to a thread loses what they had queued there (AC15), and
   // the asks to them from its agents end (Inbox AC14).
@@ -713,8 +714,8 @@ const make = Effect.gen(function* () {
           );
         }),
       ),
-    rosterDecider: (personId, proposalId) =>
-      Effect.gen(function* () {
+    rosterDecider: Effect.fn("j5.sharing.sharedConversation.rosterDecider")(
+      function* (personId, proposalId) {
         if (personId === null) return null;
         const rows = yield* sql<{ readonly captain_thread_id: string }>`
           SELECT captain_thread_id FROM j5_agent_crew_proposal WHERE id = ${proposalId}
@@ -723,17 +724,17 @@ const make = Effect.gen(function* () {
         if (threadId === undefined || !(yield* shared.isShared(threadId))) return null;
         const author = yield* authorOn(personId, threadId);
         return author === null ? null : authorLabel(author);
-      }).pipe(
-        Effect.catch((cause) =>
-          Effect.logError("J5 shared conversation could not name who answered a roster", {
-            cause,
-          }).pipe(Effect.as(null)),
-        ),
+      },
+      Effect.catch((cause) =>
+        Effect.logError("J5 shared conversation could not name who answered a roster", {
+          cause,
+        }).pipe(Effect.as(null)),
       ),
+    ),
     withdrawQueued,
     endUnanswerableAsks,
-    recordReply: (personId, reply) =>
-      Effect.gen(function* () {
+    recordReply: Effect.fn("j5.sharing.sharedConversation.recordReply")(
+      function* (personId, reply) {
         if (!(yield* shared.isShared(reply.threadId))) return;
         const author = yield* authorOn(personId, reply.threadId);
         if (author === null) return;
@@ -747,14 +748,13 @@ const make = Effect.gen(function* () {
           carried,
           carried.note === null ? "" : `${carried.note}\n`,
         );
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause._tag === "PersonAccessStorageError"
-            ? cause
-            : new PersonAccessStorageError({ operation: "record a reply's author", cause }),
-        ),
-        Effect.withSpan("j5.sharing.sharedConversation.recordReply"),
+      },
+      Effect.mapError((cause) =>
+        cause._tag === "PersonAccessStorageError"
+          ? cause
+          : new PersonAccessStorageError({ operation: "record a reply's author", cause }),
       ),
+    ),
     claimAnswer: (personId, answer) => recordAnswer(personId, answer, false),
   });
 });

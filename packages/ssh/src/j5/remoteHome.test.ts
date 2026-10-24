@@ -96,25 +96,23 @@ describe("J5 remote server home", () => {
     assert.notInclude(script, "$HOME/.t3/runtime");
   });
 
-  for (const [name, runner] of [
-    ["archive", ARCHIVE],
-    ["node-script", NODE_SCRIPT],
-  ] as const) {
-    it.effect(`launches a ${name} runner with ~/.j5code as its home`, () =>
-      Effect.gen(function* () {
-        const launch = yield* scriptSentBy(
-          '{"remotePort":3774}\n',
-          SshTunnel.launchOrReuseRemoteServer(TARGET, undefined, runner),
-        );
+  it.effect.each([
+    { name: "archive", runner: ARCHIVE },
+    { name: "node-script", runner: NODE_SCRIPT },
+  ])("launches a $name runner with ~/.j5code as its home", ({ runner }) =>
+    Effect.gen(function* () {
+      const launch = yield* scriptSentBy(
+        '{"remotePort":3774}\n',
+        SshTunnel.launchOrReuseRemoteServer(TARGET, undefined, runner),
+      );
 
-        assert.include(launch, 'DEFAULT_SERVER_HOME="$HOME/.j5code"');
-        assert.include(launch, '--base-dir "$DEFAULT_SERVER_HOME"');
-        assert.notInclude(launch, 'DEFAULT_SERVER_HOME="$HOME/.t3"');
-        assert.notInclude(launch, "$HOME/.t3/runtime");
-        assert.include(launch, "Remote J5 server did not become ready");
-      }),
-    );
-  }
+      assert.include(launch, 'DEFAULT_SERVER_HOME="$HOME/.j5code"');
+      assert.include(launch, '--base-dir "$DEFAULT_SERVER_HOME"');
+      assert.notInclude(launch, 'DEFAULT_SERVER_HOME="$HOME/.t3"');
+      assert.notInclude(launch, "$HOME/.t3/runtime");
+      assert.include(launch, "Remote J5 server did not become ready");
+    }),
+  );
 
   it.effect("pairs against the ~/.j5code home", () =>
     Effect.gen(function* () {

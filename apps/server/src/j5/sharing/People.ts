@@ -217,13 +217,12 @@ export const layer: Layer.Layer<
         const askerId = reach.kind === "person" ? reach.person.personId : null;
         const everyone = yield* people.scopePeople(scope);
         const titles = new Map<string, string | null>();
-        const title = (held: PersonScope) =>
-          Effect.gen(function* () {
-            const columns = scopeColumns(held);
-            const key = `${columns.kind}:${columns.id}`;
-            if (!titles.has(key)) titles.set(key, yield* titleOf(held));
-            return titles.get(key) ?? null;
-          });
+        const title = Effect.fn("j5.sharing.people.title")(function* (held: PersonScope) {
+          const columns = scopeColumns(held);
+          const key = `${columns.kind}:${columns.id}`;
+          if (!titles.has(key)) titles.set(key, yield* titleOf(held));
+          return titles.get(key) ?? null;
+        });
         return {
           people: yield* Effect.forEach(everyone, (entry) =>
             Effect.gen(function* () {

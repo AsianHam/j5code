@@ -9,7 +9,7 @@ import {
 import { ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { resolveThreadStatusPill } from "../../components/Sidebar.logic";
@@ -107,7 +107,9 @@ export function FleetPage() {
   const sources = useAtomValue(fleetDetailSourcesAtom);
   useFleetDetailRefresh();
   const [refreshing, setRefreshing] = useState(false);
-  const projects = useMemo(() => mergeFleetSources(sources), [sources]);
+  // Each machine's ledger answers per project, so every row under it shares that project.
+  const logicalProjectOf = useLogicalProjects();
+  const projects = mergeFleetSources(sources);
   const showEnvironment = spansMultipleEnvironments(projects);
   const loading = !sources.isReady || sources.sources.some((source) => source.status === "loading");
   const notices = [
@@ -119,82 +121,57 @@ export function FleetPage() {
     ),
   ];
 
-  const refresh = useCallback(async () => {
+  const refresh = async () => {
     setRefreshing(true);
-    try {
-      await refreshFleet();
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
+    await refreshFleet().finally(() => setRefreshing(false));
+  };
 
-  const threadsByKey = useMemo(
-    () =>
-      new Map(
-        threads.map((thread) => [
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-          thread,
-        ]),
-      ),
-    [threads],
+  const threadsByKey = new Map(
+    threads.map((thread) => [
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      thread,
+    ]),
   );
-  // Each machine's ledger answers per project, so every row under it shares that project.
-  const logicalProjectOf = useLogicalProjects();
-  const projectOf = useCallback(
-    (ledgerProject: ScopedFleetLedgerProject) =>
-      logicalProjectOf(ledgerProject.environmentId, ledgerProject.id),
-    [logicalProjectOf],
+  const projectOf = (ledgerProject: ScopedFleetLedgerProject) =>
+    logicalProjectOf(ledgerProject.environmentId, ledgerProject.id);
+  const partitioned = partitionFleet(projects, (environmentId, threadId) =>
+    threadsByKey.get(scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)))),
   );
-  const sections = useMemo(() => {
-    const partitioned = partitionFleet(projects, (environmentId, threadId) =>
-      threadsByKey.get(scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)))),
-    );
-    return {
-      ...partitioned,
-      active: orderFleetRowsByProject(partitioned.active, projectOf),
-      settled: orderFleetRowsByProject(partitioned.settled, projectOf),
-    };
-  }, [projectOf, projects, threadsByKey]);
-  const projectCount = useMemo(
-    () => countFleetProjects([...sections.active, ...sections.settled], projectOf),
-    [projectOf, sections],
-  );
-  const retired = useMemo(() => retiredCrews(projects), [projects]);
+  const sections = {
+    ...partitioned,
+    active: orderFleetRowsByProject(partitioned.active, projectOf),
+    settled: orderFleetRowsByProject(partitioned.settled, projectOf),
+  };
+  const projectCount = countFleetProjects([...sections.active, ...sections.settled], projectOf);
+  const retired = retiredCrews(projects);
   // Playbook runs name the Crew they follow from this read, and jump to its group.
-  const crewNames = useMemo(
-    () =>
-      new Map(
-        projects.flatMap((ledgerProject) =>
-          ledgerProject.crews.map(
-            (crew) =>
-              [
-                fleetCrewAnchorId(ledgerProject.environmentId, crew.crewInstanceId),
-                crew.crewName,
-              ] as const,
-          ),
-        ),
+  const crewNames = new Map(
+    projects.flatMap((ledgerProject) =>
+      ledgerProject.crews.map(
+        (crew) =>
+          [
+            fleetCrewAnchorId(ledgerProject.environmentId, crew.crewInstanceId),
+            crew.crewName,
+          ] as const,
       ),
-    [projects],
+    ),
   );
   // A Crew can sit inside the collapsed Settled or Retired sections, so every enclosing
   // expander opens before the group scrolls into view.
-  const showCrew = useCallback((anchorId: string) => {
+  const showCrew = (anchorId: string) => {
     const group = document.getElementById(anchorId);
     if (!(group instanceof HTMLDetailsElement)) return;
     for (let node: Element | null = group; node !== null; node = node.parentElement)
       if (node instanceof HTMLDetailsElement) node.open = true;
     group.scrollIntoView({ block: "center" });
     group.querySelector("summary")?.focus();
-  }, []);
-  const openThread = useCallback(
-    (environmentId: EnvironmentId, threadId: string) => {
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(environmentId, ThreadId.make(threadId))),
-      });
-    },
-    [navigate],
-  );
+  };
+  const openThread = (environmentId: EnvironmentId, threadId: string) => {
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(scopeThreadRef(environmentId, ThreadId.make(threadId))),
+    });
+  };
 
   const { agentCount } = sections;
   const tableProps = { showEnvironment, threadsByKey, onOpenThread: openThread, projectOf };
@@ -360,9 +337,8 @@ function FleetNodeRows(
         title: `Could not stop crew ${crew.crewName}`,
         description: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      setBusy(null);
     }
+    setBusy(null);
   };
   // The person's Archive crew: the same unit archive the Captain has, behind one dialog that
   // lists every seat with what ends for it. The Crew moves to the Retired list.
@@ -416,9 +392,8 @@ function FleetNodeRows(
         title: `Could not archive crew ${crew.crewName}`,
         description: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      setBusy(null);
     }
+    setBusy(null);
   };
   return (
     <>

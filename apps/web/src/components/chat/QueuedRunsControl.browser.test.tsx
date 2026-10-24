@@ -30,6 +30,14 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
     resources.map((resource) => `https://assets.test/${resource.attachmentId}`)) as never,
 }));
 
+// J5 (case 80): shared-conversation authorship holds runs back until its read answers; a solo
+// thread shows them as queued.
+vi.mock(import("../../j5/sharing/sharedTimeline"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useSharedQueuedRuns: ((_environmentId: unknown, _threadId: unknown, queued: unknown) =>
+    queued) as never,
+}));
+
 import { render as renderUi } from "../../../test/render";
 import { QueuedRunsControl } from "./QueuedRunsControl";
 

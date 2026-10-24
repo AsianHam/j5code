@@ -172,17 +172,17 @@ Letter codes in the Decided lines (SC2, QS1, AR3, and so on) are rulings recorde
 
 ### Timeline, composer, and plans
 
-#### D16. Agent-to-agent messages render as cards
+#### D38. Messages from anyone but the person fold on the left, and say who sent them
 
-**Upstream:** a message delivered from another agent appears as if the person had typed it, with only a raw envelope tag to tell it apart.
+**Upstream:** a message another agent sends into a thread folds into a one-line row on the right, named after the sender's thread, and an automation's prompt folds into an "Automation" row, so the person's own messages stay easy to find (pingdotgg/t3code#23135, pingdotgg/t3code#22638). A message the app writes itself is a full message on the right with "Sent by T3 Code" above it.
 
-**J5:** incoming and outgoing agent messages render as cards, as prominent as a user message, naming the sender and linking to its thread. They stay out of the conversation minimap, and queued rows name their sender.
+**J5:** every message in the person's place in a thread is shown by who is speaking. The person's own messages keep upstream's bubble on the right. Another person's is a full bubble on the left with their name, and a reply sent from the Inbox says "via Inbox". Everyone else, whether an agent, a machine participant, an outside agent, an agent on a peer server or the spawner of a Peer Agent, folds on the left into upstream's one-line row, under an identity line: the participant's name and, when the message asks something of the reader, the Inbox's Exchange badge ("Expects reply" or "Replied"), or else an "Automation" or "Outside agent" tag. The folded row shows the first line of the letter, never J5's envelope, and opens to the whole letter. These messages stay out of the conversation minimap, and a queued one names its sender. Two more groups are agreed and not built yet ([#698](https://github.com/Jacksondr5/j5code/issues/698)): J5's platform notices (silences, undelivered messages, Crew decisions, seat reports) as one grey line each, and J5's look for the messages upstream's platform writes (grey lines for its notices, an outlined pill for its prompts, its Automation row included). Mobile gets the same design later ([#699](https://github.com/Jacksondr5/j5code/issues/699)).
 
-**Why:** the person is a first-class reader of every agent-to-agent message and should see it in the normal flow without hunting. A first, quieter design made the messages hard to spot, so they were made prominent. The minimap tracks the person's own prompts, and agent messages there were noise.
+**Why:** upstream's reason holds for J5: other agents' letters pushed the person's own messages off screen, and J5's cards did so more than upstream's rows. J5 also knows what upstream does not: who each participant is, beyond a thread's title, and whether a message opens or closes an Exchange, so the folded row can say who is speaking and whether it waits on the reader. Upstream gives no reason for keeping folded rows on the right, and J5 already puts other people on the left, so only the person's own words sit on the right. Notices get one look whoever wrote them, so the person can tell a notice from a letter at a glance.
 
-**Consequences:** the seams in the timeline are small, but each advance checks the row and minimap hooks. Sent-message cards recognize only Codex and Claude tool records; other providers keep generic rendering. Upstream's in-thread find searches the cards' text. Upstream is still building out its own agent-to-agent features (see the [upstream convergence watchlist](upstream-convergence.md)), so its treatment of these messages may change. Check this entry at every upstream advance, and prefer upstream's treatment if it now meets the need.
+**Consequences:** the seams sit in upstream's user row and timeline, and the classifier is J5's own, shared by web and mobile. A message whose envelope J5 does not recognize falls back to upstream's row, visibly. Until the notices are built, a platform notice no parser reads keeps J5's raw card. The two pending groups restyle messages upstream writes: the code is J5's and a message whose id upstream changes falls back to upstream's row, but the look is a divergence of its own, checked at every advance. Upstream's own thread sends, which carry no J5 envelope, get J5's treatment too, named from the sender's thread. Inbox replies no longer show the "Closed your exchange" chip. Upstream is still building agent-to-agent features (see the [upstream convergence watchlist](upstream-convergence.md)); prefer upstream's treatment if it comes to meet the need.
 
-**Decided:** Jackson, 2026-08-29 (TA1–TA5) and 2026-08-31 (TA6–TA8, including cards for sent messages). The minimap rule is from Jackson's PR #168 (2026-09-16). Sender labels on queued rows came from Jackson's dogfood findings (#42, #62), fixed on 2026-09-04. Recorded in FORK.md cases 7, 14 and 24.
+**Decided:** Jackson, 2026-10-24, during the advance onto upstream's nightly `v0.1.3-nightly.20261024.3630`; it replaces D16. Recorded in FORK.md cases 7, 24 and 80.
 
 #### D17. Plans are stored as artifacts and exported to `plan.md`
 
@@ -493,6 +493,10 @@ In a linked worktree with no running server, J5's `pair` refused to fall back to
 
 J5 kept Reconnect on the chat view's banner while an environment was reconnecting, and added "Reconnect now" to Settings › Connections, as a temporary patch (Jackson, 2026-10-19). Retired 2026-10-24 (Jackson): upstream's Settings › Connections now offers "Retry now" (pingdotgg/t3code#22171), which meets the entry's exit condition, a retry on web and desktop while reconnecting.
 
+#### D16. Agent-to-agent messages render as cards
+
+J5 drew incoming and outgoing agent messages as cards, as prominent as a user message, naming the sender and linking to its thread, kept them out of the conversation minimap, and named the sender on queued rows (Jackson, 2026-08-29 and 2026-08-31, TA1–TA8; sent-message cards retired 2026-10-10, [#522](https://github.com/Jacksondr5/j5code/issues/522)). Retired 2026-10-24 (Jackson), replaced by D38: upstream now folds other agents' messages into one-line rows (pingdotgg/t3code#23135), and J5 adopted the fold with its own identity line and badge.
+
 #### D10. Welcome wizard assigns imported conversations a Squadron
 
 J5 added a fourth stage to upstream's welcome wizard that gave each imported folder's conversations a Squadron home (Jackson, 2026-09-17, PR #178). Retired 2026-10-04 in the plan to retire Squadrons ([#412](https://github.com/Jacksondr5/j5code/issues/412)): the wizard has upstream's three stages again. Imported conversations register in their project like every other thread since the ledger re-keyed to projects (2026-10-07).
@@ -511,7 +515,7 @@ A scheduled run was refused before creating a thread when several Squadrons refe
 
 #### D5. A committed Stop wins over a racing steer
 
-Once a Stop was committed, J5 kept a steer the provider had accepted before it from starting a new turn. It arrived with the 2026-09-17 upstream integration and Jackson kept it on 2026-09-24. Jackson ruled on 2026-09-28 that controlling a thread's turns is upstream's area and this is a race J5 doesn't design for. Removed 2026-10-08 ([#343](https://github.com/Jacksondr5/j5code/issues/343)): J5 runs upstream's code. Upstream's Stop holds the thread's queue, which covers queued messages; a peer steer already in flight to a GPT 6 agent can still wake it (D4).
+Once a Stop was committed, J5 kept a steer the provider had accepted before it from starting a new turn. It arrived with the 2026-09-17 upstream integration and Jackson kept it on 2026-09-24. Jackson ruled on 2026-09-28 that controlling a thread's turns is upstream's area and this is a race J5 doesn't design for. Removed 2026-10-08 ([#343](https://github.com/Jacksondr5/j5code/issues/343)): J5 runs upstream's code. Upstream's Stop holds the thread's queue, which covers queued messages. Since the 2026-10-24 advance upstream also refuses a steer to a run that is stopping (pingdotgg/t3code#16926), and J5 queues that GPT 6 delivery instead (D4).
 
 #### D7. Codex CLI version floor
 
@@ -575,3 +579,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-19 — D37 added: a connection that keeps failing can be retried at once on web and desktop (Jackson).
 - 2026-10-20 — D2 clarifies that native-question answers retain upstream access and attribution behavior, and placed-agent notices replace raw thread waiting ([#674](https://github.com/Jacksondr5/j5code/pull/674), [#281](https://github.com/Jacksondr5/j5code/issues/281), [existing access decision](https://github.com/Jacksondr5/j5code/issues/345#issuecomment-6092125478)).
 - 2026-10-24 — the advance onto upstream's nightly `v0.1.3-nightly.20261024.3630`: D21 and D37 retired, because upstream ships both fixes; D2 leaves out upstream's `thread` CLI command (#695); D4 keeps J5's held-queue rule beside upstream's new person-only release (pingdotgg/t3code#21473); D19 adds the agents' stop prefix, the dev seed and the older-service message; D27 pins PostHog's host against upstream's new endpoint and takes upstream's new events; D31 watches pingdotgg/t3code#21574 (Jackson's decisions of that day).
+- 2026-10-24 — D16 retired and D38 added: messages from anyone but the person fold on the left and say who sent them; J5's notices and its look for upstream's platform messages are agreed and wait on [#698](https://github.com/Jacksondr5/j5code/issues/698) (Jackson).

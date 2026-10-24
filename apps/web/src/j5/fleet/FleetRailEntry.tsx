@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { RadarIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
 
 import { useSidebar } from "../../components/ui/sidebar";
 import { cn } from "../../lib/utils";
@@ -18,14 +17,12 @@ export function FleetRailEntry({ onBackdrop }: { readonly onBackdrop: boolean })
   const { isMobile, setOpenMobile } = useSidebar();
   const sources = useAtomValue(fleetSourcesAtom);
   useFleetRefresh();
-  const alerts = useMemo(() => {
-    const known = sources.sources.filter((source) => source.data !== null);
-    return known.length === 0 ? null : countFleetAlerts(mergeFleetSources(sources));
-  }, [sources]);
+  const known = sources.sources.filter((source) => source.data !== null);
+  const alerts = known.length === 0 ? null : countFleetAlerts(mergeFleetSources(sources));
 
-  const closeMobileSidebar = useCallback(() => {
+  const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);
-  }, [isMobile, setOpenMobile]);
+  };
 
   const label =
     alerts === null || alerts === 0 ? "Open fleet" : `Open fleet, ${alerts} agents owe a reply`;

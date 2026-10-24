@@ -62,14 +62,15 @@ export const recordScheduler = Effect.fn("j5.sharing.scheduledRuns.recordSchedul
 });
 
 /** A task's prompt as it is stored, before a save changes it; `null` for a task not yet made. */
-export const storedPrompt = (taskId: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql<{ readonly prompt: string }>`
+export const storedPrompt = Effect.fn("j5.sharing.scheduledRuns.storedPrompt")(function* (
+  taskId: string,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly prompt: string }>`
       SELECT prompt FROM scheduled_tasks WHERE task_id = ${taskId}
     `;
-    return rows[0]?.prompt ?? null;
-  });
+  return rows[0]?.prompt ?? null;
+});
 
 /**
  * A run not sent because the person it would name can no longer write where it goes. Its message
@@ -145,55 +146,53 @@ const make = Effect.gen(function* () {
 
   const threads = ThreadManagementService.of({
     ...inner.threads,
-    sendToThread: (input) =>
-      Effect.gen(function* () {
-        const taskId = input.scheduledTaskId;
-        if (taskId === undefined) return yield* inner.threads.sendToThread(input);
-        const text = yield* Effect.gen(function* () {
-          if (!(yield* shared.isShared(input.threadId))) return input.text;
-          return yield* stamp({
-            taskId,
-            commandId: input.commandId,
-            threadId: input.threadId,
-            messageId: input.messageId ?? MessageId.make(`message:j5:scheduled:${input.commandId}`),
-            text: input.text,
-            launchingIn: null,
-          });
-        }).pipe(Effect.catch(failRun(input.commandId)));
-        return yield* inner.threads.sendToThread({ ...input, text });
-      }),
+    sendToThread: Effect.fn("j5.sharing.scheduledRuns.sendToThread")(function* (input) {
+      const taskId = input.scheduledTaskId;
+      if (taskId === undefined) return yield* inner.threads.sendToThread(input);
+      const text = yield* Effect.gen(function* () {
+        if (!(yield* shared.isShared(input.threadId))) return input.text;
+        return yield* stamp({
+          taskId,
+          commandId: input.commandId,
+          threadId: input.threadId,
+          messageId: input.messageId ?? MessageId.make(`message:j5:scheduled:${input.commandId}`),
+          text: input.text,
+          launchingIn: null,
+        });
+      }).pipe(Effect.catch(failRun(input.commandId)));
+      return yield* inner.threads.sendToThread({ ...input, text });
+    }),
   });
 
   const launch = ThreadLaunchService.of({
     ...inner.launch,
-    launch: (input) =>
-      Effect.gen(function* () {
-        const first = input.initialMessage;
-        const taskId = first?.scheduledTaskId;
-        if (first === undefined || taskId === undefined || input.threadId !== undefined) {
-          return yield* inner.launch.launch(input);
-        }
-        const stamped = yield* Effect.gen(function* () {
-          // A shared conversation's messages are recorded under their thread, so the run's thread
-          // is named before it is made, the same for each retry of the run's command.
-          const threadId = ThreadId.make(
-            `thread:j5:scheduled:${NodeCrypto.createHash("sha256").update(input.commandId).digest("hex").slice(0, 32)}`,
-          );
-          if (!(yield* shared.isShared(threadId, input.projectId))) return input;
-          const messageId =
-            first.messageId ?? MessageId.make(`message:j5:scheduled:${input.commandId}`);
-          const text = yield* stamp({
-            taskId,
-            commandId: input.commandId,
-            threadId,
-            messageId,
-            text: first.text,
-            launchingIn: input.projectId,
-          });
-          return { ...input, threadId, initialMessage: { ...first, messageId, text } };
-        }).pipe(Effect.catch(failRun(input.commandId)), Effect.orDie);
-        return yield* inner.launch.launch(stamped);
-      }),
+    launch: Effect.fn("j5.sharing.scheduledRuns.launch")(function* (input) {
+      const first = input.initialMessage;
+      const taskId = first?.scheduledTaskId;
+      if (first === undefined || taskId === undefined || input.threadId !== undefined) {
+        return yield* inner.launch.launch(input);
+      }
+      const stamped = yield* Effect.gen(function* () {
+        // A shared conversation's messages are recorded under their thread, so the run's thread
+        // is named before it is made, the same for each retry of the run's command.
+        const threadId = ThreadId.make(
+          `thread:j5:scheduled:${NodeCrypto.createHash("sha256").update(input.commandId).digest("hex").slice(0, 32)}`,
+        );
+        if (!(yield* shared.isShared(threadId, input.projectId))) return input;
+        const messageId =
+          first.messageId ?? MessageId.make(`message:j5:scheduled:${input.commandId}`);
+        const text = yield* stamp({
+          taskId,
+          commandId: input.commandId,
+          threadId,
+          messageId,
+          text: first.text,
+          launchingIn: input.projectId,
+        });
+        return { ...input, threadId, initialMessage: { ...first, messageId, text } };
+      }).pipe(Effect.catch(failRun(input.commandId)), Effect.orDie);
+      return yield* inner.launch.launch(stamped);
+    }),
   });
 
   return { threads, launch };

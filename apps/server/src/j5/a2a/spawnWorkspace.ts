@@ -393,8 +393,8 @@ const make = Effect.gen(function* () {
     };
   });
 
-  const inspect: SpawnWorkspaceServiceShape["inspect"] = (caller) =>
-    Effect.gen(function* () {
+  const inspect: SpawnWorkspaceServiceShape["inspect"] = Effect.fn("j5.spawnWorkspace.inspect")(
+    function* (caller) {
       const workspaceRoot = yield* projectRoot(caller.projectId);
       const cwd = caller.worktreePath ?? workspaceRoot;
       // Membership comes from upstream's ref snapshot, which coalesces refreshes for 5 seconds,
@@ -430,14 +430,16 @@ const make = Effect.gen(function* () {
         localBranchNames: caller.checkBranches ? yield* git.listLocalBranchNames(cwd) : [],
         missingBaseRefs,
       } satisfies SpawnCheckout;
-    }).pipe(
-      Effect.catch((cause) =>
-        Effect.succeed({ readable: false, problem: detailOf(cause) } satisfies SpawnCheckout),
-      ),
-    );
+    },
+    Effect.catch((cause) =>
+      Effect.succeed({ readable: false, problem: detailOf(cause) } satisfies SpawnCheckout),
+    ),
+  );
 
-  const workspaceOptions: SpawnWorkspaceServiceShape["workspaceOptions"] = (caller) =>
-    Effect.gen(function* () {
+  const workspaceOptions: SpawnWorkspaceServiceShape["workspaceOptions"] = Effect.fn(
+    "j5.spawnWorkspace.workspaceOptions",
+  )(
+    function* (caller) {
       const workspaceRoot = yield* projectRoot(caller.projectId);
       const cwd = caller.worktreePath ?? workspaceRoot;
       const listed = yield* listWorktrees(cwd, workspaceRoot);
@@ -447,7 +449,9 @@ const make = Effect.gen(function* () {
         cwd,
         worktrees: listed.worktrees,
       };
-    }).pipe(Effect.catch(() => Effect.succeed(NO_WORKSPACE_OPTIONS)));
+    },
+    Effect.catch(() => Effect.succeed(NO_WORKSPACE_OPTIONS)),
+  );
 
   const withSpawnStart: SpawnWorkspaceServiceShape["withSpawnStart"] = (input, effect) =>
     // The check, the add, and the releasing finalizer run with no interruptible gap, so an

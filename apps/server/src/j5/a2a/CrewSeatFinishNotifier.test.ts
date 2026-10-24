@@ -350,7 +350,7 @@ it.effect("tells the Captain how each finished seat ended, and settles nothing",
         assert.match(scoutNotice.text, /^<j5_seat_finished>\nrun_status: failed\nfailure: /);
         assert.include(
           scoutNotice.text,
-          "failure: provider_error — API Error: Can't reach the API server",
+          "failure: provider_error: API Error: Can't reach the API server",
         );
         assert.include(scoutNotice.text, "seat: scout");
         assert.include(scoutNotice.text, "handoff: none declared");

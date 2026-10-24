@@ -188,22 +188,24 @@ export const pairingLinkForPerson = Effect.fn("j5.sharing.cliPairing.pairingLink
     // The link and the record of whose it is commit together: a link made without it would pair
     // a device the server could not place. Upstream's link is written through the same database
     // client (`cliEnvironmentAuth` builds both over one runtime).
-    const mintFor = (personId: ParticipantId, levels: ReadonlyArray<HeldLevel>) =>
-      Effect.gen(function* () {
-        const granted = devicePermissions(highestLevel(levels.map((held) => held.level)), ceiling);
-        if (granted.length === 0) {
-          return yield* refuse(`--scope gives nothing within ${name}'s level.`);
-        }
-        const link = yield* input.mint(granted);
-        yield* intents.record({
-          pairingLinkId: link.id,
-          credential: link.credential,
-          personId,
-          linkId: null,
-          ceiling,
-        });
-        return link;
+    const mintFor = Effect.fn("j5.sharing.cliPairing.mintFor")(function* (
+      personId: ParticipantId,
+      levels: ReadonlyArray<HeldLevel>,
+    ) {
+      const granted = devicePermissions(highestLevel(levels.map((held) => held.level)), ceiling);
+      if (granted.length === 0) {
+        return yield* refuse(`--scope gives nothing within ${name}'s level.`);
+      }
+      const link = yield* input.mint(granted);
+      yield* intents.record({
+        pairingLinkId: link.id,
+        credential: link.credential,
+        personId,
+        linkId: null,
+        ceiling,
       });
+      return link;
+    });
     const existing = everyone.find(
       (record) =>
         record.person.displayName !== null &&

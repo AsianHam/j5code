@@ -7,4 +7,4 @@
  * nightlies are stamped with the next patch version. A pin on `main` or a nightly tag takes that
  * next version, and a pin on a release tag takes the tag's.
  */
-export const J5_UPSTREAM_T3_CODE_VERSION = "0.1.1";
+export const J5_UPSTREAM_T3_CODE_VERSION = "0.1.3";

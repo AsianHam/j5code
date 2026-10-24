@@ -84,9 +84,8 @@ export function PlaybookConversationDialog({
   const launch = useRef<{ key: string; target: Parameters<typeof startTurn>[0] } | null>(null);
   async function submit() {
     if (!workspace || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
+    // The compiler cannot lower a throw inside try, so the steps throw from their own function.
+    const openConversation = async () => {
       if (name !== null) {
         if (
           (await openPlaybookDraft(workspace, `Start playbook ${name}`, openThread)) === "preserved"
@@ -149,12 +148,16 @@ export function PlaybookConversationDialog({
           params: buildThreadRouteParams(threadRef),
         });
       }
+    };
+    setBusy(true);
+    setError(null);
+    try {
+      await openConversation();
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not open the conversation.");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   }
   return (
     <Dialog

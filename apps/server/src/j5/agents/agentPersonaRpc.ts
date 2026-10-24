@@ -68,64 +68,65 @@ export const makeAgentPersonaRpcHandlers = Effect.fn("j5.makeAgentPersonaRpcHand
       Effect.provideService(SqlClient.SqlClient, sql),
     );
     return {
-      [METHODS.getAgentPersonaCatalog]: (_input: Input<"getAgentPersonaCatalog">) =>
-        Effect.gen(function* () {
-          const current = yield* library.catalog().pipe(Effect.mapError(catalogError));
-          const catalog = buildAgentPersonaCatalog(yield* deps.providers, current.definitions);
-          const importedIds = new Set(current.importedIds);
-          const digests = new Map(
-            [...current.definitions, ...current.removedSources].map((definition) => [
+      [METHODS.getAgentPersonaCatalog]: Effect.fn(
+        "j5.agents.agentPersonaRpc.getAgentPersonaCatalog",
+      )(function* (_input: Input<"getAgentPersonaCatalog">) {
+        const current = yield* library.catalog().pipe(Effect.mapError(catalogError));
+        const catalog = buildAgentPersonaCatalog(yield* deps.providers, current.definitions);
+        const importedIds = new Set(current.importedIds);
+        const digests = new Map(
+          [...current.definitions, ...current.removedSources].map((definition) => [
+            definition.id,
+            definitionDigest(definition),
+          ]),
+        );
+        const editable = new Map(
+          current.definitions
+            .filter(({ id }) => importedIds.has(id))
+            .map((definition) => [
               definition.id,
-              definitionDigest(definition),
+              {
+                definitionDigest: definitionDigest(definition),
+                modelRoute: definition.modelRoute,
+              },
             ]),
-          );
-          const editable = new Map(
-            current.definitions
-              .filter(({ id }) => importedIds.has(id))
-              .map((definition) => [
-                definition.id,
-                {
-                  definitionDigest: definitionDigest(definition),
-                  modelRoute: definition.modelRoute,
-                },
-              ]),
-          );
-          const disabledIds = new Set(current.disabledIds);
-          const origin = (personaId: string) => {
-            const path = current.sourcePaths.get(personaId);
-            return importedIds.has(personaId)
-              ? { kind: "imported" as const }
-              : path === undefined
-                ? { kind: "bundled" as const }
-                : { kind: "folder" as const, path };
-          };
-          const removed = buildAgentPersonaCatalog(yield* deps.providers, current.removedSources);
-          return {
-            personas: [
-              ...catalog.personas.map((persona) => ({
-                ...persona,
-                imported: importedIds.has(persona.personaId),
-                origin: origin(persona.personaId),
-                definitionDigest: digests.get(persona.personaId)!,
-                ...(editable.has(persona.personaId)
-                  ? { editable: editable.get(persona.personaId)! }
-                  : {}),
-                availability: disabledIds.has(persona.personaId)
-                  ? { status: "unavailable" as const, reason: "disabled" as const }
-                  : persona.availability,
-              })),
-              ...removed.personas.map((persona) => ({
-                ...persona,
-                imported: false,
-                removed: true,
-                origin: origin(persona.personaId),
-                definitionDigest: digests.get(persona.personaId)!,
-                availability: { status: "unavailable" as const, reason: "removed" as const },
-              })),
-            ],
-            policyEnforcement: agentPersonaPolicyEnforcement(),
-          };
-        }),
+        );
+        const disabledIds = new Set(current.disabledIds);
+        const origin = (personaId: string) => {
+          const path = current.sourcePaths.get(personaId);
+          return importedIds.has(personaId)
+            ? { kind: "imported" as const }
+            : path === undefined
+              ? { kind: "bundled" as const }
+              : { kind: "folder" as const, path };
+        };
+        const removed = buildAgentPersonaCatalog(yield* deps.providers, current.removedSources);
+        return {
+          personas: [
+            ...catalog.personas.map((persona) => ({
+              ...persona,
+              imported: importedIds.has(persona.personaId),
+              origin: origin(persona.personaId),
+              definitionDigest: digests.get(persona.personaId)!,
+              ...(editable.has(persona.personaId)
+                ? { editable: editable.get(persona.personaId)! }
+                : {}),
+              availability: disabledIds.has(persona.personaId)
+                ? { status: "unavailable" as const, reason: "disabled" as const }
+                : persona.availability,
+            })),
+            ...removed.personas.map((persona) => ({
+              ...persona,
+              imported: false,
+              removed: true,
+              origin: origin(persona.personaId),
+              definitionDigest: digests.get(persona.personaId)!,
+              availability: { status: "unavailable" as const, reason: "removed" as const },
+            })),
+          ],
+          policyEnforcement: agentPersonaPolicyEnforcement(),
+        };
+      }),
       [METHODS.importAgentPersonas]: (input: Input<"importAgentPersonas">) =>
         library
           .importFiles(input)
@@ -170,20 +171,20 @@ export const makeAgentPersonaRpcHandlers = Effect.fn("j5.makeAgentPersonaRpcHand
         ),
       [METHODS.getAgentPersonaUsage]: (_input: Input<"getAgentPersonaUsage">) =>
         usage().pipe(Effect.mapError(catalogError)),
-      [METHODS.getAgentPersonaLibrarySources]: (_input: Input<"getAgentPersonaLibrarySources">) =>
-        Effect.gen(function* () {
-          const current = yield* library.sources().pipe(Effect.mapError(catalogError));
-          const folders = yield* Effect.forEach(
-            current.folders,
-            (folder) =>
-              (folder.exists
-                ? agentPersonaFolderGitStatus(folder.path)
-                : Effect.succeed(null)
-              ).pipe(Effect.map((git) => ({ ...folder, git }))),
-            { concurrency: 4 },
-          );
-          return { ...current, folders };
-        }),
+      [METHODS.getAgentPersonaLibrarySources]: Effect.fn(
+        "j5.agents.agentPersonaRpc.getAgentPersonaLibrarySources",
+      )(function* (_input: Input<"getAgentPersonaLibrarySources">) {
+        const current = yield* library.sources().pipe(Effect.mapError(catalogError));
+        const folders = yield* Effect.forEach(
+          current.folders,
+          (folder) =>
+            (folder.exists ? agentPersonaFolderGitStatus(folder.path) : Effect.succeed(null)).pipe(
+              Effect.map((git) => ({ ...folder, git })),
+            ),
+          { concurrency: 4 },
+        );
+        return { ...current, folders };
+      }),
       [METHODS.getAgentHandoffs]: (input: Input<"getAgentHandoffs">) =>
         handoffs.list({ threadIds: input.threadIds }).pipe(
           Effect.map((list) => ({ handoffs: list })),

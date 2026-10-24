@@ -78,8 +78,8 @@ const reachedAgent = (run: CarrierRun) =>
 /**
  * Over the server's records. `touch` moves a thread's authors for the clients that read them.
  */
-export const makeMessageStamps = (touch: (threadId: ThreadId) => Effect.Effect<unknown>) =>
-  Effect.gen(function* () {
+export const makeMessageStamps = Effect.fn("j5.sharing.sharedConversation.makeMessageStamps")(
+  function* (touch: (threadId: ThreadId) => Effect.Effect<unknown>) {
     const sql = yield* SqlClient.SqlClient;
     const people = yield* PersonAccess;
     const shared = yield* SharedThreads;
@@ -221,4 +221,5 @@ export const makeMessageStamps = (touch: (threadId: ThreadId) => Effect.Effect<u
     });
 
     return { writerLabel, authorOn, announce, recordAuthor };
-  });
+  },
+);

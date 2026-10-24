@@ -93,22 +93,24 @@ const READS_A_NARROW_PERSON_SENDS: ReadonlySet<string> = new Set([
  * to be such a person's only the reads in `READS_A_NARROW_PERSON_SENDS` go out. The check does
  * not wait for that answer, so no one's reads are delayed.
  */
-const j5Read = <TTag extends J5ReadTag>(tag: TTag, input: EnvironmentRpcInput<TTag>) =>
-  Effect.gen(function* () {
-    const supervisor = yield* EnvironmentSupervisor;
-    if (!READS_A_NARROW_PERSON_SENDS.has(tag) && (yield* connectionIsKnownNarrow)) {
-      return yield* new EnvironmentRpcUnavailableError({
-        environmentId: supervisor.target.environmentId,
-        message: "This is not shared with you on this server.",
-      });
-    }
-    return yield* request(tag, input).pipe(
-      Effect.catchCauseIf(
-        (cause) => isUnknownRequestTag(cause, tag),
-        () => Effect.fail(needsNewerServer(supervisor.target.environmentId, "view")),
-      ),
-    );
-  });
+const j5Read = Effect.fn("j5.read")(function* <TTag extends J5ReadTag>(
+  tag: TTag,
+  input: EnvironmentRpcInput<TTag>,
+) {
+  const supervisor = yield* EnvironmentSupervisor;
+  if (!READS_A_NARROW_PERSON_SENDS.has(tag) && (yield* connectionIsKnownNarrow)) {
+    return yield* new EnvironmentRpcUnavailableError({
+      environmentId: supervisor.target.environmentId,
+      message: "This is not shared with you on this server.",
+    });
+  }
+  return yield* request(tag, input).pipe(
+    Effect.catchCauseIf(
+      (cause) => isUnknownRequestTag(cause, tag),
+      () => Effect.fail(needsNewerServer(supervisor.target.environmentId, "view")),
+    ),
+  );
+});
 
 /** J5 uses the same environment registry, query lifecycle, and command dispatch as other features. */
 export function createJ5EnvironmentAtoms<R, E>(

@@ -11,7 +11,7 @@ import type {
   SkillLinkInspect,
 } from "@t3tools/contracts";
 import type { SkillOrigin } from "@t3tools/shared/j5/skillInventory";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MoreHorizontalIcon } from "lucide-react";
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
@@ -81,23 +81,20 @@ export function SkillLinksPanel(props: Props) {
     );
     running.current = true;
     setBusy(true);
-    try {
-      const result = await remove({
-        environmentId: props.environmentId,
-        input: { id, ...(forget ? { forget: true } : {}) },
-      });
-      showResult(
-        result._tag === "Success"
-          ? result.value.action === "removed" && changesAvailability
-            ? skillChangeFeedback(result.value.message)
-            : result.value.message
-          : messageOf(squashAtomCommandFailure(result)),
-      );
-      links.refresh();
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    const result = await remove({
+      environmentId: props.environmentId,
+      input: { id, ...(forget ? { forget: true } : {}) },
+    });
+    running.current = false;
+    setBusy(false);
+    showResult(
+      result._tag === "Success"
+        ? result.value.action === "removed" && changesAvailability
+          ? skillChangeFeedback(result.value.message)
+          : result.value.message
+        : messageOf(squashAtomCommandFailure(result)),
+    );
+    links.refresh();
   }
   return (
     <>
@@ -240,18 +237,15 @@ export function LinkSkillDialog(
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
-  const request = useMemo(
-    () =>
-      targetId && props.connected
-        ? {
-            source: props.selection.source,
-            targetInstanceId: targetId,
-            scope,
-            ...(props.projectId ? { projectId: props.projectId } : {}),
-          }
-        : null,
-    [props.selection.source, targetId, scope, props.projectId, props.connected],
-  );
+  const request =
+    targetId && props.connected
+      ? {
+          source: props.selection.source,
+          targetInstanceId: targetId,
+          scope,
+          ...(props.projectId ? { projectId: props.projectId } : {}),
+        }
+      : null;
   useEffect(() => {
     let active = true;
     if (request && props.connected)
@@ -271,28 +265,25 @@ export function LinkSkillDialog(
     running.current = true;
     setBusy(true);
     setError(null);
-    try {
-      const response = await create({
-        environmentId: props.environmentId,
-        input: {
-          ...request,
-          expectedSourcePath: checked.sourcePath,
-          expectedDestinationPath: checked.destinationPath,
-        },
-      });
-      if (response._tag === "Success")
-        props.onLinked(
-          response.value.action === "created"
-            ? skillChangeFeedback(response.value.message)
-            : response.value.message,
-        );
-      else {
-        setError({ request, message: messageOf(squashAtomCommandFailure(response)) });
-        setResult(null);
-      }
-    } finally {
-      running.current = false;
-      setBusy(false);
+    const response = await create({
+      environmentId: props.environmentId,
+      input: {
+        ...request,
+        expectedSourcePath: checked.sourcePath,
+        expectedDestinationPath: checked.destinationPath,
+      },
+    });
+    running.current = false;
+    setBusy(false);
+    if (response._tag === "Success")
+      props.onLinked(
+        response.value.action === "created"
+          ? skillChangeFeedback(response.value.message)
+          : response.value.message,
+      );
+    else {
+      setError({ request, message: messageOf(squashAtomCommandFailure(response)) });
+      setResult(null);
     }
   }
   return (
@@ -436,16 +427,12 @@ function UnlinkSkillDialog(
     request: SkillLinkInspect;
     preview: SkillDeletePreview;
   } | null>(null);
-  const request = useMemo(
-    () =>
-      props.connected
-        ? {
-            source: props.selection.source,
-            ...(props.projectId ? { projectId: props.projectId } : {}),
-          }
-        : null,
-    [props.connected, props.selection.source, props.projectId],
-  );
+  const request = props.connected
+    ? {
+        source: props.selection.source,
+        ...(props.projectId ? { projectId: props.projectId } : {}),
+      }
+    : null;
   const [inspection, setInspection] = useState<{
     request: SkillLinkInspect;
     options: ReadonlyArray<ExistingSkillLink> | null;
@@ -496,40 +483,37 @@ function UnlinkSkillDialog(
     running.current = true;
     setBusy(true);
     setInspection((previous) => (previous ? { ...previous, errors: [] } : previous));
-    try {
-      const result = await unlink({
-        environmentId: props.environmentId,
-        input: { links: selected.map((option) => option.request) },
-      });
-      if (result._tag !== "Success") {
-        setInspection((previous) =>
-          previous
-            ? { ...previous, errors: [messageOf(squashAtomCommandFailure(result))] }
-            : previous,
-        );
-        return;
-      }
-      const removed = new Set(result.value.removedPaths);
+    const result = await unlink({
+      environmentId: props.environmentId,
+      input: { links: selected.map((option) => option.request) },
+    });
+    running.current = false;
+    setBusy(false);
+    if (result._tag !== "Success") {
       setInspection((previous) =>
         previous
-          ? {
-              ...previous,
-              options:
-                previous.options?.filter(
-                  (entry) => !removed.has(entry.request.expectedDestinationPath),
-                ) ?? null,
-              errors: result.value.failed.map((failure) => `${failure.path}: ${failure.message}`),
-            }
+          ? { ...previous, errors: [messageOf(squashAtomCommandFailure(result))] }
           : previous,
       );
-      const counts = `${removed.size} ${removed.size === 1 ? "link" : "links"} removed. Source files stay in place.${result.value.refreshFailed ? " Discovery refresh failed; retry Refresh." : ""}`;
-      const summary = removed.size > 0 ? skillChangeFeedback(counts) : counts;
-      setMessage(summary);
-      props.onUnlinked(summary);
-    } finally {
-      running.current = false;
-      setBusy(false);
+      return;
     }
+    const removed = new Set(result.value.removedPaths);
+    setInspection((previous) =>
+      previous
+        ? {
+            ...previous,
+            options:
+              previous.options?.filter(
+                (entry) => !removed.has(entry.request.expectedDestinationPath),
+              ) ?? null,
+            errors: result.value.failed.map((failure) => `${failure.path}: ${failure.message}`),
+          }
+        : previous,
+    );
+    const counts = `${removed.size} ${removed.size === 1 ? "link" : "links"} removed. Source files stay in place.${result.value.refreshFailed ? " Discovery refresh failed; retry Refresh." : ""}`;
+    const summary = removed.size > 0 ? skillChangeFeedback(counts) : counts;
+    setMessage(summary);
+    props.onUnlinked(summary);
   }
 
   async function prepareDeletion() {
@@ -537,44 +521,38 @@ function UnlinkSkillDialog(
     running.current = true;
     setBusy(true);
     setInspection((previous) => (previous ? { ...previous, errors: [] } : previous));
-    try {
-      const result = await previewDeletion({ environmentId: props.environmentId, input: request });
-      if (result._tag === "Success") setDeletion({ request, preview: result.value });
-      else
-        setInspection((previous) =>
-          previous
-            ? { ...previous, errors: [messageOf(squashAtomCommandFailure(result))] }
-            : previous,
-        );
-    } finally {
-      running.current = false;
-      setBusy(false);
-    }
+    const result = await previewDeletion({ environmentId: props.environmentId, input: request });
+    running.current = false;
+    setBusy(false);
+    if (result._tag === "Success") setDeletion({ request, preview: result.value });
+    else
+      setInspection((previous) =>
+        previous
+          ? { ...previous, errors: [messageOf(squashAtomCommandFailure(result))] }
+          : previous,
+      );
   }
 
   async function permanentlyDelete() {
     if (running.current || !request || !checkedDeletion) return;
     running.current = true;
     setBusy(true);
-    try {
-      const result = await deleteSkill({
-        environmentId: props.environmentId,
-        input: { ...request, ...checkedDeletion },
-      });
-      if (result._tag === "Success") {
-        props.onUnlinked(skillChangeFeedback(result.value.message));
-        props.onClose();
-      } else {
-        setDeletion(null);
-        setInspection((previous) =>
-          previous
-            ? { ...previous, errors: [messageOf(squashAtomCommandFailure(result))] }
-            : previous,
-        );
-      }
-    } finally {
-      running.current = false;
-      setBusy(false);
+    const result = await deleteSkill({
+      environmentId: props.environmentId,
+      input: { ...request, ...checkedDeletion },
+    });
+    running.current = false;
+    setBusy(false);
+    if (result._tag === "Success") {
+      props.onUnlinked(skillChangeFeedback(result.value.message));
+      props.onClose();
+    } else {
+      setDeletion(null);
+      setInspection((previous) =>
+        previous
+          ? { ...previous, errors: [messageOf(squashAtomCommandFailure(result))] }
+          : previous,
+      );
     }
   }
 

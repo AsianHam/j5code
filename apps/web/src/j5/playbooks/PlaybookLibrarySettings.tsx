@@ -134,9 +134,8 @@ function PlaybookLibrary({
       sources.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Playbook action failed.");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   }
   async function changeFolders(folders: string[]) {
     const result = await setFolders({ environmentId, input: { folders } });

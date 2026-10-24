@@ -436,35 +436,35 @@ const makeLayer = (daemon: boolean) =>
             ),
           );
 
-      const coversFailure: CrewLaunchReporterShape["coversFailure"] = (threadId, run) =>
-        Effect.gen(function* () {
-          const membership = yield* crews.findMembership(participantIdForThread(threadId));
-          if (membership === null) return false;
-          const instance = yield* crews.read(membership.crewInstanceId);
-          if (instance === null) return false;
-          const candidates = yield* proposals.listForCaptain(instance.captainParticipantId);
-          const proposal = candidates.find(
-            (candidate) =>
-              candidate.crewInstanceId === instance.id &&
-              candidate.status === "approved" &&
-              crewSeatReservedBy(candidate.id)({
-                participantId: participantIdForThread(threadId),
-                seatName: membership.seatName,
-              }) &&
-              run.userMessageId === crewSeatBriefMessageId(candidate.id, membership.seatName),
-          );
-          if (proposal === undefined) return false;
-          const captain = yield* threads.getThreadProjection(instance.captainThreadId);
-          const report = captain.messages.find(
-            (message) => message.id === noticeMessageId(proposal.id),
-          );
-          if (report !== undefined)
-            return report.text.split("\n").includes(`failed_run: ${run.id}`);
-          // The approval and instance are durable before any brief starts. Cover early failures
-          // even before watch(), and after restart while the report is still owed. Once posted,
-          // only the exact failed runs in that durable message are suppressed; later failures speak.
-          return proposal.reportedAt === null;
-        });
+      const coversFailure: CrewLaunchReporterShape["coversFailure"] = Effect.fn(
+        "j5.a2a.crewLaunchReporter.coversFailure",
+      )(function* (threadId, run) {
+        const membership = yield* crews.findMembership(participantIdForThread(threadId));
+        if (membership === null) return false;
+        const instance = yield* crews.read(membership.crewInstanceId);
+        if (instance === null) return false;
+        const candidates = yield* proposals.listForCaptain(instance.captainParticipantId);
+        const proposal = candidates.find(
+          (candidate) =>
+            candidate.crewInstanceId === instance.id &&
+            candidate.status === "approved" &&
+            crewSeatReservedBy(candidate.id)({
+              participantId: participantIdForThread(threadId),
+              seatName: membership.seatName,
+            }) &&
+            run.userMessageId === crewSeatBriefMessageId(candidate.id, membership.seatName),
+        );
+        if (proposal === undefined) return false;
+        const captain = yield* threads.getThreadProjection(instance.captainThreadId);
+        const report = captain.messages.find(
+          (message) => message.id === noticeMessageId(proposal.id),
+        );
+        if (report !== undefined) return report.text.split("\n").includes(`failed_run: ${run.id}`);
+        // The approval and instance are durable before any brief starts. Cover early failures
+        // even before watch(), and after restart while the report is still owed. Once posted,
+        // only the exact failed runs in that durable message are suppressed; later failures speak.
+        return proposal.reportedAt === null;
+      });
 
       const reconcile: CrewLaunchReporterShape["reconcile"] = Effect.gen(function* () {
         const unreported = yield* proposals.listUnreported();

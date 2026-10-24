@@ -72,30 +72,27 @@ const make = Effect.gen(function* () {
   );
 
   return ArtifactMcpService.of({
-    list: (scope) =>
-      Effect.gen(function* () {
-        const projectId = yield* projectIdFor(scope);
-        return { entries: [...(yield* artifacts.list(projectId).pipe(mapWorkspaceError))] };
-      }),
-    read: (scope, path) =>
-      Effect.gen(function* () {
-        const projectId = yield* projectIdFor(scope);
-        return yield* artifacts.read({ projectId, relativePath: path }).pipe(mapWorkspaceError);
-      }),
-    write: (scope, input) =>
-      Effect.gen(function* () {
-        const projectId = yield* projectIdFor(scope);
-        // J5: saved-agent handoffs keep every version inside the one file; other artifacts overwrite.
-        const writeArtifact = input.path.replaceAll("\\", "/").startsWith("handoffs/")
-          ? artifacts.writeVersioned
-          : artifacts.write;
-        const artifact = yield* writeArtifact({
-          projectId,
-          relativePath: input.path,
-          content: input.content,
-        }).pipe(mapWorkspaceError);
-        return { artifact, logicalPath: `artifacts/${artifact.path}` };
-      }),
+    list: Effect.fn("ArtifactMcpService.list")(function* (scope) {
+      const projectId = yield* projectIdFor(scope);
+      return { entries: [...(yield* artifacts.list(projectId).pipe(mapWorkspaceError))] };
+    }),
+    read: Effect.fn("ArtifactMcpService.read")(function* (scope, path) {
+      const projectId = yield* projectIdFor(scope);
+      return yield* artifacts.read({ projectId, relativePath: path }).pipe(mapWorkspaceError);
+    }),
+    write: Effect.fn("ArtifactMcpService.write")(function* (scope, input) {
+      const projectId = yield* projectIdFor(scope);
+      // J5: saved-agent handoffs keep every version inside the one file; other artifacts overwrite.
+      const writeArtifact = input.path.replaceAll("\\", "/").startsWith("handoffs/")
+        ? artifacts.writeVersioned
+        : artifacts.write;
+      const artifact = yield* writeArtifact({
+        projectId,
+        relativePath: input.path,
+        content: input.content,
+      }).pipe(mapWorkspaceError);
+      return { artifact, logicalPath: `artifacts/${artifact.path}` };
+    }),
   });
 });
 

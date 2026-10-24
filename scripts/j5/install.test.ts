@@ -65,10 +65,7 @@ describe.skipIf(
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Expected a TCP listener");
-      const installer = INSTALLER.replaceAll(
-        "'",
-        "'\\''",
-      );
+      const installer = INSTALLER.replaceAll("'", "'\\''");
       // The installer edits the shell's startup file, so give it a scratch home and shell.
       const userHome = NodePath.join(root, "user");
       await NodeFSP.mkdir(userHome);
@@ -167,22 +164,18 @@ describe.skipIf(
     await NodeFSP.writeFile(NodePath.join(versionDir, "j5"), "#!/bin/sh\n", { mode: 0o755 });
     await NodeFSP.writeFile(NodePath.join(versionDir, ".install-complete"), "1.2.3\n");
     await configure({ home, bin });
-    const output = NodeChildProcess.execFileSync(
-      "sh",
-      [INSTALLER],
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          PATH: "/usr/bin:/bin",
-          HOME: home,
-          T3CODE_VERSION: "1.2.3",
-          J5CODE_HOME: NodePath.join(root, "j5home"),
-          T3CODE_INSTALL_BIN_DIR: bin,
-          ...environment({ home }),
-        },
+    const output = NodeChildProcess.execFileSync("sh", [INSTALLER], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        PATH: "/usr/bin:/bin",
+        HOME: home,
+        T3CODE_VERSION: "1.2.3",
+        J5CODE_HOME: NodePath.join(root, "j5home"),
+        T3CODE_INSTALL_BIN_DIR: bin,
+        ...environment({ home }),
       },
-    );
+    });
     return { root, home, bin, output };
   };
 

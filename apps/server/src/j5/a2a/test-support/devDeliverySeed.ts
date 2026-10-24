@@ -224,8 +224,8 @@ const isInside = (path: Path.Path, candidate: string, parent: string) => {
  * linked git worktree's own `.j5code` is that checkout's disposable dev state,
  * so a base directory inside one is accepted wherever the worktree lives.
  */
-export const validateIsolatedBaseDir = (baseDir: string) =>
-  Effect.gen(function* () {
+export const validateIsolatedBaseDir = Effect.fn("j5.a2a.devDeliverySeed.validateIsolatedBaseDir")(
+  function* (baseDir: string) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     if (!path.isAbsolute(baseDir)) {
@@ -281,7 +281,8 @@ export const validateIsolatedBaseDir = (baseDir: string) =>
       return yield* sharedStateError;
     }
     return resolvedBaseDir;
-  });
+  },
+);
 
 const databasePathFor = (path: Path.Path, baseDir: string) =>
   path.resolve(baseDir, "userdata", "statev2.sqlite");
@@ -398,15 +399,16 @@ const makeRuntimeLayer = (databasePath: string, baseDir: string, cwd: string) =>
   return Layer.mergeAll(orchestration, a2a, exposedOutbox);
 };
 
-const readAllEvents = (ledgerProjectId: LedgerProjectId) =>
-  Effect.gen(function* () {
-    const ledger = yield* A2ALedger;
-    return (yield* ledger.readEvents({
-      projectId: ledgerProjectId,
-      cursor: { afterSeq: 0 },
-      limit: 1_000,
-    })).events;
-  });
+const readAllEvents = Effect.fn("j5.a2a.devDeliverySeed.readAllEvents")(function* (
+  ledgerProjectId: LedgerProjectId,
+) {
+  const ledger = yield* A2ALedger;
+  return (yield* ledger.readEvents({
+    projectId: ledgerProjectId,
+    cursor: { afterSeq: 0 },
+    limit: 1_000,
+  })).events;
+});
 
 const deliveredEventFor = (ledgerProjectId: LedgerProjectId, messageId: LedgerMessageId) =>
   readAllEvents(ledgerProjectId).pipe(
@@ -425,12 +427,12 @@ const deliveredEventFor = (ledgerProjectId: LedgerProjectId, messageId: LedgerMe
     }),
   );
 
-const interruptActiveSeedRun = (input: {
-  readonly projectId: ProjectId;
-  readonly threadId: ThreadId;
-  readonly commandId: CommandId;
-}) =>
-  Effect.gen(function* () {
+const interruptActiveSeedRun = Effect.fn("j5.a2a.devDeliverySeed.interruptActiveSeedRun")(
+  function* (input: {
+    readonly projectId: ProjectId;
+    readonly threadId: ThreadId;
+    readonly commandId: CommandId;
+  }) {
     const threads = yield* ThreadManagementService;
     const before = yield* threads.getThreadProjection(input.threadId);
     const active = latestActiveRun(before);
@@ -455,7 +457,8 @@ const interruptActiveSeedRun = (input: {
       );
     }
     return active.id;
-  });
+  },
+);
 
 const scenario = <A, E, R>(name: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.mapError((cause) => new DevDeliverySeedScenarioError({ name, cause })));
@@ -464,11 +467,8 @@ const scenario = <A, E, R>(name: string, effect: Effect.Effect<A, E, R>) =>
  * Takes and rolls back a real production-ledger write before any scenario.
  * A busy DB reaches the caller as a clear server-off precondition failure.
  */
-const assertTargetServerStopped = (input: {
-  readonly projectId: LedgerProjectId;
-  readonly createdAt: string;
-}) =>
-  Effect.gen(function* () {
+const assertTargetServerStopped = Effect.fn("j5.a2a.devDeliverySeed.assertTargetServerStopped")(
+  function* (input: { readonly projectId: LedgerProjectId; readonly createdAt: string }) {
     const sql = yield* SqlClient.SqlClient;
     const ledger = yield* A2ALedger;
     yield* sql
@@ -484,18 +484,19 @@ const assertTargetServerStopped = (input: {
             : Effect.fail(new DevDeliverySeedServerOffError({ cause })),
         ),
       );
-  });
+  },
+);
 
-const joinScenarioAgents = (input: {
-  readonly projectId: LedgerProjectId;
-  readonly senderId: ParticipantId;
-  readonly senderThreadId: ThreadId;
-  readonly receiverId: ParticipantId;
-  readonly receiverThreadId: ThreadId;
-  readonly acceptedAt: string;
-  readonly commandId: CommCommandId;
-}) =>
-  Effect.gen(function* () {
+const joinScenarioAgents = Effect.fn("j5.a2a.devDeliverySeed.joinScenarioAgents")(
+  function* (input: {
+    readonly projectId: LedgerProjectId;
+    readonly senderId: ParticipantId;
+    readonly senderThreadId: ThreadId;
+    readonly receiverId: ParticipantId;
+    readonly receiverThreadId: ThreadId;
+    readonly acceptedAt: string;
+    readonly commandId: CommCommandId;
+  }) {
     const ledger = yield* A2ALedger;
     yield* ledger.appendEvents({
       commandId: input.commandId,
@@ -526,7 +527,8 @@ const joinScenarioAgents = (input: {
         },
       ],
     });
-  });
+  },
+);
 
 /**
  * Seeds the delivery scenarios into `requestedBaseDir`.
@@ -535,447 +537,444 @@ const joinScenarioAgents = (input: {
  * `project` to put the seed threads into a project that already exists in the
  * home, so the home keeps one project per directory.
  */
-export const runDevDeliverySeed = (
+export const runDevDeliverySeed = Effect.fn("j5.a2a.devDeliverySeed.runDevDeliverySeed")(function* (
   requestedBaseDir: string,
   options: {
     readonly project?: { readonly id: ProjectId; readonly workspaceRoot: string };
   } = {},
-) =>
-  Effect.gen(function* () {
-    const baseDir = yield* validateIsolatedBaseDir(requestedBaseDir);
-    const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
-    const runId = `j5-a2a-seed-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
-    const now = DateTime.formatIso(yield* DateTime.now);
-    const projectId = options.project?.id ?? ProjectId.make(`project:${runId}`);
-    const workspaceRoot = options.project?.workspaceRoot ?? process.cwd();
-    const senderThreadId = ThreadId.make(`thread:${runId}:sender`);
-    const receiverThreadId = ThreadId.make(`thread:${runId}:receiver`);
-    const senderId = ParticipantId.make(`agent:${runId}:sender`);
-    const receiverId = ParticipantId.make(`agent:${runId}:receiver`);
-    // A thread's home is its project, so the ledger is keyed by the project's id.
-    const ledgerProjectId = LedgerProjectId.make(projectId);
-    const runtime = makeRuntimeLayer(databasePathFor(path, baseDir), baseDir, workspaceRoot);
+) {
+  const baseDir = yield* validateIsolatedBaseDir(requestedBaseDir);
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const runId = `j5-a2a-seed-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
+  const now = DateTime.formatIso(yield* DateTime.now);
+  const projectId = options.project?.id ?? ProjectId.make(`project:${runId}`);
+  const workspaceRoot = options.project?.workspaceRoot ?? process.cwd();
+  const senderThreadId = ThreadId.make(`thread:${runId}:sender`);
+  const receiverThreadId = ThreadId.make(`thread:${runId}:receiver`);
+  const senderId = ParticipantId.make(`agent:${runId}:sender`);
+  const receiverId = ParticipantId.make(`agent:${runId}:receiver`);
+  // A thread's home is its project, so the ledger is keyed by the project's id.
+  const ledgerProjectId = LedgerProjectId.make(projectId);
+  const runtime = makeRuntimeLayer(databasePathFor(path, baseDir), baseDir, workspaceRoot);
 
-    const seed = Effect.gen(function* () {
-      const threads = yield* ThreadManagementService;
-      const ledger = yield* A2ALedger;
-      const sender = yield* A2ASendService;
-      const deliveries = yield* A2ADeliveryWorker;
-      const silence = yield* A2ASilenceDetector;
-      const inbox = yield* A2AHumanInbox;
-      const machines = yield* MachineParticipantService;
-      const outbox = yield* EffectOutboxV2;
+  const seed = Effect.gen(function* () {
+    const threads = yield* ThreadManagementService;
+    const ledger = yield* A2ALedger;
+    const sender = yield* A2ASendService;
+    const deliveries = yield* A2ADeliveryWorker;
+    const silence = yield* A2ASilenceDetector;
+    const inbox = yield* A2AHumanInbox;
+    const machines = yield* MachineParticipantService;
+    const outbox = yield* EffectOutboxV2;
 
-      yield* assertTargetServerStopped({
-        projectId: LedgerProjectId.make(seededId(runId, "server-off-preflight")),
-        createdAt: now,
-      });
-      // This is the production host-local registry bootstrap: it has no project or thread
-      // state and must exist before the real HumanInbox send/answer scenario can address a person.
-      const localOperatorPersonId = yield* ensureLocalOperatorHumanPerson(
-        yield* SqlClient.SqlClient,
-      );
+    yield* assertTargetServerStopped({
+      projectId: LedgerProjectId.make(seededId(runId, "server-off-preflight")),
+      createdAt: now,
+    });
+    // This is the production host-local registry bootstrap: it has no project or thread
+    // state and must exist before the real HumanInbox send/answer scenario can address a person.
+    const localOperatorPersonId = yield* ensureLocalOperatorHumanPerson(yield* SqlClient.SqlClient);
 
-      yield* scenario(
-        "bootstrap",
-        Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          if (options.project === undefined) {
-            // The seed runs no project commands, so it writes the project row the ledger reads
-            // titles from and a machine registration requires.
-            yield* sql`
+    yield* scenario(
+      "bootstrap",
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        if (options.project === undefined) {
+          // The seed runs no project commands, so it writes the project row the ledger reads
+          // titles from and a machine registration requires.
+          yield* sql`
               INSERT INTO projection_projects (
                 project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at
               ) VALUES (
                 ${projectId}, 'J5 disposable A2A seed', ${workspaceRoot}, '[]', ${now}, ${now}, NULL
               )
             `;
-          } else {
-            const existing = yield* sql<{ readonly workspaceRoot: string }>`
+        } else {
+          const existing = yield* sql<{ readonly workspaceRoot: string }>`
               SELECT workspace_root AS "workspaceRoot" FROM projection_projects
               WHERE project_id = ${projectId} AND deleted_at IS NULL
             `;
-            if (existing[0]?.workspaceRoot !== workspaceRoot) {
-              return yield* Effect.die(
-                `Project ${projectId} is not registered at ${workspaceRoot} in this home.`,
-              );
-            }
-          }
-          yield* threads.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make(seededId(runId, "bootstrap:sender-thread")),
-            threadId: senderThreadId,
-            projectId,
-            title: "J5 disposable A2A sender seed",
-            modelSelection: fakeModelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: workspaceRoot,
-            createdBy: "system",
-            creationSource: "server",
-          });
-          yield* threads.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make(seededId(runId, "bootstrap:receiver-thread")),
-            threadId: receiverThreadId,
-            projectId,
-            title: "J5 disposable A2A receiver seed",
-            modelSelection: fakeModelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: workspaceRoot,
-            createdBy: "system",
-            creationSource: "server",
-          });
-          yield* ledger.ensureProject({ projectId: ledgerProjectId, createdAt: now });
-          yield* joinScenarioAgents({
-            projectId: ledgerProjectId,
-            senderId,
-            senderThreadId,
-            receiverId,
-            receiverThreadId,
-            acceptedAt: now,
-            commandId: CommCommandId.make(seededId(runId, "bootstrap:membership")),
-          });
-        }),
-      );
-
-      const ta1 = yield* scenario(
-        "ta1-peer-exchange",
-        Effect.gen(function* () {
-          const result = yield* sender.send({
-            commandId: CommCommandId.make(seededId(runId, "ta1:send")),
-            senderThreadId,
-            to: receiverId,
-            message: "Peer delivery seed: please reply through this exchange.",
-            expectReply: true,
-            intent: "Seed a visible peer exchange.",
-            acceptedAt: now,
-          });
-          if (result.exchangeId === null)
-            return yield* Effect.die("TA1 seed did not open an exchange.");
-          yield* deliveries.drain;
-          yield* interruptActiveSeedRun({
-            projectId,
-            threadId: receiverThreadId,
-            commandId: CommandId.make(seededId(runId, "ta1:cancel-provider-start")),
-          });
-          return {
-            ledgerMessageId: result.messageId,
-            deliveryMessageId: deliveryMessageId(result.messageId),
-            exchangeId: result.exchangeId,
-            targetThreadId: receiverThreadId,
-          };
-        }),
-      );
-
-      const ta2 = yield* scenario(
-        "ta2-human-answer",
-        Effect.gen(function* () {
-          const opened = yield* sender.send({
-            commandId: CommCommandId.make(seededId(runId, "ta2:ask-human")),
-            senderThreadId,
-            to: localOperatorPersonId,
-            message: "Human inbox seed: reply through this exchange.",
-            expectReply: true,
-            intent: "Seed a real HumanInbox answer delivery.",
-            urgency: "soon",
-            acceptedAt: now,
-          });
-          if (opened.exchangeId === null) {
-            return yield* Effect.die("TA2 seed did not open a human exchange.");
-          }
-          yield* deliveries.drain;
-
-          const resolvedPersonId = yield* inbox.resolvePersonId();
-          if (resolvedPersonId !== localOperatorPersonId) {
-            return yield* Effect.die("TA2 HumanInbox resolved a different local operator.");
-          }
-          const pending = yield* inbox.list(resolvedPersonId);
-          const pendingItem = pending.find((item) => item.exchangeId === opened.exchangeId);
-          if (
-            pendingItem === undefined ||
-            pendingItem.senderId !== senderId ||
-            pendingItem.message !== "Human inbox seed: reply through this exchange."
-          ) {
-            return yield* Effect.die("TA2 seed did not create the expected HumanInbox item.");
-          }
-
-          const replyText = "Human inbox answer seed: this reply came through the real inbox.";
-          const answered = yield* inbox.answer({
-            commandId: CommCommandId.make(seededId(runId, "ta2:answer-human")),
-            personId: resolvedPersonId,
-            exchangeId: pendingItem.exchangeId,
-            message: replyText,
-            acceptedAt: now,
-          });
-          if (answered.exchangeState !== "closed" || answered.exchangeId !== opened.exchangeId) {
-            return yield* Effect.die("TA2 HumanInbox answer did not close its exchange.");
-          }
-          yield* deliveries.drain;
-
-          const replyDeliveryMessageId = deliveryMessageId(answered.messageId);
-          const projected = yield* threads.getThreadProjection(senderThreadId);
-          const reply = projected.messages.find((message) => message.id === replyDeliveryMessageId);
-          const expectedEnvelope = formatClosedHumanEnvelope({
-            senderId: localOperatorPersonId,
-            message: replyText,
-          });
-          if (
-            reply?.role !== "user" ||
-            reply.createdBy !== "user" ||
-            reply.creationSource !== "mcp" ||
-            reply.text !== expectedEnvelope
-          ) {
+          if (existing[0]?.workspaceRoot !== workspaceRoot) {
             return yield* Effect.die(
-              "TA2 reply was not the closed human envelope with user/MCP provenance.",
+              `Project ${projectId} is not registered at ${workspaceRoot} in this home.`,
             );
           }
-          yield* interruptActiveSeedRun({
-            projectId,
-            threadId: senderThreadId,
-            commandId: CommandId.make(seededId(runId, "ta2:cancel-provider-start")),
-          });
-          return {
-            personId: localOperatorPersonId,
-            inboxRequestLedgerMessageId: opened.messageId,
-            exchangeId: opened.exchangeId,
-            replyLedgerMessageId: answered.messageId,
-            replyDeliveryMessageId,
-            targetThreadId: senderThreadId,
-          };
-        }),
-      );
-
-      const ta3 = yield* scenario(
-        "ta3-silence",
-        Effect.gen(function* () {
-          const source = yield* sender.send({
-            commandId: CommCommandId.make(seededId(runId, "ta3:send")),
-            senderThreadId,
-            to: receiverId,
-            message: "Silence seed: this delivery will end before a reply.",
-            expectReply: true,
-            intent: "Seed a truthful silence notice.",
-            acceptedAt: now,
-          });
-          if (source.exchangeId === null) {
-            return yield* Effect.die("TA3 seed did not open an exchange.");
-          }
-          yield* deliveries.drain;
-          yield* interruptActiveSeedRun({
-            projectId,
-            threadId: receiverThreadId,
-            commandId: CommandId.make(seededId(runId, "ta3:cancel-provider-start")),
-          });
-          const delivered = yield* deliveredEventFor(ledgerProjectId, source.messageId);
-          const notices = yield* silence.handleDeliveryEvent(delivered);
-          const notice = notices[0];
-          if (notice?.kind !== "silence.notice") {
-            return yield* Effect.die("TA3 seed did not produce a silence notice.");
-          }
-          const noticeMessageId = LedgerMessageId.make(
-            `message:j5:a2a:silence:${encodeURIComponent(ledgerProjectId)}:${encodeURIComponent(source.exchangeId)}:${encodeURIComponent(source.messageId)}`,
-          );
-          yield* deliveries.drain;
-          yield* interruptActiveSeedRun({
-            projectId,
-            threadId: senderThreadId,
-            commandId: CommandId.make(seededId(runId, "ta3:cancel-notice-provider-start")),
-          });
-          return {
-            sourceLedgerMessageId: source.messageId,
-            sourceDeliveryMessageId: deliveryMessageId(source.messageId),
-            noticeLedgerMessageId: noticeMessageId,
-            noticeDeliveryMessageId: deliveryMessageId(noticeMessageId),
-            targetThreadId: senderThreadId,
-          };
-        }),
-      );
-
-      const machineMessage = yield* scenario(
-        "machine-message",
-        Effect.gen(function* () {
-          const { participant } = yield* machines.register({
-            commandId: CommCommandId.make(seededId(runId, "machine:register")),
-            projectId: ledgerProjectId,
-            // Machine names are unique across projects, and every run makes a
-            // new project, so a reused home needs a per-run name.
-            name: `seed-watchdog-${runId.slice(-12)}`,
-            acceptedAt: now,
-          });
-          const result = yield* sender.sendAsMachine({
-            commandId: CommCommandId.make(seededId(runId, "machine:send")),
-            senderParticipantId: participant.participantId,
-            to: receiverId,
-            message: "Machine delivery seed: the nightly check passed. No reply is possible.",
-            acceptedAt: now,
-          });
-          yield* deliveries.drain;
-          yield* interruptActiveSeedRun({
-            projectId,
-            threadId: receiverThreadId,
-            commandId: CommandId.make(seededId(runId, "machine:cancel-provider-start")),
-          });
-          return {
-            senderParticipantId: participant.participantId,
-            ledgerMessageId: result.messageId,
-            deliveryMessageId: deliveryMessageId(result.messageId),
-            targetThreadId: receiverThreadId,
-          };
-        }),
-      );
-
-      const rawFutureEnvelope = yield* scenario(
-        "raw-future-envelope",
-        Effect.gen(function* () {
-          const messageId = LedgerMessageId.make(seededId(runId, "raw:future-envelope"));
-          yield* ledger.appendEvents({
-            commandId: CommCommandId.make(seededId(runId, "raw:future-envelope")),
-            projectId: ledgerProjectId,
-            acceptedAt: now,
-            events: [
-              {
-                kind: "message.sent",
-                sender: SILENCE_DETECTOR_PARTICIPANT_ID,
-                receiver: receiverId,
-                exchangeId: null,
-                correlationId: CorrelationId.make(seededId(runId, "raw:future-correlation")),
-                payload: {
-                  messageId,
-                  text: "[Cross-agent messaging system notice: template-v999]\n\nThis deliberately future/unrecognized envelope must render as raw text.\n\nNo current renderer template owns this body.",
-                  originProjectId: ledgerProjectId,
-                  receiverProjectId: ledgerProjectId,
-                  exchangeRole: "none",
-                  envelopeChannel: "silence_notice",
-                },
-                createdAt: now,
-              },
-            ],
-          });
-          yield* deliveries.drain;
-          yield* interruptActiveSeedRun({
-            projectId,
-            threadId: receiverThreadId,
-            commandId: CommandId.make(seededId(runId, "raw:cancel-provider-start")),
-          });
-          return {
-            ledgerMessageId: messageId,
-            deliveryMessageId: deliveryMessageId(messageId),
-            targetThreadId: receiverThreadId,
-          };
-        }),
-      );
-
-      const normalNonA2AContrast = yield* scenario(
-        "normal-non-a2a-contrast",
-        Effect.gen(function* () {
-          const messageId = MessageId.make(`message:mcp:${runId}:thread-send:contrast`);
-          yield* threads.sendToThread({
-            projectId,
-            threadId: senderThreadId,
-            commandId: CommandId.make(seededId(runId, "normal:mcp-send")),
-            messageId,
-            text: "Normal MCP-shaped contrast: this must retain the generic timeline row.",
-            attachments: [],
-            modelSelection: fakeModelSelection,
-            mode: "queue",
-            createdBy: "agent",
-            creationSource: "mcp",
-          });
-          yield* interruptActiveSeedRun({
-            projectId,
-            threadId: senderThreadId,
-            commandId: CommandId.make(seededId(runId, "normal:cancel-provider-start")),
-          });
-          return { messageId, targetThreadId: senderThreadId };
-        }),
-      );
-
-      const senderProjection = yield* threads.getThreadProjection(senderThreadId);
-      const receiverProjection = yield* threads.getThreadProjection(receiverThreadId);
-      const projections = [senderProjection, receiverProjection];
-      const activeRunCount = projections
-        .flatMap((projection) => projection.runs)
-        .filter(isActiveRun).length;
-      const activeProviderSessionCount = projections.reduce(
-        (total, projection) => total + projection.providerSessions.length,
-        0,
-      );
-      if (activeRunCount !== 0 || activeProviderSessionCount !== 0) {
-        return yield* Effect.die("Disposable seed left provider-executable work behind.");
-      }
-      const effectedCommandIds = [
-        deliveryCommandId(ta1.ledgerMessageId),
-        deliveryCommandId(ta2.replyLedgerMessageId),
-        deliveryCommandId(ta3.sourceLedgerMessageId),
-        deliveryCommandId(ta3.noticeLedgerMessageId),
-        deliveryCommandId(machineMessage.ledgerMessageId),
-        deliveryCommandId(rawFutureEnvelope.ledgerMessageId),
-        CommandId.make(seededId(runId, "normal:mcp-send")),
-      ];
-      const persistedEffects = yield* Effect.forEach(
-        effectedCommandIds,
-        (commandId) => outbox.listByCommandId(commandId),
-        { concurrency: 1 },
-      ).pipe(Effect.map((groups) => groups.flat()));
-      const cancelledProviderStartEffectCount = persistedEffects.filter(
-        (effect) => effect.request.type === "provider-turn.start" && effect.status === "cancelled",
-      ).length;
-      if (cancelledProviderStartEffectCount !== effectedCommandIds.length) {
-        return yield* Effect.die("Disposable seed left a provider-turn start effect executable.");
-      }
-      const nextClaimableAt = yield* outbox.nextClaimableAt;
-      if (Option.isSome(nextClaimableAt)) {
-        return yield* Effect.die("Disposable seed left a claimable orchestration effect behind.");
-      }
-
-      return {
-        version: 1,
-        runId,
-        baseDir,
-        dbPath: databasePathFor(path, baseDir),
-        project: { id: projectId },
-        threads: {
-          sender: { threadId: senderThreadId, participantId: senderId },
-          receiver: { threadId: receiverThreadId, participantId: receiverId },
-        },
-        scenarios: {
-          ta1PeerExchange: ta1,
-          ta2HumanAnswer: ta2,
-          ta3Silence: ta3,
-          machineMessage,
-          rawFutureEnvelope,
-          normalNonA2AContrast,
-        },
-        noProviderWork: {
-          runnerStartedEffectWorker: false,
-          providerAdapterOpenSessionCalls: 0,
-          activeProviderSessionCount,
-          activeRunCount,
-          cancelledProviderStartEffectCount,
-          nextClaimableAt: null,
-        },
-        notSeeded: {
-          ta4Trailing: {
-            status: "held",
-            reason: "TA4 remains behind its separately authorized timeline seam.",
-          },
-        },
-        reuse: {
-          invocation: "scripts/j5/a2a-delivery-seed.sh --base-dir <isolated-t3-home>",
-          note: "Use the receipt ids to locate only this disposable seed set; rerunning creates a new run id.",
-        },
-      } satisfies DevDeliverySeedReceipt;
-    }).pipe(Effect.provide(runtime));
-    return yield* seed.pipe(
-      Effect.catch((cause) =>
-        isDevDeliverySeedServerOffError(cause) || !isDatabaseContention(cause)
-          ? Effect.fail(cause)
-          : Effect.fail(new DevDeliverySeedServerOffError({ cause })),
-      ),
+        }
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(seededId(runId, "bootstrap:sender-thread")),
+          threadId: senderThreadId,
+          projectId,
+          title: "J5 disposable A2A sender seed",
+          modelSelection: fakeModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspaceRoot,
+          createdBy: "system",
+          creationSource: "server",
+        });
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(seededId(runId, "bootstrap:receiver-thread")),
+          threadId: receiverThreadId,
+          projectId,
+          title: "J5 disposable A2A receiver seed",
+          modelSelection: fakeModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspaceRoot,
+          createdBy: "system",
+          creationSource: "server",
+        });
+        yield* ledger.ensureProject({ projectId: ledgerProjectId, createdAt: now });
+        yield* joinScenarioAgents({
+          projectId: ledgerProjectId,
+          senderId,
+          senderThreadId,
+          receiverId,
+          receiverThreadId,
+          acceptedAt: now,
+          commandId: CommCommandId.make(seededId(runId, "bootstrap:membership")),
+        });
+      }),
     );
-  }).pipe(Effect.provide(NodeServices.layer));
+
+    const ta1 = yield* scenario(
+      "ta1-peer-exchange",
+      Effect.gen(function* () {
+        const result = yield* sender.send({
+          commandId: CommCommandId.make(seededId(runId, "ta1:send")),
+          senderThreadId,
+          to: receiverId,
+          message: "Peer delivery seed: please reply through this exchange.",
+          expectReply: true,
+          intent: "Seed a visible peer exchange.",
+          acceptedAt: now,
+        });
+        if (result.exchangeId === null)
+          return yield* Effect.die("TA1 seed did not open an exchange.");
+        yield* deliveries.drain;
+        yield* interruptActiveSeedRun({
+          projectId,
+          threadId: receiverThreadId,
+          commandId: CommandId.make(seededId(runId, "ta1:cancel-provider-start")),
+        });
+        return {
+          ledgerMessageId: result.messageId,
+          deliveryMessageId: deliveryMessageId(result.messageId),
+          exchangeId: result.exchangeId,
+          targetThreadId: receiverThreadId,
+        };
+      }),
+    );
+
+    const ta2 = yield* scenario(
+      "ta2-human-answer",
+      Effect.gen(function* () {
+        const opened = yield* sender.send({
+          commandId: CommCommandId.make(seededId(runId, "ta2:ask-human")),
+          senderThreadId,
+          to: localOperatorPersonId,
+          message: "Human inbox seed: reply through this exchange.",
+          expectReply: true,
+          intent: "Seed a real HumanInbox answer delivery.",
+          urgency: "soon",
+          acceptedAt: now,
+        });
+        if (opened.exchangeId === null) {
+          return yield* Effect.die("TA2 seed did not open a human exchange.");
+        }
+        yield* deliveries.drain;
+
+        const resolvedPersonId = yield* inbox.resolvePersonId();
+        if (resolvedPersonId !== localOperatorPersonId) {
+          return yield* Effect.die("TA2 HumanInbox resolved a different local operator.");
+        }
+        const pending = yield* inbox.list(resolvedPersonId);
+        const pendingItem = pending.find((item) => item.exchangeId === opened.exchangeId);
+        if (
+          pendingItem === undefined ||
+          pendingItem.senderId !== senderId ||
+          pendingItem.message !== "Human inbox seed: reply through this exchange."
+        ) {
+          return yield* Effect.die("TA2 seed did not create the expected HumanInbox item.");
+        }
+
+        const replyText = "Human inbox answer seed: this reply came through the real inbox.";
+        const answered = yield* inbox.answer({
+          commandId: CommCommandId.make(seededId(runId, "ta2:answer-human")),
+          personId: resolvedPersonId,
+          exchangeId: pendingItem.exchangeId,
+          message: replyText,
+          acceptedAt: now,
+        });
+        if (answered.exchangeState !== "closed" || answered.exchangeId !== opened.exchangeId) {
+          return yield* Effect.die("TA2 HumanInbox answer did not close its exchange.");
+        }
+        yield* deliveries.drain;
+
+        const replyDeliveryMessageId = deliveryMessageId(answered.messageId);
+        const projected = yield* threads.getThreadProjection(senderThreadId);
+        const reply = projected.messages.find((message) => message.id === replyDeliveryMessageId);
+        const expectedEnvelope = formatClosedHumanEnvelope({
+          senderId: localOperatorPersonId,
+          message: replyText,
+        });
+        if (
+          reply?.role !== "user" ||
+          reply.createdBy !== "user" ||
+          reply.creationSource !== "mcp" ||
+          reply.text !== expectedEnvelope
+        ) {
+          return yield* Effect.die(
+            "TA2 reply was not the closed human envelope with user/MCP provenance.",
+          );
+        }
+        yield* interruptActiveSeedRun({
+          projectId,
+          threadId: senderThreadId,
+          commandId: CommandId.make(seededId(runId, "ta2:cancel-provider-start")),
+        });
+        return {
+          personId: localOperatorPersonId,
+          inboxRequestLedgerMessageId: opened.messageId,
+          exchangeId: opened.exchangeId,
+          replyLedgerMessageId: answered.messageId,
+          replyDeliveryMessageId,
+          targetThreadId: senderThreadId,
+        };
+      }),
+    );
+
+    const ta3 = yield* scenario(
+      "ta3-silence",
+      Effect.gen(function* () {
+        const source = yield* sender.send({
+          commandId: CommCommandId.make(seededId(runId, "ta3:send")),
+          senderThreadId,
+          to: receiverId,
+          message: "Silence seed: this delivery will end before a reply.",
+          expectReply: true,
+          intent: "Seed a truthful silence notice.",
+          acceptedAt: now,
+        });
+        if (source.exchangeId === null) {
+          return yield* Effect.die("TA3 seed did not open an exchange.");
+        }
+        yield* deliveries.drain;
+        yield* interruptActiveSeedRun({
+          projectId,
+          threadId: receiverThreadId,
+          commandId: CommandId.make(seededId(runId, "ta3:cancel-provider-start")),
+        });
+        const delivered = yield* deliveredEventFor(ledgerProjectId, source.messageId);
+        const notices = yield* silence.handleDeliveryEvent(delivered);
+        const notice = notices[0];
+        if (notice?.kind !== "silence.notice") {
+          return yield* Effect.die("TA3 seed did not produce a silence notice.");
+        }
+        const noticeMessageId = LedgerMessageId.make(
+          `message:j5:a2a:silence:${encodeURIComponent(ledgerProjectId)}:${encodeURIComponent(source.exchangeId)}:${encodeURIComponent(source.messageId)}`,
+        );
+        yield* deliveries.drain;
+        yield* interruptActiveSeedRun({
+          projectId,
+          threadId: senderThreadId,
+          commandId: CommandId.make(seededId(runId, "ta3:cancel-notice-provider-start")),
+        });
+        return {
+          sourceLedgerMessageId: source.messageId,
+          sourceDeliveryMessageId: deliveryMessageId(source.messageId),
+          noticeLedgerMessageId: noticeMessageId,
+          noticeDeliveryMessageId: deliveryMessageId(noticeMessageId),
+          targetThreadId: senderThreadId,
+        };
+      }),
+    );
+
+    const machineMessage = yield* scenario(
+      "machine-message",
+      Effect.gen(function* () {
+        const { participant } = yield* machines.register({
+          commandId: CommCommandId.make(seededId(runId, "machine:register")),
+          projectId: ledgerProjectId,
+          // Machine names are unique across projects, and every run makes a
+          // new project, so a reused home needs a per-run name.
+          name: `seed-watchdog-${runId.slice(-12)}`,
+          acceptedAt: now,
+        });
+        const result = yield* sender.sendAsMachine({
+          commandId: CommCommandId.make(seededId(runId, "machine:send")),
+          senderParticipantId: participant.participantId,
+          to: receiverId,
+          message: "Machine delivery seed: the nightly check passed. No reply is possible.",
+          acceptedAt: now,
+        });
+        yield* deliveries.drain;
+        yield* interruptActiveSeedRun({
+          projectId,
+          threadId: receiverThreadId,
+          commandId: CommandId.make(seededId(runId, "machine:cancel-provider-start")),
+        });
+        return {
+          senderParticipantId: participant.participantId,
+          ledgerMessageId: result.messageId,
+          deliveryMessageId: deliveryMessageId(result.messageId),
+          targetThreadId: receiverThreadId,
+        };
+      }),
+    );
+
+    const rawFutureEnvelope = yield* scenario(
+      "raw-future-envelope",
+      Effect.gen(function* () {
+        const messageId = LedgerMessageId.make(seededId(runId, "raw:future-envelope"));
+        yield* ledger.appendEvents({
+          commandId: CommCommandId.make(seededId(runId, "raw:future-envelope")),
+          projectId: ledgerProjectId,
+          acceptedAt: now,
+          events: [
+            {
+              kind: "message.sent",
+              sender: SILENCE_DETECTOR_PARTICIPANT_ID,
+              receiver: receiverId,
+              exchangeId: null,
+              correlationId: CorrelationId.make(seededId(runId, "raw:future-correlation")),
+              payload: {
+                messageId,
+                text: "[Cross-agent messaging system notice: template-v999]\n\nThis deliberately future/unrecognized envelope must render as raw text.\n\nNo current renderer template owns this body.",
+                originProjectId: ledgerProjectId,
+                receiverProjectId: ledgerProjectId,
+                exchangeRole: "none",
+                envelopeChannel: "silence_notice",
+              },
+              createdAt: now,
+            },
+          ],
+        });
+        yield* deliveries.drain;
+        yield* interruptActiveSeedRun({
+          projectId,
+          threadId: receiverThreadId,
+          commandId: CommandId.make(seededId(runId, "raw:cancel-provider-start")),
+        });
+        return {
+          ledgerMessageId: messageId,
+          deliveryMessageId: deliveryMessageId(messageId),
+          targetThreadId: receiverThreadId,
+        };
+      }),
+    );
+
+    const normalNonA2AContrast = yield* scenario(
+      "normal-non-a2a-contrast",
+      Effect.gen(function* () {
+        const messageId = MessageId.make(`message:mcp:${runId}:thread-send:contrast`);
+        yield* threads.sendToThread({
+          projectId,
+          threadId: senderThreadId,
+          commandId: CommandId.make(seededId(runId, "normal:mcp-send")),
+          messageId,
+          text: "Normal MCP-shaped contrast: this must retain the generic timeline row.",
+          attachments: [],
+          modelSelection: fakeModelSelection,
+          mode: "queue",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* interruptActiveSeedRun({
+          projectId,
+          threadId: senderThreadId,
+          commandId: CommandId.make(seededId(runId, "normal:cancel-provider-start")),
+        });
+        return { messageId, targetThreadId: senderThreadId };
+      }),
+    );
+
+    const senderProjection = yield* threads.getThreadProjection(senderThreadId);
+    const receiverProjection = yield* threads.getThreadProjection(receiverThreadId);
+    const projections = [senderProjection, receiverProjection];
+    const activeRunCount = projections
+      .flatMap((projection) => projection.runs)
+      .filter(isActiveRun).length;
+    const activeProviderSessionCount = projections.reduce(
+      (total, projection) => total + projection.providerSessions.length,
+      0,
+    );
+    if (activeRunCount !== 0 || activeProviderSessionCount !== 0) {
+      return yield* Effect.die("Disposable seed left provider-executable work behind.");
+    }
+    const effectedCommandIds = [
+      deliveryCommandId(ta1.ledgerMessageId),
+      deliveryCommandId(ta2.replyLedgerMessageId),
+      deliveryCommandId(ta3.sourceLedgerMessageId),
+      deliveryCommandId(ta3.noticeLedgerMessageId),
+      deliveryCommandId(machineMessage.ledgerMessageId),
+      deliveryCommandId(rawFutureEnvelope.ledgerMessageId),
+      CommandId.make(seededId(runId, "normal:mcp-send")),
+    ];
+    const persistedEffects = yield* Effect.forEach(
+      effectedCommandIds,
+      (commandId) => outbox.listByCommandId(commandId),
+      { concurrency: 1 },
+    ).pipe(Effect.map((groups) => groups.flat()));
+    const cancelledProviderStartEffectCount = persistedEffects.filter(
+      (effect) => effect.request.type === "provider-turn.start" && effect.status === "cancelled",
+    ).length;
+    if (cancelledProviderStartEffectCount !== effectedCommandIds.length) {
+      return yield* Effect.die("Disposable seed left a provider-turn start effect executable.");
+    }
+    const nextClaimableAt = yield* outbox.nextClaimableAt;
+    if (Option.isSome(nextClaimableAt)) {
+      return yield* Effect.die("Disposable seed left a claimable orchestration effect behind.");
+    }
+
+    return {
+      version: 1,
+      runId,
+      baseDir,
+      dbPath: databasePathFor(path, baseDir),
+      project: { id: projectId },
+      threads: {
+        sender: { threadId: senderThreadId, participantId: senderId },
+        receiver: { threadId: receiverThreadId, participantId: receiverId },
+      },
+      scenarios: {
+        ta1PeerExchange: ta1,
+        ta2HumanAnswer: ta2,
+        ta3Silence: ta3,
+        machineMessage,
+        rawFutureEnvelope,
+        normalNonA2AContrast,
+      },
+      noProviderWork: {
+        runnerStartedEffectWorker: false,
+        providerAdapterOpenSessionCalls: 0,
+        activeProviderSessionCount,
+        activeRunCount,
+        cancelledProviderStartEffectCount,
+        nextClaimableAt: null,
+      },
+      notSeeded: {
+        ta4Trailing: {
+          status: "held",
+          reason: "TA4 remains behind its separately authorized timeline seam.",
+        },
+      },
+      reuse: {
+        invocation: "scripts/j5/a2a-delivery-seed.sh --base-dir <isolated-t3-home>",
+        note: "Use the receipt ids to locate only this disposable seed set; rerunning creates a new run id.",
+      },
+    } satisfies DevDeliverySeedReceipt;
+  }).pipe(Effect.provide(runtime));
+  return yield* seed.pipe(
+    Effect.catch((cause) =>
+      isDevDeliverySeedServerOffError(cause) || !isDatabaseContention(cause)
+        ? Effect.fail(cause)
+        : Effect.fail(new DevDeliverySeedServerOffError({ cause })),
+    ),
+  );
+}, Effect.provide(NodeServices.layer));

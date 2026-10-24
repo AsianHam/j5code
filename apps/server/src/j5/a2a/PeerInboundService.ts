@@ -387,8 +387,8 @@ export const layer: Layer.Layer<PeerInboundService, never, PeerInboundServiceReq
         }
       });
 
-      const receive: PeerInboundServiceShape["receive"] = (input) =>
-        Effect.gen(function* () {
+      const receive: PeerInboundServiceShape["receive"] = Effect.fn("j5.a2a.peer.inbound.receive")(
+        function* (input) {
           const commandId = peerReceiveCommandId({
             originEnvironmentId: input.originEnvironmentId,
             messageId: input.messageId,
@@ -631,7 +631,8 @@ export const layer: Layer.Layer<PeerInboundService, never, PeerInboundServiceReq
             receivedSeq: received?.seq ?? appended.receipt.resultSeq,
             replay: !appended.committed,
           } satisfies PeerInboundResult;
-        });
+        },
+      );
 
       return PeerInboundService.of({ receive });
     }),

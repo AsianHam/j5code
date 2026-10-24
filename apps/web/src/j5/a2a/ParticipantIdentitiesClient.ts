@@ -27,12 +27,8 @@ export function useParticipantIdentities(
   const connected = useConnectedEnvironmentIds().includes(environmentId);
   const [result, setResult] = useState({ key: "", identities: NO_IDENTITIES });
   useEffect(() => {
-    const ids = idsKey === "" ? [] : idsKey.split("\0");
-    if (ids.length === 0) {
-      setResult({ key, identities: NO_IDENTITIES });
-      return;
-    }
-    if (!connected) return;
+    if (idsKey === "" || !connected) return;
+    const ids = idsKey.split("\0");
     let active = true;
     void readParticipantIdentities(environmentId, ids).then((next) => {
       if (active) setResult({ key, identities: next });
