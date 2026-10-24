@@ -485,7 +485,7 @@ Recorded in `FORK.md` cases 69 to 73, 78 and 80.
 
 **Consequences:** three small upstream integration sites are carried (FORK.md case 82). Check audio selection, gesture unlocking and mode cancellation at each advance. Until the next advance it also carries upstream's burst guard, which this needs (FORK.md's temporary patches). The sound does not sync, reach providers or agents through MCP, or customize mobile push sounds. Clearing local site data removes it. No server storage or contract changes.
 
-**Decided:** Abraham, 2026-10-21, explicit implementation brief and instruction to proceed in thread `bb2eadb8-9a96-426f-9d88-621ce8f31fee`.
+**Decided:** proposed by Abraham, 2026-10-21; accepted by Jackson, 2026-10-24. Recorded in FORK.md case 82 and its temporary patches.
 
 ### Awaiting a decision
 
@@ -601,5 +601,5 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-18 — D36: a bare `j5 auth pairing create` makes a link for a device the server asks about, so upstream's desktop app still connects over SSH; `j5 pair` still refuses (confirmed by Jackson 2026-10-19; [#636](https://github.com/Jacksondr5/j5code/issues/636)).
 - 2026-10-19 — D33: T3 Connect's sessions are the first owner's, as they were full access before levels (review of [#638](https://github.com/Jacksondr5/j5code/pull/638)).
 - 2026-10-19 — D37 added: a connection that keeps failing can be retried at once on web and desktop (Jackson).
-- 2026-10-21 — D38 added: a completion sound can be a local MP3 on web and desktop (Abraham).
+- 2026-10-24 — D38 added: a completion sound can be a local MP3 on web and desktop (proposed by Abraham, accepted by Jackson).
 - 2026-10-20 — D2 clarifies that native-question answers retain upstream access and attribution behavior, and placed-agent notices replace raw thread waiting ([#674](https://github.com/Jacksondr5/j5code/pull/674), [#281](https://github.com/Jacksondr5/j5code/issues/281), [existing access decision](https://github.com/Jacksondr5/j5code/issues/345#issuecomment-6092125478)).
