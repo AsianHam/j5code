@@ -4,11 +4,18 @@ import { LEVEL_PERMISSIONS } from "@t3tools/contracts/j5";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
+import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import { Access } from "./Access.ts";
-import { J5_LINK_PAIRING_SUBJECT, PairingIntents } from "./PairingIntents.ts";
+import * as AccessGate from "./AccessGate.ts";
+import {
+  J5_LINK_PAIRING_SUBJECT,
+  PairingIntents,
+  recordConnectionsLinkCreator,
+} from "./PairingIntents.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 import { accessLayer, device, isLive, person } from "./test-support/accessHarness.ts";
 
@@ -244,6 +251,7 @@ it.layer(accessLayer)("PairingIntents", (it) => {
         pairingLinkId: "pairing:connections",
         credential: "credential-connections",
         scopes: [AuthOrchestrationReadScope],
+        creatorLive: Effect.succeed(true),
       });
       const intent = yield* intents.intentOf("credential-connections");
       assert.strictEqual(intent?.personId, maker.personId);
@@ -255,8 +263,84 @@ it.layer(accessLayer)("PairingIntents", (it) => {
         pairingLinkId: "pairing:peer",
         credential: "credential-peer",
         scopes: [AuthOrchestrationReadScope],
+        creatorLive: Effect.succeed(true),
       });
       assert.isNull(yield* intents.intentOf("credential-peer"));
+    }),
+  );
+
+  it.effect("refuses a Connections link whose maker was removed while it was made", () =>
+    Effect.gen(function* () {
+      const intents = yield* PairingIntents;
+      const access = yield* Access;
+      const maker = yield* person("Leaving", [{ scope: { kind: "server" }, level: "owner" }]);
+      const laptop = yield* device(maker.personId, LEVEL_PERMISSIONS.owner);
+      // Upstream has minted the link; the maker is removed before J5 records whose it is.
+      yield* access.removePerson(maker.personId);
+      const refused = yield* recordConnectionsLinkCreator({
+        creator: laptop.identity,
+        link: { id: "pairing:late", credential: "credential-late" },
+        scopes: LEVEL_PERMISSIONS.owner,
+      }).pipe(Effect.flip);
+      // Upstream's handler revokes a link whose maker is not recorded.
+      assert.strictEqual(refused.reason, "no_person");
+      assert.isNull(yield* intents.intentOf("credential-late"));
+
+      // A device no one has claimed still makes links, recorded as no one's.
+      const unclaimed = yield* device(null, LEVEL_PERMISSIONS.owner);
+      yield* recordConnectionsLinkCreator({
+        creator: unclaimed.identity,
+        link: { id: "pairing:unclaimed", credential: "credential-unclaimed" },
+        scopes: LEVEL_PERMISSIONS.owner,
+      });
+      assert.isNull(yield* intents.intentOf("credential-unclaimed"));
+    }),
+  );
+
+  it.effect("refuses a Connections link whose maker's device is ended while it is made", () =>
+    Effect.gen(function* () {
+      const intents = yield* PairingIntents;
+      const sessions = yield* SessionStore.SessionStore;
+      const maker = yield* person("Ending", [{ scope: { kind: "server" }, level: "owner" }]);
+      const laptop = yield* device(maker.personId, LEVEL_PERMISSIONS.owner);
+      // Upstream's revoke waits here, once the gate has cut the laptop loose from its person.
+      const revoking = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const auth = yield* EnvironmentAuth.EnvironmentAuth.pipe(
+        Effect.provide(
+          AccessGate.layerGatedEnvironmentAuth.pipe(
+            Layer.provide(
+              Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+                revokeSession: (sessionId) =>
+                  Deferred.succeed(revoking, undefined).pipe(
+                    Effect.andThen(Deferred.await(resume)),
+                    Effect.andThen(sessions.revoke(sessionId)),
+                    Effect.orDie,
+                  ),
+              }),
+            ),
+          ),
+        ),
+      );
+
+      // Another device ends the laptop just as upstream has minted a link on it.
+      const ending = yield* auth.revokeSession(laptop.sessionId).pipe(Effect.forkChild);
+      yield* Deferred.await(revoking);
+      // The record runs as far as it can while the revoke is paused: before the cut and the
+      // revoke were one transaction, to its end, finding the laptop no one's and still live.
+      const recording = yield* recordConnectionsLinkCreator({
+        creator: laptop.identity,
+        link: { id: "pairing:ending", credential: "credential-ending" },
+        scopes: LEVEL_PERMISSIONS.owner,
+      }).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(ending);
+
+      // Refused, so upstream's handler revokes the link rather than leave it approving as no one.
+      const recorded = yield* Fiber.join(recording).pipe(Effect.result);
+      assert.isTrue(Result.isFailure(recorded), "the link was recorded as no one's");
+      if (Result.isFailure(recorded)) assert.strictEqual(recorded.failure.reason, "no_person");
+      assert.isNull(yield* intents.intentOf("credential-ending"));
     }),
   );
 });

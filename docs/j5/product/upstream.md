@@ -377,7 +377,7 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths and n
 
 **J5:** each device belongs to a person, and the person's scope and level decide what it reaches ([People and access](features/people-and-access.md)).
 
-- **Who a device is** is recorded by J5 against upstream's session as it is issued, without changing upstream's tables. Sessions that are no person's device are left as upstream issues them and are not narrowed: those of peer servers, of `j5 a2a` machine senders, of MCP clients and of the CLI's `auth session issue`. MCP clients are approved only by an Owner, and lowering or removing an Owner refuses an approval still waiting to be exchanged, for the remaining Owners to approve again. Ending the MCP clients a lowered or removed Owner approved is Later ([#639](https://github.com/Jacksondr5/j5code/issues/639)).
+- **Who a device is** is recorded by J5 against upstream's session as it is issued, without changing upstream's tables. Sessions that are no person's device are left as upstream issues them and are not narrowed: those of peer servers, of `j5 a2a` machine senders, of MCP clients and of the CLI's `auth session issue`. MCP clients are approved only by an Owner. Lowering or removing an Owner ends the MCP clients that Owner approved, and refuses any approval still waiting to be exchanged, for the remaining Owners to approve again. An MCP client approved before J5 recorded who approved it keeps working until an Owner ends it.
 - **A device holds exactly its person's level's permissions**, mapped onto upstream's in one place. When the level changes, J5 revokes the device's session. The device then renews it on J5's own route, proving itself with the old token, and gets a session holding the new permissions. J5 never hands upstream more permissions for a request than the device holds.
 - **A person whose scope is narrower than the server** has a connection narrowed to it:
   - every HTTP route and WebSocket request is refused unless J5 has listed it;
@@ -411,7 +411,7 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths and n
 
 - **A lowered level reaches an open socket at once,** because upstream closes a session's sockets when it is revoked, replaced or expires.
 - **A change of level makes the person's devices reconnect once.**
-- **A device offline past its session's lifetime is paired again by hand** after a change of level. An MCP client holds no person's level, so a change of level does not touch it.
+- **A device offline past its session's lifetime is paired again by hand** after a change of level. An MCP client holds no person's level, so a change of level does not touch it, except that lowering or removing an Owner ends the MCP clients they approved.
 - **Each advance checks four things:**
   - whether upstream added a place that sends configuration, lifecycle events or sidebar items;
   - whether every route still signs in through the functions J5 wraps;
@@ -604,3 +604,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-24 — D38 added: a completion sound can be a local MP3 on web and desktop (proposed by Abraham, accepted by Jackson).
 - 2026-10-20 — D2 clarifies that native-question answers retain upstream access and attribution behavior, and placed-agent notices replace raw thread waiting ([#674](https://github.com/Jacksondr5/j5code/pull/674), [#281](https://github.com/Jacksondr5/j5code/issues/281), [existing access decision](https://github.com/Jacksondr5/j5code/issues/345#issuecomment-6092125478)).
 - 2026-10-24 — D2: agents get upstream's queue tools, with edit held to an agent's own messages and the ledger following every edit; D4: the platform delivers in send order and a person or an agent may reorder by hand (Jackson, [#136](https://github.com/Jacksondr5/j5code/issues/136)).
+- 2026-10-24 — D33: lowering or removing an Owner ends the MCP clients that Owner approved, and only those (Jackson; [#639](https://github.com/Jacksondr5/j5code/issues/639)).

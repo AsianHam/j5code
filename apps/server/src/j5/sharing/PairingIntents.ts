@@ -16,6 +16,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as SessionStore from "../../auth/SessionStore.ts";
 import { ParticipantId } from "../a2a/contracts.ts";
 import { ReadChanges, layer as readChangesLayer } from "../a2a/ReadChanges.ts";
 import {
@@ -133,13 +134,17 @@ export interface PairingIntentsShape {
   /**
    * Records, for a link made in upstream's Connections settings, that it pairs a device for the
    * person whose device made it, under the permissions chosen there (AC3, AC18). A link made by a
-   * session that is no person's records nothing.
+   * session that is no person's records nothing, and the link then approves an MCP client as no
+   * one; so one made by a session that is no longer live is refused, since that is a device whose
+   * person was removed while the link was made.
    */
   readonly recordForCreator: (input: {
     readonly creator: SessionIdentity;
     readonly pairingLinkId: string;
     readonly credential: string;
     readonly scopes: ReadonlyArray<string>;
+    /** Whether the maker's session is still live, read only when it is no person's. */
+    readonly creatorLive: Effect.Effect<boolean, unknown>;
   }) => Effect.Effect<void, PairingIntentError>;
   /** The intent a credential carries, read without using it; `null` for none. */
   readonly intentOf: (
@@ -241,7 +246,16 @@ const make: Layer.Layer<PairingIntents, never, SqlClient.SqlClient | ReadChanges
         recordForCreator: Effect.fn("j5.sharing.pairingIntents.recordForCreator")(
           function* (input) {
             const reach = yield* people.sessionReach(input.creator).pipe(Effect.mapError(storage));
-            if (reach.kind !== "person") return;
+            if (reach.kind === "service") return;
+            if (reach.kind === "unknown") {
+              // Every way J5 ends a device unbinds and revokes it in one transaction, and a
+              // replaced browser session is unbound only once upstream has revoked it, so a
+              // session found unbound here and still live was never anyone's (a device no one has
+              // claimed).
+              const live = yield* input.creatorLive.pipe(Effect.mapError(storage));
+              if (!live) return yield* new PairingIntentError({ reason: "no_person" });
+              return;
+            }
             yield* record({
               pairingLinkId: input.pairingLinkId,
               credential: input.credential,
@@ -445,17 +459,21 @@ export const recordConnectionsLinkCreator = (input: {
   readonly link: { readonly id: string; readonly credential: string };
   readonly scopes: ReadonlyArray<string>;
 }) =>
-  Effect.serviceOption(PairingIntents).pipe(
-    Effect.flatMap((intents) =>
-      Option.match(intents, {
-        onNone: () => Effect.void,
-        onSome: (service) =>
-          service.recordForCreator({
-            creator: input.creator,
-            pairingLinkId: input.link.id,
-            credential: input.link.credential,
-            scopes: input.scopes,
-          }),
-      }),
-    ),
-  );
+  Effect.gen(function* () {
+    const intents = yield* Effect.serviceOption(PairingIntents);
+    if (Option.isNone(intents)) return;
+    const sessions = yield* SessionStore.SessionStore;
+    yield* intents.value.recordForCreator({
+      creator: input.creator,
+      pairingLinkId: input.link.id,
+      credential: input.link.credential,
+      scopes: input.scopes,
+      creatorLive: sessions
+        .listActive()
+        .pipe(
+          Effect.map((active) =>
+            active.some((session) => session.sessionId === input.creator.sessionId),
+          ),
+        ),
+    });
+  });

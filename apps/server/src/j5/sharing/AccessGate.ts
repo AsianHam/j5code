@@ -30,7 +30,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import type * as SqlClient from "effect/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
@@ -51,7 +52,7 @@ import {
   peopleLayer as peopleRecordsLayer,
 } from "./PairingIntents.ts";
 import { layer as linksLayer } from "./Links.ts";
-import { McpApprovalGeneration } from "./McpApproval.ts";
+import { McpExchangeApproval } from "./McpApproval.ts";
 import { nameDevOwnerAtStartup } from "./devOwnerName.ts";
 import { layer as peopleLayer } from "./People.ts";
 import {
@@ -137,6 +138,8 @@ type AccessRpcRule = (
       readonly projectIcon: (payload: unknown) => ProjectId | undefined;
     }
 ) & { readonly unknownToo?: true };
+
+const isSqlError = Schema.is(SqlError.SqlError);
 
 const field = (value: unknown, name: string): unknown =>
   typeof value === "object" && value !== null && name in value
@@ -457,6 +460,7 @@ export const layerGatedEnvironmentAuth = Layer.effect(
     const access = yield* PersonAccess;
     const intents = yield* PairingIntents;
     const changes = yield* Access;
+    const sql = yield* SqlClient.SqlClient;
     // Upstream's own session store, to read whose browser is asking. A test that stands in for
     // upstream's auth has none, and then no browser is taken for anyone's.
     const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
@@ -502,20 +506,31 @@ export const layerGatedEnvironmentAuth = Layer.effect(
     /**
      * Before upstream ends a session, by any of its four ways, the session is cut loose from its
      * person, and with that from any mark that would let it renew: an ended device stays ended
-     * (AC49, AC50). If it cannot be done, nothing is revoked, so the Owner sees the failure and
-     * the device is not left half ended.
+     * (AC49, AC50). The two commit together or not at all, so no one sees a session that is no
+     * one's and still live, which would make links as no one's (`PairingIntents.recordForCreator`),
+     * and a failure leaves the device as it was for the Owner to try again.
      */
     const unbound = <A, E, R>(
       unbind: Effect.Effect<unknown, PersonAccessStorageError>,
       revoke: Effect.Effect<A, E, R>,
     ) =>
-      unbind.pipe(
-        Effect.mapError(
-          (cause): EnvironmentAuth.ServerAuthInternalError =>
-            new EnvironmentAuth.ServerAuthSessionRevocationError({ cause }),
-        ),
-        Effect.andThen(revoke),
-      );
+      sql
+        .withTransaction(
+          unbind.pipe(
+            Effect.mapError(
+              (cause): EnvironmentAuth.ServerAuthInternalError =>
+                new EnvironmentAuth.ServerAuthSessionRevocationError({ cause }),
+            ),
+            Effect.andThen(revoke),
+          ),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            isSqlError(cause)
+              ? new EnvironmentAuth.ServerAuthSessionRevocationError({ cause })
+              : (cause as Exclude<typeof cause, SqlError.SqlError>),
+          ),
+        );
 
     /**
      * What to do about the session a browser already holds when it pairs again. Upstream replaces
@@ -606,15 +621,16 @@ export const layerGatedEnvironmentAuth = Layer.effect(
           inner.revokeOtherClientSessions(currentSessionId),
         ),
       // An MCP client is approved by an Owner; one approved before an Owner was lowered or
-      // removed is refused its session, and approved again (`Access.issueMcpClient`). Upstream
-      // issues one only from an exchange `McpApproval` gave the approval's generation to.
+      // removed is refused its session, and approved again, and one issued is recorded as its
+      // approver's (`Access.issueMcpClient`). Upstream issues one only from an exchange
+      // `McpApproval` gave the approval to.
       issueMcpClientSession: (input) =>
-        Effect.serviceOption(McpApprovalGeneration).pipe(
+        Effect.serviceOption(McpExchangeApproval).pipe(
           Effect.flatMap(
             Option.match({
               onNone: () => Effect.fail(new StaleMcpApprovalError({})),
-              onSome: (generation) =>
-                changes.issueMcpClient(generation, inner.issueMcpClientSession(input)),
+              onSome: (approval) =>
+                changes.issueMcpClient(approval, inner.issueMcpClientSession(input)),
             }),
           ),
           Effect.mapError((cause) =>

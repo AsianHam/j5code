@@ -86,6 +86,16 @@ export class StaleMcpApprovalError extends Schema.TaggedError<StaleMcpApprovalEr
   }
 }
 
+/**
+ * What an MCP client's approval was checked against, given to the exchange of its code: which
+ * change of the server's Owners it was, and the person whose device or pairing code approved it,
+ * or `null` when that names no one (the first owner's startup link, or a device no one claimed).
+ */
+export interface McpClientApproval {
+  readonly generation: number;
+  readonly approver: ParticipantId | null;
+}
+
 /** What changed for a person, told after it commits. */
 export interface AccessChange {
   readonly personId: ParticipantId;
@@ -149,12 +159,17 @@ export interface AccessShape {
    */
   readonly ownersGeneration: Effect.Effect<number, PersonAccessStorageError>;
   /**
-   * Issues an MCP client's session approved at `generation`, unless an Owner was lowered or
-   * removed since: the approval may have been an Owner's who is not one now, and is refused to be
-   * approved again. Held under the same lock as a change of level, so the two never cross.
+   * Issues an MCP client's session, unless an Owner was lowered or removed since its approval was
+   * checked: the approval may have been an Owner's who is not one now, and is refused to be
+   * approved again. The session is recorded as its approver's, so lowering or removing them as an
+   * Owner ends it. Held under the same lock as a change of level, so the two never cross.
    */
-  readonly issueMcpClient: <A, E, R>(
-    generation: number,
+  readonly issueMcpClient: <
+    A extends { readonly token: string; readonly expiresAt: DateTime.DateTime },
+    E,
+    R,
+  >(
+    approval: McpClientApproval,
     issue: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | StaleMcpApprovalError | PersonAccessStorageError, R>;
 }
@@ -289,11 +304,49 @@ const make = Effect.gen(function* () {
 
   const ownersGeneration = yield* Ref.make(0);
   /**
-   * Every MCP approval not yet issued, voided: it may have been an Owner's who is not one now.
-   * MCP clients already issued keep their sessions; ending only those the lowered Owner approved
-   * is Later.
+   * Every MCP approval not yet issued, voided, whoever gave it: it may have been an Owner's who
+   * is not one now, and the Owners who remain approve it again.
    */
   const voidWaitingMcpApprovals = Ref.update(ownersGeneration, (generation) => generation + 1);
+
+  const mcpStorage = (operation: string) => (cause: unknown) =>
+    new PersonAccessStorageError({ operation, cause });
+
+  /** Records an issued MCP client's session as `personId`'s, and forgets those since expired. */
+  const recordMcpApprover = Effect.fn("j5.sharing.access.recordMcpApprover")(function* (
+    personId: ParticipantId,
+    issued: { readonly token: string; readonly expiresAt: DateTime.DateTime },
+  ) {
+    const { sessionId } = yield* sessions
+      .verify(issued.token)
+      .pipe(Effect.mapError(mcpStorage("read the MCP client's session")));
+    const now = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`
+      DELETE FROM j5_a2a_mcp_client_approver WHERE expires_at <= ${now}
+    `.pipe(Effect.mapError(mcpStorage("forget expired MCP clients")));
+    yield* sql`
+      INSERT INTO j5_a2a_mcp_client_approver (session_id, person_id, expires_at)
+      VALUES (${sessionId}, ${personId}, ${DateTime.formatIso(issued.expiresAt)})
+    `.pipe(Effect.mapError(mcpStorage("record who approved an MCP client")));
+  });
+
+  /**
+   * Ends the MCP clients `personId` approved, in the transaction that lowers or removes them. A
+   * session already ended or expired is passed over.
+   */
+  const endApprovedMcpClients = Effect.fn("j5.sharing.access.endApprovedMcpClients")(function* (
+    personId: ParticipantId,
+  ) {
+    const approved = yield* sql<{ readonly session_id: AuthSessionId }>`
+      DELETE FROM j5_a2a_mcp_client_approver WHERE person_id = ${personId}
+      RETURNING session_id
+    `.pipe(Effect.mapError(mcpStorage("read the MCP clients a person approved")));
+    for (const { session_id: sessionId } of approved) {
+      yield* sessions
+        .revoke(sessionId)
+        .pipe(Effect.mapError(mcpStorage("end an MCP client a person approved")));
+    }
+  });
 
   /**
    * Runs a change to one person and renews whichever of their devices it requires, all in one
@@ -315,7 +368,10 @@ const make = Effect.gen(function* () {
             yield* revokeForRenewal(device.sessionId);
           }
         }
-        if (before.owner && !after.owner) yield* voidWaitingMcpApprovals;
+        if (before.owner && !after.owner) {
+          yield* voidWaitingMcpApprovals;
+          yield* endApprovedMcpClients(personId);
+        }
         return result;
       }),
     ).pipe(Effect.tap(() => tell({ personId, kind: "reach" })));
@@ -381,6 +437,7 @@ const make = Effect.gen(function* () {
           }
           yield* afterChange(personId);
           if (owner) yield* voidWaitingMcpApprovals;
+          yield* endApprovedMcpClients(personId);
         }),
       );
       yield* tell({ personId, kind: "removed" });
@@ -446,13 +503,15 @@ const make = Effect.gen(function* () {
 
     ownersGeneration: committed(Ref.get(ownersGeneration)),
 
-    issueMcpClient: (generation, issue) =>
+    issueMcpClient: (approval, issue) =>
       committed(
         Effect.gen(function* () {
-          if ((yield* Ref.get(ownersGeneration)) !== generation) {
+          if ((yield* Ref.get(ownersGeneration)) !== approval.generation) {
             return yield* new StaleMcpApprovalError({});
           }
-          return yield* issue;
+          const issued = yield* issue;
+          if (approval.approver !== null) yield* recordMcpApprover(approval.approver, issued);
+          return issued;
         }),
       ),
   });

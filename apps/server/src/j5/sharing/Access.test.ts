@@ -260,10 +260,14 @@ it.layer(accessLayer)("Access", (it) => {
         subject: "mcp-client",
         scopes: [AuthOrchestrationReadScope],
       });
-      yield* access.issueMcpClient(yield* access.ownersGeneration, issueAgent);
+      const approvedNow = Effect.map(access.ownersGeneration, (generation) => ({
+        generation,
+        approver: owner.personId,
+      }));
+      yield* access.issueMcpClient(yield* approvedNow, issueAgent);
 
       // Approved, then the Owner is lowered, then the approval is exchanged: refused.
-      const approved = yield* access.ownersGeneration;
+      const approved = yield* approvedNow;
       yield* access.setLevel({
         personId: owner.personId,
         scope: { kind: "server" },
@@ -272,15 +276,63 @@ it.layer(accessLayer)("Access", (it) => {
       const stale = yield* access.issueMcpClient(approved, issueAgent).pipe(Effect.flip);
       assert.strictEqual(stale._tag, "StaleMcpApprovalError");
       // One approved after the change issues, however soon.
-      yield* access.issueMcpClient(yield* access.ownersGeneration, issueAgent);
+      yield* access.issueMcpClient(yield* approvedNow, issueAgent);
 
       const other = yield* person("Owner who leaves", [
         { scope: { kind: "server" }, level: "owner" },
       ]);
-      const beforeRemoval = yield* access.ownersGeneration;
+      const beforeRemoval = { generation: yield* access.ownersGeneration, approver: null };
       yield* access.removePerson(other.personId);
       const removed = yield* access.issueMcpClient(beforeRemoval, issueAgent).pipe(Effect.flip);
       assert.strictEqual(removed._tag, "StaleMcpApprovalError");
+    }),
+  );
+
+  it.effect("ends the MCP clients a lowered or removed Owner approved, and no one else's", () =>
+    Effect.gen(function* () {
+      const access = yield* Access;
+      const sessions = yield* SessionStore.SessionStore;
+      const owner = (name: string) => person(name, [{ scope: { kind: "server" }, level: "owner" }]);
+      const approve = (approver: PersonAccess.Person | null) =>
+        Effect.gen(function* () {
+          const issued = yield* access.issueMcpClient(
+            { generation: yield* access.ownersGeneration, approver: approver?.personId ?? null },
+            sessions.issue({ subject: "mcp-client", scopes: [AuthOrchestrationReadScope] }),
+          );
+          return issued.sessionId;
+        });
+      const lowered = yield* owner("Owner who is lowered");
+      const staying = yield* owner("Owner who stays");
+      const removed = yield* owner("Owner who is removed");
+      const loweredClient = yield* approve(lowered);
+      const stayingClient = yield* approve(staying);
+      const removedClient = yield* approve(removed);
+      // Approved before approvers were recorded, or by a code that names no one.
+      const unrecordedClient = yield* approve(null);
+      const waiting = { generation: yield* access.ownersGeneration, approver: staying.personId };
+
+      yield* access.setLevel({
+        personId: lowered.personId,
+        scope: { kind: "server" },
+        level: "collaborator",
+      });
+      assert.isFalse(yield* isLive(loweredClient));
+      assert.isTrue(yield* isLive(stayingClient));
+      assert.isTrue(yield* isLive(removedClient));
+      assert.isTrue(yield* isLive(unrecordedClient));
+      // Still waiting when the Owners changed: refused, whoever approved it.
+      const stale = yield* access
+        .issueMcpClient(
+          waiting,
+          sessions.issue({ subject: "mcp-client", scopes: [AuthOrchestrationReadScope] }),
+        )
+        .pipe(Effect.flip);
+      assert.strictEqual(stale._tag, "StaleMcpApprovalError");
+
+      yield* access.removePerson(removed.personId);
+      assert.isFalse(yield* isLive(removedClient));
+      assert.isTrue(yield* isLive(stayingClient));
+      assert.isTrue(yield* isLive(unrecordedClient));
     }),
   );
 
