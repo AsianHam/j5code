@@ -314,6 +314,9 @@ export function liveTestEnvironment(
     ...rest,
     // Without this the dev server registers <worktree>/apps/server as a project.
     T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
+    // The rig names each home's owner itself, and a `--fresh` home's stays unnamed so the
+    // naming question can be tested; the dev runner would otherwise name it "Dev owner".
+    J5CODE_DEV_OWNER_NAME: "",
     // Every node child here opens SQLite, and each process warns once that it is experimental:
     // dozens of lines that bury what a command prints. Only that kind of warning is silenced.
     NODE_OPTIONS: [rest.NODE_OPTIONS, "--disable-warning=ExperimentalWarning"]

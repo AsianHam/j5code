@@ -20,6 +20,7 @@ import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess } from "effect/process";
 
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
+import { j5DevOwnerName } from "./lib/j5-dev-owner.ts";
 import { j5DevPostHogKey } from "./lib/j5-dev-telemetry.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
@@ -313,6 +314,8 @@ export function createDevRunnerEnv({
 
     // J5: a dev server's usage events go to the dev PostHog project (#513).
     output.T3CODE_POSTHOG_KEY = j5DevPostHogKey(baseEnv);
+    // J5: a dev home's first owner starts with a name (#642).
+    output.J5CODE_DEV_OWNER_NAME = j5DevOwnerName(baseEnv);
 
     if (configuredBaseDir !== undefined) {
       output.J5CODE_HOME = resolvedBaseDir;

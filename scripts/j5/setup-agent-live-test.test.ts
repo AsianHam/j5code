@@ -356,7 +356,7 @@ describe("tailnet mappings", () => {
 });
 
 describe("liveTestEnvironment", () => {
-  it("drops what the live server exports and stops the dev server adopting its cwd", () => {
+  it("drops what the live server exports, stops the dev server adopting its cwd and naming the owner", () => {
     const environment = liveTestEnvironment(
       {
         T3CODE_PORT: "5773",
@@ -371,6 +371,7 @@ describe("liveTestEnvironment", () => {
     assert.deepEqual(environment, {
       KEEP: "1",
       T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
+      J5CODE_DEV_OWNER_NAME: "",
       NODE_OPTIONS: "--disable-warning=ExperimentalWarning",
       PATH: `/work/tree/node_modules/.bin${NodePath.delimiter}/usr/bin`,
     });

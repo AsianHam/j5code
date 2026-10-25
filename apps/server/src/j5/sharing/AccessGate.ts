@@ -52,6 +52,7 @@ import {
 } from "./PairingIntents.ts";
 import { layer as linksLayer } from "./Links.ts";
 import { McpApprovalGeneration } from "./McpApproval.ts";
+import { nameDevOwnerAtStartup } from "./devOwnerName.ts";
 import { layer as peopleLayer } from "./People.ts";
 import {
   type MessageAsset,
@@ -651,6 +652,7 @@ export const gateEnvironmentAuth = <A, E, R>(
   peopleLayer.pipe(
     Layer.provideMerge(linksLayer),
     Layer.provideMerge(renewOutdatedDevicesAtStartup),
+    Layer.provideMerge(nameDevOwnerAtStartup),
     Layer.provideMerge(layerGatedEnvironmentAuth),
     Layer.provideMerge(accessLayer.pipe(Layer.provide(sharedThreadsWriteHook))),
     Layer.provideMerge(upstream),

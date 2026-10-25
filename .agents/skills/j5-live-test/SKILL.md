@@ -135,8 +135,11 @@ A worktree holds one setup at a time. Pass a flag to the first start, or to
 
 - **After any `rebuild`**, a tab that was open before it can stay on the
   pairing form. Press "Reload app" there.
-- **`--fresh`.** The home has no project and no pinned model. After pairing, wait
-  for the wizard's heading, "Set up J5 Code", since there is no composer yet.
+- **`--fresh`.** The home has no project and no pinned model, and its owner has
+  no name, so the browser is first asked what to call them. Every other home's
+  owner is already named, as is a plain `vp run dev` home's ("Dev owner"). After
+  pairing and naming, wait for the wizard's heading, "Set up J5 Code", since
+  there is no composer yet.
   Its import step pre-selects projects it found on this machine, real ones
   among them: add only the test repository the script names, or choose "Do
   not import projects". Pick your model by hand.
@@ -225,15 +228,15 @@ A claim without one of those three labels counts as not verified.
 Always: the change's own flow, including the way back out, and one real turn
 sent through the UI.
 
-| When the change touches                        | Also run                                                                                                                                                                                     |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The turn path, provider adapters, or MCP tools | One turn each on Codex and Claude                                                                                                                                                            |
-| Stored state, deliveries, or recovery          | `restart` at rest, then use the state                                                                                                                                                        |
-| Interrupted runs                               | `restart` during a held turn                                                                                                                                                                 |
-| Migrations                                     | `upgrade` from the PR's base, and a `--fresh` run. When a migration converts existing rows, also run it on a copy of real data with `vp run migrate-dev-db`, and check the rows it converted |
-| Startup, onboarding, or settings defaults      | A `--fresh` run                                                                                                                                                                              |
-| Anything an agent is meant to use              | Ask a real agent in plain words, without naming the tool                                                                                                                                     |
-| Peering or cross-server messages               | A `--peer` run                                                                                                                                                                               |
+| When the change touches                           | Also run                                                                                                                                                                                     |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The turn path, provider adapters, or MCP tools    | One turn each on Codex and Claude                                                                                                                                                            |
+| Stored state, deliveries, or recovery             | `restart` at rest, then use the state                                                                                                                                                        |
+| Interrupted runs                                  | `restart` during a held turn                                                                                                                                                                 |
+| Migrations                                        | `upgrade` from the PR's base, and a `--fresh` run. When a migration converts existing rows, also run it on a copy of real data with `vp run migrate-dev-db`, and check the rows it converted |
+| Startup, onboarding, naming, or settings defaults | A `--fresh` run                                                                                                                                                                              |
+| Anything an agent is meant to use                 | Ask a real agent in plain words, without naming the tool                                                                                                                                     |
+| Peering or cross-server messages                  | A `--peer` run                                                                                                                                                                               |
 
 ## PR screenshots
 

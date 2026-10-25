@@ -26,6 +26,7 @@ import {
   resolveOffset,
   runDevRunnerWithInput,
 } from "./dev-runner.ts";
+import { J5_DEV_OWNER_NAME } from "./lib/j5-dev-owner.ts";
 import { J5_DEV_POSTHOG_KEY } from "./lib/j5-dev-telemetry.ts";
 
 const emptyConfigLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }));
@@ -193,6 +194,30 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: { T3CODE_POSTHOG_KEY: "phc_from_env_file" },
         });
         assert.equal(chosen.T3CODE_POSTHOG_KEY, "phc_from_env_file");
+      }),
+    );
+    it.effect("names a dev home's first owner unless the environment gives a name", () =>
+      Effect.gen(function* () {
+        const input = {
+          mode: "dev",
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        } as const;
+        const named = yield* createDevRunnerEnv({ ...input, baseEnv: {} });
+        assert.equal(named.J5CODE_DEV_OWNER_NAME, J5_DEV_OWNER_NAME);
+        // Blank is kept: the live-test rig leaves the first owner unnamed that way.
+        const unnamed = yield* createDevRunnerEnv({
+          ...input,
+          baseEnv: { J5CODE_DEV_OWNER_NAME: "" },
+        });
+        assert.equal(unnamed.J5CODE_DEV_OWNER_NAME, "");
       }),
     );
     it.effect("leaves the shared home implicit and disables browser auto-open", () =>
