@@ -15,7 +15,11 @@ import { renderCrewNotice } from "../crew/CrewNoticeRenderer";
 import { participantIdsForCrewNotice } from "../crew/crewNotices.logic";
 import { useThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { presentParticipantIdentity } from "./ParticipantIdentity";
+import { useConnectionAccess } from "../sharing/access";
+import {
+  presentParticipantIdentity,
+  type ParticipantIdentityPresentation,
+} from "./ParticipantIdentity";
 
 /**
  * `deliveryMessageId` in the server A2A transport is deliberately stable across
@@ -70,8 +74,6 @@ export interface ThreadA2ADeliveryCompositionInput {
   readonly participantLabels?: ReadonlyMap<string, string> | undefined;
   /** From the same read: each agent sender's thread, on this server or a peer. */
   readonly participantThreads?: ReadonlyMap<string, ScopedThreadRef> | undefined;
-  /** The caller supplies this only when it can prove the authenticated viewer. */
-  readonly resolveViewerParticipantId?: (() => string | null) | undefined;
   /** The shown thread, for cards that open seats and render a message's markdown. */
   readonly threadRef?: ScopedThreadRef | null | undefined;
   readonly markdownCwd?: string | undefined;
@@ -405,9 +407,39 @@ export function presentThreadA2ADelivery(
 
 export function participantIdsForThreadA2ADelivery(message: ChatMessage): ReadonlyArray<string> {
   const presentation = presentThreadA2ADelivery({ message });
-  return presentation?.kind === "peer"
-    ? [presentation.senderId]
-    : participantIdsForCrewNotice(message);
+  if (presentation?.kind === "peer") return [presentation.senderId];
+  // A person's reply that carries only their id is named by the identity read.
+  if (presentation?.kind === "human") {
+    return presentation.senderLabel === null ? [presentation.senderId] : [];
+  }
+  return participantIdsForCrewNotice(message);
+}
+
+/**
+ * An Inbox reply reads "You" to the person who sent it and names them to anyone else (Thread
+ * rendering AC4). The name the reply came with is the one they had when they sent it (People and
+ * access AC47); a reply that carries only their id takes the name the identity read gives.
+ */
+export function presentInboxReplyAttribution(input: {
+  readonly senderId: string;
+  readonly senderLabel: string | null;
+  readonly viewerParticipantId: string | null;
+  readonly participantLabels: ReadonlyMap<string, string>;
+}): ParticipantIdentityPresentation {
+  if (input.viewerParticipantId === input.senderId) {
+    return { label: "You · via Inbox", tooltipParticipantId: null };
+  }
+  const sender =
+    input.senderLabel === null
+      ? presentParticipantIdentity({
+          participantId: input.senderId,
+          participantLabels: input.participantLabels,
+        })
+      : { label: input.senderLabel, tooltipParticipantId: null };
+  return {
+    label: `Via Inbox · ${sender.label}`,
+    tooltipParticipantId: sender.tooltipParticipantId,
+  };
 }
 
 export function formatThreadA2AQueuedDelivery(
@@ -659,6 +691,58 @@ function PeerDeliveryCard({
   );
 }
 
+function InboxReplyCard({
+  body,
+  environmentId,
+  exchange,
+  markdown,
+  participantLabels,
+  senderId,
+  senderLabel,
+}: {
+  readonly body: string;
+  readonly environmentId: ScopedThreadRef["environmentId"] | null;
+  readonly exchange: "expects-reply" | "plain" | "closed";
+  readonly markdown: A2AMarkdownContext;
+  readonly participantLabels: ReadonlyMap<string, string>;
+  readonly senderId: string;
+  readonly senderLabel: string | null;
+}) {
+  // The viewer is the person this client is on the thread's own server, which is where the
+  // reply was answered; another server's person is someone else.
+  const access = useConnectionAccess(environmentId);
+  const attribution = presentInboxReplyAttribution({
+    senderId,
+    senderLabel,
+    viewerParticipantId: access?.kind === "person" ? access.personId : null,
+    participantLabels,
+  });
+  return (
+    <section className="rounded-lg bg-accent px-3 py-2.5" data-j5-a2a-renderer="human">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        {attribution.tooltipParticipantId === null ? (
+          <p className="font-medium text-muted-foreground">{attribution.label}</p>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger render={<p className="font-medium text-muted-foreground" />}>
+              {attribution.label}
+            </TooltipTrigger>
+            <TooltipPopup>{attribution.tooltipParticipantId}</TooltipPopup>
+          </Tooltip>
+        )}
+        {exchange === "closed" ? (
+          <span className="rounded-md border border-border/70 px-1.5 py-0.5 text-2xs font-semibold text-muted-foreground">
+            Closed your exchange
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-1" data-thread-find-text="true">
+        <A2AMarkdownBody body={body} className="text-sm" markdown={markdown} />
+      </div>
+    </section>
+  );
+}
+
 /**
  * The upstream user-row seam calls this function directly. It deliberately
  * returns null for non-A2A messages so the existing renderer owns that path.
@@ -693,25 +777,16 @@ export function renderThreadA2ADelivery(props: ThreadA2ADeliveryCompositionInput
   }
 
   if (presentation.kind === "human") {
-    const viewerParticipantId = props.resolveViewerParticipantId?.() ?? null;
-    const attribution =
-      viewerParticipantId !== null && viewerParticipantId === presentation.senderId
-        ? "You · via Inbox"
-        : `Via Inbox · ${presentation.senderLabel ?? presentation.senderId}`;
     return (
-      <section className="rounded-lg bg-accent px-3 py-2.5" data-j5-a2a-renderer="human">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-          <p className="font-medium text-muted-foreground">{attribution}</p>
-          {presentation.exchange === "closed" ? (
-            <span className="rounded-md border border-border/70 px-1.5 py-0.5 text-2xs font-semibold text-muted-foreground">
-              Closed your exchange
-            </span>
-          ) : null}
-        </div>
-        <div className="mt-1" data-thread-find-text="true">
-          <A2AMarkdownBody body={presentation.body} className="text-sm" markdown={markdown} />
-        </div>
-      </section>
+      <InboxReplyCard
+        body={presentation.body}
+        environmentId={props.threadRef?.environmentId ?? null}
+        exchange={presentation.exchange}
+        markdown={markdown}
+        participantLabels={props.participantLabels ?? new Map()}
+        senderId={presentation.senderId}
+        senderLabel={presentation.senderLabel}
+      />
     );
   }
 

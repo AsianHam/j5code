@@ -320,6 +320,15 @@ export const layer: Layer.Layer<
           );
           // An outside agent has no thread either; it is shown by the label it signed in with.
           rows.push(...(yield* outsideAgentNameRows(sql, participantIdBatch)));
+          // A person is shown by their name, a removed one by the name they had (People and
+          // access AC47); a first owner who has not given one yet stays unnamed.
+          rows.push(
+            ...(yield* sql<IdentityRow>`
+                SELECT person_id AS participant_id, display_name
+                FROM j5_a2a_human_person
+                WHERE person_id IN ${sql.in(participantIdBatch)}
+              `),
+          );
           // A sender homed on a peer has no thread here; the label its server
           // sent with its latest delivery stands in, and only for ids nothing
           // local named, so local-only reads never touch received history.

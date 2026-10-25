@@ -278,6 +278,31 @@ it.effect("names an outside agent by the label it signed in with", () =>
   }).pipe(Effect.provide(makeTestLayer())),
 );
 
+it.effect("names a person by their name, and leaves one who has given none unnamed", () =>
+  Effect.gen(function* () {
+    yield* runMigrations();
+    yield* runJ5A2AMigrations();
+    const sql = yield* SqlClient.SqlClient;
+    const reads = yield* ClientReadsService;
+    const at = "2026-10-24T00:00:00.000Z";
+    yield* sql`
+      INSERT INTO j5_a2a_human_person (person_id, is_local_operator, display_name, created_at)
+      VALUES (${firstPerson}, 1, NULL, ${at}), (${secondPerson}, 0, 'Priya', ${at})
+    `;
+    const nobody = ParticipantId.make("human:nobody");
+    assert.deepStrictEqual(
+      yield* reads.participantIdentities({ participantIds: [secondPerson, firstPerson, nobody] }),
+      {
+        entries: [
+          { participantId: secondPerson, identity: { kind: "known", displayName: "Priya" } },
+          { participantId: firstPerson, identity: { kind: "unknown" } },
+          { participantId: nobody, identity: { kind: "unknown" } },
+        ],
+      },
+    );
+  }).pipe(Effect.provide(makeTestLayer())),
+);
+
 it.effect(
   "counts exactly the A4 open list for explicit people and uses the literal open partial index",
   () =>

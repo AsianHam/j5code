@@ -19,7 +19,7 @@ import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 
-import { ParticipantId } from "../a2a/contracts.ts";
+import { isHumanParticipantId, ParticipantId } from "../a2a/contracts.ts";
 import { getLocalOperatorHumanPersonId } from "../a2a/HumanPersonRegistry.ts";
 import { ReadChanges, layer as readChangesLayer } from "../a2a/ReadChanges.ts";
 
@@ -263,9 +263,10 @@ export interface PersonAccessShape {
     asset: MessageAsset,
   ) => Effect.Effect<PersonLevel | null, PersonAccessStorageError>;
   /**
-   * Whether a person may be told an agent's name: its own thread is one they reach, or it sent a
-   * message to an agent whose thread they reach. Anything else they are told nothing of, since an
-   * agent's name is its thread's title.
+   * Whether a person may be told a participant's name. An agent's name is its thread's title, so
+   * it is told when its own thread is one they reach, or when it sent a message to an agent whose
+   * thread they reach. A person's name is told to themselves, and otherwise only while that person
+   * is on a list of who reaches a thread or project they reach (AC26).
    */
   readonly participantVisible: (
     personId: ParticipantId,
@@ -594,6 +595,73 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
       Effect.mapError(storage("read a person's level on a thread")),
     );
 
+    const projectInFeed: PersonAccessShape["projectInFeed"] = Effect.fn(
+      "j5.sharing.personAccess.projectInFeed",
+    )(
+      function* (personId, projectId) {
+        // The cheap answers first: the server, the project, or a thread that lives in it.
+        const direct = yield* sql<{ readonly found: number }>`
+          SELECT 1 AS found
+          FROM j5_a2a_person_level AS held
+          WHERE held.person_id = ${personId}
+            AND (
+              held.scope_kind = 'server'
+              OR (held.scope_kind = 'project' AND held.scope_id = ${projectId})
+              OR (held.scope_kind = 'thread' AND EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_threads AS thread
+                WHERE thread.thread_id = held.scope_id
+                  AND thread.project_id = ${projectId}
+                  AND thread.deleted_at IS NULL
+              ))
+            )
+          LIMIT 1
+        `;
+        if (direct.length > 0) return true;
+        // An agent beneath a covered thread can live in another project; its thread is in the
+        // person's sidebar, and so is that project.
+        const threads = yield* sql<{ readonly thread_id: string }>`
+          SELECT thread_id FROM orchestration_v2_projection_threads
+          WHERE project_id = ${projectId} AND deleted_at IS NULL
+        `;
+        for (const thread of threads) {
+          if ((yield* coveringThread(thread.thread_id as ThreadId, personId)).length > 0) {
+            return true;
+          }
+        }
+        return false;
+      },
+      Effect.mapError(storage("read whether a project is in a person's sidebar")),
+    );
+
+    // Whether a person is on a list of who reaches a thread or project the viewer reaches
+    // (`scopePeople` behind AC26): some thread both reach, or a project the viewer reaches whose
+    // level the person holds. A removed person holds no level, so is on none. Each thread's
+    // levels come from one line of ancestors, so two people share a thread exactly when one
+    // reaches a thread the other holds, or a thread in a project the other holds; checking each
+    // one's own levels is enough.
+    const onReadableRoster = Effect.fn("j5.sharing.personAccess.onReadableRoster")(function* (
+      viewerId: ParticipantId,
+      personId: ParticipantId,
+    ) {
+      const held = yield* sql<LevelRow>`
+        SELECT person_id, scope_kind, scope_id, level FROM j5_a2a_person_level
+        WHERE person_id IN (${viewerId}, ${personId})
+      `;
+      const viewerHeld = held.filter((row) => row.person_id === viewerId);
+      const personHeld = held.filter((row) => row.person_id === personId);
+      if (viewerHeld.length === 0 || personHeld.length === 0) return false;
+      if (held.some((row) => row.scope_kind === "server")) return true;
+      const reaches = (row: LevelRow, otherId: ParticipantId) =>
+        row.scope_kind === "thread"
+          ? coveringThread(row.scope_id as ThreadId, otherId).pipe(
+              Effect.map((rows) => rows.length > 0),
+            )
+          : projectInFeed(otherId, row.scope_id as ProjectId);
+      for (const row of viewerHeld) if (yield* reaches(row, personId)) return true;
+      for (const row of personHeld) if (yield* reaches(row, viewerId)) return true;
+      return false;
+    });
+
     const viaOf = (row: LevelRow, threadId: ThreadId | null): ReachVia =>
       row.scope_kind === "server"
         ? "server"
@@ -689,41 +757,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           Effect.withSpan("j5.sharing.personAccess.threadProject"),
         ),
 
-      projectInFeed: Effect.fn("j5.sharing.personAccess.projectInFeed")(
-        function* (personId, projectId) {
-          // The cheap answers first: the server, the project, or a thread that lives in it.
-          const direct = yield* sql<{ readonly found: number }>`
-            SELECT 1 AS found
-            FROM j5_a2a_person_level AS held
-            WHERE held.person_id = ${personId}
-              AND (
-                held.scope_kind = 'server'
-                OR (held.scope_kind = 'project' AND held.scope_id = ${projectId})
-                OR (held.scope_kind = 'thread' AND EXISTS (
-                  SELECT 1 FROM orchestration_v2_projection_threads AS thread
-                  WHERE thread.thread_id = held.scope_id
-                    AND thread.project_id = ${projectId}
-                    AND thread.deleted_at IS NULL
-                ))
-              )
-            LIMIT 1
-          `;
-          if (direct.length > 0) return true;
-          // An agent beneath a covered thread can live in another project; its thread is in the
-          // person's sidebar, and so is that project.
-          const threads = yield* sql<{ readonly thread_id: string }>`
-            SELECT thread_id FROM orchestration_v2_projection_threads
-            WHERE project_id = ${projectId} AND deleted_at IS NULL
-          `;
-          for (const thread of threads) {
-            if ((yield* coveringThread(thread.thread_id as ThreadId, personId)).length > 0) {
-              return true;
-            }
-          }
-          return false;
-        },
-        Effect.mapError(storage("read whether a project is in a person's sidebar")),
-      ),
+      projectInFeed,
 
       messageAssetLevel: Effect.fn("j5.sharing.personAccess.messageAssetLevel")(
         function* (personId, asset) {
@@ -741,6 +775,10 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
 
       participantVisible: Effect.fn("j5.sharing.personAccess.participantVisible")(
         function* (personId, participant) {
+          if (participant.participantId === personId) return true;
+          if (isHumanParticipantId(participant.participantId as ParticipantId)) {
+            return yield* onReadableRoster(personId, participant.participantId as ParticipantId);
+          }
           if (
             participant.threadId !== null &&
             (yield* coveringThread(participant.threadId as ThreadId, personId)).length > 0
@@ -762,7 +800,7 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           }
           return false;
         },
-        Effect.mapError(storage("read whether a person may know an agent")),
+        Effect.mapError(storage("read whether a person may know a participant")),
       ),
 
       mcpAppResource: Effect.fn("j5.sharing.personAccess.mcpAppResource")(

@@ -8,7 +8,9 @@ import {
   J5_A2A_DELIVERY_MESSAGE_PREFIX,
   formatThreadA2AQueuedDelivery,
   isThreadA2ADeliveryMessage,
+  participantIdsForThreadA2ADelivery,
   participantIdsForThreadA2AEnvelope,
+  presentInboxReplyAttribution,
   presentThreadA2ADelivery,
   renderThreadA2ADelivery,
   ThreadA2ADeliveryRenderer,
@@ -212,18 +214,6 @@ describe("ThreadA2ADeliveryRenderer", () => {
     expect(markup).not.toContain("Show raw envelope");
   });
 
-  it("renders a #11 human inbox reply with a literal id until local identity is proven", () => {
-    const markup = renderToStaticMarkup(
-      <ThreadA2ADeliveryRenderer
-        message={message({ id: deliveryId("human"), createdBy: "user", text: humanRaw })}
-      />,
-    );
-
-    expect(markup).toContain('data-j5-a2a-renderer="human"');
-    expect(markup).toContain("Via Inbox · human:viewer");
-    expect(markup).toContain("Please prioritize the alert.");
-  });
-
   it("reads the name of an inbox reply that carries one, without the level the agent is told", () => {
     for (const [header, label] of [
       ["[Message from Jackson (human:viewer)]", "Jackson"],
@@ -272,15 +262,50 @@ describe("ThreadA2ADeliveryRenderer", () => {
     });
   });
 
-  it("uses You only when the caller proves the viewer matches the sender", () => {
-    const markup = renderToStaticMarkup(
-      <ThreadA2ADeliveryRenderer
-        message={message({ id: deliveryId("human-local"), createdBy: "user", text: humanRaw })}
-        resolveViewerParticipantId={() => "human:viewer"}
-      />,
-    );
+  it("says You to the person who answered and names them to anyone else", () => {
+    const labels = new Map([["human:viewer", "Priya Today"]]);
+    const attribution = (senderLabel: string | null, viewerParticipantId: string | null) =>
+      presentInboxReplyAttribution({
+        senderId: "human:viewer",
+        senderLabel,
+        viewerParticipantId,
+        participantLabels: labels,
+      });
 
-    expect(markup).toContain("You · via Inbox");
+    expect(attribution("Priya", "human:viewer")).toEqual({
+      label: "You · via Inbox",
+      tooltipParticipantId: null,
+    });
+    // The name the reply came with stands, even after a rename.
+    expect(attribution("Priya", "human:other").label).toBe("Via Inbox · Priya");
+    expect(attribution("Priya", null).label).toBe("Via Inbox · Priya");
+    expect(attribution(null, "human:other").label).toBe("Via Inbox · Priya Today");
+    expect(
+      presentInboxReplyAttribution({
+        senderId: "human:viewer",
+        senderLabel: null,
+        viewerParticipantId: null,
+        participantLabels: new Map(),
+      }),
+    ).toEqual({
+      label: "Via Inbox · Unnamed participant",
+      tooltipParticipantId: "human:viewer",
+    });
+  });
+
+  it("asks the identity read for a person only when their reply carries no name", () => {
+    const closedInstruction = humanClosedRaw.slice(humanClosedRaw.lastIndexOf("\n\n") + 2);
+    const named = `[Message from Priya (human:viewer)]\n\nCall Acme first.\n\n${closedInstruction}`;
+    expect(
+      participantIdsForThreadA2ADelivery(
+        message({ id: deliveryId("human-named"), createdBy: "user", text: named }),
+      ),
+    ).toEqual([]);
+    expect(
+      participantIdsForThreadA2ADelivery(
+        message({ id: deliveryId("human-id-only"), createdBy: "user", text: humanClosedRaw }),
+      ),
+    ).toEqual(["human:viewer"]);
   });
 
   it("renders the exact v13 human reply as a closed exchange without reply instructions", () => {
@@ -290,12 +315,7 @@ describe("ThreadA2ADeliveryRenderer", () => {
       text: humanClosedRaw,
     });
     const presentation = presentThreadA2ADelivery({ message: source });
-    const markup = renderToStaticMarkup(
-      <ThreadA2ADeliveryRenderer
-        message={source}
-        resolveViewerParticipantId={() => "human:viewer"}
-      />,
-    );
+    const markup = renderToStaticMarkup(<ThreadA2ADeliveryRenderer message={source} />);
 
     expect(presentation).toMatchObject({
       kind: "human",
@@ -303,7 +323,6 @@ describe("ThreadA2ADeliveryRenderer", () => {
       body: "Human reply delivered verbatim.",
       exchange: "closed",
     });
-    expect(markup).toContain("You · via Inbox");
     expect(markup).toContain("Closed your exchange");
     expect(markup).not.toContain("Expects reply");
     expect(markup).not.toContain(closedInstruction);

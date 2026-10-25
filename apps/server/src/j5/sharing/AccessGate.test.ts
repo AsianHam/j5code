@@ -4,6 +4,7 @@ import {
   J5_AGENT_PERSONA_WS_METHODS,
   J5_ARTIFACT_WS_METHODS,
   ORCHESTRATION_V2_WS_METHODS,
+  ProjectId,
   RpcScopeAuthorization,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -31,6 +32,7 @@ import {
   accessLayer,
   device,
   person,
+  placed,
   thread,
 } from "./test-support/accessHarness.ts";
 
@@ -344,6 +346,185 @@ it.layer(testLayer)("access gate", (it) => {
           identity: { kind: "unknown" },
         },
       ]);
+    }),
+  );
+
+  /** The names a connection is told, given the names the identity read answered. */
+  const toldNames = Effect.fn("test.toldNames")(function* (
+    session: Signed,
+    named: ReadonlyArray<readonly [string, string]>,
+  ) {
+    const authorize = yield* RpcScopeAuthorization.pipe(
+      Effect.provide(
+        AccessGate.layerRpcAuthorization(session, RpcAuthorization.layer(session.scopes)),
+      ),
+    );
+    type Handler = Parameters<typeof authorize>[0];
+    const answer = yield* authorize(
+      Effect.succeed({
+        entries: named.map(([participantId, displayName]) => ({
+          participantId,
+          identity: { kind: "known", displayName },
+        })),
+      }) as unknown as Handler,
+      {
+        rpc: { _tag: J5_CLIENT_READ_WS_METHODS.readParticipantIdentities },
+        payload: { participantIds: [] },
+      } as unknown as Parameters<typeof authorize>[1],
+    );
+    const entries = (
+      answer as unknown as {
+        readonly entries: ReadonlyArray<{
+          readonly identity: { readonly kind: string; readonly displayName?: string };
+        }>;
+      }
+    ).entries;
+    return entries.map((entry) => entry.identity.displayName ?? null);
+  });
+
+  it.effect("tells a narrowed person only the names on who reaches what they read", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const mine = yield* thread("thread:names-mine");
+      const below = yield* thread("thread:names-below", OTHER_PROJECT, {
+        parent: mine,
+        relationship: "subagent",
+      });
+      const other = yield* thread("thread:names-other");
+      yield* placed(mine, null);
+      const sameThread = yield* person("Priya Names", [
+        { scope: { kind: "thread", threadId: mine }, level: "collaborator" },
+      ]);
+      const sameProject = yield* person("Ines Names", [
+        { scope: { kind: "project", projectId: PROJECT }, level: "viewer" },
+      ]);
+      const server = yield* person("Omar Names", [{ scope: { kind: "server" }, level: "viewer" }]);
+      const underneath = yield* person("Bea Names", [
+        { scope: { kind: "thread", threadId: below }, level: "viewer" },
+      ]);
+      const elsewhere = yield* person("Sam Names", [
+        { scope: { kind: "thread", threadId: other }, level: "collaborator" },
+      ]);
+      const otherProject = yield* person("Tove Names", [
+        { scope: { kind: "project", projectId: OTHER_PROJECT }, level: "collaborator" },
+      ]);
+      const unshared = yield* person("Uma Names", [
+        {
+          scope: { kind: "project", projectId: ProjectId.make("project:names-unshared") },
+          level: "collaborator",
+        },
+      ]);
+      const stranger = yield* person("Quinn Names");
+      // An agent the reader reads asking someone does not put them on its thread's list.
+      yield* sql`
+        INSERT INTO j5_a2a_exchange (
+          project_id, exchange_id, sender_id, receiver_id, status, intent, urgency,
+          opened_seq, closed_seq, created_at, updated_at
+        ) VALUES (
+          ${PROJECT}, 'exchange:names-asked', ${`agent:j5:a2a:thread:${mine}`},
+          ${stranger.personId}, 'open', 'Which vendor?', 'soon', 1, NULL,
+          '2026-10-24T00:00:00.000Z', '2026-10-24T00:00:00.000Z'
+        )
+      `;
+      const { session, person: reader } = yield* signed(
+        "Roster name reader",
+        [{ scope: { kind: "thread", threadId: mine }, level: "viewer" }],
+        LEVEL_PERMISSIONS.viewer,
+      );
+      assert.deepStrictEqual(
+        yield* toldNames(session, [
+          [reader.personId, "Roster name reader"],
+          [sameThread.personId, "Priya Names"],
+          [sameProject.personId, "Ines Names"],
+          [server.personId, "Omar Names"],
+          [underneath.personId, "Bea Names"],
+          // Her project holds the thread beneath theirs, so she reaches it too.
+          [otherProject.personId, "Tove Names"],
+          [elsewhere.personId, "Sam Names"],
+          [unshared.personId, "Uma Names"],
+          [stranger.personId, "Quinn Names"],
+        ]),
+        [
+          "Roster name reader",
+          "Priya Names",
+          "Ines Names",
+          "Omar Names",
+          "Bea Names",
+          "Tove Names",
+          null,
+          null,
+          null,
+        ],
+      );
+      // Reaching a project, they are told who reaches a thread in it, and no one outside it.
+      const { session: projectReader } = yield* signed(
+        "Names project reader",
+        [{ scope: { kind: "project", projectId: OTHER_PROJECT }, level: "viewer" }],
+        LEVEL_PERMISSIONS.viewer,
+      );
+      assert.deepStrictEqual(
+        yield* toldNames(projectReader, [
+          [underneath.personId, "Bea Names"],
+          [otherProject.personId, "Tove Names"],
+          [server.personId, "Omar Names"],
+          // A thread's level reaches the threads beneath it, wherever they live.
+          [sameThread.personId, "Priya Names"],
+          [sameProject.personId, "Ines Names"],
+          [elsewhere.personId, "Sam Names"],
+        ]),
+        ["Bea Names", "Tove Names", "Omar Names", "Priya Names", null, null],
+      );
+    }),
+  );
+
+  it.effect("stops telling a narrowed person a name once its person no longer reaches it", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const access = yield* PersonAccess.PersonAccess;
+      const mine = yield* thread("thread:names-revoked");
+      yield* placed(mine, null);
+      const revoked = yield* person("Priya Revoked", [
+        { scope: { kind: "thread", threadId: mine }, level: "collaborator" },
+      ]);
+      const removed = yield* person("Sam Removed", [
+        { scope: { kind: "thread", threadId: mine }, level: "viewer" },
+      ]);
+      yield* sql`
+        INSERT INTO j5_a2a_exchange (
+          project_id, exchange_id, sender_id, receiver_id, status, intent, urgency,
+          opened_seq, closed_seq, created_at, updated_at
+        ) VALUES (
+          ${PROJECT}, 'exchange:names-revoked', ${`agent:j5:a2a:thread:${mine}`},
+          ${revoked.personId}, 'open', 'Which vendor?', 'soon', 1, NULL,
+          '2026-10-24T00:00:00.000Z', '2026-10-24T00:00:00.000Z'
+        )
+      `;
+      const { session } = yield* signed(
+        "Revocation reader",
+        [{ scope: { kind: "thread", threadId: mine }, level: "viewer" }],
+        LEVEL_PERMISSIONS.viewer,
+      );
+      assert.deepStrictEqual(
+        yield* toldNames(session, [
+          [revoked.personId, "Priya Revoked"],
+          [removed.personId, "Sam Removed"],
+        ]),
+        ["Priya Revoked", "Sam Removed"],
+      );
+
+      yield* access.removeLevel({
+        personId: revoked.personId,
+        scope: { kind: "thread", threadId: mine },
+      });
+      yield* access.removePerson(removed.personId);
+      yield* access.setName({ personId: revoked.personId, displayName: "Priya Renamed" });
+      assert.deepStrictEqual(
+        yield* toldNames(session, [
+          [revoked.personId, "Priya Renamed"],
+          [removed.personId, "Sam Removed"],
+        ]),
+        [null, null],
+      );
     }),
   );
 
