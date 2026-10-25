@@ -6,32 +6,52 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { latestActiveRun } from "../../orchestration-v2/ThreadManagementService.ts";
 import {
+  latestExecutedRun,
+  latestRootProviderFailure,
+} from "@t3tools/shared/orchestrationV2ThreadError";
+
+import {
   gpt6PeerSteeringRun,
   deliveryMessageId,
+  idleQueueHold,
   isDeliveryMessageId,
   requestedSteeringRun,
 } from "./DeliveryTransport.ts";
-import { formatReceiverBacklogNotice } from "./EnvelopeFormatter.ts";
+import {
+  formatReceiverBacklogNotice,
+  formatReceiverLimitNotice,
+  formatReceiverQueueHeldNotice,
+} from "./EnvelopeFormatter.ts";
 import { LedgerMessageId, Participant, type ParticipantId, type SendMode } from "./contracts.ts";
 
-export interface ReceiverBacklog {
-  /** Messages that will each start their own turn once the receiver's current turn ends. */
-  readonly waiting: number;
-  /** How many of those the caller sent. */
-  readonly fromCaller: number;
-}
+export type ReceiverBacklog =
+  | {
+      readonly type: "behind_turn";
+      /** Messages that will each start their own turn once the receiver's current turn ends. */
+      readonly waiting: number;
+      /** How many of those the caller sent. */
+      readonly fromCaller: number;
+    }
+  | {
+      readonly type: "usage_limit";
+      /** When upstream continues the receiver, or null when it waits for a person. */
+      readonly resetAt: string | null;
+    }
+  /** Its queue is held, so the message runs only once a person resumes it. */
+  | { readonly type: "queue_held" };
 
 const decodeParticipant = Schema.decodeUnknownEffect(Schema.fromJsonString(Participant));
 
 /**
  * What a just-sent message is waiting behind: the receiver's running turn and the
  * A2A messages after it, both those already queued as runs and those the delivery
- * worker has not handed over yet. Undefined when the message will not wait: the
- * receiver is idle, takes it mid-turn (a GPT 6 model, or a steer or restart), holds its queue, is not an agent on
- * this server, or the message has already run or will never run. Measured when
- * called and never stored, so it is advice to the sender, not a delivery fact. A
- * failed read is logged and reads as undefined: the message is already committed,
- * and the send must not fail over advice.
+ * worker has not handed over yet; or a held queue or usage limit, which only a resume
+ * or a continue lifts (D4). Undefined when the message will not wait: the receiver is
+ * idle and takes it now, takes it mid-turn (a GPT 6 model, or a steer or restart), is
+ * not an agent on this server, or the message has already run or will never run.
+ * Measured when called and never stored, so it is advice to the sender, not a delivery
+ * fact. A failed read is logged and reads as undefined: the message is already
+ * committed, and the send must not fail over advice.
  */
 export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
   function* (input: {
@@ -69,17 +89,52 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
       "providerThreads",
       "providerSessions",
     ]);
-    if (target.thread.archivedAt !== null || latestActiveRun(target) === undefined)
-      return undefined;
-    // A held queue drains only when someone resumes the thread, so "after its current
-    // turn ends" would be false. Telling the sender about held receivers is #272.
-    if (target.runs.some((run) => run.status === "queued" && run.queueHeld === true))
-      return undefined;
+    if (target.thread.archivedAt !== null) return undefined;
 
     const runByMessage = new Map(target.runs.map((run) => [run.userMessageId, run]));
     const sentRun = runByMessage.get(deliveryMessageId(input.sentMessageId));
     // Already started or finished (a replay reports the current state, not the first one).
     if (sentRun !== undefined && sentRun.status !== "queued") return undefined;
+    const pending = pendingRows.filter(
+      (row) => !runByMessage.has(deliveryMessageId(LedgerMessageId.make(row.message_id))),
+    );
+    // Neither queued nor pending: cancelled or alarmed, so it is not waiting.
+    if (sentRun === undefined && !pending.some((row) => row.message_id === input.sentMessageId))
+      return undefined;
+    const heldQueue = target.runs.some((run) => run.status === "queued" && run.queueHeld === true);
+
+    if (latestActiveRun(target) === undefined) {
+      // An idle receiver takes the message now, resuming a held queue first, unless that
+      // queue may not be resumed. Upstream holds a message sent after a failed worktree
+      // setup even without a held queue.
+      const latestRun = latestExecutedRun(target.runs);
+      // Only a failed run's errors can name a usage limit.
+      const { turnItems } =
+        latestRun?.status !== "failed"
+          ? { turnItems: [] }
+          : yield* orchestrator.getThreadRecords(participant.threadId, ["turnItems"], {
+              turnItemRunIds: [latestRun.id],
+              turnItemTypes: ["error"],
+            });
+      const hold = idleQueueHold({ ...target, turnItems });
+      if (hold?.type === "worktree_setup_failed") return { type: "queue_held" } as const;
+      // Without a held queue a delivery starts a turn at once, as upstream starts any message
+      // to an idle thread, but one already queued waits for the continue.
+      if (hold?.type !== "usage_limit" || (!heldQueue && sentRun === undefined)) return undefined;
+      // Upstream continues it at the reset only when its recovery is armed for this limit,
+      // as the thread's usage-limit banner shows.
+      const recovery = target.thread.limitRecovery;
+      const resetAt = latestRootProviderFailure(hold.run, turnItems)?.resetAt;
+      return {
+        type: "usage_limit",
+        resetAt:
+          recovery?.autoResume === true &&
+          recovery.runId === hold.run.id &&
+          recovery.resetAt === resetAt
+            ? recovery.resetAt
+            : null,
+      } satisfies ReceiverBacklog;
+    }
     // Not yet handed over, so a running GPT 6 turn, or the turn a steer or restart lands on,
     // will take it mid-turn. Once queued, it stays queued even if the receiver's turn later
     // becomes steerable.
@@ -91,13 +146,8 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
         : requestedSteeringRun(target, "peer", mode)) !== undefined
     )
       return undefined;
-
-    const pending = pendingRows.filter(
-      (row) => !runByMessage.has(deliveryMessageId(LedgerMessageId.make(row.message_id))),
-    );
-    // Neither queued nor pending: cancelled or alarmed, so it is not waiting.
-    if (sentRun === undefined && !pending.some((row) => row.message_id === input.sentMessageId))
-      return undefined;
+    // A held queue drains only when someone resumes the thread, not when its turn ends.
+    if (heldQueue) return { type: "queue_held" } as const;
     const callerId = (yield* sql<{ readonly sender_id: string }>`
       SELECT sender_id FROM j5_a2a_delivery WHERE message_id = ${input.sentMessageId} LIMIT 1
     `)[0]?.sender_id;
@@ -112,6 +162,7 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
             messageIds: queued.map((run) => run.userMessageId),
           })).messages;
     return {
+      type: "behind_turn",
       waiting: queued.length + pending.length,
       fromCaller:
         queuedMessages.filter((message) => message.senderThreadId === input.callerThreadId).length +
@@ -129,7 +180,7 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
     ),
 );
 
-/** Adds the backlog notice to a send result when the message will wait behind the receiver's turn. */
+/** Adds a notice to a send result when the message will wait: behind the receiver's turn, or on its hold. */
 export const withDeliveryNotice = Effect.fn("j5.a2a.withDeliveryNotice")(function* <
   R extends { readonly messageId: LedgerMessageId },
 >(
@@ -141,14 +192,16 @@ export const withDeliveryNotice = Effect.fn("j5.a2a.withDeliveryNotice")(functio
   },
 ) {
   const backlog = yield* readReceiverBacklog({ ...input, sentMessageId: result.messageId });
-  return backlog === undefined
-    ? result
-    : {
-        ...result,
-        deliveryNotice: formatReceiverBacklogNotice({
+  if (backlog === undefined) return result;
+  const deliveryNotice =
+    backlog.type === "behind_turn"
+      ? formatReceiverBacklogNotice({
           receiverId: input.receiverId,
           waiting: backlog.waiting,
           fromYou: backlog.fromCaller,
-        }),
-      };
+        })
+      : backlog.type === "usage_limit"
+        ? formatReceiverLimitNotice({ receiverId: input.receiverId, resetAt: backlog.resetAt })
+        : formatReceiverQueueHeldNotice({ receiverId: input.receiverId });
+  return { ...result, deliveryNotice };
 });

@@ -436,7 +436,7 @@ export const SendMessageResult = Schema.Struct({
   exchangeState: Schema.Literals(["none", "open", "closing", "closed"]),
   joinedExistingExchange: Schema.Boolean,
   durableAtSeq: PositiveInt,
-  /** Present when the receiver is busy and the message will wait behind its running turn. */
+  /** Present when the message will wait: behind the receiver's running turn, or on its held queue or usage limit. */
   deliveryNotice: Schema.optional(Schema.String),
   /** The name of the peer server the receiver lives on; absent for a receiver on this server. */
   receiverServer: Schema.optionalKey(Schema.String),

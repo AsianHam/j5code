@@ -306,6 +306,34 @@ export const requestedSteeringRun = (
   return (mode === "steer" ? turns.supportsActiveSteering || restarts : restarts) ? run : undefined;
 };
 
+/**
+ * Why an idle agent's queue must not be resumed for a delivery. Upstream refuses to resume a thread
+ * stopped by a usage limit, and holds a message queued after a failed worktree setup
+ * (`worktreeMissingRun` in Orchestrator.ts), as resuming would run it in the project checkout.
+ */
+export const idleQueueHold = (
+  target: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "turnItems" | "providerSessions"
+  >,
+) => {
+  const sessionError =
+    target.providerSessions
+      .filter((session) => session.providerInstanceId === target.thread.providerInstanceId)
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+      )[0]?.lastError ?? null;
+  const limitedRun = usageLimitBlockedRun(target.runs, target.turnItems, sessionError);
+  if (limitedRun !== null) return { type: "usage_limit" as const, run: limitedRun };
+  const latestRun = latestExecutedRun(target.runs);
+  return (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
+    latestRun.workspacePreparation?.type === "worktree" &&
+    target.thread.worktreePath === null
+    ? { type: "worktree_setup_failed" as const }
+    : undefined;
+};
+
 export const formatAgentDeliveryEnvelope = (
   input: AgentDeliveryInput & {
     readonly originProjectTitle?: string | undefined;
@@ -630,34 +658,14 @@ export const live: Layer.Layer<
           // queue, so the held messages run first and it joins the back (#580). A retry of an
           // accepted delivery never resumes again. Upstream refuses to resume a thread stopped by
           // a usage limit, so that delivery waits unsent, as a held one, until the thread continues.
-          // So does one whose worktree setup failed, as upstream holds a message queued then
-          // (`worktreeMissingRun` in Orchestrator.ts): resuming would run it in the project checkout.
+          // So does one whose worktree setup failed (`idleQueueHold`).
           const heldQueueRun = target.runs.find(
             (run) => run.status === "queued" && run.queueHeld === true,
           );
-          const latestRun = latestExecutedRun(target.runs);
-          const worktreeSetupFailed =
-            (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
-            latestRun.workspacePreparation?.type === "worktree" &&
-            target.thread.worktreePath === null;
           const queueBehindHeld =
             alreadyAccepted || heldQueueRun === undefined || target.runs.some(isActiveRun)
               ? Effect.void
-              : worktreeSetupFailed ||
-                  usageLimitBlockedRun(
-                    target.runs,
-                    target.turnItems,
-                    target.providerSessions
-                      .filter(
-                        (session) =>
-                          session.providerInstanceId === target.thread.providerInstanceId,
-                      )
-                      .toSorted(
-                        (left, right) =>
-                          DateTime.toEpochMillis(right.updatedAt) -
-                          DateTime.toEpochMillis(left.updatedAt),
-                      )[0]?.lastError ?? null,
-                  ) !== null
+              : idleQueueHold(target) !== undefined
                 ? Effect.fail(
                     new A2ADeliveryHeldError({
                       participantId: input.receiverId,

@@ -137,7 +137,7 @@ import {
   formatPeerEnvelope,
 } from "./EnvelopeFormatter.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
-import { readReceiverBacklog } from "./receiverBacklog.ts";
+import { readReceiverBacklog, withDeliveryNotice } from "./receiverBacklog.ts";
 import { noneLayer as peerDirectoryNoneLayer } from "./PeerDirectory.ts";
 import { A2ALifecycleService, manualLayer as lifecycleServiceLayer } from "./LifecycleService.ts";
 import {
@@ -1124,11 +1124,19 @@ it.effect("measures the backlog a send waits behind on a busy receiver", () =>
       // Committed sends the worker has not handed over yet are waiting too.
       yield* send.send(sendInput(caller, "second"));
       const third = yield* send.send(sendInput(caller, "third"));
-      assert.deepStrictEqual(yield* backlogFor(third), { waiting: 2, fromCaller: 2 });
+      assert.deepStrictEqual(yield* backlogFor(third), {
+        type: "behind_turn",
+        waiting: 2,
+        fromCaller: 2,
+      });
       // Queued runs and pending deliveries add up; another sender's count is not the caller's.
       yield* worker.drain;
       yield* send.send(sendInput(other, "other"));
-      assert.deepStrictEqual(yield* backlogFor(third), { waiting: 3, fromCaller: 2 });
+      assert.deepStrictEqual(yield* backlogFor(third), {
+        type: "behind_turn",
+        waiting: 3,
+        fromCaller: 2,
+      });
 
       // Only agents on this server are measured.
       assert.isUndefined(
@@ -1185,25 +1193,7 @@ it.effect("counts a message queued before an Astra turn became steerable", () =>
           callerThreadId: ThreadId.make("thread:j5-a2a-delivery-backlog-astra-queued-caller"),
           sentMessageId: target.messageId,
         }),
-        { waiting: 1, fromCaller: 0 },
-      );
-    }).pipe(Effect.provide(makeTestLayer(harness)));
-  }),
-);
-
-it.effect("reports no backlog while the receiver's queue is held", () =>
-  Effect.gen(function* () {
-    const harness = yield* makeHarness;
-    yield* Effect.gen(function* () {
-      const target = yield* seedTarget("backlog-held");
-      yield* holdTargetQueue(target);
-      // A held queue waits for someone to resume the thread, not for the turn to end.
-      assert.isUndefined(
-        yield* readReceiverBacklog({
-          receiverId: target.receiverId,
-          callerThreadId: ThreadId.make("thread:j5-a2a-delivery-backlog-held-caller"),
-          sentMessageId: target.messageId,
-        }),
+        { type: "behind_turn", waiting: 1, fromCaller: 0 },
       );
     }).pipe(Effect.provide(makeTestLayer(harness)));
   }),
@@ -3492,6 +3482,48 @@ it.effect("keeps a delivery unsent while a usage limit blocks the receiver's hel
   }),
 );
 
+/** Leaves a target idle with one held message after a run that failed to set up its worktree. */
+const idleAfterFailedWorktreeSetup = Effect.fn("A2AIntegration.idleAfterFailedWorktreeSetup")(
+  function* (
+    harness: DeliveryHarness,
+    target: { readonly projectId: ProjectId; readonly threadId: ThreadId },
+  ) {
+    const earlierRunId = yield* idleWithHeldQueue(harness, target, {
+      class: "provider_error",
+      message: "Worktree setup failed.",
+      code: null,
+      retryable: null,
+    });
+    // The failed run had been preparing a worktree that never got bound to the thread.
+    yield* (yield* OrchestratorV2).dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make(`command:held-worktree:unbind:${target.threadId}`),
+      threadId: target.threadId,
+      worktreePath: null,
+    });
+    const failed = (yield* (yield* ThreadManagementService).getThreadProjection(
+      target.threadId,
+    )).runs.find((run) => run.status === "failed")!;
+    yield* (yield* EventSinkV2).write({
+      events: [
+        {
+          id: EventId.make(`event:held-worktree:preparation:${target.threadId}`),
+          type: "run.updated",
+          threadId: target.threadId,
+          runId: failed.id,
+          providerInstanceId: failed.providerInstanceId,
+          occurredAt: yield* DateTime.now,
+          payload: {
+            ...failed,
+            workspacePreparation: { type: "worktree", baseRef: "main", startFromOrigin: false },
+          },
+        },
+      ],
+    });
+    return earlierRunId;
+  },
+);
+
 it.effect("keeps a delivery unsent while a failed worktree setup holds the receiver's queue", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
@@ -3499,38 +3531,7 @@ it.effect("keeps a delivery unsent while a failed worktree setup holds the recei
       const target = yield* seedTarget("held-worktree", "gpt-5.4");
       const threads = yield* ThreadManagementService;
       const transport = yield* A2ADeliveryTransport;
-      const earlierRunId = yield* idleWithHeldQueue(harness, target, {
-        class: "provider_error",
-        message: "Worktree setup failed.",
-        code: null,
-        retryable: null,
-      });
-      // The failed run had been preparing a worktree that never got bound to the thread.
-      yield* (yield* OrchestratorV2).dispatch({
-        type: "thread.metadata.update",
-        commandId: CommandId.make("command:held-worktree:unbind"),
-        threadId: target.threadId,
-        worktreePath: null,
-      });
-      const failed = (yield* threads.getThreadProjection(target.threadId)).runs.find(
-        (run) => run.status === "failed",
-      )!;
-      yield* (yield* EventSinkV2).write({
-        events: [
-          {
-            id: EventId.make("event:held-worktree:preparation"),
-            type: "run.updated",
-            threadId: target.threadId,
-            runId: failed.id,
-            providerInstanceId: failed.providerInstanceId,
-            occurredAt: yield* DateTime.now,
-            payload: {
-              ...failed,
-              workspacePreparation: { type: "worktree", baseRef: "main", startFromOrigin: false },
-            },
-          },
-        ],
-      });
+      const earlierRunId = yield* idleAfterFailedWorktreeSetup(harness, target);
 
       const error = yield* transport.deliverAgent(target.delivery).pipe(Effect.flip);
 
@@ -3540,6 +3541,120 @@ it.effect("keeps a delivery unsent while a failed worktree setup holds the recei
       assert.equal(after.runs.find((run) => run.id === earlierRunId)?.status, "queued");
       assert.isFalse(after.messages.some((row) => row.id === deliveryMessageId(target.messageId)));
     }).pipe(Effect.provide(makeTestLayer(harness)));
+  }),
+);
+
+/** Sends to the target from a seeded caller and returns the send result's notice. */
+const sendNoticeTo = Effect.fn("A2AIntegration.sendNoticeTo")(function* (
+  suffix: string,
+  target: { readonly ledgerProjectId: LedgerProjectId; readonly receiverId: ParticipantId },
+) {
+  const caller = yield* seedTarget(
+    `${suffix}-caller`,
+    modelSelection.model,
+    undefined,
+    target.ledgerProjectId,
+  );
+  const sent = yield* (yield* A2ASendService).send({
+    commandId: CommCommandId.make(`command:j5-a2a-delivery-${suffix}-notice`),
+    senderThreadId: caller.threadId,
+    to: target.receiverId,
+    message: "An update",
+    acceptedAt: "2026-09-24T00:00:00.000Z",
+  });
+  return (yield* withDeliveryNotice(sent, {
+    receiverId: target.receiverId,
+    callerThreadId: caller.threadId,
+  })).deliveryNotice;
+});
+
+it.effect("tells the sender a busy receiver's held queue keeps its message waiting", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("notice-held-busy");
+      yield* holdTargetQueue(target);
+      assert.equal(
+        yield* sendNoticeTo("notice-held-busy", target),
+        `${target.receiverId}'s queue is on hold, so your message waits until a person resumes it. It will run then, in the order it was sent. Don't send it again.`,
+      );
+    }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
+  }),
+);
+
+it.effect("tells the sender a failed worktree setup keeps its message waiting", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("notice-held-worktree");
+      yield* idleAfterFailedWorktreeSetup(harness, target);
+      assert.equal(
+        yield* sendNoticeTo("notice-held-worktree", target),
+        `${target.receiverId}'s queue is on hold, so your message waits until a person resumes it. It will run then, in the order it was sent. Don't send it again.`,
+      );
+    }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
+  }),
+);
+
+it.effect("tells the sender a usage limit pauses the receiver until a person continues it", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("notice-limit-paused");
+      yield* idleWithHeldQueue(harness, target, {
+        class: "usage_limit",
+        message: "Usage limit reached.",
+        code: null,
+        retryable: null,
+        resetAt: "2099-01-01T00:00:00.000Z",
+      });
+      assert.equal(
+        yield* sendNoticeTo("notice-limit-paused", target),
+        `${target.receiverId} hit its provider's usage limit and is paused until a person continues it. Your message is saved and will run then, in the order it was sent. Don't send it again.`,
+      );
+    }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
+  }),
+);
+
+it.effect("tells the sender when upstream continues a usage-limited receiver", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("notice-limit-auto");
+      const resetAt = "2099-01-01T00:00:00.000Z";
+      yield* idleWithHeldQueue(harness, target, {
+        class: "usage_limit",
+        message: "Usage limit reached.",
+        code: null,
+        retryable: null,
+        resetAt,
+      });
+      const limited = (yield* (yield* ThreadManagementService).getThreadProjection(
+        target.threadId,
+      )).runs.find((run) => run.status === "failed")!;
+      // What the thread's "Resume at reset" does.
+      yield* (yield* OrchestratorV2).dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:notice-limit-auto:arm"),
+        threadId: target.threadId,
+        limitRecovery: { runId: limited.id, resetAt, autoResume: true },
+      });
+      assert.equal(
+        yield* sendNoticeTo("notice-limit-auto", target),
+        `${target.receiverId} hit its provider's usage limit and continues automatically at ${resetAt}. Your message is saved and will run then, in the order it was sent. Don't send it again.`,
+      );
+    }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
+  }),
+);
+
+it.effect("adds no notice for an idle receiver whose held queue the delivery resumes", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("notice-held-idle");
+      yield* idleWithHeldQueue(harness, target);
+      assert.isUndefined(yield* sendNoticeTo("notice-held-idle", target));
+    }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
   }),
 );
 
