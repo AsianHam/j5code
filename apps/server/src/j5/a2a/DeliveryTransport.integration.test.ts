@@ -6,6 +6,17 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { PlacementCommandId } from "./placementContracts.ts";
 import { dispatchCommand as dispatchIntakeCommand } from "../../orchestration-v2/ThreadMessageIntake.ts";
 import { J5AdaptedThreadToolkit, J5AdaptedThreadHandlersLive } from "./mcp/threadTools.ts";
+import { handlersFor } from "./mcp/upstreamCatalog.ts";
+import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
+import * as ThreadHandlers from "../../mcp/toolkits/thread/handlers.ts";
+import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
+import { Toolkit } from "effect/ai";
+import { claimPersonQueuedEdit } from "./queuedEdits.ts";
+import {
+  A2ASilenceDetector,
+  manualLayer as silenceDetectorManualLayer,
+  removedNoticeMessage,
+} from "./SilenceDetector.ts";
 import { ParticipantPlacementService } from "./PlacementService.ts";
 import { J5ThreadRegistrationLayer } from "./runtimeLayer.ts";
 import { ChatAttachmentId, EnvironmentId } from "@t3tools/contracts";
@@ -152,6 +163,7 @@ import {
 } from "./SendService.ts";
 import {
   CommCommandId,
+  CorrelationId,
   LedgerProjectId,
   ExchangeId,
   outsideAgentParticipantId,
@@ -3950,4 +3962,395 @@ it.effect("registers an archived older thread as archived, in one step or not at
       assert.strictEqual(yield* lifecycle.registerExistingThreads, 0);
     }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
   }),
+);
+
+/** Upstream's queue cancel and promote, run on upstream's handlers as `/mcp` registers them. */
+const QueueRemovalToolkit = Toolkit.make(
+  ThreadToolkit.tools.t3_queue_cancel,
+  ThreadToolkit.tools.t3_queue_promote_to_steer,
+);
+const QueueRemovalHandlersLive = McpToolAccess.HandlersLayer.layer(
+  handlersFor(QueueRemovalToolkit, ThreadHandlers.layer),
+);
+
+it.effect(
+  "an agent edits only its own queued message, inside its envelope, and the ledger follows every edit",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      const base = silenceDetectorManualLayer.pipe(
+        Layer.provideMerge(crewInstanceLayer),
+        Layer.provideMerge(makeMessageLifecycleLayer(harness)),
+        Layer.provideMerge(serverConfigLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      yield* Effect.gen(function* () {
+        const registrar = yield* A2AHomeRegistrar;
+        const send = yield* A2ASendService;
+        const worker = yield* A2ADeliveryWorker;
+        const threads = yield* ThreadManagementService;
+        const orchestrator = yield* OrchestratorV2;
+        const detector = yield* A2ASilenceDetector;
+        const sql = yield* SqlClient.SqlClient;
+        const editor = yield* seedTarget("edit-sender", modelSelection.model, registrar);
+        const seed = (suffix: string) =>
+          seedTarget(
+            suffix,
+            modelSelection.model,
+            registrar,
+            editor.ledgerProjectId,
+            editor.projectId,
+          );
+        const other = yield* seed("edit-other");
+        const receiver = yield* seed("edit-receiver");
+        yield* startBusyTurn(editor);
+        yield* startBusyTurn(receiver);
+
+        const sendFrom = (from: typeof editor, name: string) =>
+          send.send({
+            commandId: CommCommandId.make(`command:edit:${name}`),
+            senderThreadId: from.threadId,
+            to: receiver.receiverId,
+            message: `Original ${name}`,
+            acceptedAt: "2026-10-24T00:00:00.000Z",
+          });
+        const own = yield* sendFrom(editor, "own");
+        const others = yield* sendFrom(other, "others");
+        const promoted = yield* sendFrom(other, "promoted");
+        yield* worker.drain;
+        yield* threads.sendToThread({
+          commandId: CommandId.make("command:edit:person"),
+          projectId: receiver.projectId,
+          threadId: receiver.threadId,
+          messageId: MessageId.make("message:edit:person"),
+          text: "A person's queued words",
+          attachments: [],
+          mode: "queue",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queued = (messageId: MessageId) =>
+          threads.getThreadProjection(receiver.threadId).pipe(
+            Effect.map((projection) => {
+              const message = projection.messages.find((entry) => entry.id === messageId)!;
+              const run = projection.runs.find((entry) => entry.id === message.runId)!;
+              return { message, run };
+            }),
+          );
+        const ownQueued = yield* queued(deliveryMessageId(own.messageId));
+        assert.equal(ownQueued.run.status, "queued");
+
+        const scope = {
+          environmentId: EnvironmentId.make("environment:edit-test"),
+          requestNamespace: "edit-test",
+          thread: {
+            threadId: editor.threadId,
+            providerSessionId: "edit-test",
+            providerInstanceId: modelSelection.instanceId,
+          },
+          client: undefined,
+          capabilities: new Set(["orchestration"] as const),
+          issuedAt: 1,
+        };
+        const edit = (queuedRunId: (typeof ownQueued)["run"]["id"], text: string) =>
+          Effect.gen(function* () {
+            const toolkit = yield* J5AdaptedThreadToolkit;
+            return yield* toolkit
+              .handle("t3_queue_edit", { threadId: receiver.threadId, queuedRunId, text })
+              .pipe(
+                Stream.unwrap,
+                Stream.run(Sink.last()),
+                Effect.flatMap(Effect.fromOption),
+                Effect.provideService(McpInvocationContext, scope),
+              );
+          }).pipe(Effect.provide(J5AdaptedThreadHandlersLive));
+        const removals = yield* Effect.provide(QueueRemovalToolkit, QueueRemovalHandlersLive);
+        const asEditor = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
+          stream.pipe(
+            Stream.run(Sink.last()),
+            Effect.flatMap(Effect.fromOption),
+            Effect.provideService(McpInvocationContext, scope),
+          );
+        /** Upstream's latest record of the message, as the event stream carries it. */
+        const latestUpdate = (messageId: MessageId, afterSequence: number) =>
+          orchestrator
+            .streamStoredEventsFrom({
+              threadId: receiver.threadId,
+              afterSequence,
+              eventType: "message.updated",
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "message.updated" && stored.event.payload.id === messageId,
+              ),
+              Stream.take(1),
+              Stream.runHead,
+              Effect.flatMap(Effect.fromOption),
+            );
+        const ledgerRow = (messageId: LedgerMessageId) =>
+          sql<{
+            readonly message_text: string;
+            readonly edited_by: string | null;
+          }>`SELECT message_text, edited_by FROM j5_a2a_delivery WHERE message_id = ${messageId}`.pipe(
+            Effect.map((rows) => rows[0]),
+          );
+
+        const sink = yield* EventSinkV2;
+        // The sender edits its own message: the envelope stays, only the body changes.
+        const beforeOwnEdit = yield* sink.latestSequence();
+        const edited = yield* edit(ownQueued.run.id, "Rewritten own");
+        assert.isFalse(edited.isFailure);
+        const ownAfter = yield* queued(deliveryMessageId(own.messageId));
+        assert.equal(
+          ownAfter.message.text,
+          ownQueued.message.text.replace("Original own", "Rewritten own"),
+        );
+        assert.match(ownAfter.message.text, /^\[Cross-agent message from /);
+        const ownUpdate = yield* latestUpdate(deliveryMessageId(own.messageId), beforeOwnEdit);
+        yield* detector.handleStoredEvent(ownUpdate);
+        yield* detector.handleStoredEvent(ownUpdate);
+        assert.deepEqual(yield* ledgerRow(own.messageId), {
+          message_text: "Rewritten own",
+          edited_by: editor.receiverId,
+        });
+        const editEvents = yield* sql<{ readonly sender: string | null }>`
+          SELECT sender FROM j5_a2a_comm_event
+          WHERE kind = 'message.edited'
+            AND json_extract(payload, '$.messageId') = ${own.messageId}
+        `;
+        assert.deepEqual(editEvents, [{ sender: editor.receiverId }]);
+
+        // An agent that hands back the whole envelope it read gets one envelope, not two.
+        const reread = (yield* queued(deliveryMessageId(own.messageId))).message.text;
+        const beforeAgain = yield* sink.latestSequence();
+        assert.isFalse(
+          (yield* edit(ownQueued.run.id, reread.replace("Rewritten own", "Rewritten again")))
+            .isFailure,
+        );
+        assert.equal(
+          (yield* queued(deliveryMessageId(own.messageId))).message.text,
+          ownQueued.message.text.replace("Original own", "Rewritten again"),
+        );
+        const againUpdate = yield* latestUpdate(deliveryMessageId(own.messageId), beforeAgain);
+        // A restart replays both edits from the detector's last checkpoint: the first must not be
+        // applied over the second.
+        for (const stored of [againUpdate, ownUpdate, againUpdate]) {
+          yield* detector.handleStoredEvent(stored);
+        }
+        assert.deepEqual(yield* ledgerRow(own.messageId), {
+          message_text: "Rewritten again",
+          edited_by: editor.receiverId,
+        });
+
+        // Another agent's message and a person's are refused, with what the agent can do instead.
+        const othersQueued = yield* queued(deliveryMessageId(others.messageId));
+        const refusedOthers = yield* edit(othersQueued.run.id, "Hijacked");
+        assert.isTrue(refusedOthers.isFailure);
+        const othersFailure = yield* decodeToolFailure(refusedOthers.result);
+        assert.equal(othersFailure.code, "capability_denied");
+        assert.include(othersFailure.message, other.receiverId);
+        assert.include(othersFailure.message, "t3_queue_cancel");
+        const personQueued = yield* queued(MessageId.make("message:edit:person"));
+        const refusedPerson = yield* edit(personQueued.run.id, "Hijacked");
+        assert.isTrue(refusedPerson.isFailure);
+        assert.include(
+          (yield* decodeToolFailure(refusedPerson.result)).message,
+          "A person wrote this queued message",
+        );
+        assert.equal(
+          (yield* queued(deliveryMessageId(others.messageId))).message.text,
+          othersQueued.message.text,
+        );
+
+        // A person edits a delivery from the UI: the whole text, through the command intake.
+        const person = ParticipantId.make("human:edit-person");
+        const personEdit = {
+          type: "queued-run.edit" as const,
+          commandId: CommandId.make("command:edit:by-person"),
+          threadId: receiver.threadId,
+          runId: othersQueued.run.id,
+          text: othersQueued.message.text.replace("Original others", "Tidied by a person"),
+        };
+        yield* claimPersonQueuedEdit(personEdit, person);
+        const beforePersonEdit = yield* sink.latestSequence();
+        yield* dispatchIntakeCommand(personEdit);
+        yield* detector.handleStoredEvent(
+          yield* latestUpdate(deliveryMessageId(others.messageId), beforePersonEdit),
+        );
+        assert.deepEqual(yield* ledgerRow(others.messageId), {
+          message_text: "Tidied by a person",
+          edited_by: person,
+        });
+
+        // A person who rewrites the header leaves an envelope J5 no longer recognises: the ledger
+        // keeps their whole text, and the sender can no longer edit inside it.
+        const beforeRewrite = yield* sink.latestSequence();
+        const rewritten = (yield* queued(deliveryMessageId(own.messageId))).message.text.replace(
+          "[Cross-agent message from ",
+          "[Forwarded from ",
+        );
+        const rewrite = {
+          type: "queued-run.edit" as const,
+          commandId: CommandId.make("command:edit:rewrite"),
+          threadId: receiver.threadId,
+          runId: ownQueued.run.id,
+          text: rewritten,
+        };
+        yield* claimPersonQueuedEdit(rewrite, person);
+        yield* dispatchIntakeCommand(rewrite);
+        const rewriteUpdates = yield* orchestrator
+          .streamStoredEventsFrom({
+            threadId: receiver.threadId,
+            afterSequence: beforeRewrite,
+            eventType: "message.updated",
+          })
+          .pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "message.updated" &&
+                stored.event.payload.id === deliveryMessageId(own.messageId) &&
+                stored.event.payload.text === rewritten,
+            ),
+            Stream.take(1),
+            Stream.runHead,
+            Effect.flatMap(Effect.fromOption),
+          );
+        yield* detector.handleStoredEvent(rewriteUpdates);
+        assert.deepEqual(yield* ledgerRow(own.messageId), {
+          message_text: rewritten,
+          edited_by: person,
+        });
+        const refusedRewrite = yield* edit(ownQueued.run.id, "Inside a rewritten envelope");
+        assert.isTrue(refusedRewrite.isFailure);
+        assert.include(
+          (yield* decodeToolFailure(refusedRewrite.result)).message,
+          "no longer has the J5 envelope",
+        );
+
+        // Cancel and promote are upstream's, for any message, and the sender hears as before.
+        const removedNotices = () =>
+          sql<{ readonly receiver_id: string; readonly message_text: string }>`
+            SELECT receiver_id, message_text FROM j5_a2a_delivery
+            WHERE envelope_channel = 'silence_notice'
+          `;
+        const terminal = (runId: (typeof ownQueued)["run"]["id"]) =>
+          orchestrator
+            .streamStoredEventsFrom({ threadId: receiver.threadId, eventType: "run.updated" })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "run.updated" &&
+                  stored.event.payload.id === runId &&
+                  stored.event.payload.completedAt !== null,
+              ),
+              Stream.take(1),
+              Stream.runHead,
+              Effect.flatMap(Effect.fromOption),
+            );
+        const promotedQueued = yield* queued(deliveryMessageId(promoted.messageId));
+        const receiverRun = (yield* threads.getThreadProjection(receiver.threadId)).runs.find(
+          (run) => run.status === "running",
+        )!;
+        assert.isFalse(
+          (yield* asEditor(
+            Stream.unwrap(
+              removals.handle("t3_queue_promote_to_steer", {
+                threadId: receiver.threadId,
+                queuedRunId: promotedQueued.run.id,
+                targetRunId: receiverRun.id,
+              }),
+            ),
+          )).isFailure,
+        );
+        yield* (yield* OrchestrationEffectWorkerV2).drain();
+        yield* detector.handleStoredEvent(yield* terminal(promotedQueued.run.id));
+        assert.lengthOf(yield* removedNotices(), 0);
+
+        // Only an edit is recorded: not a message joining the queue (one from a peer server
+        // included, whose envelope J5 cannot render again), not a promotion, and not a rename of
+        // the sender's project since delivery.
+        const fromPeer = LedgerMessageId.make("message:edit:from-peer");
+        yield* (yield* A2ALedger).append({
+          commandId: CommCommandId.make("command:edit:from-peer"),
+          projectId: editor.ledgerProjectId,
+          acceptedAt: "2026-10-24T00:00:00.000Z",
+          event: {
+            kind: "message.received",
+            sender: ParticipantId.make("agent:edit-peer-sender"),
+            receiver: receiver.receiverId,
+            exchangeId: null,
+            correlationId: CorrelationId.make("correlation:edit:from-peer"),
+            payload: {
+              originProjectId: LedgerProjectId.make("project:edit-peer-origin"),
+              originEnvironmentId: "environment:edit-peer",
+              message: {
+                messageId: fromPeer,
+                text: "From a peer server",
+                originProjectId: LedgerProjectId.make("project:edit-peer-origin"),
+                receiverProjectId: editor.ledgerProjectId,
+                exchangeRole: "none",
+                envelopeChannel: "peer",
+              },
+            },
+            createdAt: "2026-10-24T00:00:00.000Z",
+          },
+        });
+        yield* worker.drain;
+        assert.equal(
+          (yield* queued(deliveryMessageId(fromPeer))).run.status,
+          "queued",
+          "the peer's message waits in the receiver's queue",
+        );
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id, title, workspace_root, scripts_json, created_at, updated_at
+          ) VALUES (
+            ${editor.ledgerProjectId}, 'Renamed since delivery', '/tmp', '[]',
+            '2026-10-24T00:00:00.000Z', '2026-10-24T00:00:00.000Z'
+          )
+        `;
+        const editsSoFar = () =>
+          sql<{ readonly message_id: string; readonly text: string }>`
+            SELECT json_extract(payload, '$.messageId') AS message_id,
+              json_extract(payload, '$.text') AS text
+            FROM j5_a2a_comm_event WHERE kind = 'message.edited' ORDER BY seq
+          `;
+        const recorded = yield* editsSoFar();
+        const heads = yield* sql<{ readonly head: number }>`
+          SELECT MAX(sequence) AS head FROM orchestration_events
+          WHERE stream_id = ${receiver.threadId}
+        `;
+        const everyUpdate = yield* sink.stream({ threadId: receiver.threadId }).pipe(
+          Stream.takeUntil((stored) => stored.sequence >= heads[0]!.head),
+          Stream.filter((stored) => stored.event.type === "message.updated"),
+          Stream.runCollect,
+        );
+        for (const stored of everyUpdate) yield* detector.handleStoredEvent(stored);
+        assert.deepEqual(yield* editsSoFar(), recorded);
+        assert.equal((yield* ledgerRow(fromPeer))?.message_text, "From a peer server");
+        assert.isNull((yield* ledgerRow(promoted.messageId))?.edited_by);
+
+        assert.isFalse(
+          (yield* asEditor(
+            Stream.unwrap(
+              removals.handle("t3_queue_cancel", {
+                threadId: receiver.threadId,
+                queuedRunId: othersQueued.run.id,
+              }),
+            ),
+          )).isFailure,
+        );
+        yield* detector.handleStoredEvent(yield* terminal(othersQueued.run.id));
+        const notices = yield* removedNotices();
+        assert.lengthOf(notices, 1);
+        // Every claim went with the edit it named.
+        assert.deepEqual(yield* sql`SELECT command_id FROM j5_a2a_queued_edit_claim`, []);
+        assert.equal(notices[0]?.receiver_id, other.receiverId);
+        assert.include(
+          notices[0]?.message_text,
+          removedNoticeMessage(receiver.receiverId, others.messageId, "Tidied by a person", person),
+        );
+      }).pipe(Effect.provide(base));
+    }),
 );

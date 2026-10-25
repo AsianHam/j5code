@@ -22,6 +22,7 @@ import {
   type ExchangeId,
   MessageDeliveredPayload,
   MessageDeliveryFailedPayload,
+  MessageEditedPayload,
   type CommEvent,
   MessageReceivedPayload,
   MessageSentPayload,
@@ -210,6 +211,7 @@ const decodeMessageSent = Schema.decodeUnknownEffect(MessageSentPayload);
 const decodeMessageReceived = Schema.decodeUnknownEffect(MessageReceivedPayload);
 const decodeMessageDelivered = Schema.decodeUnknownEffect(MessageDeliveredPayload);
 const decodeMessageDeliveryFailed = Schema.decodeUnknownEffect(MessageDeliveryFailedPayload);
+const decodeMessageEdited = Schema.decodeUnknownEffect(MessageEditedPayload);
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 // The one payload with optional keys has its own encoder, so every other caller keeps the Json check.
@@ -604,6 +606,24 @@ export const layer: Layer.Layer<
           const payload = yield* decodeMessageCancelled(event.payload);
           yield* sql`UPDATE j5_a2a_delivery SET status = 'cancelled', next_attempt_at = NULL, last_error = ${payload.reason}, updated_at = ${event.createdAt}
             WHERE project_id = ${event.projectId} AND message_id = ${payload.messageId} AND status <> 'delivered'`;
+          return;
+        }
+        case "message.edited": {
+          const payload = yield* decodeMessageEdited(event.payload);
+          const rows = yield* sql<{ readonly message_id: string }>`
+            UPDATE j5_a2a_delivery
+            SET
+              message_text = ${payload.text},
+              edited_by = ${event.sender},
+              edited_at = ${event.createdAt},
+              edit_source_sequence = ${payload.sourceSequence},
+              updated_at = ${event.createdAt}
+            WHERE project_id = ${event.projectId} AND message_id = ${payload.messageId}
+            RETURNING message_id
+          `;
+          if (rows[0] === undefined) {
+            return yield* new A2AStorageError({ operation: "project edited message" });
+          }
           return;
         }
         case "message.received": {

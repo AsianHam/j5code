@@ -3127,9 +3127,10 @@ const layerWsRpc = (
       return {
         ...handlers,
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
-          j5Commands
-            .admit(command)
-            .pipe(Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand])),
+          j5Commands.dispatchCommand(
+            command,
+            handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand],
+          ),
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input: OrchestrationV2ThreadLaunchInput) =>
           j5Commands
             .admitLaunch(input)

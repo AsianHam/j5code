@@ -168,8 +168,6 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 
 29. A send to an agent whose turn is running, and which will not take the message into that turn, returns a notice stating how many messages are waiting for it, how many of them the caller sent, and that each will run as its own turn; a send to an idle agent or to a running Codex GPT 6 turn returns no notice, and no send is refused because of the backlog.
 
-30. A queued message from an agent on the same server that is removed from the receiver's queue before its turn starts is reported to its sender once, in a platform notice naming the receiver and quoting how the message began. A message promoted into the running turn, an ask, and a message that went with an archived receiver produce no such notice.
-
 ### Outside agents
 
 30. An outside agent is one participant for each sign-in. Its id is `outside:` followed by the session id, it is shown by the label its client registered, and it needs no registration.
@@ -183,6 +181,11 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 38. An agent an outside agent starts sits at the top level of its project and records the outside agent as its spawner. Its first turn names the outside agent by its label and states that `j5_send_message` cannot reply to it.
 39. An agent an outside agent starts never runs with broader permissions than the level the sign-in was approved at. With no mode asked for it runs at that level. A broader mode is refused. A persona whose policy is broader is refused with an error that names the level and the legal moves. A read-only sign-in starts nothing.
 40. A retried spawn with the same request id from the same sign-in replays the first spawn. The same request id from another sign-in starts its own agent.
+
+### Queued messages
+
+41. A queued message from an agent on the same server that is removed from the receiver's queue before its turn starts is reported to its sender once, in a platform notice naming the receiver and quoting how the message began, and naming who edited it in the queue when that was someone else. A message promoted into the running turn, an ask, and a message that went with an archived receiver produce no such notice.
+42. An agent may edit a queued message only if it sent it. Its new text goes inside the message's envelope, so the sender and header stay as they were; an edit to another participant's message or a person's is refused with an error naming cancel, reorder and promote, which work on any queued message. Every edit to a queued message from an agent, whoever makes it, is recorded in the ledger with the new text and who made it.
 
 ## Scenarios
 
@@ -216,6 +219,7 @@ message, ask, reply, plain message, Exchange, intent, urgency, obligation, envel
 - 2026-10-11 — a sending agent may ask for a steer or a restart; the queue stays the default and the GPT 6 exception stands. AC13 and AC14 rewritten: AC14 no longer says only a person steers (Jackson, [#519](https://github.com/Jacksondr5/j5code/issues/519)).
 - 2026-10-12 — outside agents: an agent signed in from outside the app is a participant for each sign-in, with no thread and no project. It sends plain messages to agents on its own server, recorded in the receiver's project and capped on every send by the level the sign-in was approved at. Nothing is delivered to it. It starts agents in a project it names, at the top level, under the same cap, personas included. AC30–AC40 and the two terminal scenarios (Jackson, 2026-10-11; [#498](https://github.com/Jacksondr5/j5code/issues/498)).
 - 2026-10-12 — a queued message removed before it ran is told to its sender; the delivery receipt is stated as joining the queue, with no stored queued status; AC41 (Jackson, [#504](https://github.com/Jacksondr5/j5code/issues/504)).
+- 2026-10-24 — agents get upstream's queue tools: an agent edits only a message it sent, inside its envelope, and the ledger records every edit to a queued agent message with who made it; AC42, and AC41 names the editor (Jackson, [#136](https://github.com/Jacksondr5/j5code/issues/136)).
 - 2026-10-18 — envelopes no longer carry the measured time (former R25). It was a bet that agents would act on elapsed time, never built; scheduled tasks, silence notices and the inbox's open-for time cover the needs it named. Whether agents should be told the time is a broader question, not one for the envelope (Jackson, [#29](https://github.com/Jacksondr5/j5code/issues/29)).
 - 2026-10-18 — a delivery alarm is told to its sender in one not-delivered notice, as a refusal is; an alarmed ask's Exchange stays open for the sender to withdraw, and a sender on a peer server is not told of an alarm after its receipt. AC12 rewritten (Jackson, [#260](https://github.com/Jacksondr5/j5code/issues/260)).
 - 2026-10-19 — a not-delivered notice names its message by the id the send returned, and an ask by its intent too, so a sender with several messages out can tell which one it is about (Jackson, [#670](https://github.com/Jacksondr5/j5code/issues/670)).

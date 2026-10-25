@@ -246,10 +246,6 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       for (const excluded of [
         "t3_thread_launch",
         "t3_project_delete",
-        "t3_queue_edit",
-        "t3_queue_cancel",
-        "t3_queue_reorder",
-        "t3_queue_promote_to_steer",
         "create_threads",
         "t3_thread_start",
         "t3_thread_send",
@@ -339,8 +335,12 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         "t3_project_list",
         "t3_project_read",
         "t3_project_update",
+        "t3_queue_cancel",
+        "t3_queue_edit",
         "t3_queue_list",
+        "t3_queue_promote_to_steer",
         "t3_queue_read",
+        "t3_queue_reorder",
         "t3_thread_configuration",
         "t3_thread_configure",
         "t3_thread_fork",
@@ -413,14 +413,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         const text = yield* response.text;
         return yield* decodeToolCallPayload(text.match(/\{.*\}/s)![0]);
       });
-      for (const [index, name] of [
-        "t3_thread_launch",
-        "t3_project_delete",
-        "t3_queue_edit",
-        "t3_queue_cancel",
-        "t3_queue_reorder",
-        "t3_queue_promote_to_steer",
-      ].entries()) {
+      for (const [index, name] of ["t3_thread_launch", "t3_project_delete"].entries()) {
         const response = yield* httpClient.post("/mcp", {
           headers: {
             accept: "application/json, text/event-stream",

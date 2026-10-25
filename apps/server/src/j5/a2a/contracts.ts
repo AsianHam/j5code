@@ -145,6 +145,7 @@ export const CommEventKind = Schema.Literals([
   "message.delivered",
   "message.delivery_failed",
   "message.cancelled",
+  "message.edited",
   "exchange.closed",
   "exchange.dropped",
   "silence.notice",
@@ -162,6 +163,7 @@ const NonMembershipEventKind = Schema.Literals([
   "message.delivered",
   "message.delivery_failed",
   "message.cancelled",
+  "message.edited",
   "exchange.closed",
   "exchange.dropped",
   "silence.notice",
@@ -319,6 +321,19 @@ export const MessageSentPayload = Schema.Struct({
   envelopeChannel: DeliveryEnvelopeChannel,
 });
 export type MessageSentPayload = typeof MessageSentPayload.Type;
+
+/**
+ * A queued message's new text, recorded when anyone edits it in the receiver's queue. The event's
+ * sender is who edited it, or null when J5 could not tell. `text` is the body inside the envelope
+ * the message was delivered with, as `message.sent` records it, or the whole queued text once the
+ * envelope no longer matches. `sourceSequence` is the orchestration event that carried the edit.
+ */
+export const MessageEditedPayload = Schema.Struct({
+  messageId: LedgerMessageId,
+  text: Schema.String.check(Schema.isNonEmpty()),
+  sourceSequence: NonNegativeInt,
+});
+export type MessageEditedPayload = typeof MessageEditedPayload.Type;
 
 export const MessageDeliveredPayload = Schema.Struct({
   messageId: LedgerMessageId,

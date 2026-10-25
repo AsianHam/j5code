@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type { CrewSeatArchiveGuard } from "../a2a/crewSeatArchiveGuard.ts";
+import { claimPersonQueuedEdit, releaseQueuedEditClaim } from "../a2a/queuedEdits.ts";
 import {
   PersonAccess,
   type PersonAccessStorageError,
@@ -150,6 +151,14 @@ export interface CommandAdmission {
     OrchestrationV2Command,
     EnvironmentAuthorizationError | OrchestrationV2DispatchCommandError
   >;
+  /**
+   * A person's command, admitted and then handed to upstream's `dispatch`. `ws.ts` wraps upstream's
+   * dispatch with this (FORK.md case 78).
+   */
+  readonly dispatchCommand: <A, E, R>(
+    command: OrchestrationV2Command,
+    dispatch: (command: OrchestrationV2Command) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | EnvironmentAuthorizationError | OrchestrationV2DispatchCommandError, R>;
   readonly admitLaunch: (
     input: OrchestrationV2ThreadLaunchInput,
   ) => Effect.Effect<OrchestrationV2ThreadLaunchInput, EnvironmentAuthorizationError>;
@@ -257,6 +266,35 @@ export const makeCommandAdmission = (
         Effect.withSpan("j5.sharing.commandAdmission.admit"),
       );
 
+    // A person's edit of a queued agent message is recorded in the ledger under their name
+    // (`queuedEdits.ts`). A failure to claim it names no one and does not stop the edit.
+    const claimEdit = (command: OrchestrationV2Command) =>
+      person === null || command.type !== "queued-run.edit"
+        ? Effect.succeed(false)
+        : claimPersonQueuedEdit(command, person).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+            Effect.catch((cause) =>
+              Effect.logError("J5 could not record who edited a queued message", { cause }).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+    const releaseEdit = (command: OrchestrationV2Command) =>
+      releaseQueuedEditClaim(command.commandId).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.catch((cause) =>
+          Effect.logError("J5 could not release a refused queued edit's claim", { cause }),
+        ),
+      );
+    const dispatchCommand: CommandAdmission["dispatchCommand"] = (command, dispatch) =>
+      Effect.gen(function* () {
+        const admitted = yield* admit(command);
+        const claimed = yield* claimEdit(admitted);
+        return yield* dispatch(admitted).pipe(
+          Effect.tapError(() => (claimed ? releaseEdit(admitted) : Effect.void)),
+        );
+      });
+
     const admitLaunch: CommandAdmission["admitLaunch"] = Effect.fn(
       "j5.sharing.commandAdmission.admitLaunch",
     )(function* (input) {
@@ -305,5 +343,5 @@ export const makeCommandAdmission = (
       });
     };
 
-    return { admit, admitLaunch, upsertScheduledTask };
+    return { admit, dispatchCommand, admitLaunch, upsertScheduledTask };
   });
