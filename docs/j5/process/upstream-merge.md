@@ -12,11 +12,14 @@ How J5 advances to a new upstream T3 Code. FORK.md holds the rules this depends 
 - **One PR.** The advance and every fork adaptation it forces land together, however large.
 - **Advance onto a release tag,** not a branch tip. Upstream's `main` holds V2 now, and `j5/main` descends from it, so an ordinary `git merge` of the tag is expected. When J5 needs an upstream commit no release has yet, advance onto a nightly tag that upstream CI passed instead, and record why in the FORK.md pin log.
 - **Freeze.** Record the fork head, the previous pin and the upstream SHA, and don't move the target mid-merge.
+- **Start from earlier advances' leftovers.** Before any merge work, read the open issues in earlier advances' milestones and in "Missed upstream merge items". Take in the ones this advance makes due or possible, such as an issue that waits for "the next advance", and comment on the ones it fixes.
+- **Follow-ups go in the advance's milestone.** Create a milestone named for the upstream version, such as "Upstream advance: T3 Code v0.1.3". Everything agreed but not done in the advance PR becomes an issue in it, filed when it is agreed, so the advance can be tracked and closed from one place.
 - **If the previous pin is not an ancestor of the candidate,** git's own merge base is wrong. Use the merge-tree fallback in FORK.md ("Advancing").
 
 ## Review before building
 
 - **Real content delta:** diff the pin against the candidate and read the diff, not only the commit log. Summarize what upstream added, especially anything touching J5 areas.
+- **Check the watch lists against the delta.** Test each "Watch for" line in the [upstream convergence watchlist](../product/upstream-convergence.md) and each retirement condition in the [register of divergences](../product/upstream.md) against what upstream shipped. A hit, or a partial one, becomes a decision for the maintainer.
 - **Literal conflicts**, then the **breaks that merge cleanly**, which cause most defects:
   - **J5-owned code** that imports or calls upstream APIs that changed (typecheck an approximate merge).
   - **New upstream lint rules.** Upstream's rules apply to J5 code too: lint `apps/*/src/j5` and `packages/*/src/j5` against the candidate's rules.
@@ -33,7 +36,8 @@ How J5 advances to a new upstream T3 Code. FORK.md holds the rules this depends 
 - **Walk the [register of divergences](../product/upstream.md).** For each entry, check whether upstream's change makes it unnecessary, harder to carry, or wrong. Bring any change to the maintainer; retiring a divergence is the default when upstream now does the job.
 - **Port upstream's edits to the files J5 owns outright** (`AGENTS.md`, the PR template; see FORK.md) and to J5's standing agent instructions, `packages/provider-core/src/j5/orchestrationInstructions.ts` (FORK.md case 8). Keep J5's version and apply what fits. Upstream's changes to its own instruction text show up as a merge conflict in `packages/provider-core/src/server/orchestrationInstructions.ts`, where J5 deleted that text.
 - **Rewrite** the [upstream convergence watchlist](../product/upstream-convergence.md) and check the give-back backlog (#276).
-- **Bring the decisions to the maintainer.** Default to adopting upstream and adjusting later if it proves bad.
+- **Brief the maintainer, then bring the decisions.** First, what J5 picks up: the upstream features and behavior changes a person or an agent would notice, in a few lines each, including those that need no decision. Then the decisions, one at a time with a recommendation: watch-list hits, divergences, and upstream behavior that crosses a J5 policy. Default to adopting upstream and adjusting later if it proves bad.
+- **Propose highlights.** From the briefing, pick what deserves a [highlight](../product/features/highlights.md): a J5 feature the advance visibly changes, and upstream features worth introducing. Smaller upstream changes can share one roundup entry. Bring the candidates with the briefing; the agreed entries are committed in the advance PR.
 
 ## Build and verify
 
@@ -49,4 +53,4 @@ How J5 advances to a new upstream T3 Code. FORK.md holds the rules this depends 
 ## After merge
 
 - Cut the release and migrate machines per the user guide.
-- File the follow-up issues the review agreed on.
+- Check that every follow-up the review agreed on is an issue in the advance's milestone.
