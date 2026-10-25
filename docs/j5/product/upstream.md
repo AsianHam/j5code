@@ -130,7 +130,7 @@ Letter codes in the Decided lines (SC2, QS1, AR3, and so on) are rulings recorde
 
 **Consequences:** each advance checks that no fan-out path carries a persona.
 
-**Decided:** 2026-09-24 (#7b), a merge-time decision made to let that day's advance proceed. How fan-out should really work in J5 is open (#338). Recorded in FORK.md case 19.
+**Decided:** 2026-09-24 (#7b), a merge-time decision. It stands since Squadrons were retired: fan-out threads now live in their project, as upstream has them, and this refusal is the only J5 difference. Recorded in FORK.md case 19.
 
 ### Archive and lifecycle
 
@@ -218,7 +218,7 @@ Letter codes in the Decided lines (SC2, QS1, AR3, and so on) are rulings recorde
 
 **Why:** J5 and T3 Code must be able to run side by side on one machine without either reading or damaging the other's data, or taking the other's deep links, updates, or system registrations. Nothing in J5 points at upstream's infrastructure.
 
-**Consequences:** some Linux integrations still collide with an installed T3 Code (#138), and many `T3CODE_*` variable names remain. A copied prompt link is not clickable on GitHub or in chat apps, where upstream's hosted link is; a j5.codes page that forwards to the app would fix that (#633). One exception remains, to be removed: SSH transport still writes `~/.t3/ssh-launch` on remote hosts, kept only for npm-era remote servers that no longer exist (#339). Whether to rename the remaining `T3CODE_*` variables is open (#340).
+**Consequences:** Linux screen-capture helpers still use T3 Code's directories, extension and bus names, so they would collide with an installed T3 Code. J5 ships no Linux desktop build, so they are left as upstream's. Many `T3CODE_*` variable names remain. A copied prompt link is not clickable on GitHub or in chat apps, where upstream's hosted link is; a j5.codes page that forwards to the app would fix that (#633). One exception remains, to be removed: SSH transport still writes `~/.t3/ssh-launch` on remote hosts, kept only for npm-era remote servers that no longer exist (#339). Whether to rename the remaining `T3CODE_*` variables is open (#340).
 
 The separate home is what keeps the two products' databases apart. J5 used to refuse a T3 Code database by its migration history as well; it no longer does, because upstream's own migrator now does the renumbering J5 used to bridge. Pointed at a T3 Code database on purpose, J5 would upgrade it. J5 does refuse its own databases from 0.0.43 or earlier, whose upgrade code is retired, with a message to run `j5 update 0.0.48` first.
 

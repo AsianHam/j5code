@@ -197,25 +197,9 @@ Check `j5 service status` and the logs once more. If you skipped 0.0.48 and a
 newer release reports that it can no longer upgrade this database, run
 `j5 update 0.0.48`, let the server start once, and run `j5 update` again.
 
-## 6. Report the upgrade (final step)
+An agent following this guide stops here; step 6 is a separate visit days later.
 
-Releases after 0.0.48 no longer carry the code that upgrades databases from the
-August and September 2026 builds, which is why step 3 installs 0.0.48 first.
-This report records which installs have made the move.
-
-After the first successful start on the newest release (step 5 passed), comment on
-[Jacksondr5/j5code#275](https://github.com/Jacksondr5/j5code/issues/275) with
-the machine or owner name and the version, for example:
-
-```sh
-gh issue comment 275 -R Jacksondr5/j5code \
-  --body "Upgraded: <machine or owner>, $(j5 --version)"
-```
-
-If `gh` isn't available or signed in, give the owner that text to post. An agent
-following this guide stops here; step 7 is a separate visit days later.
-
-## 7. Clean up (after a few days of normal use)
+## 6. Clean up (after a few days of normal use)
 
 Keep the old files until you are sure you will not roll back.
 
