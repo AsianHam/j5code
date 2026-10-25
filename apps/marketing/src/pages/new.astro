@@ -1,0 +1,259 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Boat from "../components/Boat.astro";
+---
+
+<Layout title="Open a prompt — J5 Code" description="A prompt shared as a link. It opens in J5 Code as a draft, and nothing runs until you press Send.">
+  <div class="prompt-page">
+    <div class="heading-boat"><Boat tone="dark" size={56} /></div>
+
+    <section class="panel" id="prompt-link" hidden>
+      <h1 class="heading display">Open this prompt</h1>
+      <p class="subheading">It opens as a draft in J5 Code. Nothing runs until you press Send.</p>
+
+      <div class="warning" id="hidden-warning" role="alert" hidden>
+        <strong>This prompt had hidden characters, it may be malicious</strong>
+        <span id="hidden-count"></span>
+      </div>
+
+      <pre class="prompt" id="prompt-text"></pre>
+      <p class="details" id="prompt-details"></p>
+
+      <div class="actions">
+        <a class="btn btn-primary" id="open-app" href="/download">Open in J5 Code</a>
+        <a class="btn btn-ghost" href="/download">Get J5 Code</a>
+      </div>
+
+      <form class="server" id="server-form" novalidate>
+        <label class="server-label" for="server-address">Using J5 Code in a browser? Open the prompt on your server.</label>
+        <div class="server-row">
+          <input
+            class="server-input"
+            id="server-address"
+            type="text"
+            inputmode="url"
+            autocomplete="url"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="localhost:3773"
+          />
+          <button class="btn btn-ghost" type="submit">Open on my server</button>
+        </div>
+        <p class="server-error" id="server-error" role="alert" hidden>Enter your server's address, such as localhost:3773 or https://my-server.example.</p>
+      </form>
+    </section>
+
+    <section class="panel" id="prompt-link-error" hidden>
+      <h1 class="heading display">Could not open the link</h1>
+      <p class="subheading" id="error-text"></p>
+      <div class="actions">
+        <a class="btn btn-ghost" href="/download">Get J5 Code</a>
+      </div>
+    </section>
+
+    <noscript>
+      <p class="subheading">This page needs JavaScript to read the prompt.</p>
+    </noscript>
+  </div>
+</Layout>
+
+<script>
+  import { readPromptLinkPage, serverPromptLinkUrl } from "../lib/promptLink";
+
+  const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+  const page = readPromptLinkPage(window.location.href);
+
+  if (!page.ok) {
+    byId("error-text").textContent = page.error;
+    byId("prompt-link-error").hidden = false;
+  } else {
+    const { appPath, deepLink, prompt, details } = page.value;
+    if (prompt !== null && prompt.hiddenCharacters > 0) {
+      const count = prompt.hiddenCharacters;
+      byId("hidden-count").textContent =
+        `J5 Code removed ${count} hidden character${count === 1 ? "" : "s"}. Read the prompt before you send it.`;
+      byId("hidden-warning").hidden = false;
+    }
+    const promptText = byId("prompt-text");
+    if (prompt === null) promptText.hidden = true;
+    else promptText.textContent = prompt.text;
+    byId("prompt-details").textContent = details.join(" · ");
+    byId<HTMLAnchorElement>("open-app").href = deepLink;
+
+    const address = byId<HTMLInputElement>("server-address");
+    const addressError = byId("server-error");
+    address.addEventListener("input", () => {
+      addressError.hidden = true;
+    });
+    byId<HTMLFormElement>("server-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const target = serverPromptLinkUrl(address.value, appPath);
+      if (target === null) {
+        addressError.hidden = false;
+        address.focus();
+        return;
+      }
+      window.location.assign(target);
+    });
+    byId("prompt-link").hidden = false;
+  }
+</script>
+
+<style>
+  .prompt-page {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8vh 1.5rem 4rem;
+    background:
+      radial-gradient(ellipse 70% 50% at 50% 0%, rgba(59, 143, 174, 0.14), transparent 70%),
+      var(--navy-950);
+  }
+
+  .heading-boat {
+    margin-bottom: 0.5rem;
+  }
+
+  .panel {
+    width: 100%;
+    max-width: 680px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .panel[hidden] {
+    display: none;
+  }
+
+  .heading {
+    font-size: clamp(2rem, 4.4vw, 3rem);
+    text-align: center;
+    margin-bottom: 0.5rem;
+  }
+
+  .subheading {
+    font-size: 0.95rem;
+    color: var(--foam-dim);
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+
+  .warning {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin-bottom: 1rem;
+    padding: 0.85rem 1rem;
+    border-radius: 10px;
+    border: 1px solid rgba(232, 131, 111, 0.55);
+    background: rgba(200, 68, 45, 0.12);
+    color: var(--foam);
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+
+  .warning[hidden] {
+    display: none;
+  }
+
+  .warning span {
+    color: var(--foam-muted);
+  }
+
+  .prompt {
+    align-self: stretch;
+    max-height: 18rem;
+    overflow: auto;
+    padding: 1rem 1.1rem;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.18);
+    color: var(--foam);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .prompt[hidden] {
+    display: none;
+  }
+
+  .details {
+    align-self: stretch;
+    margin-top: 0.6rem;
+    font-size: 0.8rem;
+    color: var(--foam-dim);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.6rem;
+    margin-top: 1.75rem;
+  }
+
+  .server {
+    align-self: stretch;
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .server-label {
+    font-size: 0.85rem;
+    color: var(--foam-muted);
+  }
+
+  .server-row {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .server-input {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.18);
+    color: var(--foam);
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+
+  .server-input::placeholder {
+    color: var(--foam-dim);
+  }
+
+  .server-input:focus-visible {
+    border-color: var(--line-strong);
+  }
+
+  .server-error {
+    font-size: 0.8rem;
+    color: #e8836f;
+  }
+
+  .server-error[hidden] {
+    display: none;
+  }
+
+  @media (max-width: 640px) {
+    .prompt-page {
+      padding: 5vh 1.25rem 4rem;
+    }
+
+    .server-row {
+      flex-direction: column;
+    }
+  }
+</style>
