@@ -78,7 +78,7 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
 - Desktop OS integration: `electron-launcher.mjs`, `ElectronProtocol.ts`,
   `DesktopLinuxUrlHandler.ts`, and the server renderer-origin allowlist, `DESKTOP_RENDERER_ORIGINS`
   in `apps/server/src/httpCors.ts`.
-- Linux capture: `apps/desktop/src/snapShot/{KdeSnapShot,HyprlandSnapShot,GnomeCaptureSetup,linuxCaptureSession}.ts` and `apps/desktop/gnome-extension/`. These still use upstream helper directories, desktop/extension identities and bus names, so they can collide with an installed T3 Code. J5 ships no Linux desktop build, so they are not isolated.
+- Linux capture: `apps/desktop/src/snapShot/{KdeSnapShot,HyprlandSnapShot,GnomeCaptureSetup,linuxCaptureSession}.ts` and `apps/desktop/gnome-extension/`. The GNOME extension accepts capture requests only from J5's own bus names (`j5code.SnapShot`, `j5code-dev.SnapShot`, from the Linux app id). The rest still use upstream helper directories, desktop/extension identities and bus names, so they can collide with an installed T3 Code. J5 ships no Linux desktop build, so they are not isolated.
 - Desktop packaging: `apps/desktop/package.json`, `scripts/build-desktop-artifact.ts` (including
   the generated package's `homepage`, `https://j5.codes`, and the macOS usage strings such as
   `NSLocalNetworkUsageDescription`), and both DMG background SVGs.

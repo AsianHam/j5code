@@ -1,7 +1,5 @@
-export const CLIENT_NAMES = [
-  "com.t3tools.T3Code.SnapShot",
-  "com.t3tools.T3Code.Development.SnapShot",
-];
+// J5: the desktop app owns `${linuxAppId}.SnapShot`, and J5's Linux app id is its desktop entry name.
+export const CLIENT_NAMES = ["j5code.SnapShot", "j5code-dev.SnapShot"];
 
 export function isWaylandSession(meta) {
   // GNOME 50 removed the X11 compositor and this API. GNOME 45–49 still need the check.
