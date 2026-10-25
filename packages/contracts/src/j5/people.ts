@@ -1,7 +1,12 @@
 import * as Schema from "effect/Schema";
 import { Rpc, RpcGroup } from "effect/rpc";
 
-import { AuthClientMetadata, EnvironmentAuthorizationError } from "../auth.ts";
+import {
+  AuthClientMetadata,
+  AuthEnvironmentScope,
+  AuthGrantScope,
+  EnvironmentAuthorizationError,
+} from "../auth.ts";
 import { AuthSessionId, ProjectId, ThreadId, TrimmedNonEmptyString } from "../baseSchemas.ts";
 import { ProjectIconOverride } from "../project.ts";
 import { HeldPersonLevel } from "./access.ts";
@@ -271,6 +276,44 @@ export const JoinLinkResult = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("joined") }),
 ]);
 export type JoinLinkResult = typeof JoinLinkResult.Type;
+
+/**
+ * Where `j5 pair --person` and `j5 auth pairing create` make their link when a server is running
+ * for the home, so the change reaches open clients as one made in the app does. Only the CLI's
+ * own short-lived session with Manage access may call it.
+ */
+export const J5_CLI_PAIRING_PATH = "/api/j5/people/pair";
+
+/** The commands' flags, as given. */
+export const CliPairingRequest = Schema.Struct({
+  person: Schema.optionalKey(Schema.String),
+  level: Schema.optionalKey(PersonLevel),
+  project: Schema.optionalKey(Schema.String),
+  thread: Schema.optionalKey(Schema.String),
+  /** `--scope`, or the command's default; `scopesGiven` says whether it was given. */
+  scopes: Schema.Array(AuthGrantScope),
+  scopesGiven: Schema.Boolean,
+  ttlMs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  label: Schema.optionalKey(Schema.String),
+  /** What a link without `--person` is: refused, or one for a device the server will ask about. */
+  withoutPerson: Schema.Literals(["refuse", "ask"]),
+});
+export type CliPairingRequest = typeof CliPairingRequest.Type;
+
+/**
+ * The link made, and what the command says it did. A refusal carries a status, `error` (the
+ * refusal's tag) and `message`; `PairingPersonUnknownError` also carries `personName`.
+ */
+export const CliPairingResponse = Schema.Struct({
+  id: Schema.String,
+  credential: Schema.String,
+  scopes: Schema.Array(AuthEnvironmentScope),
+  label: Schema.optionalKey(Schema.String),
+  createdAt: Schema.String,
+  expiresAt: Schema.String,
+  said: Schema.String,
+});
+export type CliPairingResponse = typeof CliPairingResponse.Type;
 
 const PeopleError = Schema.Union([J5ActionError, EnvironmentAuthorizationError]);
 const Done = Schema.Struct({});
