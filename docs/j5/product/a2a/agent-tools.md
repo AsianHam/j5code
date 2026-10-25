@@ -93,7 +93,7 @@ fresh client_request_id."
 | Input               | Type                                  | Required | Meaning                                           |
 | ------------------- | ------------------------------------- | -------- | ------------------------------------------------- |
 | `brief`             | string, non-empty                     | yes      | The first-turn prompt the new agent starts with   |
-| `title`             | string                                | no       | Thread title; derived from the brief when omitted |
+| `title`             | string, non-empty                     | yes      | A short name for the agent: its thread title      |
 | `persona`           | persona id from `j5_list_personas`    | no       | Persona spawn: the child carries that persona's   |
 |                     |                                       |          | immutable assignment (SP3 below)                  |
 | `provider`          | id from `orchestrator_capabilities`   | yes      | Chosen per task — no inherit default (Jackson,    |
@@ -485,3 +485,4 @@ run; `j5_stop_crew` doesn't, and unarchiving doesn't restart it.
 - 2026-10-12 — review of outside agents: `delegate_task` and the playbook reads name the legal move too; an outside agent's listing reports only what it can do; a project with no thread yet lists its people and no agents; the level is checked when a message is sent (PR #560).
 - 2026-10-12 — Stop: the next message delivered to a stopped agent resumes its queue and runs after the held messages, where it used to run ahead of them; the `j5_stop_agent` and `j5_stop_crew` descriptions say so (Jackson, [#580](https://github.com/Jacksondr5/j5code/issues/580)).
 - 2026-10-17 — the advance onto upstream's nightly `v0.1.1-nightly.20261017.3238`: `t3_workflow_stop`, `write_pull_request_guides` and `read_pull_request_guide` join the kept upstream tools as-is, and `delegate_task`'s description takes upstream's sentences on a child's own worktree, a wait that ends at the child's question, and runtime modes (Jackson's decisions of that day; [register of divergences](../upstream.md), D1 and D2).
+- 2026-10-24 — `j5_spawn_agent` requires a short `title`, as upstream's `t3_thread_launch` does, instead of naming the agent after the start of its brief ([#296](https://github.com/Jacksondr5/j5code/issues/296)).

@@ -1209,7 +1209,7 @@ const handlers = {
                 commandId: spawnCreateCommandId(stableInput, workspace.type),
                 threadId,
                 projectId: target,
-                title: spawnTitle(input.brief, input.title),
+                title: spawnTitle(input.title),
                 modelSelection,
                 runtimeMode,
                 interactionMode,
@@ -1292,7 +1292,7 @@ const handlers = {
                 ledgerProjectId: facts.home.projectId,
                 projectId: target,
                 threadId,
-                title: spawnTitle(input.brief, input.title),
+                title: spawnTitle(input.title),
                 messageId: spawnMessageId(stableInput),
                 text: spawnFirstTurnText({
                   brief: input.brief,

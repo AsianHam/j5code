@@ -60,10 +60,8 @@ export const spawnHomeCommandId = (input: SpawnStableInput) =>
 export const spawnPlacementCommandId = (input: SpawnStableInput) =>
   PlacementCommandId.make(lifecycleId({ kind: "command", operation: "spawn-placement", ...input }));
 
-export const spawnTitle = (brief: string, title: string | undefined): string => {
-  const value = title?.trim() || brief.trim();
-  return value.length > 80 ? `${value.slice(0, 77)}...` : value;
-};
+export const spawnTitle = (title: string): string =>
+  title.length > 80 ? `${title.slice(0, 77)}...` : title;
 
 /** What a seat's first turn needs to know about its Crew; instructions are content, verbatim. */
 export interface CrewBriefContext {

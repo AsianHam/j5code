@@ -15,6 +15,7 @@ import {
   RunId,
   RuntimeMode,
   ThreadId,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
@@ -286,7 +287,10 @@ export type J5SpawnAgentWorkspace = typeof J5SpawnAgentWorkspace.Type;
 
 export const J5SpawnAgentInput = Schema.Struct({
   brief: NonEmptyString,
-  title: Schema.optional(NonEmptyString),
+  title: TrimmedNonEmptyString.annotate({
+    description:
+      "A short name for the agent, a few words, shown in the sidebar and Fleet. Not the brief.",
+  }),
   project_id: Schema.optional(
     LedgerProjectId.annotate({
       description:
