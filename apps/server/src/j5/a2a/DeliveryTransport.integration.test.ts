@@ -94,6 +94,7 @@ import {
   latestSteerableRun,
   ThreadManagementService,
   type ThreadManagementSendMode,
+  isActiveRun,
 } from "../../orchestration-v2/ThreadManagementService.ts";
 import {
   ThreadLifecycleService,
@@ -128,6 +129,7 @@ import {
 import { deliveryCommandId } from "./DeliveryTransport.ts";
 import { EffectOutboxV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import { ProviderRuntimeRecoveryService } from "../../orchestration-v2/ProviderRuntimeRecoveryService.ts";
+import { limitRecoveryCommand } from "../../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadSettlement from "../../orchestration-v2/ThreadSettlementService.ts";
@@ -3468,6 +3470,311 @@ it.effect("resumes an idle receiver's held queue so a delivery runs after the he
       assert.isNotTrue(delivered?.queueHeld);
     }).pipe(Effect.provide(makeTestLayer(harness)));
   }),
+);
+
+/** Leaves a target idle after its turn stopped on a usage limit, with one unheld message queued if asked. */
+const idleOnUsageLimit = Effect.fn("A2AIntegration.idleOnUsageLimit")(function* (
+  harness: DeliveryHarness,
+  target: { readonly projectId: ProjectId; readonly threadId: ThreadId },
+  queued: boolean,
+) {
+  const threads = yield* ThreadManagementService;
+  yield* startBusyTurn(target);
+  const earlier = queued
+    ? yield* threads.sendToThread({
+        projectId: target.projectId,
+        threadId: target.threadId,
+        commandId: CommandId.make(`command:limited:earlier:${target.threadId}`),
+        messageId: MessageId.make(`message:limited:earlier:${target.threadId}`),
+        text: "Earlier work",
+        attachments: [],
+        mode: "queue",
+        createdBy: "user",
+        creationSource: "web",
+      })
+    : undefined;
+  const resetAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
+  yield* finishTestTurn(harness, target.threadId, {
+    class: "usage_limit",
+    message: "Usage limit reached.",
+    code: null,
+    retryable: null,
+    resetAt,
+  });
+  return { earlierRunId: earlier?.run.id, resetAt };
+});
+
+it.effect(
+  "holds a delivery to a usage-limited agent with nothing queued, and tells its sender",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const target = yield* seedTarget("limited-empty");
+        const threads = yield* ThreadManagementService;
+        const transport = yield* A2ADeliveryTransport;
+        yield* idleOnUsageLimit(harness, target, false);
+
+        const error = yield* transport.deliverAgent(target.delivery).pipe(Effect.flip);
+
+        assert.instanceOf(error, A2ADeliveryHeldError);
+        const after = yield* threads.getThreadProjection(target.threadId);
+        assert.isFalse(
+          after.messages.some((row) => row.id === deliveryMessageId(target.messageId)),
+        );
+        assert.isFalse(after.runs.some((run) => run.status === "queued" || isActiveRun(run)));
+        assert.equal(
+          yield* sendNoticeTo("limited-empty", target),
+          `${target.receiverId} hit its provider's usage limit and is paused until a person continues it. Your message is saved and will run then, in the order it was sent. Don't send it again.`,
+        );
+      }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
+    }),
+);
+
+it.effect.each(["upstream", "a person"] as const)(
+  "holds a delivery behind messages queued before a usage limit and runs it after them once %s continues the agent",
+  (continuedBy) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const target = yield* seedTarget(`limited-queued-${continuedBy.replace(" ", "-")}`);
+        const threads = yield* ThreadManagementService;
+        const orchestrator = yield* OrchestratorV2;
+        const transport = yield* A2ADeliveryTransport;
+        const { earlierRunId, resetAt } = yield* idleOnUsageLimit(harness, target, true);
+        const limited = yield* threads.getThreadProjection(target.threadId);
+        const earlier = limited.runs.find((run) => run.id === earlierRunId);
+        assert.equal(earlier?.status, "queued");
+        assert.isNotTrue(earlier?.queueHeld);
+
+        assert.instanceOf(
+          yield* transport.deliverAgent(target.delivery).pipe(Effect.flip),
+          A2ADeliveryHeldError,
+        );
+        assert.isFalse(
+          (yield* threads.getThreadProjection(target.threadId)).messages.some(
+            (row) => row.id === deliveryMessageId(target.messageId),
+          ),
+        );
+
+        if (continuedBy === "upstream") {
+          // What the usage-limit sweep does: arm the recovery, then continue past the reset.
+          const shell = () =>
+            orchestrator
+              .getShellSnapshot()
+              .pipe(
+                Effect.map((snapshot) =>
+                  snapshot.threads.find((thread) => thread.id === target.threadId)!,
+                ),
+              );
+          yield* threads.dispatch(
+            limitRecoveryCommand(
+              yield* shell(),
+              true,
+              DateTime.toEpochMillis(yield* DateTime.now),
+            )!,
+          );
+          yield* TestClock.adjust("2 minutes");
+          yield* threads.dispatch(
+            limitRecoveryCommand(yield* shell(), true, Date.parse(resetAt) + 1)!,
+          );
+        } else {
+          yield* threads.sendToThread({
+            projectId: target.projectId,
+            threadId: target.threadId,
+            commandId: CommandId.make("command:limited-queued:person-continue"),
+            messageId: MessageId.make("message:limited-queued:person-continue"),
+            text: "Carry on.",
+            attachments: [],
+            mode: "auto",
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
+        yield* startPendingTestTurn(target.threadId);
+
+        yield* transport.deliverAgent(target.delivery);
+
+        const continued = yield* threads.getThreadProjection(target.threadId);
+        const delivered = continued.runs.find(
+          (run) => run.userMessageId === deliveryMessageId(target.messageId),
+        );
+        assert.equal(delivered?.status, "queued");
+        assert.isAbove(
+          delivered!.queuePosition!,
+          continued.runs.find((run) => run.id === earlierRunId)!.queuePosition!,
+        );
+        yield* finishTestTurn(harness, target.threadId);
+        yield* (yield* OrchestrationEffectWorkerV2).drain();
+        const after = yield* threads.getThreadProjection(target.threadId);
+        assert.notEqual(after.runs.find((run) => run.id === earlierRunId)?.status, "queued");
+        assert.equal(
+          after.runs.find((run) => run.userMessageId === deliveryMessageId(target.messageId))
+            ?.status,
+          "queued",
+        );
+      }).pipe(Effect.provide(makeTestLayer(harness)));
+    }),
+);
+
+/** The delivery seam with the silence detector, which wakes held deliveries when a run starts. */
+const makeWakeTestLayer = (harness: DeliveryHarness) =>
+  silenceDetectorManualLayer.pipe(
+    Layer.provideMerge(crewInstanceLayer),
+    Layer.provideMerge(makeLifecycleTestLayer(harness)),
+    Layer.provideMerge(serverConfigLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+/** A person continues a usage-limited target; returns the stored event of the run it started. */
+const continueByPerson = Effect.fn("A2AIntegration.continueByPerson")(function* (target: {
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId;
+}) {
+  const started = yield* (yield* EventSinkV2).stream({ threadId: target.threadId }).pipe(
+    Stream.filter(
+      (stored) =>
+        (stored.event.type === "run.created" || stored.event.type === "run.updated") &&
+        stored.event.payload.status === "starting",
+    ),
+    Stream.runHead,
+    Effect.forkChild({ startImmediately: true }),
+  );
+  yield* (yield* ThreadManagementService).sendToThread({
+    projectId: target.projectId,
+    threadId: target.threadId,
+    commandId: CommandId.make(`command:continue:${target.threadId}`),
+    messageId: MessageId.make(`message:continue:${target.threadId}`),
+    text: "Carry on.",
+    attachments: [],
+    mode: "auto",
+    createdBy: "user",
+    creationSource: "web",
+  });
+  return Option.getOrThrow(yield* Fiber.join(started));
+});
+
+const queuePositionOf = Effect.fn("A2AIntegration.queuePositionOf")(function* (
+  threadId: ThreadId,
+  messageId: LedgerMessageId,
+) {
+  const run = (yield* (yield* ThreadManagementService).getThreadProjection(threadId)).runs.find(
+    (candidate) => candidate.userMessageId === deliveryMessageId(messageId),
+  );
+  return run?.status === "queued" ? run.queuePosition : undefined;
+});
+
+/** A target stopped on a usage limit and a caller in its project that sends it updates. */
+const limitedTargetWithCaller = Effect.fn("A2AIntegration.limitedTargetWithCaller")(function* (
+  harness: DeliveryHarness,
+  suffix: string,
+) {
+  const send = yield* A2ASendService;
+  const target = yield* seedTarget(suffix);
+  const caller = yield* seedTarget(
+    `${suffix}-caller`,
+    modelSelection.model,
+    undefined,
+    target.ledgerProjectId,
+  );
+  yield* idleOnUsageLimit(harness, target, false);
+  const sendUpdate = (name: string) =>
+    send.send({
+      commandId: CommCommandId.make(`command:j5-a2a-delivery-${suffix}-${name}`),
+      senderThreadId: caller.threadId,
+      to: target.receiverId,
+      message: `Update ${name}`,
+      acceptedAt: "2026-09-24T00:00:00.000Z",
+    });
+  return { target, sendUpdate };
+});
+
+it.effect("hands held messages over in send order, together, as soon as the agent continues", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const worker = yield* A2ADeliveryWorker;
+      const { target, sendUpdate } = yield* limitedTargetWithCaller(harness, "wake-order");
+
+      // A is held and rechecked until its next recheck is eight minutes out.
+      const a = yield* sendUpdate("a");
+      yield* worker.drain;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        yield* TestClock.adjust(heldQueueRecheckMs(attempt));
+        yield* worker.drain;
+      }
+      // B, sent later, is held with its first recheck a minute out: before A's.
+      const b = yield* sendUpdate("b");
+      yield* worker.drain;
+      assert.isUndefined(yield* queuePositionOf(target.threadId, a.messageId));
+      assert.isUndefined(yield* queuePositionOf(target.threadId, b.messageId));
+
+      const started = yield* continueByPerson(target);
+      yield* (yield* A2ASilenceDetector).handleStoredEvent(started);
+      // No time passes: the wake hands both over now, A first.
+      yield* worker.drain;
+      const positionA = yield* queuePositionOf(target.threadId, a.messageId);
+      const positionB = yield* queuePositionOf(target.threadId, b.messageId);
+      assert.isDefined(positionA);
+      assert.isDefined(positionB);
+      assert.isBelow(positionA!, positionB!);
+    }).pipe(Effect.provide(makeWakeTestLayer(harness)));
+  }),
+);
+
+it.effect("keeps a message sent just after the agent continues behind the ones held for it", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const worker = yield* A2ADeliveryWorker;
+      const { target, sendUpdate } = yield* limitedTargetWithCaller(harness, "wake-after-lift");
+      const a = yield* sendUpdate("a");
+      yield* worker.drain;
+
+      const started = yield* continueByPerson(target);
+      // Sent between the lift and the wake: it waits behind A instead of overtaking it.
+      const c = yield* sendUpdate("c");
+      yield* worker.drain;
+      assert.isUndefined(yield* queuePositionOf(target.threadId, a.messageId));
+      assert.isUndefined(yield* queuePositionOf(target.threadId, c.messageId));
+
+      yield* (yield* A2ASilenceDetector).handleStoredEvent(started);
+      yield* worker.drain;
+      const positionA = yield* queuePositionOf(target.threadId, a.messageId);
+      const positionC = yield* queuePositionOf(target.threadId, c.messageId);
+      assert.isDefined(positionA);
+      assert.isDefined(positionC);
+      assert.isBelow(positionA!, positionC!);
+    }).pipe(Effect.provide(makeWakeTestLayer(harness)));
+  }),
+);
+
+it.effect(
+  "starts a delivery at once on an idle agent whose last turn failed for another reason",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const target = yield* seedTarget("failed-other");
+        const threads = yield* ThreadManagementService;
+        const transport = yield* A2ADeliveryTransport;
+        yield* startBusyTurn(target);
+        yield* finishTestTurn(harness, target.threadId, {
+          class: "provider_error",
+          message: "The provider failed.",
+          code: null,
+          retryable: null,
+        });
+
+        yield* transport.deliverAgent(target.delivery);
+
+        const delivered = (yield* threads.getThreadProjection(target.threadId)).runs.find(
+          (run) => run.userMessageId === deliveryMessageId(target.messageId),
+        );
+        assert.isDefined(delivered);
+        assert.isTrue(isActiveRun(delivered!));
+      }).pipe(Effect.provide(makeTestLayer(harness)));
+    }),
 );
 
 it.effect("keeps a delivery unsent while a usage limit blocks the receiver's held queue", () =>

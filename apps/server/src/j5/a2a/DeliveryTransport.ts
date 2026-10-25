@@ -85,11 +85,12 @@ export class A2ADeliveryHeldError extends Schema.TaggedError<A2ADeliveryHeldErro
   "A2ADeliveryHeldError",
   {
     participantId: Schema.String,
-    runId: Schema.String,
+    /** The held or limited run it waits on, or the earlier message it waits behind. */
+    waitingOn: Schema.String,
   },
 ) {
   override get message(): string {
-    return `${this.participantId} holds queued messages until someone resumes its thread; run ${this.runId} is queued, not delivered.`;
+    return `${this.participantId} holds this message, not delivered: it waits on ${this.waitingOn}.`;
   }
 }
 
@@ -307,9 +308,10 @@ export const requestedSteeringRun = (
 };
 
 /**
- * Why an idle agent's queue must not be resumed for a delivery. Upstream refuses to resume a thread
- * stopped by a usage limit, and holds a message queued after a failed worktree setup
- * (`worktreeMissingRun` in Orchestrator.ts), as resuming would run it in the project checkout.
+ * Why a delivery to an idle agent waits unsent. Upstream refuses to resume a thread stopped by a
+ * usage limit and would start the delivery into the same limit, and it holds a message queued
+ * after a failed worktree setup (`worktreeMissingRun` in Orchestrator.ts), as resuming would run it
+ * in the project checkout.
  */
 export const idleQueueHold = (
   target: Pick<
@@ -330,7 +332,7 @@ export const idleQueueHold = (
   return (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
     latestRun.workspacePreparation?.type === "worktree" &&
     target.thread.worktreePath === null
-    ? { type: "worktree_setup_failed" as const }
+    ? { type: "worktree_setup_failed" as const, run: latestRun }
     : undefined;
 };
 
@@ -650,26 +652,33 @@ export const live: Layer.Layer<
           const heldRun = (run: OrchestrationV2Run | undefined) =>
             run?.status === "queued" && run.queueHeld === true
               ? Effect.fail(
-                  new A2ADeliveryHeldError({ participantId: input.receiverId, runId: run.id }),
+                  new A2ADeliveryHeldError({
+                    participantId: input.receiverId,
+                    waitingOn: `run ${run.id}`,
+                  }),
                 )
               : Effect.void;
           // Upstream starts a message sent to an idle thread at once, even past a held queue, and
           // leaves the held messages waiting. A delivery keeps its place instead: it resumes the
           // queue, so the held messages run first and it joins the back (#580). A retry of an
-          // accepted delivery never resumes again. Upstream refuses to resume a thread stopped by
-          // a usage limit, so that delivery waits unsent, as a held one, until the thread continues.
-          // So does one whose worktree setup failed (`idleQueueHold`).
+          // accepted delivery never resumes again. A delivery to a thread stopped by a usage limit
+          // waits unsent until the thread continues, held queue or not: upstream would start it
+          // into the same limit, or leave it behind messages that wait for the continue (#718).
+          // Delivered then, it joins the back of the queue. One whose worktree setup failed waits
+          // when messages are held there (`idleQueueHold`); upstream holds any other itself.
           const heldQueueRun = target.runs.find(
             (run) => run.status === "queued" && run.queueHeld === true,
           );
+          const idle = !alreadyAccepted && !target.runs.some(isActiveRun);
+          const hold = idle ? idleQueueHold(target) : undefined;
           const queueBehindHeld =
-            alreadyAccepted || heldQueueRun === undefined || target.runs.some(isActiveRun)
+            !idle || (heldQueueRun === undefined && hold?.type !== "usage_limit")
               ? Effect.void
-              : idleQueueHold(target) !== undefined
+              : hold !== undefined
                 ? Effect.fail(
                     new A2ADeliveryHeldError({
                       participantId: input.receiverId,
-                      runId: heldQueueRun.id,
+                      waitingOn: `run ${heldQueueRun?.id ?? hold.run.id}`,
                     }),
                   )
                 : orchestrator.dispatch({

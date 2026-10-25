@@ -348,6 +348,8 @@ export const MessageDeliveryFailedPayload = Schema.Struct({
   error: Schema.String.check(Schema.isNonEmpty()),
   nextAttemptAt: Schema.NullOr(Schema.String),
   alarmed: Schema.Boolean,
+  /** The receiver held it unsent: a recheck, which never counts toward the alarm. */
+  held: Schema.optional(Schema.Boolean),
 });
 export type MessageDeliveryFailedPayload = typeof MessageDeliveryFailedPayload.Type;
 

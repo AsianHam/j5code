@@ -21,7 +21,7 @@ import type * as Scope from "effect/Scope";
 import { reportedLabel } from "./peerLabel.ts";
 import config from "./delivery-config.v1.json" with { type: "json" };
 import {
-  type A2ADeliveryHeldError,
+  A2ADeliveryHeldError,
   type A2ADeliveryRefusedError,
   A2ADeliveryTransport,
   A2ADeliveryTransportError,
@@ -82,6 +82,10 @@ interface DeliveryRow {
   readonly message_text: string;
   readonly status: "pending" | "retry_scheduled" | "delivered" | "alarmed";
   readonly attempts: number;
+  /** Of those attempts, the rechecks while the receiver held it. */
+  readonly held_attempts: number;
+  /** The order it was accepted on this server, across projects. */
+  readonly accept_order: number;
   readonly created_at: string;
   /** Set when the row came in from a peer server; NULL means the origin is `project_id` here. */
   readonly origin_project_id: string | null;
@@ -127,6 +131,8 @@ export const noopHooks = Layer.succeed(
 
 export interface A2ADeliveryWorkerShape {
   readonly notify: Effect.Effect<void>;
+  /** The agent may take messages again: attempt its waiting deliveries now, in send order. */
+  readonly wake: (participantId: ParticipantId) => Effect.Effect<void>;
   readonly cancelParticipantDeliveries: (
     participantId: ParticipantId,
   ) => Effect.Effect<void, A2ADeliveryWorkerError>;
@@ -173,7 +179,8 @@ const workerError = (operation: string) => (cause: unknown) =>
   new A2ADeliveryWorkerError({ operation, cause });
 
 /**
- * A held receiver queue waits for a person; recheck it slowly and never alarm on it.
+ * A held delivery waits for its receiver to be resumed or continued, which wakes it (`wake`);
+ * this slow recheck is the fallback, and it never alarms.
  * Each recheck appends a ledger event, so the interval doubles from one minute to a
  * fifteen-minute cap: a long hold costs about four events an hour, not sixty.
  */
@@ -244,6 +251,12 @@ const makeLayer = (daemon: boolean) =>
           SELECT environment_id FROM j5_a2a_peer WHERE link_mode = 'store'
         )
       )`;
+      const deliveryColumns = sql`
+        project_id, message_id, sent_seq, sender_id, receiver_id, receiver_project_id,
+        exchange_id, exchange_role, envelope_channel, correlation_id, message_text, status,
+        attempts, held_attempts, accept_order, created_at, origin_project_id,
+        origin_environment_id, receiver_environment_id
+      `;
       const storedForPollingPeer = sql`(
         receiver_environment_id IN (SELECT environment_id FROM j5_a2a_peer WHERE link_mode = 'store')
       )`;
@@ -324,6 +337,28 @@ const makeLayer = (daemon: boolean) =>
             createdAt: row.created_at,
           });
         } else {
+          // Messages reach an agent in the order they were accepted, from any project: this one
+          // waits while an earlier one to the same agent is still waiting, held or in retry. A
+          // wake hands them over together, so it costs nothing once the hold lifts.
+          const earlier = yield* sql<{ readonly message_id: string }>`
+            SELECT message_id FROM j5_a2a_delivery
+            WHERE receiver_id = ${row.receiver_id}
+              AND receiver_environment_id IS NULL
+              AND status IN ('pending', 'retry_scheduled')
+              AND accept_order < ${row.accept_order}
+            LIMIT 1
+          `.pipe(
+            Effect.mapError(
+              (cause) =>
+                new A2ADeliveryTransportError({ operation: "read earlier deliveries", cause }),
+            ),
+          );
+          if (earlier[0] !== undefined) {
+            return yield* new A2ADeliveryHeldError({
+              participantId: row.receiver_id,
+              waitingOn: `earlier message ${earlier[0].message_id}`,
+            });
+          }
           yield* appendReceiverEntry(row);
           // Canonical references live in the immutable sent fact. Reading that
           // indexed row avoids a second projection and a schema migration.
@@ -448,13 +483,17 @@ const makeLayer = (daemon: boolean) =>
         const failedAt = DateTime.formatIso(failedAtDate);
         // A held queue is not a failed delivery: it stays retry_scheduled, never delivered or alarmed.
         const held = heldError(cause);
+        // Rechecks while held never reached the transport, so only the others count.
+        const transportAttempt = attempt - row.held_attempts;
         const alarmed =
-          refusal !== undefined || (held === undefined && attempt >= config.alarmAfterAttempts);
+          refusal !== undefined ||
+          (held === undefined && transportAttempt >= config.alarmAfterAttempts);
         const nextAttemptAt = alarmed
           ? null
           : DateTime.formatIso(
               DateTime.add(failedAtDate, {
-                milliseconds: held !== undefined ? heldQueueRecheckMs(attempt) : backoffMs(attempt),
+                milliseconds:
+                  held !== undefined ? heldQueueRecheckMs(attempt) : backoffMs(transportAttempt),
               }),
             );
         const messageId = LedgerMessageId.make(row.message_id);
@@ -468,7 +507,7 @@ const makeLayer = (daemon: boolean) =>
                 refusal !== undefined
                   ? yield* refusalNotices(row, refusal, failedAt)
                   : alarmed
-                    ? yield* alarmNotices(row, attempt, cause, failedAt)
+                    ? yield* alarmNotices(row, transportAttempt, cause, failedAt)
                     : [];
               return yield* writer.appendEventsInTransaction({
                 commandId: commandId("failed", messageId, attempt),
@@ -490,6 +529,7 @@ const makeLayer = (daemon: boolean) =>
                           : `${refusal.code}: ${refusal.message}`,
                       nextAttemptAt,
                       alarmed,
+                      ...(held === undefined ? {} : { held: true }),
                     },
                     createdAt: failedAt,
                   },
@@ -712,24 +752,7 @@ const makeLayer = (daemon: boolean) =>
       const runOnceRaw = Effect.gen(function* () {
         const now = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
         const rows = yield* sql<DeliveryRow>`
-          SELECT
-            project_id,
-            message_id,
-            sent_seq,
-            sender_id,
-            receiver_id,
-            receiver_project_id,
-            exchange_id,
-            exchange_role,
-            envelope_channel,
-            correlation_id,
-            message_text,
-            status,
-            attempts,
-            created_at,
-            origin_project_id,
-            origin_environment_id,
-            receiver_environment_id
+          SELECT ${deliveryColumns}
           FROM j5_a2a_delivery
           WHERE status IN ('pending', 'retry_scheduled')
             AND (next_attempt_at IS NULL OR next_attempt_at <= ${now})
@@ -739,6 +762,48 @@ const makeLayer = (daemon: boolean) =>
         `;
         const row = rows[0];
         if (row === undefined) return null;
+        return yield* attemptRow(row);
+      });
+      const runOnceEffect = runOnceRaw.pipe(Effect.mapError(workerError("run one delivery")));
+      const runOnce: A2ADeliveryWorkerShape["runOnce"] = drainPermit.withPermit(runOnceEffect);
+
+      // Receivers that stopped being held. Their held deliveries are attempted at once, in send
+      // order, instead of on each one's own recheck. One backing off after a transport failure
+      // keeps its schedule, so a busy receiver's wakes don't spend its retries; the guard holds
+      // the deliveries behind it meanwhile.
+      const wokenReceivers = new Set<string>();
+      const wake = (participantId: string) =>
+        Effect.sync(() => wokenReceivers.add(participantId)).pipe(
+          Effect.andThen(Queue.offer(wakeups, undefined)),
+          Effect.asVoid,
+        );
+      /** A row left the waiting set: the next message to its agent may be waiting behind it. */
+      const wakeBehind = (row: DeliveryRow) =>
+        row.receiver_environment_id === null &&
+        !isHumanParticipantId(ParticipantId.make(row.receiver_id))
+          ? wake(row.receiver_id)
+          : Effect.void;
+      const runWokenEffect = Effect.gen(function* () {
+        const now = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
+        const receivers = [...wokenReceivers];
+        wokenReceivers.clear();
+        const completed: Array<DeliveryMilestone> = [];
+        for (const receiverId of receivers) {
+          const rows = yield* sql<DeliveryRow>`
+            SELECT ${deliveryColumns}
+            FROM j5_a2a_delivery
+            WHERE receiver_id = ${receiverId}
+              AND receiver_environment_id IS NULL
+              AND status IN ('pending', 'retry_scheduled')
+              AND (last_held = 1 OR next_attempt_at IS NULL OR next_attempt_at <= ${now})
+            ORDER BY accept_order
+          `;
+          for (const row of rows) completed.push(yield* attemptRow(row));
+        }
+        return completed;
+      }).pipe(Effect.mapError(workerError("run woken deliveries")));
+
+      const attemptRow = Effect.fn("j5.a2a.delivery.attemptRow")(function* (row: DeliveryRow) {
         const attempt = row.attempts + 1;
         if (yield* deliveryUnavailable(row)) {
           const milestone = yield* cancelDelivery(row, attempt);
@@ -780,15 +845,15 @@ const makeLayer = (daemon: boolean) =>
             ? exit.value
             : yield* recordFailure(row, attempt, exit.cause, refusalOf(exit.cause));
         }).pipe(Effect.ensuring(Effect.sync(() => peerAttemptsInFlight.delete(inFlight))));
+        if (milestone.state !== "retry_scheduled") yield* wakeBehind(row);
         yield* PubSub.publish(milestones, milestone);
         return milestone;
       });
-      const runOnceEffect = runOnceRaw.pipe(Effect.mapError(workerError("run one delivery")));
-      const runOnce: A2ADeliveryWorkerShape["runOnce"] = drainPermit.withPermit(runOnceEffect);
 
       const drainEffect = Effect.fn("j5.a2a.delivery.drain")(function* () {
         const completed: Array<DeliveryMilestone> = [];
         while (true) {
+          completed.push(...(yield* runWokenEffect));
           const milestone = yield* runOnceEffect;
           if (milestone === null) return completed;
           completed.push(milestone);
@@ -846,6 +911,7 @@ const makeLayer = (daemon: boolean) =>
       ) {
         for (const row of rows) {
           const milestone = yield* cancelDelivery(row, row.attempts + 1);
+          yield* wakeBehind(row);
           yield* PubSub.publish(milestones, milestone);
         }
       });
@@ -989,6 +1055,7 @@ const makeLayer = (daemon: boolean) =>
             { concurrency: "unbounded", discard: true },
           ).pipe(Effect.mapError(workerError("cancel participant deliveries"))),
         notify: Queue.offer(wakeups, undefined).pipe(Effect.asVoid),
+        wake,
         handOutToPeer: (environmentId) =>
           storePermit
             .withPermit(handOutToPeer(environmentId))

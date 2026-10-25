@@ -46,6 +46,7 @@ import Migration0042 from "./migrations/042_EveryoneHereAsks.ts";
 import Migration0043 from "./migrations/043_TaskSchedulers.ts";
 import Migration0044 from "./migrations/044_QueuedMessageEdits.ts";
 import Migration0045 from "./migrations/045_McpClientApprovers.ts";
+import Migration0046 from "./migrations/046_LocalDeliveryOrder.ts";
 
 export const J5_A2A_MIGRATIONS_TABLE = "j5_a2a_migrations";
 
@@ -102,6 +103,7 @@ export const migrationEntries = [
   [43, "TaskSchedulers", Migration0043],
   [44, "QueuedMessageEdits", Migration0044],
   [45, "McpClientApprovers", Migration0045],
+  [46, "LocalDeliveryOrder", Migration0046],
 ] as const;
 
 const makeMigrationLoader = (throughId?: number) =>

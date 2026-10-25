@@ -101,12 +101,10 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
     // Neither queued nor pending: cancelled or alarmed, so it is not waiting.
     if (sentRun === undefined && !pending.some((row) => row.message_id === input.sentMessageId))
       return undefined;
-    const heldQueue = target.runs.some((run) => run.status === "queued" && run.queueHeld === true);
 
     if (latestActiveRun(target) === undefined) {
-      // An idle receiver takes the message now, resuming a held queue first, unless that
-      // queue may not be resumed. Upstream holds a message sent after a failed worktree
-      // setup even without a held queue.
+      // An idle receiver takes the message now, resuming a held queue first, unless it
+      // stopped on a usage limit or its worktree setup failed (`idleQueueHold`).
       const latestRun = latestExecutedRun(target.runs);
       // Only a failed run's errors can name a usage limit.
       const { turnItems } =
@@ -118,9 +116,7 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
             });
       const hold = idleQueueHold({ ...target, turnItems });
       if (hold?.type === "worktree_setup_failed") return { type: "queue_held" } as const;
-      // Without a held queue a delivery starts a turn at once, as upstream starts any message
-      // to an idle thread, but one already queued waits for the continue.
-      if (hold?.type !== "usage_limit" || (!heldQueue && sentRun === undefined)) return undefined;
+      if (hold?.type !== "usage_limit") return undefined;
       // Upstream continues it at the reset only when its recovery is armed for this limit,
       // as the thread's usage-limit banner shows.
       const recovery = target.thread.limitRecovery;
@@ -147,7 +143,8 @@ export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
     )
       return undefined;
     // A held queue drains only when someone resumes the thread, not when its turn ends.
-    if (heldQueue) return { type: "queue_held" } as const;
+    if (target.runs.some((run) => run.status === "queued" && run.queueHeld === true))
+      return { type: "queue_held" } as const;
     const callerId = (yield* sql<{ readonly sender_id: string }>`
       SELECT sender_id FROM j5_a2a_delivery WHERE message_id = ${input.sentMessageId} LIMIT 1
     `)[0]?.sender_id;

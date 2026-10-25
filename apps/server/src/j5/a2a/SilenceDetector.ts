@@ -173,6 +173,11 @@ const terminalRun = (stored: OrchestrationV2StoredEvent): OrchestrationV2Run | u
     : undefined;
 };
 
+/** A run starting on a thread: whatever held its agent's messages has lifted. */
+const runStarted = ({ event }: OrchestrationV2StoredEvent) =>
+  (event.type === "run.created" || event.type === "run.updated") &&
+  event.payload.status === "starting";
+
 const stablePart = (value: string) => encodeURIComponent(value);
 
 const noticeIdentity = (projectId: string, exchangeId: string, deliveryMessageId: string) =>
@@ -698,6 +703,18 @@ const makeLayer = (daemon: boolean) =>
             Effect.provideService(SqlClient.SqlClient, sql),
             Effect.provideService(A2ALedgerTransactionWriter, ledgerWriter),
           );
+        }
+        if (runStarted(stored)) {
+          // Deliveries held while the agent was stopped on a usage limit, its queue was held,
+          // or its worktree setup had failed go now, together and in send order.
+          const started = yield* sql<{ readonly participant_id: string }>`
+            SELECT participant_id FROM j5_a2a_membership
+            WHERE thread_id = ${stored.event.threadId} AND archived_at IS NULL
+          `;
+          for (const membership of started) {
+            yield* deliveryWorker.wake(ParticipantId.make(membership.participant_id));
+          }
+          return [];
         }
         const run = terminalRun(stored);
         if (run === undefined || run.completedAt === null) return [];
