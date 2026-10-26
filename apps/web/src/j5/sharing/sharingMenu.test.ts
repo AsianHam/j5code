@@ -39,7 +39,7 @@ describe("the thread menu for an Owner", () => {
       labels(
         sharingMenuItems(
           upstream,
-          { owner: true, level: "owner", holdsThread: true },
+          { owner: true, level: "owner", holdsThread: true, startsInProject: true },
           { canShare: false },
         ),
       ),
@@ -67,7 +67,7 @@ describe("the thread menu for someone who is not an Owner", () => {
   it("leaves out archiving, deleting and project settings for a Collaborator", () => {
     const items = sharingMenuItems(
       upstream,
-      { owner: false, level: "collaborator", holdsThread: false },
+      { owner: false, level: "collaborator", holdsThread: false, startsInProject: true },
       { canShare: false },
     );
     expect(labels(items)).toEqual(["Rename thread", "Mark unread", "Copy", "Share thread…"]);
@@ -79,7 +79,7 @@ describe("the thread menu for someone who is not an Owner", () => {
       labels(
         sharingMenuItems(
           upstream,
-          { owner: false, level: "collaborator", holdsThread: true },
+          { owner: false, level: "collaborator", holdsThread: true, startsInProject: true },
           { canShare: false },
         ),
       ),
@@ -91,7 +91,7 @@ describe("the thread menu for someone who is not an Owner", () => {
       labels(
         sharingMenuItems(
           upstream,
-          { owner: false, level: "viewer", holdsThread: true },
+          { owner: false, level: "viewer", holdsThread: true, startsInProject: false },
           { canShare: false },
         ),
       ),
@@ -103,11 +103,32 @@ describe("the thread menu for someone who is not an Owner", () => {
       labels(
         sharingMenuItems(
           upstream,
-          { owner: false, level: "viewer", holdsThread: false },
+          { owner: false, level: "viewer", holdsThread: false, startsInProject: false },
           { canShare: false },
         ),
       ),
     ).not.toContain("Leave thread");
+  });
+});
+
+describe("a new thread from the thread menu", () => {
+  const withBranch: ReadonlyArray<ContextMenuItem<UpstreamId | "new-thread-on-branch">> = [
+    { id: "new-thread-on-branch", label: "New thread on main" },
+    ...upstream,
+  ];
+  const newThread = (startsInProject: boolean) =>
+    sharingMenuItems(
+      withBranch,
+      { owner: false, level: "collaborator", holdsThread: true, startsInProject },
+      { canShare: false },
+    ).find((item) => item.id === "new-thread-on-branch");
+
+  it("is disabled for a thread's Collaborator, who cannot start one in its project", () => {
+    expect(newThread(false)?.disabled).toBe(true);
+  });
+
+  it("is left as upstream built it for someone who can", () => {
+    expect(newThread(true)?.disabled).toBeUndefined();
   });
 });
 

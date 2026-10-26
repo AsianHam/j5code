@@ -128,6 +128,7 @@ import {
   useSharedConversationEntries,
   useSharedMessageAuthor,
 } from "../../j5/sharing/sharedTimeline";
+import { useCanForkThread } from "../../j5/sharing/access";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
   participantIdsForThreadA2ADelivery,
@@ -2740,8 +2741,12 @@ function AssistantForkButton({
     projectedItem,
     capabilities: support.providerSession?.capabilities,
   });
+  const canStartFork = useCanForkThread(
+    ctx.activeThreadEnvironmentId,
+    projectedItem.sourceThreadId,
+  );
 
-  if (!canFork || projectedItem.item.runId === null) return null;
+  if (!canFork || !canStartFork || projectedItem.item.runId === null) return null;
   const runId = projectedItem.item.runId;
 
   return (

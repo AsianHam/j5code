@@ -2,6 +2,12 @@
 
 import { useHighlightsPaletteItems } from "../j5/highlights/highlightsPalette";
 import { useSharingPaletteItems } from "../j5/sharing/sharingPalette";
+import { useCanAddProject, useCanStartIn } from "../j5/sharing/access";
+import {
+  openableFromSearch,
+  startableMemberRef,
+  startableProjectPicker,
+} from "../j5/sharing/startableProjects";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -914,6 +920,12 @@ function OpenCommandPaletteDialog(props: {
     defaultProjectRef,
     handleNewThread,
   });
+  const canStartIn = useCanStartIn();
+  const startPicker = startableProjectPicker({
+    groups: projectGroups,
+    preferredProjectRef: contextualProjectRef,
+    canStartIn,
+  });
   const projectPickerEntries = buildSidebarProjectPickerEntries({
     groups: projectGroups,
     preferredProjectRef: contextualProjectRef,
@@ -973,7 +985,7 @@ function OpenCommandPaletteDialog(props: {
     }) ?? null;
   const browseEnvironmentId =
     sourcePicker?.environmentId ?? addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
-  const canCreateProject = useEnvironmentScope(browseEnvironmentId, AuthOrchestrationOperateScope);
+  const canCreateProject = useCanAddProject(browseEnvironmentId);
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
   const browseEnvironmentIsDesktopLocal =
@@ -1121,6 +1133,11 @@ function OpenCommandPaletteDialog(props: {
     [browseNavigation],
   );
 
+  const searchProjectKeysWithThreads = new Set(
+    threads.flatMap((thread) =>
+      thread.archivedAt === null ? [`${thread.environmentId}:${thread.projectId}`] : [],
+    ),
+  );
   const openProjectFromSearch = async (project: (typeof projects)[number]) => {
     const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
     const groupedProjectKeys = group
@@ -1152,7 +1169,8 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    await handleNewThread(scopeProjectRef(project.environmentId, project.id));
+    const startRef = startableMemberRef({ project, group, canStartIn });
+    if (startRef) await handleNewThread(startRef);
   };
 
   const projectSearchItems = buildProjectActionItems({
@@ -1189,6 +1207,19 @@ function OpenCommandPaletteDialog(props: {
     },
     icon: projectFaviconIcon,
     runProject: openProjectFromSearch,
+  }).map((item, index) => {
+    // J5: a project with no thread to open and no checkout this person may start one in is shown
+    // but cannot be picked, as upstream shows a server that is not connected.
+    const project = pickerProjects[index];
+    const openable =
+      !project ||
+      openableFromSearch({
+        project,
+        group: projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`),
+        projectKeysWithThreads: searchProjectKeysWithThreads,
+        canStartIn,
+      });
+    return openable ? item : { ...item, disabled: true };
   });
 
   const projectThreadItems = (() => {
@@ -1196,10 +1227,10 @@ function OpenCommandPaletteDialog(props: {
       isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
     const projectItems = enumerateCommandPaletteItems(
       buildProjectActionItems({
-        projects: pickerProjects.filter((project) => !isScratch(project)),
+        projects: startPicker.projects.filter((project) => !isScratch(project)),
         valuePrefix: "new-thread-in",
         searchTerms: (project) => {
-          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          const group = startPicker.groupByTargetKey.get(`${project.environmentId}:${project.id}`);
           const location = projectEnvironmentLocationById.get(project.environmentId);
           return [
             ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
@@ -1232,7 +1263,7 @@ function OpenCommandPaletteDialog(props: {
         },
         icon: projectFaviconIcon,
         runProject: async (project) => {
-          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          const group = startPicker.groupByTargetKey.get(`${project.environmentId}:${project.id}`);
           const contextualRefBelongsToGroup =
             contextualProjectRef !== null &&
             group?.memberProjectRefs.some(
@@ -1654,12 +1685,16 @@ function OpenCommandPaletteDialog(props: {
   });
   const highlightsPaletteItems = useHighlightsPaletteItems();
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
-  if (projects.length > 0) {
+  if (projects.length > 0 && projectThreadItems.length > 0) {
     const activeProjectTitle =
       projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
       (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null);
 
-    if (activeProjectTitle) {
+    if (
+      activeProjectTitle &&
+      contextualProjectRef !== null &&
+      canStartIn(contextualProjectRef.environmentId, contextualProjectRef.projectId)
+    ) {
       actionItems.push({
         kind: "action",
         value: "action:new-thread",
@@ -2395,6 +2430,7 @@ function OpenCommandPaletteDialog(props: {
     newProjectFlow !== null &&
     newProjectName.length > 0 &&
     !isCreatingNewProject &&
+    canCreateProject &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
 
   async function submitNewProject(): Promise<void> {
@@ -2894,10 +2930,7 @@ function OpenCommandPaletteDialog(props: {
     addProjectCloneFlow?.environmentId ?? null,
     AuthSourceControlWriteScope,
   );
-  const canCreateClonedProject = useEnvironmentScope(
-    addProjectCloneFlow?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
-  );
+  const canCreateClonedProject = useCanAddProject(addProjectCloneFlow?.environmentId ?? null);
   const canCloneProject = canWriteSourceControl && canCreateClonedProject;
   const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
   const canSubmitBrowsePath =
@@ -3232,7 +3265,11 @@ function OpenCommandPaletteDialog(props: {
             <Kbd>{createShortcutLabel}</Kbd>
           </KbdGroup>
         </TooltipTrigger>
-        <TooltipPopup side="top">{`Create (${createShortcutLabel})`}</TooltipPopup>
+        <TooltipPopup side="top">
+          {canCreateProject
+            ? `Create (${createShortcutLabel})`
+            : "This connection cannot add projects."}
+        </TooltipPopup>
       </Tooltip>
     ) : addProjectCloneFlow?.step === "repository" ? (
       <Tooltip>

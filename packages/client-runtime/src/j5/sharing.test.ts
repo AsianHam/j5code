@@ -30,6 +30,7 @@ import {
   projectLevelFor,
   reachesServer,
   sharingAllowsOperate,
+  sharingAllowsStart,
   threadLevelFor,
   threadLevelInProject,
 } from "./sharing.ts";
@@ -251,6 +252,55 @@ describe("what a connection may do with a thread it is starting", () => {
     ]);
     expect(projectLevelFor(SERVER_VIEWER, PROJECT)).toBe("viewer");
     expect(projectLevelFor(access, PROJECT)).toBe("collaborator");
+  });
+});
+
+describe("what a connection may start", () => {
+  const PROJECT = ProjectId.make("project:shared");
+  const THREAD = ThreadId.make("thread:one");
+
+  it("lets a thread's Collaborator start no thread, fork or project", () => {
+    const access = person([{ scope: { kind: "thread", threadId: THREAD }, level: "collaborator" }]);
+    expect(sharingAllowsStart(access, PROJECT)).toBe(false);
+    expect(sharingAllowsStart(access, null)).toBe(false);
+  });
+
+  it("lets a project's Collaborator start threads there and add no project", () => {
+    const access = person([
+      { scope: { kind: "server" }, level: "viewer" },
+      { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
+    ]);
+    expect(sharingAllowsStart(access, PROJECT)).toBe(true);
+    expect(sharingAllowsStart(access, "project:other")).toBe(false);
+    expect(sharingAllowsStart(access, null)).toBe(false);
+  });
+
+  it("lets a Viewer here who writes to another thread start nothing here", () => {
+    const access = person([
+      { scope: { kind: "project", projectId: PROJECT }, level: "viewer" },
+      { scope: { kind: "thread", threadId: THREAD }, level: "collaborator" },
+    ]);
+    expect(sharingAllowsStart(access, PROJECT)).toBe(false);
+  });
+
+  it("lets a server's Viewer start nothing anywhere", () => {
+    expect(sharingAllowsStart(SERVER_VIEWER, PROJECT)).toBe(false);
+    expect(sharingAllowsStart(SERVER_VIEWER, null)).toBe(false);
+  });
+
+  it("lets a server's Collaborator or Owner, or a service, start anything", () => {
+    const collaborator = person([{ scope: { kind: "server" }, level: "collaborator" }], {
+      wide: true,
+    });
+    for (const access of [collaborator, OWNER, { kind: "service" } as const]) {
+      expect(sharingAllowsStart(access, PROJECT)).toBe(true);
+      expect(sharingAllowsStart(access, null)).toBe(true);
+    }
+  });
+
+  it("withholds nothing before the server answers, and everything from an unplaced device", () => {
+    expect(sharingAllowsStart(null, null)).toBe(true);
+    expect(sharingAllowsStart({ kind: "unknown" }, PROJECT)).toBe(false);
   });
 });
 

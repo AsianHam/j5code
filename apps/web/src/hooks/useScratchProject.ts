@@ -9,6 +9,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { useCanStartIn } from "~/j5/sharing/access";
 import { useEnvironments } from "~/state/environments";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -28,6 +29,7 @@ export function useScratchProject() {
   const { environments } = useEnvironments();
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
   const handleNewThread = useNewThreadHandler();
+  const canStartIn = useCanStartIn();
 
   const scratchWorkspaceRootFor = useCallback(
     (environmentId: EnvironmentId | null): string | null => {
@@ -42,13 +44,18 @@ export function useScratchProject() {
 
   const scratchEnvironmentId = useCallback(
     (current: EnvironmentId | null): EnvironmentId | null => {
-      if (current !== null) return scratchWorkspaceRootFor(current) !== null ? current : null;
+      if (current !== null)
+        return scratchWorkspaceRootFor(current) !== null && canStartIn(current, null)
+          ? current
+          : null;
       const offering = environments.filter(
-        (entry) => scratchWorkspaceRootFor(entry.environmentId) !== null,
+        (entry) =>
+          scratchWorkspaceRootFor(entry.environmentId) !== null &&
+          canStartIn(entry.environmentId, null),
       );
       return offering.length === 1 ? (offering[0]?.environmentId ?? null) : null;
     },
-    [environments, scratchWorkspaceRootFor],
+    [canStartIn, environments, scratchWorkspaceRootFor],
   );
 
   const openScratchProject = useCallback(

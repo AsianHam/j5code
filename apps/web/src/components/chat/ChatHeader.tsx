@@ -1,4 +1,5 @@
 import { ThreadPeopleChip } from "../../j5/sharing/ThreadPeople";
+import { useCanStartThreadIn } from "../../j5/sharing/access";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -83,6 +84,10 @@ export const ChatHeader = memo(function ChatHeader({
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
+  const canStartInProject = useCanStartThreadIn(
+    activeProject?.environmentId ?? null,
+    activeProject?.id ?? null,
+  );
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
   const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
   const [collapseParentTitle, setCollapseParentTitle] = useState(false);
@@ -299,6 +304,7 @@ export const ChatHeader = memo(function ChatHeader({
                       type="button"
                       aria-label={`New thread in ${activeProjectName}`}
                       onClick={onNewThreadInProject}
+                      disabled={!canStartInProject}
                       className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                     />
                   }

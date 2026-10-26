@@ -14,14 +14,15 @@ export type SharingMenuActionId = typeof SHARE_THREAD | typeof LEAVE_THREAD;
 
 /**
  * What the thread's server says of the person: whether they own it, their level over the thread,
- * and whether they hold a level on the thread itself, which is what they can leave, whatever
- * their device may manage. The first owner leaves nothing. `null` while the server has not
- * answered, or for a session that is no person's.
+ * whether they hold a level on the thread itself, which is what they can leave, whatever their
+ * device may manage, and whether they may start a thread in its project. The first owner leaves
+ * nothing. `null` while the server has not answered, or for a session that is no person's.
  */
 export interface SharingMenuAccess {
   readonly owner: boolean;
   readonly level: PersonLevel | null;
   readonly holdsThread: boolean;
+  readonly startsInProject: boolean;
 }
 
 // `access.ts`, which owns the connection runtime, hands the read over when it loads; until then
@@ -39,13 +40,18 @@ export function provideSharingMenuAccess(
 // marker included, which is one value for everyone on the thread (Shared conversations AC19).
 const OWNERS_ONLY: ReadonlySet<string> = new Set(["archive", "delete", "project-settings"]);
 const NOT_A_VIEWERS: ReadonlySet<string> = new Set(["mark-unread"]);
+// Upstream offers a new thread to a connection that writes nothing, as local navigation; a person
+// who cannot start one in the thread's project is shown it disabled, as upstream shows an action a
+// connection lacks (AC14).
+const STARTS_A_THREAD: ReadonlySet<string> = new Set(["new-thread-on-branch"]);
 
 /**
  * Upstream's thread menu as People and access changes it. "Share thread…" goes after "Copy"
  * (AC34), disabled on a device without "Manage access", as upstream shows an action a device
  * lacks. For someone who is not an Owner, the items that are Owners' go, and "Leave thread" takes
- * Archive's place when they hold a level on the thread itself (AC48). Upstream's own list is left
- * as it was built.
+ * Archive's place when they hold a level on the thread itself (AC48). "New thread on <branch>" is
+ * disabled for someone who cannot start a thread in the project. Upstream's own list is left as it
+ * was built.
  */
 export function withSharingMenuItems<Id extends string>(
   items: ReadonlyArray<ContextMenuItem<Id>>,
@@ -72,7 +78,13 @@ export function sharingMenuItems<Id extends string>(
     access !== null &&
     ((!access.owner && OWNERS_ONLY.has(item.id)) ||
       (access.level === "viewer" && NOT_A_VIEWERS.has(item.id)));
-  const kept = items.filter((item) => !removed(item));
+  const kept = items
+    .filter((item) => !removed(item))
+    .map((item) =>
+      access !== null && !access.startsInProject && STARTS_A_THREAD.has(item.id)
+        ? { ...item, disabled: true }
+        : item,
+    );
   const copy = kept.findIndex((item) => item.id === "copy");
   const withShare: ReadonlyArray<ContextMenuItem<Id | SharingMenuActionId>> =
     copy === -1 ? [...kept, share] : [...kept.slice(0, copy + 1), share, ...kept.slice(copy + 1)];

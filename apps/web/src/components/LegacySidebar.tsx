@@ -127,6 +127,8 @@ import { useDesktopUpdateState } from "../state/desktopUpdate";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { archiveWithPreflight } from "../j5/a2a/archiveFlow";
+import { useCanStartInAny } from "../j5/sharing/access";
+import { readCanStartThreadIn } from "../j5/sharing/startAccess";
 import { projectEnvironment } from "../state/projects";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
@@ -1174,6 +1176,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
   } = props;
+  const canStartThreadHere = useCanStartInAny(project.memberProjects);
   const environmentMachine = project.allRemoteMembersAreWsl
     ? "linux"
     : project.allRemoteMembersAreDesktopLocal
@@ -2111,6 +2114,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             project.memberProjects.map((member) => ({
               id: member.physicalProjectKey,
               label: formatProjectMemberActionLabel(member, project.groupedProjectCount),
+              disabled: !readCanStartThreadIn(scopeProjectRef(member.environmentId, member.id)),
             })),
             {
               x: event.clientX,
@@ -2328,7 +2332,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const clicked = await api.contextMenu.show(
         [
           ...(thread.branch
-            ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
+            ? [
+                {
+                  id: "new-thread-on-branch",
+                  label: `New thread on ${thread.branch}`,
+                  disabled: !readCanStartThreadIn(
+                    scopeProjectRef(thread.environmentId, thread.projectId),
+                  ),
+                },
+              ]
             : []),
           { id: "rename", label: "Rename thread", disabled: !canOperateThread },
           { id: "mark-unread", label: "Mark unread" },
@@ -2531,7 +2543,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <Tooltip>
           <TooltipTrigger
             render={
-              <div className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+              <div
+                hidden={!canStartThreadHere}
+                className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100"
+              >
                 <button
                   type="button"
                   aria-label={`Create new thread in ${project.displayName}`}

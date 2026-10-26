@@ -26,6 +26,13 @@ vi.mock("~/state/session", () => ({
   readEnvironmentScope: (environmentId: unknown, scope: string) =>
     (environmentId === "environment" ? state.scopes : state.primaryScopes).has(scope),
 }));
+// J5 (case 73): the thread's level is J5's; these tests hold the session's permission alone.
+vi.mock("~/j5/sharing/access", () => ({
+  useCanOperateThread: (environmentId: unknown) =>
+    (environmentId === "environment" ? state.scopes : state.primaryScopes).has(
+      "orchestration:operate",
+    ),
+}));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("~/state/server", () => ({ serverEnvironment: { configValueAtom: () => null } }));
 vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: { discovery: () => null } }));

@@ -179,8 +179,9 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
-import { useIsNarrowEverywhere } from "../j5/sharing/access";
+import { useCanStartInAny, useIsNarrowEverywhere } from "../j5/sharing/access";
 import { buildWithSharingMenuItems, runSharingMenuAction } from "../j5/sharing/sharingMenu";
+import { readStartableProjectRef } from "../j5/sharing/startableProjects";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
@@ -2716,6 +2717,7 @@ export default function Sidebar() {
   const newThreadContext = useHandleNewThread();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isNarrowEverywhere = useIsNarrowEverywhere();
+  const canStartInAnyProject = useCanStartInAny(projects);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -4497,6 +4499,10 @@ export default function Sidebar() {
         activeThread: newThreadContext.activeThread ?? undefined,
         defaultProjectRef: newThreadContext.defaultProjectRef,
         handleNewThread: newThreadContext.handleNewThread,
+      }).then((started) => {
+        // J5: a project this person cannot start in hands a plain click to one they can.
+        const fallback = started || event?.shiftKey ? null : readStartableProjectRef(projectGroups);
+        if (fallback) void newThreadContext.handleNewThread(fallback);
       });
       return;
     }
@@ -4645,7 +4651,7 @@ export default function Sidebar() {
               }
               onNewProject={openAddProjectCommandPalette}
               onNewThread={handleNewThreadClick}
-              newThreadDisabled={projects.length === 0}
+              newThreadDisabled={!canStartInAnyProject}
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
               showNewThreadInProjectHint={projectGroups.length > 1}
