@@ -174,6 +174,7 @@ describe("J5 action commands", () => {
         atoms.issuePeerCredential,
         atoms.addPeer,
         atoms.removePeer,
+        atoms.changePeerOrigin,
         atoms.listPeerAddresses,
         atoms.probePeer,
       ]) {

@@ -10,13 +10,7 @@ vi.mock("./peeringClient", () => ({ listPeerAddresses, probePeer }));
 import { noRouteMessage, runPeeringCheck, type PeeringCheckSide } from "./peeringCheck";
 
 const side = (id: string, label: string, clientUrl: string | null): PeeringCheckSide => ({
-  server: {
-    environmentId: EnvironmentId.make(id),
-    label,
-    serverVersion: "0.0.48",
-    supportsPoll: true,
-    runMode: "service",
-  },
+  server: { environmentId: EnvironmentId.make(id), label },
   clientUrl,
 });
 

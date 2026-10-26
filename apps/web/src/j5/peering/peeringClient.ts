@@ -35,6 +35,19 @@ export async function removePeer(environmentId: EnvironmentId, peerEnvironmentId
   return result.value;
 }
 
+export async function changePeerOrigin(
+  environmentId: EnvironmentId,
+  peerEnvironmentId: string,
+  origin: string,
+) {
+  const result = await j5Environment.changePeerOrigin.run(appAtomRegistry, {
+    environmentId,
+    input: { environmentId: peerEnvironmentId, origin },
+  });
+  if (result._tag === "Failure") throw Cause.squash(result.cause);
+  return result.value.peer;
+}
+
 export async function listPeerAddresses(environmentId: EnvironmentId) {
   const result = await j5Environment.listPeerAddresses.run(appAtomRegistry, {
     environmentId,

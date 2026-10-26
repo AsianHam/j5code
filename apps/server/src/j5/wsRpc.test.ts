@@ -184,6 +184,8 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
         add: (input) =>
           Effect.fail(new PeerUnreachableError({ origin: input.origin, reason: "ECONNREFUSED" })),
         remove: () => reached("remove", { removed: true, revokedSessions: 1 }),
+        changeOrigin: (input) =>
+          Effect.fail(new PeerUnreachableError({ origin: input.origin, reason: "ECONNREFUSED" })),
         addresses: reached("addresses", { origins: ["http://10.0.0.5:3773"] }),
         probe: ({ origin }) =>
           reached(`probe ${origin}`, {
@@ -310,6 +312,12 @@ const callEach = (client: Effect.Success<ReturnType<typeof clientFor>>["client"]
     [ACTIONS.removePeer]: outcome(
       client[ACTIONS.removePeer]({ environmentId: "environment-home" }),
     ),
+    [ACTIONS.changePeerOrigin]: outcome(
+      client[ACTIONS.changePeerOrigin]({
+        environmentId: "environment-home",
+        origin: "https://dark.example",
+      }),
+    ),
     [ACTIONS.listPeerAddresses]: outcome(client[ACTIONS.listPeerAddresses]({})),
     [ACTIONS.probePeer]: outcome(client[ACTIONS.probePeer]({ origin: "https://vm.example:3773" })),
     [J5_ARTIFACT_WS_METHODS.deleteArtifact]: outcome(
@@ -369,6 +377,7 @@ describe("J5 client action RPC scopes", () => {
       ACTIONS.issuePeerCredential,
       ACTIONS.addPeer,
       ACTIONS.removePeer,
+      ACTIONS.changePeerOrigin,
       ACTIONS.listPeerAddresses,
       ACTIONS.probePeer,
     ]) {

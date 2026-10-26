@@ -333,5 +333,10 @@ export function createJ5EnvironmentAtoms<R, E>(
       "j5:remove-peer",
       J5_CLIENT_ACTION_WS_METHODS.removePeer,
     ),
+    changePeerOrigin: createJ5ActionCommand(
+      runtime,
+      "j5:change-peer-origin",
+      J5_CLIENT_ACTION_WS_METHODS.changePeerOrigin,
+    ),
   };
 }

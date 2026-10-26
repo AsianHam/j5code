@@ -10,6 +10,7 @@
 import { AuthA2ASendScope, AuthStandardClientScopes } from "@t3tools/contracts";
 import {
   AddPeerResponse,
+  ChangePeerOriginResponse,
   IssuePeerCredentialResponse,
   J5_PEER_API_PATHS,
   PeerListResponse,
@@ -914,6 +915,57 @@ const peerRemoveCommand = Command.make("remove", {
   ),
 );
 
+const peerMoveCommand = Command.make("move", {
+  ...connectionFlags,
+  environment: Flag.String("environment").pipe(
+    Flag.withDescription("The peer's environment id, from `j5 a2a peer list`."),
+    Flag.optional,
+  ),
+  peerOrigin: Flag.String("peer-origin").pipe(
+    Flag.withDescription(
+      "The origin this server now reaches the peer at. It may differ from the one your client uses.",
+    ),
+    Flag.optional,
+  ),
+}).pipe(
+  Command.withDescription(
+    "Change the origin this server reaches a peer at, once the peer answers there to the credential this server already holds for it. Nothing is revoked or cancelled. Needs an access:write token, or runs on the server host with a temporary local admin session.",
+  ),
+  Command.withHandler((flags) =>
+    runOutcome(
+      flags.json,
+      Effect.gen(function* () {
+        const environmentId = yield* requireFlag(flags.environment, "--environment");
+        const peerOrigin = (yield* requireFlag(flags.peerOrigin, "--peer-origin")).replace(
+          /\/+$/,
+          "",
+        );
+        const origin = yield* resolveOrigin(flags);
+        return yield* withAdminToken(flags, "j5 a2a peer move", (token) =>
+          Effect.gen(function* () {
+            const reply = yield* callServer({
+              origin,
+              token,
+              method: "POST",
+              path: J5_PEER_API_PATHS.origin,
+              body: { environmentId, origin: peerOrigin },
+              timeoutMs: Math.max(flags.timeoutMs, 10_000),
+            });
+            if (reply.status !== 200) {
+              return yield* failureFromReply(reply, { conflictExitCode: A2A_EXIT_CODES.refused });
+            }
+            const changed = yield* decodeReply(ChangePeerOriginResponse, reply.body);
+            return {
+              json: { ...changed },
+              text: `This server now reaches ${changed.peer.label} (${changed.peer.environmentId}) at ${changed.peer.origin}.`,
+            } satisfies Outcome;
+          }),
+        );
+      }),
+    ),
+  ),
+);
+
 const peerIdentityCommand = Command.make("identity", {
   ...authLocationFlags,
   origin: originFlag,
@@ -969,6 +1021,7 @@ const peerCommand = Command.make("peer").pipe(
     peerCredentialCommand,
     peerAddCommand,
     peerListCommand,
+    peerMoveCommand,
     peerRemoveCommand,
   ]),
 );

@@ -7,11 +7,12 @@ import {
 } from "@t3tools/contracts/j5";
 import { removalConfirmation } from "@t3tools/client-runtime/j5/peering";
 import { Atom } from "effect/reactivity";
-import { PlusIcon } from "lucide-react";
+import { EllipsisIcon, PencilIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
 import { Button } from "../../components/ui/button";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import { toastManager } from "../../components/ui/toast";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -20,6 +21,7 @@ import { formatEnvironmentQueryError } from "../../state/query";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { j5Environment, peersQueryAtom } from "../state";
 import { useVisibleRefresh } from "../useVisibleRefresh";
+import { editableSides, PeerEditDialog } from "./PeerEditDialog";
 import { PeerIntroductionDialog } from "./PeerIntroductionDialog";
 import { pairTitle, peerPairs, type PeerPair, type PeerPairSide } from "./peerPairs";
 import { refreshPeers, removePeer, type PeerRecord } from "./peeringClient";
@@ -143,6 +145,7 @@ const otherSide = (pair: PeerPair, side: PeerPairSide) =>
 
 function PeerPairRow({ pair }: { readonly pair: PeerPair }) {
   const [removing, setRemoving] = useState(false);
+  const [editing, setEditing] = useState(false);
   // A side this client read and found a record on; the pair exists because there is one.
   const holder = pair.sides.find(
     (side): side is PeerPairSide & { readonly record: PeerRecord } => side.record !== null,
@@ -231,9 +234,38 @@ function PeerPairRow({ pair }: { readonly pair: PeerPair }) {
         </span>
       }
       control={
-        <Button size="sm" variant="ghost" disabled={removing} onClick={() => void remove()}>
-          {removing ? "Removing…" : "Remove"}
-        </Button>
+        <>
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost-muted"
+                  size="icon-xs"
+                  disabled={removing}
+                  aria-label={`More actions for ${pairTitle(pair)}`}
+                />
+              }
+            >
+              <EllipsisIcon className="size-3.5" />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              {editableSides(pair).length > 0 ? (
+                <>
+                  <MenuItem onClick={() => setEditing(true)}>
+                    <PencilIcon />
+                    Edit
+                  </MenuItem>
+                  <MenuSeparator />
+                </>
+              ) : null}
+              <MenuItem variant="destructive" onClick={() => void remove()}>
+                {removing ? "Removing…" : "Remove…"}
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+          {editing ? <PeerEditDialog pair={pair} onClose={() => setEditing(false)} /> : null}
+        </>
       }
     />
   );
