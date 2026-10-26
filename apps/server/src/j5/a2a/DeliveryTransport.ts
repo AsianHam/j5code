@@ -254,8 +254,11 @@ const assertPersonReply = (input: AgentDeliveryInput): never => {
 const isGpt6Model = (model: string | null) =>
   model !== null && /^gpt-6[-.]/.test(codexModelFamily(model));
 
-/** Use the active run's selection, not the picker selection for future runs. */
-export const gpt6PeerSteeringRun = (
+/**
+ * The running turn a peer's update steers into without being asked: a Codex GPT 6 turn or a
+ * Claude turn. Use the active run's selection, not the picker selection for future runs.
+ */
+export const peerSteeringRun = (
   target: Pick<
     OrchestrationV2ThreadProjection,
     "thread" | "runs" | "providerTurns" | "providerThreads" | "providerSessions"
@@ -271,12 +274,18 @@ export const gpt6PeerSteeringRun = (
   const session = target.providerSessions.find(
     (candidate) => candidate.id === providerThread?.providerSessionId,
   );
-  return providerThread?.driver === "codex" &&
-    session?.driver === "codex" &&
-    session.capabilities.turns.supportsActiveSteering === true &&
-    isGpt6Model(normalizeModelSlug(run.modelSelection.model, providerThread.driver))
-    ? run
-    : undefined;
+  if (providerThread === undefined || session?.driver !== providerThread.driver) return undefined;
+  const turns = session.capabilities.turns;
+  // Claude's adapter sends an agent's steer with priority "next", which waits for the running
+  // tool calls instead of cancelling them (case 84). Its capability still reports that steering
+  // interrupts tools, because a person's steer does.
+  const claudeTakesPeerUpdates =
+    providerThread.driver === "claudeAgent" && turns.supportsActiveSteering === true;
+  const gpt6TakesPeerUpdates =
+    providerThread.driver === "codex" &&
+    turns.supportsActiveSteering === true &&
+    isGpt6Model(normalizeModelSlug(run.modelSelection.model, providerThread.driver));
+  return claudeTakesPeerUpdates || gpt6TakesPeerUpdates ? run : undefined;
 };
 
 /**
@@ -551,14 +560,14 @@ export const live: Layer.Layer<
             (effect) => effect.request.type === "provider-turn.steer",
           );
           if (priorSteer !== undefined) return yield* awaitSteeringOutcome(priorSteer.id);
-          // GPT 6 models can receive peer updates during their long turns. Other models
-          // and platform notices retain QS1's queue policy (Claude issue #73).
+          // GPT 6 and Claude agents take peer updates during their long turns. Other models
+          // and platform notices retain QS1's queue policy.
           const alreadyAccepted = target.messages.some(
             (message) => message.id === deliveryMessageId(input.messageId),
           );
           const steeringRun = alreadyAccepted
             ? undefined
-            : gpt6PeerSteeringRun(target, input.envelopeChannel);
+            : peerSteeringRun(target, input.envelopeChannel);
           // The header names the sender's project by id, with its title when the sender is on this
           // server. A peer server's project is not one of ours, so it is named by id alone.
           const originProject =

@@ -176,6 +176,12 @@ import {
 import { agentPersonaPromptSuffix } from "../../j5/agents/agentPersonaPrompts.ts";
 import { J5_CLAUDE_MCP_ALLOWED_TOOLS } from "../../j5/a2a/mcp/claudeAllowedTools.ts";
 import { j5ClaudeCrewSeatQueryOverrides } from "../../j5/a2a/crewSeatQuestions.ts";
+import {
+  j5ClaudeSteerFields,
+  j5ClaudeSteerHoldsResult,
+  j5ObserveClaudeSteer,
+  j5OfferClaudeSteer,
+} from "../../j5/a2a/claudeAgentSteers.ts";
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
@@ -7448,7 +7454,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
-            if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
+            // J5: case 84 holds a segment whose agent steer is still to run.
+            if (
+              !interrupted &&
+              wasSteered &&
+              (isClaudeActiveSteeringAbortResult(message) ||
+                j5ClaudeSteerHoldsResult(liveQuery.query, context.providerTurnId, message))
+            ) {
               context.steeredSegmentUsage.push(message.usage);
               return;
             }
@@ -7570,6 +7582,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const message = input.message;
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
+          // J5: case 84.
+          j5ObserveClaudeSteer(input.query, message);
           if (
             context === null ||
             context.promptUuid === null ||
@@ -8622,13 +8636,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
+            // J5: case 84 sends a steer that isn't a person's with priority "next".
+            const j5Steer = yield* j5ClaudeSteerFields(turnInput.message, crypto);
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
                 compileClaudeModelSelection(currentTurn.input.modelSelection).promptEffort,
               ),
               attachments: turnInput.message.attachments,
-              priority: "now",
+              ...j5Steer,
               attachmentsDir,
               fileSystem,
               skillNames: yield* userInvocableSkillNames(currentTurn.input.runtimePolicy.cwd),
@@ -8651,7 +8667,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.offer(userMessage);
+            yield* j5OfferClaudeSteer({
+              query: existing.query,
+              providerTurnId: turnInput.providerTurnId,
+              messageId: turnInput.message.messageId,
+              steer: j5Steer,
+              offer: existing.query.offer(userMessage),
+            });
           },
           (effect, turnInput) =>
             effect.pipe(

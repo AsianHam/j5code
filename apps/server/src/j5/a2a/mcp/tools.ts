@@ -107,7 +107,7 @@ export const J5SendMessageInput = Schema.Struct({
     Schema.NullOr(
       SendMode.annotate({
         description:
-          "Set this to interrupt an agent that is mid-turn. steer puts your message into the turn it is running now. restart stops that turn and starts it again on your message. queue, the default, is ordinary delivery: after the turn ends for most agents, and into the running turn for Codex GPT 6 agents.",
+          "Set this to interrupt an agent that is mid-turn. steer puts your message into the turn it is running now. restart stops that turn and starts it again on your message. queue, the default, is ordinary delivery: into the running turn for Claude and Codex GPT 6 agents, and after the turn ends for the others.",
       }),
     ),
   ),

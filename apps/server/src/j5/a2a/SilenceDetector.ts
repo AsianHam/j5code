@@ -21,6 +21,7 @@ import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
 import { canBeNotified } from "./deliveryNotices.ts";
 import { A2ADeliveryWorker } from "./DeliveryWorker.ts";
 import { deliveryMessageId, ledgerMessageIdOfDelivery } from "./DeliveryTransport.ts";
+import { j5ForgetClaudeSteers } from "./claudeAgentSteers.ts";
 import { recordQueuedEdit } from "./queuedEdits.ts";
 import { formatSilenceNoticeEnvelope } from "./EnvelopeFormatter.ts";
 import { A2ALedger, A2ALedgerTransactionWriter } from "./LedgerService.ts";
@@ -718,6 +719,15 @@ const makeLayer = (daemon: boolean) =>
         }
         const run = terminalRun(stored);
         if (run === undefined || run.completedAt === null) return [];
+        // FORK.md case 84: Stop and query failures may end without a clean SDK result.
+        if (run.status !== "completed") {
+          const records = yield* readRunsAndMessages(stored.event.threadId);
+          j5ForgetClaudeSteers(
+            records.messages
+              .filter((message) => message.runId === run.id)
+              .map((message) => message.id),
+          );
+        }
         const memberships = yield* sql<MembershipRow>`
           SELECT project_id, participant_id
           FROM j5_a2a_membership
