@@ -7,12 +7,13 @@ import {
   resolveJ5UserMessagePresentation,
 } from "@t3tools/client-runtime/j5/user-message";
 import { ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { BotIcon } from "lucide-react";
 import { use, type ReactNode } from "react";
 
 import { TimelineRowCtx } from "../../components/chat/timelineRowContext";
 import { Badge } from "../../components/ui/badge";
+import { InlineButton } from "../../components/ui/button";
 import { useQuietThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import type { ResolvedUserMessageContext } from "~/lib/composerContextRecords";
@@ -246,5 +247,26 @@ export function J5MessageAuthorLine({
         </Badge>
       ) : null}
     </p>
+  );
+}
+
+/**
+ * The expanded row's "Open thread" for a message J5 read. It opens the sender's resolved thread,
+ * which upstream's footer cannot reach for a spawn brief or a peer's message (no `senderThreadId`).
+ */
+export function J5OpenSenderThread({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const navigate = useNavigate();
+  return (
+    <InlineButton
+      onClick={() =>
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        })
+      }
+      tone="muted"
+    >
+      Open thread
+    </InlineButton>
   );
 }
