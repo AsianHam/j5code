@@ -15,15 +15,10 @@ interface RouteRow {
 }
 
 /**
- * The ledger already knows which peer server a participant is on: an ask that
- * reached it left a delivery row naming the receiver's environment, and an ask
- * it sent here left a received row naming its origin. This is the one place
- * that reads those rows, and it answers two questions with one rule each.
- *
- * For an open Exchange, the route it was opened on is the route: the earliest
- * row for that Exchange, so a participant that later appears on another peer
- * cannot move a live Exchange. For a new send, the latest route the ledger has
- * seen for the participant is the best guess.
+ * The one reader of which peer server a participant is on, from the delivery and received rows an
+ * ask left. For an open Exchange its earliest row is the route, so a participant that later appears
+ * on another peer cannot move a live Exchange; for a new send, the participant's latest route is
+ * the best guess.
  */
 export const findPeerCounterparty = Effect.fn("j5.a2a.peerCounterparty")(function* (
   sql: SqlClient.SqlClient,

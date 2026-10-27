@@ -25,15 +25,10 @@ import { ParticipantId, LedgerProjectId } from "./contracts.ts";
 import { peerProtocolHeaders, responseProtocolMismatch } from "./peerProtocol.ts";
 
 /**
- * The address book across peers. Every read asks each peer this server
- * connects to for its roster live: peers are few and a live answer is never
- * stale, and a peer that does not answer is reported as unread rather than
- * guessed at. A peer that polls this server is never called; its roster is the
- * snapshot it sent with its last poll, and before its first it is unread. Once
- * this server has a peer, a reading names this server and each peer by its own
- * name, and says whether each peer is available, so agents see where each
- * participant lives and whether it can hear them now; they still address it by
- * id.
+ * The address book across peers. Each read asks every peer this server connects to for its roster
+ * live (peers are few; one that does not answer is reported unread, not guessed at); a polling
+ * peer's roster is the snapshot from its last poll. Readings name each server and whether each peer
+ * is available; agents still address participants by id.
  */
 
 /**

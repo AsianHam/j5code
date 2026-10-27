@@ -60,14 +60,9 @@ interface CarrierRun {
 }
 
 /**
- * Whether what a message carried has reached the agent: it is the message its run was started
- * for, the run has started, so the provider was handed it, and it has not been rolled back,
- * which takes the agent's conversation back to before it. A message whose run is queued,
- * preparing or starting has told the agent nothing yet, and may never; nor has one with no run.
- * Nor has a message steered into a run started for another: it is recorded against that run,
- * which has started, whether or not the provider ever took the steer, and nothing says it did.
- * Until one is known to have run, every message carries the note again: a note told twice is
- * better than one never told.
+ * Whether a message's note reached the agent: its run was started for it, has started, and was not
+ * rolled back. Queued, preparing or run-less messages told nothing yet; nor did one steered into
+ * another run, since nothing says the provider took it. A note told twice beats one never told.
  */
 const reachedAgent = (run: CarrierRun) =>
   run.carried !== null &&
@@ -110,16 +105,10 @@ export const makeMessageStamps = Effect.fn("j5.sharing.sharedConversation.makeMe
     });
 
     /**
-     * Who the agent was last told can write to a thread: what the message with a note whose run
-     * started last said. `null` for an agent that has been told nothing that still
-     * stands. A note on a message whose run has not started has told the agent nothing yet, and
-     * may never, since the message can be withdrawn or its run fail first. So until one is known to
-     * have run, every message carries the note (AC4).
-     *
-     * Read from upstream's own records by SQL: a message's `run_id`, a run's `status` and the
-     * `startedAt` in its payload (`SharedConversation.integration.test.ts` fails if upstream
-     * reshapes them). It is asked when the next message arrives, so every way a message can be
-     * lost, a rewind included, is covered without a hook on any of them.
+     * Who the agent was last told can write: the note on the message whose run started last, or
+     * `null`. Until a note is known to have run, every message carries it (AC4). Read by SQL from
+     * upstream's `run_id`, run `status` and `startedAt` (pinned by the integration test) when the
+     * next message arrives, so every way a message is lost, a rewind included, is covered.
      */
     const lastTold = Effect.fn("j5.sharing.sharedConversation.lastTold")(function* (
       threadId: ThreadId,
@@ -188,11 +177,9 @@ export const makeMessageStamps = Effect.fn("j5.sharing.sharedConversation.makeMe
       carried: { readonly note: string | null; readonly told: string | null },
       storedPrefix: string,
     ) {
-      // Upstream keys a message by its id alone and writes a send that names one it holds over it.
-      // So a message id is its sender's own: one recorded for someone else, or one upstream holds
-      // that is no one's here, is refused. A retry of a person's own send goes on only when that
-      // send was recorded here, in a shared conversation; a retry of one sent just before the thread
-      // became shared finds no record and is refused as already sent.
+      // Upstream keys a message by id alone and overwrites on a repeat, so an id is its sender's:
+      // one recorded for someone else, or held by upstream for no one here, is refused. A retry
+      // goes on only if its send was recorded here; one sent just before sharing is refused.
       const recorded = yield* sql<{ readonly person_id: string }>`
         SELECT person_id FROM j5_a2a_message_author WHERE message_id = ${messageId}
       `;

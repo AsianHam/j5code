@@ -362,12 +362,10 @@ const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
 });
 
 /**
- * A Role-ful spawn keeps the explicit provider/model/reasoning pick; the saved agent's declared
- * routes constrain it and its authority policy becomes the child's runtime mode. A child's
- * permissions come from its own saved agent's policy or from the human's approval, never from
- * the parent: J5 carries no parent-child permission ceiling (Jackson, 2026-09-16), because any
- * such guard is one message to a trusting peer away from bypass and every child-creation door
- * would have to enforce it identically.
+ * A Role-ful spawn keeps the explicit provider, model and reasoning pick; the saved agent's routes
+ * constrain it and its authority policy becomes the child's runtime mode. Permissions come from the
+ * child's saved agent or the human's approval, never the parent: a parent-child ceiling would be
+ * one message to a trusting peer from bypass, and every door would need it.
  */
 const prepareSpawnPersona = Effect.fn("j5.a2a.mcp.prepareSpawnPersona")(function* (
   input: {
@@ -588,11 +586,9 @@ const handlers = {
       const worker = yield* A2ADeliveryWorker;
       const mode = input.mode ?? "queue";
       const attachments = input.attachments ?? [];
-      // A plain queued message needs nothing read first. A steer, a restart or a file acts on
-      // the receiver's own thread, so the receiver must be an agent on this server.
       // A plain queued message needs nothing read first. A file is claimed into the receiver's
-      // thread, so its receiver must be an agent on this server. A steer or a restart acts on
-      // the receiver's turn: here this server checks it, and on a peer server that server does.
+      // thread, so its receiver must be an agent on this server. A steer or a restart acts on the
+      // receiver's turn: here this server checks it, and on a peer server that server does.
       const receiver =
         mode === "queue" && attachments.length === 0
           ? undefined
@@ -1173,12 +1169,10 @@ const handlers = {
         .withSpawnStart(
           { stableInput, threadId, workspace },
           Effect.gen(function* () {
-            // What a shared-type thread binds: the caller's checkout, or the project's main one.
-            // As upstream's launch does, a main-checkout thread asks for a folder of its own, and
-            // gets one only in the "No project" project. It is claimed here, inside the start
-            // that only one call at a time may run, and only before the thread exists; a replay
-            // replays its create. The thread is looked for again now that this call holds the
-            // start: an earlier attempt may have created it since the read above.
+            // A shared-type thread binds the caller's checkout or the main one; as in upstream's
+            // launch, a main-checkout thread gets its own folder only in "No project". Claimed
+            // here, in the one-at-a-time start and before the thread exists, so a replay replays
+            // its create. The thread is looked for again: an earlier attempt may have created it.
             const created =
               input.workspace.type === "root" &&
               (yield* threadManagement

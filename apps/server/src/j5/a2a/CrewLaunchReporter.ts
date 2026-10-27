@@ -52,18 +52,10 @@ export const CREW_LAUNCH_REPORT_WINDOW_MS = 60_000;
  */
 export interface CrewLaunchReporterShape {
   /**
-   * Watch an approved proposal's seats. Takes a verdict for each seat from what its thread already
-   * shows, then waits on the stored-event stream for the rest; posts the report and stamps the
-   * proposal reported. Idempotent per proposal while a watch is pending. `outcomes` are the
-   * launch's own per-seat results: a seat that was never created, or whose home or brief did not
-   * go through, is decided from them. Without them (the boot sweep), a seat is measured from its
-   * thread, and one with no thread reads as not created.
-   *
-   * Before measuring, a row this proposal minted whose thread does not exist is dropped, so the
-   * roster matches what the launch made; a seat the launch reported created or not started keeps
-   * its row. A failed drop fails the report, which stays owed for the next boot sweep. That a
-   * missing thread is final rests on every production writer of member rows holding
-   * `crews.serialize` for the Crew; never call this while holding it for the same Crew.
+   * Watch an approved proposal's seats from their threads and events, then post the report and
+   * stamp the proposal; idempotent while pending. `outcomes` decide seats the launch never created
+   * or briefed (boot sweep: no thread, not created). Minted rows with no thread are dropped first,
+   * relying on member-row writers holding `crews.serialize`; never call this holding it.
    */
   readonly watch: (
     proposalId: string,

@@ -1,14 +1,8 @@
 /**
- * A run is shown from its playbook's live YAML, and a person or an agent edits that file on disk
- * without telling the store. This daemon watches the directories that hold the definitions of
- * active runs and moves the store's revision when a file there changes, so a run's views read
- * again and a broken definition shows as the run's issue.
- *
- * Only active runs are watched: a server with none holds no file handle for this. An edit to a
- * definition no run uses is seen the next time the playbook library is opened, which reads the
- * files then.
- *
- * @module PlaybookDefinitionWatch
+ * People and agents edit a playbook's YAML on disk without telling the store, so this watches the
+ * directories of active runs' definitions and bumps the store's revision on a change. Only active
+ * runs are watched, so an idle server holds no handle; other edits are read when the library
+ * next opens.
  */
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

@@ -14,11 +14,10 @@ import {
 } from "./contracts.ts";
 
 /**
- * Registered machine senders: cron jobs, watchdogs and scripts that talk to the
- * fleet from outside any agent session. A machine has one immutable project
- * home like an agent, but no thread: it sends plain messages and never
- * receives. Its `participant.joined` event is the ledger fact; the table read
- * here is that fact's projection.
+ * Registered machine senders (cron jobs, watchdogs, scripts) that talk to the fleet from outside
+ * any agent session. A machine has one immutable project home but no thread: it sends plain
+ * messages and never receives. The table is the projection of its `participant.joined` ledger
+ * event.
  */
 
 /** Server-unique, shell-friendly: the part after `machine:`. */

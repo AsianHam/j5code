@@ -54,7 +54,7 @@ export const resolveAgentPersonaRuntime = Effect.fn("resolveAgentPersonaRuntime"
         message: "The assigned persona runtime permissions are unsupported.",
       });
     }
-    // The persona's own text is the whole behavior contract; J5 appends no hidden rules (#439).
+    // The persona's own text is the whole behavior contract; J5 appends no hidden rules.
     instructions = `${definition.instructions}\n\n${PLATFORM_TOOLS_NOTE}`;
     // Declared handoffs bind to the shared artifacts system; the section names the exact path.
     const artifactSection =

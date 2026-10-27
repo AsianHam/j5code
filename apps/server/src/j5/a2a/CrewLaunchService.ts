@@ -346,7 +346,7 @@ export const layer = Layer.effect(
           const { modelSelection, provider } = yield* resolveSelection(seat, selection);
           // Access is the one setting a custom seat does not take from its Captain: a seat nobody
           // configured runs in Full access, so it never stops for approvals in a thread the person
-          // is not watching (#326). The person sees and can change it on the roster card.
+          // is not watching. The person sees and can change it on the roster card.
           const runtimeMode = seat.runtimeMode ?? "full-access";
           if (
             provider!.driver === "acpRegistry" &&

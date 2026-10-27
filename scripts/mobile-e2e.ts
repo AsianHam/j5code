@@ -8,7 +8,7 @@ import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 
-import { Device, type Pool, run } from "./mobile-e2e/device.ts";
+import { DEV_SCHEME, Device, type Pool, run } from "./mobile-e2e/device.ts";
 import { runJourney, type StepResult } from "./mobile-e2e/journey.ts";
 import { POSES, type Pose } from "./mobile-e2e/poses.ts";
 import { failedChecks, poseFailed, type PoseResult, renderReport } from "./mobile-e2e/report.ts";
@@ -210,7 +210,7 @@ async function main() {
         "start",
         "--dev-client",
         "--scheme",
-        "t3code-dev",
+        DEV_SCHEME,
         "--lan",
         "--port",
         String(metroPort),

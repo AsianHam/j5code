@@ -12,7 +12,11 @@ const nightlies = Array.from({ length: 100 }, (_, index) => ({
 }));
 
 // regression: #22490
-describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer channel lookup", () => {
+// J5 publishes Linux archives for x64 only; the installer refuses other architectures.
+describe.skipIf(
+  HostProcess.Platform.defaultValue() !== "linux" ||
+    HostProcess.Architecture.defaultValue() !== "x64",
+)("installer channel lookup", () => {
   it.each([
     ["stable", "1.2.3"],
     ["preview", "1.2.4-preview.20261019.50"],
@@ -22,10 +26,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
     const server = NodeHttp.createServer((request, response) => {
       const url = new URL(request.url ?? "/", "http://fixture");
       const body =
-        url.pathname === "/pingdotgg/t3code/releases/latest" &&
+        url.pathname === "/Jacksondr5/j5code/releases/latest" &&
         request.headers.accept === "application/json"
           ? { tag_name: "v1.2.3" }
-          : url.pathname === "/repos/pingdotgg/t3code/releases"
+          : url.pathname === "/repos/Jacksondr5/j5code/releases"
             ? { "1": nightlies, "2": [{ tag_name: `v${version}` }, { tag_name: "v1.2.3" }] }[
                 url.searchParams.get("page") ?? ""
               ]
@@ -55,8 +59,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
               ...process.env,
               T3CODE_VERSION: "",
               T3CODE_CHANNEL: channel,
-              T3CODE_HOME: NodePath.join(root, "home"),
+              J5CODE_HOME: NodePath.join(root, "home"),
               T3CODE_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
+              // J5's installer otherwise adds the bin directory to the real shell profile.
+              J5CODE_NO_MODIFY_PATH: "1",
               // A wrong version must fail here instead of downloading a real release.
               T3CODE_RELEASE_BASE_URL: origin,
             },
@@ -70,7 +76,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
         },
       );
       expect(code, output).toBe(0);
-      expect(output).toContain(`Installed T3 Code ${version}`);
+      expect(output).toContain(`Installed J5 Code ${version}`);
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));

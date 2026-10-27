@@ -71,11 +71,9 @@ export type CrewStopError = CrewStopNotFoundError | CrewStopRequestError | CrewS
 
 export interface CrewStopServiceShape {
   /**
-   * Stop every seat the way upstream's Stop does (`thread.stop`: the running turn is interrupted,
-   * its queue held, its delegated tasks stopped); nothing settles or archives, and the Crew stays
-   * live so any seat can be messaged again. Only the Captain or a
-   * person may stop a Crew: stopping is a controller's act, and a member owns nothing about its
-   * crewmates' turns (Bryant, 2026-09-14).
+   * Stop every seat the way upstream's Stop does (`thread.stop`); nothing settles or archives, and
+   * the Crew stays live so any seat can be messaged again. Only the Captain or a person may stop a
+   * Crew: stopping is a controller's act, and a member owns nothing about its crewmates' turns.
    */
   readonly stop: (input: StopCrewInput) => Effect.Effect<StopCrewOutcome, CrewStopError>;
 }

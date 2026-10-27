@@ -18,13 +18,10 @@ export default Effect.gen(function* () {
     )
   `;
 
-  // Who sent each message a person wrote while the thread was shared, with the name and level
-  // they had then (People and access AC47), so a message stays under its author after they are
-  // renamed, lose access or are removed. No foreign key to the person for the same reason.
-  // `stored_prefix` is exactly the platform's text the stored message begins with, for a client
-  // to strip; `''` for a command, which goes on as typed. `note` is the platform's note this
-  // message carries to the agent, and `told_json` who that note said can write: what the agent
-  // was last told is the newest carrier that reached it.
+  // Who sent each message written while the thread was shared, with their name and level then,
+  // so it stays theirs after a rename or removal (hence no foreign key). `stored_prefix` is the
+  // platform text a client strips (`''` for a command); `note` and `told_json` are what the agent
+  // was told about who can write, the newest carrier that reached it winning.
   yield* sql`
     CREATE TABLE j5_a2a_message_author (
       thread_id TEXT NOT NULL,

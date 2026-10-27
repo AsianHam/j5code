@@ -29,20 +29,10 @@ import { recordScheduler, storedPrompt } from "./scheduledRuns.ts";
 import { SharedConversation } from "./SharedConversation.ts";
 
 /**
- * What a person's client may send as a command or a thread launch (People and access AC13, AC14),
- * checked before upstream's handler runs. `ws.ts` wraps both requests with this one call (FORK.md
- * case 78). Once a command is admitted, a shared conversation takes it in: a person's message gains
- * its author's line (`SharedConversation`).
- *
- * For everyone who is not an Owner, archiving and deleting a thread is refused, for now: upstream
- * keeps unarchiving in Settings, which is for Owners. For a person whose scope is narrower than
- * the server, every command is checked against the scope its thread or project is in: a
- * Collaborator writes within their scope, starts a thread only in a project they reach, and forks
- * or merges back only within such a project. A Viewer sends nothing (AC13). A command type
- * without a row below is refused to a narrowed person, so one upstream adds later is closed to
- * them until it is listed here.
- *
- * A Crew seat is never archived or deleted alone (Crews AC16), checked here too.
+ * What a person's client may send as a command or thread launch (AC13, AC14), checked before
+ * upstream's handler (FORK.md case 78). Non-Owners cannot archive or delete (unarchive is an Owner
+ * setting); a Crew seat is never archived alone (Crews AC16). A narrowed Collaborator acts within
+ * scope, a Viewer sends nothing, and an unlisted command type is refused to them.
  */
 
 /** Where a command's target is: the thread it names, or the project of a thread it names. */

@@ -218,13 +218,10 @@ const previousText = Effect.fn("j5.a2a.queuedEdits.previousText")(function* (
 });
 
 /**
- * The ledger follows an edit to a queued J5 delivery, whoever made it: upstream's
- * `message.updated` from an accepted `queued-run.edit` command that changed the delivery's text
- * becomes a `message.edited` event carrying the new body, from the editor its command claimed.
- * Every other update to the message (joining the queue, its run starting, a promotion) records
- * nothing. An event at or before the last edit recorded is never applied again, so replaying the
- * stream after a restart cannot roll the text back. The command's claim is released whatever is
- * recorded.
+ * The ledger follows an edit to a queued J5 delivery, whoever made it: an accepted
+ * `queued-run.edit` that changed the text becomes a `message.edited` event with the new body and
+ * the claimed editor; other updates record nothing. Events at or before the last recorded edit are
+ * skipped, so a replay cannot roll the text back. The command's claim is always released.
  */
 export const recordQueuedEdit = Effect.fn("j5.a2a.queuedEdits.record")(function* (
   stored: OrchestrationV2StoredEvent,

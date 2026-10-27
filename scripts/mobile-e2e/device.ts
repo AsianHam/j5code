@@ -4,10 +4,12 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 
+import { J5_BRANDING } from "../lib/j5-branding.ts";
 import type { Snapshot } from "./checks.ts";
 import type { Pose } from "./poses.ts";
 
-export const BUNDLE_ID = "com.t3tools.t3code.dev";
+export const BUNDLE_ID = J5_BRANDING.mobile.development.appId;
+export const DEV_SCHEME = J5_BRANDING.mobile.development.scheme;
 
 export interface RunResult {
   readonly code: number;
@@ -165,7 +167,7 @@ export class Device {
       [
         "open",
         BUNDLE_ID,
-        `t3code-dev://expo-development-client/?url=${url}&disableOnboarding=1&disableFab=1&disableAutoLaunch=1`,
+        `${DEV_SCHEME}://expo-development-client/?url=${url}&disableOnboarding=1&disableFab=1&disableAutoLaunch=1`,
         // A real keyboard, so the layout under it is what people see.
         ...(this.pose.platform === "android" ? ["--no-test-ime"] : []),
       ],

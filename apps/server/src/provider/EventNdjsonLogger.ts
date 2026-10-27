@@ -172,11 +172,9 @@ function logWarning(message: string, context: Record<string, unknown>): Effect.E
 function resolveThreadSegment(raw: string | null | undefined): string {
   const normalized = typeof raw === "string" ? toSafeThreadAttachmentSegment(raw) : null;
   if (normalized === null) return GLOBAL_THREAD_SEGMENT;
-  // J5 fork extension: platform-spawned threads (Crew seats, Peer Agents) carry deterministic ids
-  // longer than the safe segment and identical up to the cut, so a truncated segment would merge
-  // every seat of a Crew into one file. Any id that normalization shortened (a colon, a run of
-  // punctuation, or the length cap) keeps its readable head and ends with a hash of the whole id;
-  // only a bare uuid, which normalization leaves untouched, keeps its plain name.
+  // J5: Crew seats and Peer Agents have long ids that agree up to the length cap, so a truncated
+  // segment would merge a Crew's seats into one file. An id normalization shortened keeps its
+  // readable head and ends with a hash of the whole id.
   if (raw !== undefined && raw !== null && raw.trim().length > normalized.length) {
     const hash = NodeCrypto.createHash("sha256").update(raw.trim()).digest("hex").slice(0, 12);
     return `${normalized.slice(0, Math.max(1, normalized.length - hash.length - 1))}-${hash}`;

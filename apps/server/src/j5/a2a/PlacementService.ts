@@ -174,11 +174,9 @@ export class ParticipantPlacementService extends Context.Service<
 >()("t3/j5/a2a/PlacementService/ParticipantPlacementService") {}
 
 /**
- * Internal write seam for multi-service transactions. drainPermit and
- * lifecyclePermit are independent peers that both precede appendPermit; callers
- * must then preserve appendPermit ≺ mutationPermit ≺ DB. This Semaphore(1)
- * permit is non-reentrant: acquire it before BEGIN and use the provided raw
- * in-transaction API instead of re-acquiring it through the public mutation.
+ * Internal write seam for multi-service transactions. drainPermit and lifecyclePermit both precede
+ * appendPermit; then appendPermit ≺ mutationPermit ≺ DB. The Semaphore(1) permit is non-reentrant:
+ * acquire it before BEGIN and use the raw in-transaction API, never the public mutation.
  */
 export interface ParticipantPlacementTransactionWriterShape {
   readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;

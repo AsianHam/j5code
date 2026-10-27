@@ -14,11 +14,10 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 export const COALESCE_WINDOW = "500 millis";
 
 /**
- * Says which of J5's client reads went out of date, never what changed. A writer calls `notify`
- * after its commit; every connected client follows `changes` and re-reads what moved. One
- * instance serves the whole server, shared by layer reference between the writers and the
- * WebSocket handler. Its counters start from the time the server started, so a client that
- * reconnects after a restart sees them moved and re-reads what it would not on its own.
+ * Says which of J5's client reads went out of date, never what changed: writers `notify` after
+ * commit, and every client follows `changes` and re-reads. One instance per server, shared by layer
+ * reference. Counters start at server start, so a client reconnecting after a restart sees them
+ * moved and re-reads.
  */
 export class ReadChanges extends Context.Service<
   ReadChanges,

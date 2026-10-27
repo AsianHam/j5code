@@ -5,11 +5,8 @@ import type { ProcessRunOutput } from "../../processRunner.ts";
 import type { BootServiceStep } from "../bootService.ts";
 
 /**
- * J5 releases up to 0.0.43 (npm era) installed their background service under
- * upstream's names (`t3code.service`, `com.t3tools.t3code.service`), which
- * collide with an installed T3 Code for the same OS user. J5 now installs
- * `j5code.service` / `codes.jackson.j5code.service`, and `j5 service install`
- * retires the old unit, but only when that unit is provably J5's: it names
+ * The service names J5 releases up to 0.0.43 installed under, which collide with an installed
+ * T3 Code. `j5 service install` retires such a unit only when it is provably J5's: it names
  * `J5CODE_HOME` and never `T3CODE_HOME`. A T3 Code unit is never touched.
  */
 export const LEGACY_J5_SYSTEMD_UNIT_FILE = "t3code.service";
@@ -36,12 +33,9 @@ export function isRenderedJ5BootServiceUnit(contents: string): boolean {
 }
 
 /**
- * Whether a failed legacy stop only means the service was not running.
- * systemd: exit 5 or "not loaded" / "does not exist" / "not found".
- * launchd: exit 3 (ESRCH "No such process") or 113 ("Could not find service").
- * Anything else (permission denied, bus unreachable, a timeout) is a real
- * failure: the old server may still be running, so the handover must stop
- * before a second writer starts on the same home.
+ * Whether a failed legacy stop only means the service was not running. Anything else (permission
+ * denied, bus unreachable, a timeout) is a real failure: the old server may still be running, so
+ * the handover must stop before a second writer starts on the same home.
  */
 export function legacyStopMeansNotRunning(
   kind: "systemd" | "launchd",

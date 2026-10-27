@@ -14,10 +14,8 @@ import { resolvePlaybookWorkspaceRoot } from "./workspaceRoot.ts";
 
 /**
  * The effective playbooks for a project/worktree, or an explicitly selected environment source.
- * Workspace requests resolve the project and thread first and refuses one that is gone or belongs
- * to another project. A refusal keeps the store's words. A storage failure carries the
- * underlying error's text, which can name a path on the server, so it is logged here and told
- * to the client in the method's general words.
+ * A thread that is gone or in another project is refused in the store's words. A storage failure
+ * can name a server path, so it is logged here and the client gets the method's general words.
  */
 export const makeWorkspacePlaybooks = Effect.fn("makeWorkspacePlaybooks")(function* (
   store: Pick<

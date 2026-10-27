@@ -69,11 +69,9 @@ const createJ5ActionCommand = <R, E, TTag extends EnvironmentUnaryRpcTag>(
 type J5ReadTag = Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>;
 
 /**
- * The J5 reads a client still sends for a person who reaches less than the whole server: the
- * ones the server answers for the scope the person holds (the allow-list in the server's
- * `j5/sharing/AccessGate.ts`, and the inbox and Crew reads, which answer for the threads the
- * person can write to). A read the server starts to allow such a person is added here, or their
- * client never asks.
+ * The J5 reads a client still sends for a person who reaches less than the whole server: those
+ * the server answers for the person's scope (`j5/sharing/AccessGate.ts`'s allow-list, plus the
+ * inbox and Crew reads). A read the server starts to allow must be added here too.
  */
 const READS_A_NARROW_PERSON_SENDS: ReadonlySet<string> = new Set([
   J5_ARTIFACT_WS_METHODS.listArtifacts,
@@ -87,11 +85,9 @@ const READS_A_NARROW_PERSON_SENDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * One J5 read over the environment's socket. No J5 read is a guarded method. Someone who reaches
- * less than the whole server is shown none of its own pages, the Fleet page among them (People
- * and access AC23), and the server refuses each of those reads, so once the connection is known
- * to be such a person's only the reads in `READS_A_NARROW_PERSON_SENDS` go out. The check does
- * not wait for that answer, so no one's reads are delayed.
+ * One J5 read over the environment's socket. Once the connection is known to be a narrowed
+ * person's, only `READS_A_NARROW_PERSON_SENDS` go out, since the server refuses the rest (People
+ * and access AC23). The check does not wait for that answer, so no one's reads are delayed.
  */
 const j5Read = Effect.fn("j5.read")(function* <TTag extends J5ReadTag>(
   tag: TTag,

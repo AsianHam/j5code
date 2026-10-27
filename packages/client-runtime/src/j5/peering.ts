@@ -113,15 +113,10 @@ const detailOf = (cause: unknown) =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
 
 /**
- * Mutual, in one act: each server issues a credential for the other, then each
- * records the other after proving that credential at the origin. Stops at the
- * first failure and reports every step, so the person sees exactly what stands.
- *
- * Issuing revokes nothing: a server retires a peer's older sessions only when
- * the peer first presents the newer credential, at record time. So re-peering
- * an already peered pair leaves the existing link working if a later step
- * fails; what a failed run leaves behind is at most an issued, unused
- * credential, listed under Connections until a later peering replaces it.
+ * Each server issues a credential for the other, then records the other after proving it at the
+ * origin; stops at the first failure and reports every step. Issuing revokes nothing (older
+ * sessions retire when the newer credential is first presented), so a failed re-peering leaves
+ * the existing link working and at most an unused credential under Connections.
  */
 export async function introducePeers(input: {
   readonly local: PeeringSide;
@@ -163,14 +158,10 @@ export async function introducePeers(input: {
 }
 
 /*
- * Poll mode: the check before peering, and the setup it recommends.
- *
- * Each server tests the direction it would connect in: the client asks it to
- * fetch the other's public identity at each address the other might be
- * reached at, and a test counts only when the server that answers is the one
- * expected. How each server is run says whether it may be off when a message
- * arrives. From both, the client recommends how messages travel in each
- * direction and asks only what the check could not settle.
+ * Poll mode's check before peering: each server fetches the other's public identity at each
+ * address it might be reached at, and a test counts only when the expected server answers. With
+ * how each server is run, that recommends how messages travel each way; the client asks only
+ * what the check could not settle.
  */
 
 /** How a server is run, from its descriptor's self-update capability. */
@@ -260,11 +251,9 @@ const hostOf = (origin: string) => {
 };
 
 /**
- * Which way connections can go, and the address each connecting server uses.
- * `local-only`: only this server connects, so it polls the remote, which
- * stores its messages; `remote-only` is the reverse. `localOrigin` is where the
- * remote reaches this server; `remoteOrigin` where this server reaches the
- * remote.
+ * Which way connections can go. `local-only`: only this server connects, so it polls the remote,
+ * which stores its messages; `remote-only` is the reverse. `localOrigin` is where the remote
+ * reaches this server; `remoteOrigin` where this server reaches the remote.
  */
 export interface PeeringChoice {
   readonly connections: "both" | "local-only" | "remote-only";
@@ -362,11 +351,9 @@ export const recommendPeering = (input: {
 };
 
 /**
- * What the two servers record about a pair before it is peered. A record here
- * is a peering this server still holds, removed under Peer servers first; a
- * record held only by the other server is a leftover, such as one a removal
- * made on this side only left behind, cleared there before pairing. Both
- * lists must have been read: one that failed says nothing about that server.
+ * What the two servers record about a pair before it is peered. A record here is a peering this
+ * server still holds, removed under Peer servers first; one held only by the other server is a
+ * leftover, cleared there before pairing. A list that failed to read says nothing about its server.
  */
 export const peeringRecords = (input: {
   readonly thisServer: string;

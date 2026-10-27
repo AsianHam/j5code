@@ -91,14 +91,10 @@ export const makeJ5ThreadRegistrationLayer = (
 
 export const J5ThreadRegistrationLayer = makeJ5ThreadRegistrationLayer();
 
-// Peering reaches other servers, so its layers carry their own HTTP client.
-// This server's identity and name come from the server's own environment
-// descriptor, the one its clients read. The registry is built once here and
-// shared by the outbound transport, the peer directory the send service
-// resolves through, and the peer routes.
-// One HTTP client serves every layer that reaches a peer. It never follows a
-// redirect: a request that carries this server's credential, acks or roster
-// goes only to the origin it was addressed to.
+// Peering reaches other servers, so its layers carry their own HTTP client. Identity and name come
+// from the environment descriptor clients read; the registry built here is shared by the transport,
+// the peer directory and the routes. The client never follows a redirect, so this server's
+// credential, acks and roster go only to the origin addressed.
 export const peerHttpClient = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { redirect: "manual" })),
 );

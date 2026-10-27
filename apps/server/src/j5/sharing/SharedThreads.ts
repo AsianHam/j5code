@@ -16,14 +16,10 @@ import {
 } from "./PersonAccess.ts";
 
 /**
- * Who can write to a thread, and whether it is a shared conversation: a thread more than one
- * person can write to, which it stays once it has been (Shared conversations AC6).
- *
- * The first owner writes to every thread, so a thread is shared as soon as anyone else can write
- * to it. That is recorded in two places: inside every change of access that gives someone a
- * writer's level (`recordGainedWriter`, run through `Access`'s write hook), for the threads its
- * scope covers then; and when a person's message reaches a thread with more than one writer
- * (`isShared`), which covers a thread started, or an agent spawned, under a scope shared before.
+ * Who can write to a thread, and whether it is shared: writable by more than one person, which it
+ * stays (Shared conversations AC6). Recorded both by `recordGainedWriter` in `Access`'s write hook,
+ * for threads in scope then, and by `isShared` when a message arrives, covering threads started or
+ * spawned later under a scope shared before.
  */
 
 export interface ThreadWriter {

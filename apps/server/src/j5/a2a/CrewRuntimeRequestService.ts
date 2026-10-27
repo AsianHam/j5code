@@ -91,13 +91,10 @@ export class CrewRuntimeRequestService extends Context.Service<
 >()("t3/j5/a2a/CrewRuntimeRequestService") {}
 
 /**
- * The Captain is the thread the person watches, so its approvals and questions stay inline there;
- * a seat runs out of view, so its provider approvals reach the Inbox (Crews AC9) and are answered
- * through the same `runtime-request.respond` command the composer sends. Only what the Inbox can
- * answer is listed here: approvals the provider can still take. The separate questions read
- * lists placed agents' actionable native questions as links to the original thread forms.
- * The approval list covers only live Crew seats; the question links also cover solo Peer Agents.
- * A Captain's own requests remain inline, and retired seats leave both lists.
+ * The Captain is the thread the person watches, so its requests stay inline; a seat runs out of
+ * view, so its provider approvals reach the Inbox (Crews AC9), answered with the composer's
+ * `runtime-request.respond`. Listed are approvals the provider can still take, for live seats only;
+ * the question links list placed agents' native questions, solo Peer Agents included.
  */
 export const layer = Layer.effect(
   CrewRuntimeRequestService,

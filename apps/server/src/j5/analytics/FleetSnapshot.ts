@@ -1,12 +1,7 @@
 /**
- * Records `j5.fleet.snapshot` every fifteen minutes: how many threads are working at once, how
- * many of them an agent started, how big the live Crews are, how many asks are waiting, how many
- * agents and pull requests the open threads have, and how much the server is shared and peered.
- * The boot heartbeat only counts threads and projects, which says nothing about a fleet.
- *
- * Every number is a count read from the projections and J5's own tables; no ids or names.
- *
- * @module FleetSnapshot
+ * Records `j5.fleet.snapshot` every fifteen minutes: concurrency, agent-started threads, Crew
+ * sizes, waiting asks, agents and PRs per open thread, sharing and peering. The boot heartbeat
+ * counts only threads and projects. Every number is a count; no ids or names.
  */
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";

@@ -140,12 +140,9 @@ export class A2ALedger extends Context.Service<A2ALedger, A2ALedgerShape>()(
 ) {}
 
 /**
- * Internal write seam for multi-service transactions. drainPermit and
- * lifecyclePermit are independent peers that both precede appendPermit; the
- * remaining order is appendPermit ≺ mutationPermit ≺ DB. This Semaphore(1)
- * permit is non-reentrant: callers of this seam must acquire it before BEGIN
- * and use the provided raw in-transaction APIs instead of re-acquiring it
- * through the public append methods.
+ * Internal write seam for multi-service transactions. drainPermit and lifecyclePermit both precede
+ * appendPermit; then appendPermit ≺ mutationPermit ≺ DB. The Semaphore(1) permit is non-reentrant:
+ * acquire it before BEGIN and use the raw in-transaction APIs, never the public append methods.
  */
 export interface A2ALedgerTransactionWriterShape {
   readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;

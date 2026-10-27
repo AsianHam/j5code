@@ -297,14 +297,10 @@ export interface SpawnWorkspaceServiceShape {
     readonly worktreePath: string | null;
   }) => Effect.Effect<CrewWorkspaceOptions>;
   /**
-   * Runs one spawn's start (create, facts, brief), refusing it while another start for the same
-   * thread is in flight, and refusing a request key already accepted with the other workspace type.
-   *
-   * Invariant: every door that dispatches `thread.create` for a spawn thread id goes through this.
-   * The orchestrator has no existing-thread guard and the projection upserts, so a second create
-   * under the other type's command id would overwrite the first thread. With one start in flight
-   * per thread, the receipt check can't race the create it guards. The receipt is durable, so the
-   * binding outlives the in-process guard across a restart.
+   * Runs one spawn's start (create, facts, brief), refusing it while another start for the thread
+   * is in flight or when the request key was accepted with the other workspace type. Every door
+   * dispatching `thread.create` for a spawn thread must use this: the projection upserts, so a
+   * second create would overwrite the first. The durable receipt outlives this guard.
    */
   readonly withSpawnStart: <A, E, R>(
     input: {
@@ -315,11 +311,10 @@ export interface SpawnWorkspaceServiceShape {
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | SpawnWorkspaceError, R>;
   /**
-   * Starts the brief on a created, registered thread. Shared and an existing worktree start it
-   * now; a new worktree hands the thread to ThreadLaunch, which holds the brief as a preparing run until the worktree exists
-   * and is bound, then releases it (or fails the run). The project's setup script starts before
-   * the release but is awaited only when it asks to finish first, so the agent may begin while it
-   * is still running.
+   * Starts the brief on a created, registered thread: at once for shared or an existing worktree,
+   * while a new worktree hands it to ThreadLaunch, which holds it as a preparing run until the
+   * worktree is bound. Setup is awaited only when it asks to finish first, so the agent may begin
+   * while it runs.
    */
   readonly startBrief: (
     input: StartSpawnBriefInput,

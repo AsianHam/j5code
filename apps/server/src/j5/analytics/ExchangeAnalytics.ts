@@ -1,12 +1,7 @@
 /**
- * Records `j5.exchange.closed` when an Exchange ends, saying how it ended and how long it was
- * open. An Exchange is an ask the receiver owes a reply to, so this is the measure of whether
- * asks get answered, by whom, and how long one waits on the person.
- *
- * It reads the ledger's committed events, which are published once per commit, so a retried
- * reply, withdrawal or archive counts once.
- *
- * @module ExchangeAnalytics
+ * Records `j5.exchange.closed` when an Exchange ends, how and after how long: whether asks get
+ * answered, by whom, and how long one waits on the person. It reads committed ledger events,
+ * published once per commit, so a retried reply, withdrawal or archive counts once.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

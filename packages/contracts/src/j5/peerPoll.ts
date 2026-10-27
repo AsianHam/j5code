@@ -51,11 +51,9 @@ export const peerPollStoppedReason = (peer: {
     : null;
 
 /**
- * Whether the other server ended this peering: it rejects the credential it
- * issued. A poller reads it from its stop, so a retried failure that quotes the
- * same words is not one; a server that sends directly reads the rejection it
- * last recorded, which a later exchange that succeeds clears. Removing the peer
- * here is what is left to do.
+ * Whether the other server ended this peering by rejecting the credential it issued. A poller
+ * reads it from its stop, so a retried failure quoting the same words is not one; a direct sender
+ * reads its last recorded rejection, which a later success clears. What is left is removing it.
  */
 export const isPeerCredentialRejected = (peer: {
   readonly linkMode: "push" | "store" | "poll";

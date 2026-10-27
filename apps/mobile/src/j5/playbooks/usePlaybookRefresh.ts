@@ -16,9 +16,11 @@ export function usePlaybookRefresh(input: {
 }) {
   const latest = useRef(input);
   const lastRefreshKey = useRef(input.refreshKey);
+  // oxlint-disable-next-line t3code/react-effect-budget -- listeners read the latest input, and render may not write refs.
   useEffect(() => {
     latest.current = input;
   });
+  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to app foregrounding, an outside event, while the screen is focused.
   useEffect(() => {
     if (!input.focused || !input.connected || !input.supported) return;
     const refresh = () => {
@@ -31,6 +33,7 @@ export function usePlaybookRefresh(input: {
     const subscription = AppState.addEventListener("change", refresh);
     return () => subscription.remove();
   }, [input.focused, input.connected, input.supported]);
+  // oxlint-disable-next-line t3code/react-effect-budget -- a changed key refreshes at once while the app is active, beside the foreground subscription.
   useEffect(() => {
     if (
       !input.focused ||

@@ -128,6 +128,7 @@ function MemberAgentLibrarySettingsScreen() {
     error: AgentPersonaImportConflictError;
     resolve: (selected: ReadonlyArray<AgentPersonaImportConflict> | null) => void;
   } | null>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- a replaced or unmounted confirmation resolves its waiting import as cancelled.
   useEffect(() => () => confirmation?.resolve(null), [confirmation]);
   const [editing, setEditing] = useState<{
     environmentId: EnvironmentId;

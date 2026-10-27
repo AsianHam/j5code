@@ -29,9 +29,9 @@ import { accessLayer } from "./test-support/accessHarness.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 
 /**
- * A project guest and the project's artifacts (Shared server AC9, issue #578), through the real
- * artifact routes, the real artifact folder and the real gate. Only upstream's sign-in is stood
- * in for: which session a request carries is read from a header, the way a credential would be.
+ * A project guest and the project's artifacts (Shared server AC9), through the real artifact
+ * routes, folder and gate. Only upstream's sign-in is stood in for: the session is read from a
+ * header, the way a credential would be.
  */
 
 const AT = "2026-10-12T00:00:00.000Z";

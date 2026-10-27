@@ -10,13 +10,10 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 
 export const WORKTREE_BRANCH_PREFIX = "j5code";
-// Canonical form is `j5code/<8 hex>`. `j5code-<8 hex>` is the fallback when a plain
-// `j5code` branch blocks the namespace. The matcher also accepts upstream's `t3/<8 hex>`
-// and `t3-<8 hex>`, and every legacy shape, so existing threads stay eligible for branch
-// regeneration: `t3code/<8 hex>` and `t3code-<8 hex>` from before J5's prefix was
-// renamed, and `t3code/<uuid>` from older mobile builds that used Crypto.randomUUID()
-// (always RFC 4122 v4, so version nibble `4` and variant nibble `[89ab]`). Nothing
-// looser than what was generated.
+// J5 generates `j5code/<8 hex>`, or `j5code-<8 hex>` when a plain `j5code` branch blocks the
+// namespace. The matcher also takes upstream's `t3` forms and every shape J5 once generated
+// (`t3code/<8 hex>`, `t3code-<8 hex>`, and older mobile builds' `t3code/<uuid v4>`), so existing
+// threads stay eligible for branch regeneration. Nothing looser than what was generated.
 const TEMP_WORKTREE_HEX_TOKEN = "[0-9a-f]{8}";
 const TEMP_WORKTREE_UUID_V4_TOKEN =
   "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";

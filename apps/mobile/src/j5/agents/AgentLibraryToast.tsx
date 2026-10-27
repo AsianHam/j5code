@@ -15,6 +15,7 @@ export function AgentLibraryToast(props: {
 }) {
   const { notification, onDismiss } = props;
   const insets = useSafeAreaInsets();
+  // oxlint-disable-next-line t3code/react-effect-budget -- dismisses the toast after a delay, a timer owned by its lifetime.
   useEffect(() => {
     const timer = setTimeout(onDismiss, notification.type === "error" ? 8000 : 4000);
     return () => clearTimeout(timer);

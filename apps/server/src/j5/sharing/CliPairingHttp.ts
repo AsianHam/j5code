@@ -93,11 +93,9 @@ const route = Effect.gen(function* () {
 }).pipe(Effect.catchTags(respondableTags));
 
 /**
- * Where the `j5` CLI makes a pairing link while a server runs for its home (`cliPairing.ts`), so
- * the person, their level and the link are written by the running server and reach open clients
- * as a change made in the app does. It answers only the CLI's own session: one with Manage
- * access, issued by a process that could already write the home's database, and revoked once
- * the command is done. A person's device, Owner or not, makes its changes from the People page.
+ * Where the `j5` CLI makes a pairing link while a server runs for its home, so the change reaches
+ * open clients like an in-app one. It answers only the CLI's own Manage session, issued by a
+ * process that could already write the database and revoked after the command.
  */
 export const cliPairingHttpRouteLayer = Layer.unwrap(
   Effect.gen(function* () {

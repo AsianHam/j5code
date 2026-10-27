@@ -8,17 +8,10 @@ import * as Path from "effect/Path";
 export const agentCliDirectory = (path: Path.Path, baseDir: string) => path.join(baseDir, "bin");
 
 /**
- * Lets the agents and terminals this server starts run its own `j5` (#397).
- * They inherit the server's PATH, so right after the PATH is hydrated from the
- * login shell the server puts `<home>/bin` first on it. That directory holds
- * only `j5`, so agents normally get the CLI of the server running them and
- * nothing else on PATH is shadowed. (A shell that re-reads the person's
- * profile, as a terminal does, can put their own directories ahead again.)
- *
- * A release server points `<home>/bin/j5` at its own executable first. The
- * desktop app writes its own script there before it starts this server, so
- * the PATH step runs for every server that finds a `j5` in that directory. A
- * server run from source has none and leaves PATH alone.
+ * Puts `<home>/bin` first on the PATH the server's agents and terminals inherit, so they run this
+ * server's own `j5`. That directory holds only `j5`, so nothing else is shadowed. A release
+ * server or the desktop app writes the link first; a server run from source has none and leaves
+ * PATH alone.
  */
 export const exposeOwnCliToAgents = Effect.fn("j5.cli.expose_own_cli_to_agents")(function* (
   baseDir: string,

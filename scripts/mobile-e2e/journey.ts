@@ -14,7 +14,7 @@ import {
   type SnapshotNode,
   tabBarRect,
 } from "./checks.ts";
-import { BUNDLE_ID, delay, type Device } from "./device.ts";
+import { BUNDLE_ID, DEV_SCHEME, delay, type Device } from "./device.ts";
 import { lagCheck } from "./video.ts";
 
 export interface StepResult {
@@ -130,7 +130,7 @@ export async function runJourney(
   let threads: Snapshot | null = null;
   for (let attempt = 1; attempt <= 2 && !threads; attempt++) {
     const pairing = new URLSearchParams({ pairingUrl: await pair(), autoConnect: "1" });
-    await device.openUrl(`t3code-dev://connections/new?${pairing}`);
+    await device.openUrl(`${DEV_SCHEME}://connections/new?${pairing}`);
     threads = await device
       .waitFor((snapshot) => threadRow(snapshot) !== undefined, "the paired thread list", 60_000)
       .catch(() => null);

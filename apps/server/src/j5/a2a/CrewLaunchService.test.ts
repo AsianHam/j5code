@@ -1058,8 +1058,8 @@ it.effect(
           modelSelection: { instanceId: ProviderInstanceId.make("acp"), model: "model" },
         };
         for (const runtimeMode of ["approval-required", "auto", "auto-accept-edits"] as const) {
-          // Before #326 an ACP seat inherited Auto or Accept edits here and was refused; the
-          // Full access default is one the harness enforces, so it now launches.
+          // An ACP seat launches: the Full access default is a mode the harness enforces, unlike an
+          // inherited Auto or Accept edits, which it refuses.
           const resolved = yield* launcher.resolveSeats(
             { ...captain, thread: { ...captain.thread, runtimeMode } },
             [

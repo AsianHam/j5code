@@ -119,7 +119,7 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   const environment = yield* HostProcess.Environment;
   const service = yield* BootService.BootService;
   const plan = yield* planUninstall({ baseDir: input.baseDir });
-  // J5: the PATH line the installer added to shell startup files (#397, FORK.md case 52).
+  // J5: the PATH line the installer added to shell startup files (FORK.md case 52).
   const cleanup = yield* planShellCleanup(input.baseDir).pipe(
     Effect.mapError(
       (error) =>

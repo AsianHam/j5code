@@ -1096,8 +1096,8 @@ it.effect(
       const harness = yield* daemonHarness(() => Effect.succeed(4200));
       yield* Effect.gen(function* () {
         yield* CrewSeatFinishNotifier;
-        // Replaying from 0 re-fires old reactions, such as an old Captain archive retiring
-        // live Crews on every restart (#349).
+        // Replaying from 0 re-fires old reactions, such as an old Captain archive retiring live
+        // Crews on every restart.
         assert.equal(yield* Deferred.await(harness.started), 4200);
       }).pipe(Effect.provide(harness.layer));
     }).pipe(Effect.scoped),

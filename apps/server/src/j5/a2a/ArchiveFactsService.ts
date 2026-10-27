@@ -38,11 +38,9 @@ export class A2AArchivePlacementFactsProvider extends Context.Service<
 >()("t3/j5/a2a/ArchiveFactsService/A2AArchivePlacementFactsProvider") {}
 
 /**
- * AR2's production placement reader. `listSubtree` includes the requested
- * participant, while the warning only names agents additionally affected by
- * archive, so the root is deliberately omitted here. It also walks archived
- * membership rows; those agents are already retired and are dropped, while
- * their live descendants stay.
+ * AR2's production placement reader. `listSubtree` includes the requested participant, but the
+ * warning names only the agents additionally affected, so the root is omitted. Archived membership
+ * rows are dropped, since those agents are already retired; their live descendants stay.
  */
 export const placementFactsLayer = Layer.effect(
   A2AArchivePlacementFactsProvider,

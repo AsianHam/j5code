@@ -7,8 +7,7 @@ export const playbookMentionReplacement = (name: string) => `${PLAYBOOK_MENTION_
  * Claims every token that starts with `@playbook:` so it never becomes a file search. The query is
  * the raw token after the prefix, so `@playbook:review,` matches no playbook and picking a row
  * never swallows the punctuation typed after it.
- * It shares #314's `"slash-playbook"` kind; callers tell the two forms apart by the text at
- * `rangeStart`.
+ * It shares the `"slash-playbook"` kind; callers tell the forms apart by the text at `rangeStart`.
  */
 export function detectPlaybookMention(token: string, start: number, end: number) {
   return token.startsWith(PLAYBOOK_MENTION_PREFIX)

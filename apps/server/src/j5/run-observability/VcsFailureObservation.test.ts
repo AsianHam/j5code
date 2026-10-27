@@ -134,7 +134,7 @@ it.effect.each([
     return Effect.gen(function* () {
       const service = yield* RunFinalization.RunFinalizationService;
       if (phase === "refresh") {
-        // Upstream logs a failed display refresh once the checkpoint is durable (#20195), so
+        // Upstream logs a failed display refresh once the checkpoint is durable, so
         // finalization succeeds and there is no delay to observe.
         yield* service.finalize(input);
         assert.equal(turnItems.length, 0);

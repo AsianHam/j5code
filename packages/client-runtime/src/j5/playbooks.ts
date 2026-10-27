@@ -196,11 +196,9 @@ export function playbookWorkspaces(
 }
 
 /**
- * A composer text expansion for a message that starts with `/playbook`. The name is the next
- * word, lowercased, without trailing punctuation or `.yaml`, so "/playbook release, then make a
- * crew" names `release`; any text after it is kept as a separate paragraph. A word that isn't a
- * valid playbook name leaves the message unchanged. The ordinary agent-message path performs
- * the work.
+ * Expands a message that starts with `/playbook`. The name is the next word, lowercased, without
+ * trailing punctuation or `.yaml` ("/playbook release, then make a crew" names `release`); text
+ * after it stays as a separate paragraph. A word that isn't a valid name leaves the message as is.
  */
 export function expandPlaybookPrompt(text: string): string {
   const command = /^\s*\/playbook(?!\S)[ \t]*/i.exec(text)?.[0];

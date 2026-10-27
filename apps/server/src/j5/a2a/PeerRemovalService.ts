@@ -29,15 +29,10 @@ import { reportedLabel } from "./peerLabel.ts";
 import { PeerRegistryService, type PeerSessionReadError } from "./PeerRegistryService.ts";
 
 /**
- * Removing a peer wipes the slate on this server, in every link mode, in one
- * write transaction: every open Exchange with a participant on the peer is
- * dropped, with the drop notice to the party here; every message still waiting
- * to reach the peer, stored, retrying, alarmed or handed out, is cancelled, and
- * its sender gets a not-delivered notice unless its Exchange's drop already
- * told it; and the peer's record goes. Ledger writes are serialized, so nothing
- * recorded for the peer can land in between: what was recorded before is
- * wiped, and what comes after finds no peer and is refused. Peering again
- * starts empty.
+ * Removing a peer wipes the slate here in one write transaction, in every link mode: open Exchanges
+ * with its participants are dropped with notices, every message still waiting for it is cancelled
+ * with a not-delivered notice (unless the drop told the sender), and its record goes. Ledger writes
+ * are serialized, so nothing lands in between; peering again starts empty.
  */
 
 export interface PeerRemovalResult {

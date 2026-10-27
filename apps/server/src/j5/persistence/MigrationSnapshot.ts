@@ -105,11 +105,9 @@ const readRecordedMigrations = (filename: string): RecordedMigrations => {
 };
 
 /**
- * Copies the database at `sourcePath` to `destinationPath`, which must not exist, and returns
- * when the copy is complete. `VACUUM INTO` reads one consistent snapshot through the WAL and
- * never writes to the source. It is synchronous on purpose: `node:sqlite`'s `backup()` rejects
- * the one-step rate on the Node that release executables embed, and its promise there settles
- * only when some other event wakes the loop.
+ * Copies to `destinationPath`, which must not exist. `VACUUM INTO` reads one consistent snapshot
+ * and never writes the source. Synchronous on purpose: on release executables' Node,
+ * `node:sqlite`'s `backup()` rejects the one-step rate and settles only when the loop wakes.
  */
 const copyDatabase = (sourcePath: string, destinationPath: string) => {
   const database = openReadOnly(sourcePath);
@@ -164,17 +162,10 @@ const removeOldSnapshots = Effect.fn("removeOldSnapshots")(function* (
 });
 
 /**
- * Call before anything opens the database read-write. When the database has migration history
- * and this build would run a migration in either lane (upstream's or J5's ledger), this first
- * copies it to `migrationSnapshotPath`, and fails rather than let a migration run without that
- * copy. A database with no history is new and is not copied; neither is one with nothing pending,
- * so an ordinary start costs two small reads.
- *
- * The copy (`copyDatabase`) blocks the thread until it is complete, about two seconds per
- * gigabyte. It is published only if it still records the same migrations, so a copy taken after
- * another process already migrated never replaces a real snapshot. It replaces an older snapshot
- * of the same name, and the oldest snapshots beyond `MIGRATION_SNAPSHOTS_KEPT` are then deleted.
- * A copy that fails or is interrupted before it is published is removed.
+ * Call before anything opens the database read-write. If it has history and a migration is
+ * pending in either lane, copy it to `migrationSnapshotPath` first, or fail. The copy blocks
+ * (about 2 s/GB), is published only if it still records the same migrations, and is removed if
+ * interrupted; snapshots beyond `MIGRATION_SNAPSHOTS_KEPT` are pruned.
  */
 export const snapshotBeforeMigrations = Effect.fn("snapshotBeforeMigrations")(function* (
   dbPath: string,

@@ -17,20 +17,10 @@ import { ParticipantId } from "../a2a/contracts.ts";
 import { PersonAccess } from "./PersonAccess.ts";
 
 /**
- * Where a device whose session J5 ended for renewal gets a new one (People and access AC17). A
- * session's permissions are fixed in its signed token, so a change of level ends each of the
- * person's sessions (`Access`); the device then comes here with its old token, which still
- * proves which session it was: upstream checks a token's signature before whether it was
- * revoked, and says which session a revoked token belongs to.
- *
- * Renewal is for a session J5 marked when it ended it, and for nothing else. A device an Owner or
- * the person ended has no mark, and never comes back (AC49, AC50). A session that has expired, a
- * DPoP-bound one, and a mark already used are refused, and the device is paired again by hand.
- * The new session holds what the person's level and the device's ceiling give now, and lasts
- * only as long as the old one would have, so renewing never lengthens a device's life.
- *
- * Reading the mark, consuming it, reading the level and issuing the session commit together, so
- * a token presented twice renews once.
+ * Where a device whose session J5 ended for renewal gets a new one (AC17); upstream checks a
+ * token's signature before revocation, so the old token proves which session it was. Only a
+ * J5-marked session renews (not expired, DPoP-bound or reused), never beyond the old expiry, with
+ * what its level and ceiling give now. Mark, level and issue commit together: one renewal a token.
  */
 
 /** What upstream says of a browser session presented from another origin. */

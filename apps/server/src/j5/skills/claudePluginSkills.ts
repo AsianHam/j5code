@@ -22,11 +22,9 @@ const PluginManifest = Schema.fromJsonString(
 );
 
 /**
- * Upstream's discovery names a plugin skill by its namespace (`tools:review`), not by the registry
- * key (`tools@market`) that Settings → Skills shows and links by. Recover the key from the registry
- * and manifests upstream read: the first key, in upstream's sorted order, with an installation
- * that holds the skill and the namespace the skill carries. Keys can share an installation, so the
- * directory alone does not decide.
+ * Upstream names a plugin skill by namespace (`tools:review`), but Settings → Skills links by
+ * registry key (`tools@market`). Recover it as the first key, in upstream's sorted order, whose
+ * installation holds the skill under that namespace; keys can share an installation.
  */
 export const addClaudePluginIds = Effect.fn("addClaudePluginIds")(function* (
   skills: ReadonlyArray<ServerProviderSkill>,

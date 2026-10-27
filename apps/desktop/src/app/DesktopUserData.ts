@@ -34,12 +34,10 @@ export class DesktopUserDataInitializationError extends Schema.TaggedError<Deskt
 }
 
 /**
- * J5 (FORK.md case 25, merge decision #4): the profile stays `j5code` /
- * `j5code-dev`, or the older productName-derived `J5 Code` / `J5 Code (Dev)`
- * directory when an install already lives there. Upstream moved its production
- * profile to `t3code-v2` so a V1 and a V2 T3 Code could run side by side and
- * seeded it from `t3code/Local State` on Windows; J5 never runs two versions
- * at once and must never read T3 Code's profiles, so none of that applies.
+ * J5 (FORK.md case 25): the profile stays `j5code` / `j5code-dev`, or the older `J5 Code` /
+ * `J5 Code (Dev)` directory an install already lives in. Upstream's `t3code-v2` profile and its
+ * Windows seeding exist to run two T3 Code versions side by side; J5 never does, and must never
+ * read T3 Code's profiles.
  */
 export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPath")(
   function* (input: {

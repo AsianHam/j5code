@@ -322,9 +322,9 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
       `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
   };
 
-  // J5: a dev server's usage events go to the dev PostHog project (#513).
+  // J5: an opted-in dev server reports to the dev PostHog project, not the real one.
   output.T3CODE_POSTHOG_KEY = j5DevPostHogKey(baseEnv);
-  // J5: a dev home's first owner starts with a name (#642).
+  // J5: a dev home's first owner starts with a name.
   output.J5CODE_DEV_OWNER_NAME = j5DevOwnerName(baseEnv);
 
   if (configuredBaseDir !== undefined) {

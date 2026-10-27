@@ -22,12 +22,10 @@ import * as SharedThreads from "./SharedThreads.ts";
 import { quietAccessLayer, quietLifecycleLayer } from "./test-support/conversationHarness.ts";
 
 /**
- * A shared conversation over upstream's real orchestrator and its real projections, with no
- * provider running: a run that starts stays active, so what is sent after it queues. The other
- * tests stand in for upstream and write its rows by hand; this one fails if upstream reshapes
- * what J5 reads from it by SQL: a run's `status` and the `userMessageId` and `startedAt` in its
- * payload, a message's `run_id` and `role`, the event log's `command_id`, `aggregate_kind`,
- * `stream_id`, `event_type` and the `id` in its payload, and a command's receipt by its id.
+ * A shared conversation over upstream's real orchestrator and projections, with no provider, so
+ * a started run stays active and later sends queue. It fails if upstream reshapes what J5 reads by
+ * SQL: a run's `status`, payload `userMessageId`/`startedAt`; a message's `run_id`, `role`; the
+ * event log's columns and payload `id`; and a command's receipt.
  */
 
 const threadId = ThreadId.make("thread:shared-live");

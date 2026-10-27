@@ -65,39 +65,19 @@ import {
 } from "./PersonAccess.ts";
 
 /**
- * What a connection whose person's scope is narrower than the server may reach (People and access
- * AC13, AC21 to AC25). It covers everyone who does not write to the whole server: a person at a
- * project or a thread at either level, a Viewer at server scope, and a device the server cannot
- * place yet. Both halves refuse by default: a route or a request that is not named here is
- * refused to a narrowed connection, so nothing upstream adds later is open to one until it is
- * listed. What it costs a connection held to upstream's own checks alone: nothing for a service
- * session, told apart by subject; for a person's device, a few reads by key (whose the device is,
- * and their levels; for the first owner, their id and record first) on each HTTP request, and the
- * same once at each place a socket opens through: its authorization, its view, its command
- * admission and its access requests.
- *
- * The level a rule asks for is checked against the level the person holds at the scope the
- * request names. A Collaborator may also use files, terminals, git, previews and devices keyed
- * by any folder, unchecked: a terminal or an agent reaches every folder anyway (Jackson,
- * 2026-10-17). A Viewer may not, at any scope (AC24).
+ * What a connection narrower than the server may reach (AC13, AC21 to AC25). Both halves refuse by
+ * default, so nothing upstream adds is open until listed. Levels are checked at the scope a
+ * request names. A Collaborator may use files, terminals, git, previews and devices by any folder,
+ * since a terminal reaches every folder anyway; a Viewer may not (AC24).
  */
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 /**
- * A request a narrowed connection may make.
- * - `thread`, `project`: for the one the payload names, at the level given or higher.
- * - `collaborator`: for a person who holds Collaborator anywhere, whatever folder it names.
- * - `anyone`: for any person on the server; it reports or reads nothing of anyone's work.
- * - `server`: for a person who holds a level at server scope: the Fleet page, Personas and the
- *   providers' skills, whose home is the server (AC23), read only.
- * - `narrowed`: for any person, because its handler answers a narrowed connection itself, with a
- *   reduced or filtered answer (`GuestView`, `CommandAdmission`, the J5 access requests).
- * - `messageAsset`: for an attachment or a tool's image a thread within reach holds; a
- *   Collaborator may ask for any asset, since the folders they are kept in are theirs to open.
- *
- * `unknownToo` lets a device the server cannot place make it too, so it can connect far enough
- * to say whose it is (AC5).
+ * `thread`/`project`: the named one at the level or higher. `collaborator`: Collaborator anywhere,
+ * any folder. `anyone`: reads nothing of anyone's work. `server`: a server-scope level, read only.
+ * `narrowed`: the handler reduces its own answer. `messageAsset`: an asset of a thread in reach.
+ * `unknownToo` also admits an unplaced device, so it can say whose it is (AC5).
  */
 type AccessRpcRule = (
   | {
@@ -204,15 +184,10 @@ const narrowed: AccessRpcRule = { kind: "narrowed" };
 const narrowedForAll: AccessRpcRule = { kind: "narrowed", unknownToo: true };
 
 /**
- * Every WebSocket request a narrowed connection may make (the A1 table of the plan on #636). Keyed
- * by method so that a method upstream renames or removes fails to compile here. A method that is
- * absent is refused. Upstream's own permission check still runs on every request listed, so a
- * request that needs a permission the person's level does not give (settings, providers, access,
- * relay management, environment maintenance) is refused by upstream and is not listed.
- *
- * Left out on purpose, so refused to a narrowed connection: everything that lists or changes the
- * server as a whole (adding, cloning or importing projects, archived threads, searching every
- * thread, usage, diagnostics, pull request lists, peers, the relay); and Persona and skill writes.
+ * Every WebSocket request a narrowed connection may make, keyed by method so an upstream rename
+ * fails to compile; absent means refused. Upstream's permission check still runs on each. Left
+ * out on purpose: whole-server lists and changes (projects, archive, search, usage, diagnostics,
+ * PR lists, peers, relay) and Persona and skill writes.
  */
 export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
   // A connection cannot start without these; each answers in a reduced form (`GuestView`).
@@ -423,11 +398,9 @@ const decodeSegment = (segment: string) => {
 };
 
 /**
- * Which HTTP routes keep a narrowed connection's permissions. `/ws` is the RPC socket, whose
- * requests `ACCESS_RPC_RULES` decides one by one. The sidebar snapshot route is refused: a client
- * that is refused it reads the sidebar from the socket's feed, which `GuestView` filters, so
- * there is one filtered path and not two. A route that reads no permission at all, such as the
- * one that issues a WebSocket ticket for the caller's own session, is unaffected and not listed.
+ * HTTP routes that keep a narrowed connection's permissions; `/ws` requests go through
+ * `ACCESS_RPC_RULES`. The sidebar snapshot route is refused so the sidebar has one filtered path,
+ * the socket feed `GuestView` filters. Routes that read no permission are unaffected.
  */
 export const accessHttpRule = (method: string, pathname: string): AccessHttpRule => {
   // Reading one artifact of a project (AC22): a POST that changes nothing.
@@ -447,13 +420,10 @@ const requestPathname = (request: HttpServerRequest.HttpServerRequest) =>
   new URL(request.url, "http://environment.invalid").pathname;
 
 /**
- * Wraps upstream's `EnvironmentAuth`, through which every HTTP route and WebSocket upgrade signs a
- * request in, and through which every session is ended. A narrowed session comes back with its
- * permissions only on a route `accessHttpRule` allows, for a thread route only when the person
- * reaches that thread, and for an artifact read only when they reach the project its body names;
- * anywhere else it comes back with none, so the route's own permission check refuses it the way it
- * refuses any connection that lacks the permission. If what the person reaches cannot be read, they
- * get none.
+ * Wraps upstream's `EnvironmentAuth`, which signs in every route and upgrade and ends every
+ * session. A narrowed session keeps its permissions only on routes `accessHttpRule` allows, on
+ * thread routes it reaches, and on artifact reads in projects it reaches; elsewhere it has none, so
+ * the route's own check refuses it. If its reach cannot be read, it gets none.
  */
 export const layerGatedEnvironmentAuth = Layer.effect(
   EnvironmentAuth.EnvironmentAuth,
@@ -506,11 +476,9 @@ export const layerGatedEnvironmentAuth = Layer.effect(
     });
 
     /**
-     * Before upstream ends a session, by any of its four ways, the session is cut loose from its
-     * person, and with that from any mark that would let it renew: an ended device stays ended
-     * (AC49, AC50). The two commit together or not at all, so no one sees a session that is no
-     * one's and still live, which would make links as no one's (`PairingIntents.recordForCreator`),
-     * and a failure leaves the device as it was for the Owner to try again.
+     * Before upstream ends a session, any of four ways, it is cut loose from its person and any
+     * renewal mark, so an ended device stays ended (AC49, AC50). Both commit together: a live
+     * session that is no one's would make links as no one's (`PairingIntents.recordForCreator`).
      */
     const unbound = <A, E, R>(
       unbind: Effect.Effect<unknown, PersonAccessStorageError>,
@@ -535,20 +503,10 @@ export const layerGatedEnvironmentAuth = Layer.effect(
         );
 
     /**
-     * What to do about the session a browser already holds when it pairs again. Upstream replaces
-     * that session with the new one, inside its session store, which matters twice over.
-     *
-     * A browser paired as one person opening a link made for another would become that other
-     * person, so it is refused before upstream is called, and the link is not used up (AC32).
-     *
-     * Otherwise the browser is paired as upstream has it, and once upstream has done so, the old
-     * session is cut loose from its person (`replaced`), since upstream revoked it. It is done
-     * after upstream succeeds and not before: a browser that tries a link that does not work
-     * keeps its session.
-     *
-     * A browser with no session costs nothing; one with a session costs a read of that session
-     * and its binding, and a read of the credential's intent. If a read fails, the browser is
-     * refused, since pairing it might move a device between people.
+     * A browser paired as one person opening another person's link is refused before upstream
+     * runs, leaving the link unused (AC32). Otherwise the old session is cut loose (`replaced`)
+     * only after upstream succeeds, so a failed link keeps the session. A failed read refuses
+     * the pairing, since it might move a device between people.
      */
     const previousSession = Effect.fn("j5.sharing.accessGate.previousSession")(
       function* (credential: string, previousSessionToken: string | undefined) {
@@ -737,14 +695,10 @@ const notSharedError = () =>
   });
 
 /**
- * The per-connection RPC authorization for `ws.ts`. A wide session gets upstream's own layer,
- * untouched. A narrowed one runs this first: a request must be in `ACCESS_RPC_RULES`, and must
- * name a thread or project the person reaches at the rule's level, or meet the rule's other
- * condition. Only then does upstream's permission check run, and a request still running is
- * ended if the person's reach changes so that it no longer meets its rule.
- *
- * Whether a session is wide is read when the socket opens. A change to what a person holds that
- * would change it renews their sessions, which closes this socket (`Access`).
+ * Per-connection RPC authorization for `ws.ts`. A wide session gets upstream's layer untouched; a
+ * narrowed one must match `ACCESS_RPC_RULES` before upstream's check runs, and a running request
+ * ends if the person's reach stops meeting its rule. Wideness is read at socket open; a change
+ * that would flip it renews their sessions, closing this socket (`Access`).
  */
 export const layerRpcAuthorization = (
   session: SessionIdentity,

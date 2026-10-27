@@ -7,13 +7,9 @@ import { repointLauncher } from "../../cli/update.ts";
 import { launcherOwnsVersionsDir, pinnedRuntimeVersionsDir } from "../../cloud/pinnedRuntime.ts";
 
 /**
- * Points the `j5` command at the running executable. Called once a background
- * service's server is the committed version, so an in-app update moves the
- * command along with the service (#398). Only the installer's default link,
- * `~/.local/bin/j5`, is considered (the service's environment never carries a
- * custom `T3CODE_INSTALL_BIN_DIR`), and only when it already points into this
- * home's runtime tree; anything else is not ours to touch. Returns the link
- * path when it was repointed.
+ * Points `~/.local/bin/j5` at the running executable once a service's server is committed, so an
+ * in-app update moves the command too. The service never sees a custom `T3CODE_INSTALL_BIN_DIR`,
+ * and a link not already into this home's runtime is not ours. Returns the link if repointed.
  */
 export const repointCliLauncherToSelf = Effect.fn("j5.cli.repoint_launcher_to_self")(function* (
   baseDir: string,

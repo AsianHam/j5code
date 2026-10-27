@@ -2,11 +2,9 @@ import { WriterLevel } from "@t3tools/contracts/j5";
 import * as Schema from "effect/Schema";
 
 /**
- * The platform's notes to the agent of a shared conversation (Shared conversations AC3, AC4,
- * AC7). An agent reads these as written, so the wording is reviewed as agent-facing text. A note
- * is never a message of its own: it goes at the top of the message a person sends next, ahead of
- * that message's author's line, so the agent is told in the turn it first matters and no turn is
- * spent on the note alone.
+ * The platform's notes to a shared conversation's agent (AC3, AC4, AC7), reviewed as agent-facing
+ * text. A note is never its own message: it heads the next person's message, before the author's
+ * line, so the agent learns it in the turn it matters and no turn is spent on it alone.
  */
 
 /** A person who can write to a thread, as the agent is told of them. */

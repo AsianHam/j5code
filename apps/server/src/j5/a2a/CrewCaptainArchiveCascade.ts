@@ -44,13 +44,10 @@ export class CrewCaptainArchiveCascade extends Context.Service<
 >()("t3/j5/a2a/CrewCaptainArchiveCascade") {}
 
 /**
- * Whether a Captain's settle carries this seat. The rule is upstream's own: the seat settles only
- * if `isAutoSettlementCandidate` would let auto-settle take it, so a seat that is pinned, parked on
- * a snooze, working, waiting on the person, or about to start is left alone. The exceptions are the
- * two markers that only hold off automatic settling, the auto-settle opt-out and the "active"
- * override an unsettle leaves behind: neither blocks a person's explicit Captain settle (register
- * D14), so a Captain settled, unsettled and settled again carries its seats each time.
- * The seat is read through the same shell derivation the settlement sweep's candidates come from.
+ * Whether a Captain's settle carries this seat: only if upstream's `isAutoSettlementCandidate`
+ * would let auto-settle take it, read through the sweep's own shell derivation. The auto-settle
+ * opt-out and an unsettle's "active" override are exceptions: they hold off only automatic
+ * settling, not a person's explicit Captain settle (register D14).
  */
 const seatFollowsCaptainSettle = (projection: OrchestrationV2ThreadProjection, nowMs: number) => {
   const shell = threadShellFromProjection(projection);
@@ -65,17 +62,10 @@ const seatFollowsCaptainSettle = (projection: OrchestrationV2ThreadProjection, n
 };
 
 /**
- * A Crew never outlives its Captain (Crews AC17): whatever happens to the Captain happens to its
- * Crews. A person's archive, settle, or unarchive cannot be refused or amended after the fact,
- * because upstream's command has already committed by the time J5 sees it, from the web sidebar,
- * a mobile swipe, or any future door. So the one place that sees every lifecycle event carries the
- * Crews along: an archive retires them as units through the same service the Captain and the
- * Fleet page use, with the person's act as the confirmation, and records that they retired with
- * the Captain so its unarchive brings them back; settle and unsettle are sent to each seat.
- * Command ids derive from the Captain, the Crew, the seat, and the occurrence (the event, or the
- * Captain's archive time on the sweep), so a replayed event converges on the same commands while
- * an archive after an unarchive gets commands of its own. Each Crew's step runs once; a failure is
- * logged and the cascade moves on to the next Crew.
+ * A Crew never outlives its Captain (Crews AC17). Upstream's command has committed when J5 sees it,
+ * from any door, so this reactor carries the Crews along: an archive retires them as units, stamped
+ * so the unarchive restores them; settle and unsettle go to each seat. Command ids derive from
+ * Captain, Crew, seat and occurrence, so replays converge. A failed Crew is logged, skipped.
  */
 export const layer = Layer.effect(
   CrewCaptainArchiveCascade,
@@ -191,11 +181,9 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Bring back a Crew that retired with its Captain: every archived seat thread is unarchived
-     * (the lifecycle reactor restores each seat's agent from that event), then the Crew is live
-     * again. The Crew's stamp is cleared last, so a restore cut short leaves the Crew retired with
-     * its Captain; archiving and unarchiving the Captain again re-runs it, skipping seats already
-     * back.
+     * Bring back a Crew that retired with its Captain: unarchive each archived seat (the lifecycle
+     * reactor restores its agent), then clear the Crew's stamp last, so a restore cut short leaves
+     * it retired and archiving and unarchiving the Captain again resumes it.
      */
     const restore = Effect.fn("j5.a2a.captainArchiveCascade.restore")(function* (
       captainThreadId: ThreadId,

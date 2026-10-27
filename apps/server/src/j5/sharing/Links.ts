@@ -45,17 +45,10 @@ import {
 import { type PersonNameError, checkedPersonName } from "./personNames.ts";
 
 /**
- * The one kind of link (People and access AC31 to AC43). A link is J5's own token, kept as it was
- * made so an Owner can copy it again. Whoever opens it is told what it opens, and joins on a route
- * that takes no sign-in (`LinkHttp.ts`): the token is all it trusts. A link that pairs a device
- * mints upstream's single-use pairing credential for that device there and then, recorded with
- * the person it pairs (`PairingIntents`), and the browser exchanges it on upstream's pairing route
- * at once.
- *
- * A `device` link is for someone already on the server, and stores no level: their new device
- * follows what they hold. An `invite` makes its person when it is used and gives them its level at
- * its scope; for many people, at Viewer only (AC40). A link for one person is spent by the join
- * that uses it, in the join's transaction, so two browsers racing for it cannot both have it.
+ * The one kind of link: J5's own token, kept so an Owner can copy it again. A device-pairing link
+ * mints upstream's single-use credential on the spot, recorded with its person (`PairingIntents`).
+ * A `device` link stores no level; an `invite` makes its person at its level and scope (Viewer for
+ * many, AC40). A one-person link is spent in the join's transaction, so racing browsers can't both.
  */
 
 export class LinkRefusedError extends Schema.TaggedError<LinkRefusedError>()(

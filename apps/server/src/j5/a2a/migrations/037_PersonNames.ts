@@ -1,20 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// A person's name is theirs alone on a server (Jackson, 2026-10-13).
-//
-// `name_key` is the name folded for comparing: compatibility-normalised, lower-cased, trimmed,
-// with runs of whitespace made one space, so "jackson", " Jackson ", "JACKSON" and fullwidth
-// letters are one name. The name is stored and shown as typed in `display_name`; a unique index
-// on the key is what makes two people with one name impossible, however close together they are
-// written. Look-alike letters across scripts are not caught.
-//
-// Names recorded before this are folded here. No release had a way to make a second person, so
-// two people sharing a folded name is not provided for: the index would refuse to be created.
-// The index leaves out people with no name.
-//
-// The fold is written out here and not imported, so this migration does the same thing whatever
-// the server's own fold becomes.
+// A person's name is theirs alone on a server: a unique index on `name_key` (the name folded:
+// NFKC, lower-cased, whitespace collapsed) refuses a second person with it; look-alike letters
+// across scripts are not caught. No release could make a second person, so existing names are
+// not de-duplicated. The fold is inlined so this migration never follows the server's own.
 const fold = (name: string) =>
   name.normalize("NFKC").toLowerCase().normalize("NFKC").trim().replace(/\s+/gu, " ");
 

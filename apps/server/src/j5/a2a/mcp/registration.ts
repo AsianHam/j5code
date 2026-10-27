@@ -28,11 +28,10 @@ import {
 } from "./upstreamCatalog.ts";
 
 /**
- * Everything J5 puts on `/mcp` besides the upstream toolkits it registers whole: J5's own
- * tools, and the admitted part of upstream's orchestrator, thread, attachment, project and
- * environment toolkits on upstream's own handlers. `register` is McpHttpServer's
- * `toolkitRegistration`, passed in because that module imports this one; it takes only handlers
- * McpToolAccess built, so every tool here has declared who may call it.
+ * Everything J5 puts on `/mcp` besides the upstream toolkits it registers whole: J5's tools and the
+ * admitted part of upstream's toolkits, on upstream's handlers. `register` is McpHttpServer's
+ * `toolkitRegistration`, passed in to avoid an import cycle; it takes only McpToolAccess-built
+ * handlers, so every tool declares who may call it.
  */
 export const layerJ5Toolkits = (register: typeof toolkitRegistration) =>
   Layer.mergeAll(

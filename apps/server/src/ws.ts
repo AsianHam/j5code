@@ -2087,6 +2087,7 @@ export const layerWsRpc = (
                   ),
                 ),
             ),
+            j5View.threadProjection,
           ),
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) =>
           Effect.annotateCurrentSpan({
@@ -2197,7 +2198,7 @@ export const layerWsRpc = (
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
               Effect.andThen(subscribeOrchestrationV2Thread(input)),
             ),
-          ),
+          ).pipe(j5View.threadStream),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(

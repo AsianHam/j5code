@@ -1,14 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// A link several people can join one thread with, view only (#541). It is J5's
-// own token, kept as a hash: each person who opens it becomes a new guest with
-// a View grant on the thread and an ordinary single-use share link of their own.
-// It expires, and a member can revoke it, which stops new people joining.
-//
-// A person who joined this way typed their own name. It is marked as given by
-// themselves until a member confirms or changes it, and the link they came
-// through is kept so the people list can say who joined with it.
+// A view-only link several people can join one thread with. J5's own token, kept as a hash: each
+// joiner becomes a guest with a View grant and a single-use share link of their own. A joiner's
+// name is marked self-given until a member confirms it, and their link is kept for the people
+// list.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

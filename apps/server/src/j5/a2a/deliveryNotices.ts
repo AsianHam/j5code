@@ -11,16 +11,10 @@ import {
 } from "./contracts.ts";
 
 /**
- * The notices a sender gets when a message will not arrive: its delivery
- * alarmed, a peer server refused it, or the peer was removed while it waited.
- * Each message gets one notice. A refused ask's notice also says its Exchange
- * has ended, and the Exchange is dropped as refused; an open Exchange with a
- * removed peer is dropped with a drop notice. An alarmed ask's Exchange stays
- * open: an alarm is the sender's fact to act on, not a decision by the receiver.
- *
- * A notice is platform-authored, so nothing a peer server wrote goes into one
- * raw: a refusal code it is known to send is told in this server's own words,
- * and any other reason is quoted on one line, bounded, as the peer's.
+ * The notices a sender gets when a message will not arrive (alarmed, refused by a peer, or its peer
+ * removed), one per message. A refused ask's Exchange is dropped; an alarmed ask's stays open, as
+ * the alarm is the sender's to act on. Nothing a peer wrote goes in raw: known refusal codes are
+ * told in this server's words, others quoted on one bounded line.
  */
 
 const stablePart = (value: string) => encodeURIComponent(value);

@@ -24,7 +24,6 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
-import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
@@ -41,10 +40,6 @@ import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
-import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
-import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
-import { ProjectToolkit } from "./toolkits/project/tools.ts";
-import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 import * as AttachmentHandlers from "./toolkits/attachment/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
@@ -1015,13 +1010,6 @@ const layerPreviewControlsRegistration = toolkitRegistration(
   PreviewControlsToolkit,
   PreviewControlsHandlers.layer,
 );
-
-const layerEnvironmentToolkit = toolkitRegistration(
-  EnvironmentToolkit,
-  EnvironmentHandlers.layer,
-).pipe(Layer.provide(ThreadCommandExecutor.layer));
-
-const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,

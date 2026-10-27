@@ -2,13 +2,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Squadrons are retired (#412): a thread's home is its project, and the ledger is keyed by
-// project id. Every Squadron referenced exactly one project, so each ledger moves to that
-// project's id unchanged: no row is added, removed or renumbered.
-//
-// The Squadron table is re-keyed and renamed in place and never dropped. With foreign keys on,
-// dropping it would run ON DELETE CASCADE on nine child tables, and `defer_foreign_keys` does
-// not hold a cascade back. Renaming also lets SQLite rewrite every child's foreign key itself.
+// Squadrons are retired: each ledger moves to its one project's id, no row added or renumbered.
+// The Squadron table is re-keyed and renamed, never dropped: with foreign keys on, a drop would
+// cascade through nine child tables (`defer_foreign_keys` does not hold a cascade back), and a
+// rename lets SQLite rewrite every child's foreign key itself.
 
 class SharedProjectError extends Schema.TaggedError<SharedProjectError>()("SharedProjectError", {
   projects: Schema.Array(

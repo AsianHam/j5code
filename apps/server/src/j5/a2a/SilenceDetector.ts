@@ -511,11 +511,10 @@ const makeLayer = (daemon: boolean) =>
       });
 
       /**
-       * A queued message that leaves the queue unread, whoever removed it, is told to its sender:
-       * the ledger recorded it delivered when it joined the queue (#504). An ask is reported on its
-       * Exchange instead, a promoted message moved into the running turn, and an archived receiver
-       * is gone altogether. A sender on a peer server is not told: a peer accepts a platform
-       * notice only for an Exchange.
+       * A queued message that leaves the queue unread, whoever removed it, is told to its sender,
+       * since the ledger recorded it delivered on queueing. Asks are reported on their Exchange
+       * instead, promoted messages ran, and archived receivers are gone. Senders on a peer server
+       * are not told: a peer accepts platform notices only for an Exchange.
        */
       const noticeRemovedDelivery = Effect.fn("j5.a2a.silence.noticeRemovedDelivery")(function* (
         run: OrchestrationV2Run,
@@ -698,7 +697,7 @@ const makeLayer = (daemon: boolean) =>
       const handleStoredEventRaw = Effect.fn("j5.a2a.silence.handleStoredEvent")(function* (
         stored: OrchestrationV2StoredEvent,
       ) {
-        // The same stream carries edits to queued deliveries, which the ledger follows (#136).
+        // The same stream carries edits to queued deliveries, which the ledger follows.
         if (stored.event.type === "message.updated") {
           return yield* recordQueuedEdit(stored).pipe(
             Effect.provideService(SqlClient.SqlClient, sql),
@@ -817,8 +816,8 @@ const makeLayer = (daemon: boolean) =>
       const initializeCursor = Effect.fn("j5.a2a.silence.initializeCursor")(function* () {
         const existing = yield* readCursor();
         if (existing !== null) return existing;
-        // A failed read fails the init, which the lifecycle daemon retries with backoff; the
-        // cursor is never seeded at 0, which would replay the whole event history (#349).
+        // A failed read fails the init, which the lifecycle daemon retries with backoff; the cursor
+        // is never seeded at 0, which would replay the whole event history.
         const highWater = yield* events.latestSequence();
         yield* reconcileOpenExchangesRaw();
         yield* writeCursor(highWater);

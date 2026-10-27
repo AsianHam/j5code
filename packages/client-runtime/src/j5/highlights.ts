@@ -1,6 +1,6 @@
 /**
  * Highlights: the short "What's new" entries a client shows once after it has a build with a
- * substantial new feature (#624). An entry is committed with its feature's PR; whether a feature
+ * substantial new feature. An entry is committed with its feature's PR; whether a feature
  * deserves one is decided in that PR's review. Seen-tracking is per client, so this module is pure:
  * each client passes in what it has stored.
  */

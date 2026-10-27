@@ -329,11 +329,9 @@ export interface ArchiveAgentServiceShape {
   ) => Effect.Effect<ArchiveAgentResult, ArchiveAgentError>;
   /**
    * Consequence facts without side effects, so a unit archive can warn about every member at once.
-   * Null when the target provably never came to exist: no home is registered for its thread and
-   * the projection store answers not-found for it. A Crew records every seat's row before the seat
-   * spawns, so a launch that failed partway leaves such rows behind, and the unit verbs pass them
-   * by. Every other failure propagates: absence is never inferred from a store that could not
-   * answer, and a home without a thread is a mismatch, not an absence.
+   * Null only when the target provably never existed (no home registered, projection not-found), as
+   * rows a partly failed Crew launch leaves. Every other failure propagates: absence is never
+   * inferred from a store that could not answer, and a home without a thread is a mismatch.
    */
   readonly readFacts: (
     target: ArchiveAgentTarget,

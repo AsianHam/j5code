@@ -165,17 +165,10 @@ export const openInboxCountStatement = (sql: SqlClient.SqlClient, personId: Part
   `;
 
 /**
- * The label a peer sent with the delivery this server recorded last, and the
- * peer that sent it, for each sender asked about. "Last" is by the time this server recorded the row: the
- * receiver stamps received rows with its own clock, so the origin cannot date
- * one into the future, and the stamp orders rows across projects, which `seq`
- * (allocated per project) does not; project id, then seq, break ties so one
- * row wins. A sender id belongs to one peer (the inbound ownership check refuses
- * a second origin), so its latest labeled row is that peer's latest label. Each
- * id is one backward seek on migration 27's index, so the cost follows the ids
- * asked about, never a sender's history. Both facts come back as one JSON value
- * so the seek runs once. An id with no label comes back null; callers skip it
- * (filtering in SQL would evaluate the seek twice).
+ * The label a peer sent with the delivery this server recorded last, and that peer, per sender (a
+ * sender id belongs to one peer). "Last" is by this server's receive stamp, which the origin cannot
+ * date ahead and which orders across projects, unlike `seq`; project id, then seq, break ties. One
+ * seek per id on migration 27's index, returned as one JSON value; no label is null.
  */
 const decodeLatestPeerDelivery = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ label: Schema.String, environmentId: Schema.String })),

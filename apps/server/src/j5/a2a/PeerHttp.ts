@@ -59,10 +59,9 @@ import {
 
 /**
  * The peering HTTP surface. Another server reaches hello, roster, deliver and poll with its peer
- * credential. `j5 a2a peer` reaches the administrative routes (issue a credential, add, list,
- * remove) with the same `access:*` scopes as Settings → Connections, because a peer is one more
- * authorized session there; a client does the same acts over the WebSocket (`clientActionRpc.ts`),
- * and both call `PeerAdminService`.
+ * credential. `j5 a2a peer` reaches the admin routes with the `access:*` scopes Settings →
+ * Connections uses, since a peer is one more authorized session; clients do the same over the
+ * WebSocket, and both call `PeerAdminService`.
  */
 
 const decodeIssueRequest = Schema.decodeUnknownEffect(IssuePeerCredentialRequest);

@@ -1,18 +1,8 @@
 /**
- * Records `j5.thread.created` for every thread, saying what kind of thread it is, and
- * `j5.turn.started` for every run the orchestrator creates, saying who asked for it.
- *
- * Upstream's `client.thread.started` fires only for a thread a person starts from the composer;
- * agents, delegated tasks and provider subagents create the rest. `thread.created` is written
- * once for each of them.
- *
- * Upstream's `client.turn.requested` fires only for a message a person sends over a client
- * socket. A turn started by an agent's message, an Inbox reply, a spawn brief, a Crew notice, a
- * playbook step or a scheduled task never passes through that handler, and
- * `provider.turn.completed` does not say who asked. This reads the committed `run.created`
- * event instead, which every path writes exactly once, so retried commands are not counted twice.
- *
- * @module ThreadAnalytics
+ * Records `j5.thread.created` per thread and `j5.turn.started` per run, with who asked. Upstream's
+ * client events see only what a person starts from a client; agents, Inbox replies, Crews,
+ * playbooks and schedules bypass them. Committed `thread.created` and `run.created` events are
+ * written once on every path, so retried commands count once.
  */
 import {
   OrchestrationV2Actor,

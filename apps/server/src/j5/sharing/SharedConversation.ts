@@ -47,11 +47,9 @@ import { type Author, makeMessageStamps, prefixOf, refused } from "./messageStam
 import { scheduledLine } from "./scheduledRuns.ts";
 
 /**
- * A shared conversation: a thread more than one person can write to, which stays one
- * (docs/j5/product/features/shared-conversations.md). In one, every message a person sends
- * reaches the agent beginning with its author's line, and the platform's note tells the agent who
- * can write when that changes. A thread only one person has ever been able to write to passes
- * through here untouched (AC2).
+ * A shared conversation: a thread more than one person can write to, which stays one. Each
+ * person's message reaches the agent with its author's line, and a note tells the agent who can
+ * write when that changes. A thread only one person could ever write to passes untouched (AC2).
  */
 
 /**
@@ -139,12 +137,10 @@ const admitted = (command: OrchestrationV2Command): Admitted => ({
 
 export interface SharedConversationShape {
   /**
-   * A client's command taken in and handed to upstream's `dispatch`, after `CommandAdmission` has
-   * checked that its sender may send it. `personId` is the person on the connection; `null` for a
-   * service session, whose commands are not a person's. A message for a shared conversation gains
-   * its author's line and any note due; an edit of one keeps its author's; an answer to a question
-   * carries who gave it. Who is answering a prompt is written down. A command carrying a context
-   * record of the platform's own kind is refused (AC8).
+   * A client command, already admitted by `CommandAdmission`, handed to upstream's `dispatch`.
+   * `personId` is null for a service session. In a shared conversation a message gains its
+   * author's line and any note due, an edit keeps its author, and answers record who gave them. A
+   * command carrying a platform-kind context record is refused (AC8).
    */
   readonly dispatch: <A, E, R>(
     personId: ParticipantId | null,
@@ -226,12 +222,10 @@ const make = Effect.gen(function* () {
   const { authorOn, announce, recordAuthor } = yield* makeMessageStamps(touch);
 
   /**
-   * Whether upstream's own log shows that the command an answer was written for settled its
-   * prompt, as a condition on `j5_a2a_prompt_answer AS answer`. Upstream answers "accepted" again
-   * for any command id it has already taken on the thread, so its saying so is not proof. The
-   * event that settles a prompt carries the id of the command that did it:
-   * `orchestration_events` is upstream's log, a thread's events are its stream, and this event's
-   * payload is the request itself (`SharedConversation.integration.test.ts` pins these).
+   * Whether upstream's own log shows the answer's command settled its prompt, as a condition on
+   * `j5_a2a_prompt_answer AS answer`. Upstream re-accepts any command id it already took, so its
+   * "accepted" is no proof; the settling event carries the command id (pinned by
+   * `SharedConversation.integration.test.ts`).
    */
   const settledItsPrompt = sql`EXISTS (
     SELECT 1 FROM orchestration_events AS event
@@ -321,16 +315,10 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * A queued message edited (AC14): it stays under its author, with "edited by" when someone else
-   * edited it, and keeps the note it carries. A client that sends the stored text back has the
-   * platform's text taken off it before it is written again. Edited into a command, it goes on as
-   * typed and carries nothing; edited out of one, it is stamped as a new message would be. A
-   * message no person is recorded for is stamped too, so an edit never reaches the agent with no
-   * line: under the first owner when they typed it before the thread was shared, else as the
-   * editor's own words. The record is written only once upstream takes the edit, and only while the
-   * stored text is still the text this edit wrote: upstream refuses an edit whose run has started,
-   * replays a retried command's receipt without writing again, and may take another edit between
-   * this one's commit and its record. In each case the message keeps the record its text carries.
+   * A queued message edited (AC14) stays its author's, with "edited by" for someone else, and keeps
+   * its note; returned stored text is stripped first. As a command it carries nothing; out of one,
+   * or unrecorded, it is stamped anew. The record is written only once upstream takes the edit and
+   * only while the stored text is still this edit's, since upstream may refuse, replay or reorder.
    */
   const stampEdit = Effect.fn("j5.sharing.sharedConversation.stampEdit")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.edit" }>,
@@ -397,11 +385,9 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Writes down who is answering a prompt (AC10), on a shared thread. It is a claim, kept for each
-   * command that answers: who answered is read as the claim whose command upstream's log shows
-   * settled the prompt (`settledItsPrompt`), so an answer upstream refuses and one that loses to
-   * an earlier answer name no one; a command id upstream already took makes no claim. The first
-   * claim for a command stands. A failure to record is logged and does not stop the answer.
+   * Records who is answering a prompt (AC10) as a claim per command; the answerer is the claim
+   * whose command upstream's log shows settled it (`settledItsPrompt`), so refused or losing
+   * answers name no one. A command's first claim stands; a failed record never stops the answer.
    */
   const recordAnswer = Effect.fn("j5.sharing.sharedConversation.recordAnswer")(
     function* (
@@ -569,13 +555,10 @@ const make = Effect.gen(function* () {
     const recorded = yield* sql<{ readonly found: number }>`
       SELECT 1 AS found FROM j5_a2a_shared_thread WHERE thread_id = ${threadId}
     `;
-    // A fork shows the messages of the thread it was forked from up to the run it was forked at,
-    // and that thread's own source's before them, as upstream's `buildVisibleTurnItems` does from
-    // the thread's `forkedFrom` and its runs' ordinals; those messages keep their authors here
-    // (#612). Only the messages a fork shows are read, so nothing after its fork point is named.
-    // A fork's reader need not reach the thread it was forked from, so for a reader an inherited
-    // record is read only where the stored text the fork shows begins with its prefix: then it
-    // restates what they already receive. A command carries no prefix.
+    // A fork shows its source's messages up to the fork point (and their sources' before them), as
+    // upstream's `buildVisibleTurnItems` does; those keep their authors, and nothing past the fork
+    // point is named. A reader need not reach the source, so an inherited record applies only where
+    // the shown text begins with its prefix, restating what they already receive.
     const authors = yield* sql<
       AuthorRow & { readonly created_at: string; readonly inherited: 0 | 1 }
     >`

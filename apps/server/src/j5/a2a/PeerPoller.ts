@@ -36,19 +36,10 @@ import {
 import { peerRosterHash, toPeerRoster } from "./peerRoster.ts";
 
 /**
- * The polling side of poll mode. This server cannot be reached by a peer, so
- * for each peer recorded with link mode `poll` it runs one loop that asks the
- * peer for the messages it stores here. Each poll acknowledges the previous
- * batch, sends this server's roster when it changed, and records each delivery
- * through the inbound service exactly as the deliver route does, one at a time
- * and in order. Messages this server sends to the peer still go directly.
- *
- * The loop is the heartbeat: the storing server answers a poll's headers as
- * soon as it arrives, so it sees this server present at least once per hold
- * while it runs, and this server stamps its own last poll when those headers
- * arrive. A roster change
- * abandons the poll in flight, so the peer learns of an archive or a rename at
- * once.
+ * The polling side of poll mode: one loop per peer in link mode `poll` asks for the messages stored
+ * for this server, acknowledging the last batch, sending the roster when it changed, and recording
+ * deliveries in order through the inbound service. The loop is the heartbeat on both sides. A
+ * roster change abandons the poll in flight, so an archive or rename reaches the peer at once.
  */
 
 /**
@@ -365,16 +356,10 @@ const make = Effect.fn("j5.a2a.peer.poller.make")(function* (daemon: boolean) {
     poll(environmentId, () => abandon);
 
   /**
-   * The next change to the roster this server sends, once the poll that sent
-   * `sentRosterHash` is held. The roster changes when an agent joins, leaves
-   * or is archived, a ledger fact, or when its thread is renamed, a thread
-   * metadata update. Either only prompts a fresh reading of the roster, so an
-   * update that leaves it as sent, such as a branch change, is not a change.
-   * Both sources are listened to from before the roster is read: the ledger
-   * subscription is held from here, and thread updates replay from the
-   * sequence read here. Renaming a project also changes the roster, but it
-   * writes no event, so the new name goes out with the next poll, within
-   * the hold.
+   * The next roster change after the poll carrying `sentRosterHash` is held: a ledger join, leave
+   * or archive, or a thread rename, each only prompting a re-read, so an unchanged roster is no
+   * change. Both are subscribed before the roster is read. A project rename writes no event, so it
+   * goes out with the next poll, within the hold.
    */
   const nextRosterChange = Effect.gen(function* () {
     const committed = yield* ledger.subscribeCommitted;

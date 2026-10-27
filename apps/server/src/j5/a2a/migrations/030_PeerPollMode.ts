@@ -1,26 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Peering poll mode. A peer record gains its link mode: `push` sends directly
-// both ways, `store` keeps messages here for a peer that polls (no origin and
-// no credential from it, because this server never connects to it), and
-// `poll` is this server's record of a peer it polls. A storing record also
-// holds the poller's last roster snapshot and when it last polled; every mode
-// keeps one `last_error` for a poll failure or a peer protocol mismatch, and
-// the version and capabilities the peer last stated. `label` is now the
-// peer's own name as it last reported it.
-//
-// `origin` and `credential` were NOT NULL, so the table is rebuilt.
-//
-// A credential issued for a peer that will poll is marked by a store grant
-// until the peer first presents it.
-//
-// A delivery row handed out to a polling peer is stamped `handed_out_at`; it
-// stays pending until the peer acknowledges it, and a cancellation leaves it
-// alone because the peer may already hold it. The stamp is operational, written
-// by the poll and outside the ledger's delivery projection: losing it costs only
-// a redelivery, which the peer's idempotent receipt by message id already
-// absorbs.
+// A peer's link mode: `push` sends both ways, `store` holds messages for a peer that polls (so no
+// origin or credential from it), `poll` records a peer this server polls. `origin` and
+// `credential` were NOT NULL, so the table is rebuilt. `handed_out_at` is operational: losing it
+// costs only a redelivery, which the peer's idempotent receipt by message id absorbs.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`

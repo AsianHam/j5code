@@ -14,15 +14,10 @@ import { PeerRegistryService } from "./PeerRegistryService.ts";
 import type { StoredCommEvent } from "./contracts.ts";
 
 /**
- * The storing side of poll mode. A peer that cannot be reached polls this
- * server: each poll acknowledges what the last one handed out, refreshes what
- * the poller tells about itself (its name, capabilities, protocol version and,
- * when it changed, its roster), and takes the next batch of messages stored
- * for it. With nothing waiting the poll is held until a message for this peer
- * is committed or the hold ends, which stays under typical office-proxy idle
- * timeouts. A poll is taken in two steps, so the route can answer its status
- * at once and hold only the body: `startPoll` records the poll, and the answer
- * it returns is the held batch.
+ * The storing side of poll mode. Each poll from an unreachable peer acknowledges the last batch,
+ * refreshes what it says of itself, and takes the next; with nothing waiting it is held until a
+ * message commits or the hold ends, under typical office-proxy idle timeouts. `startPoll` records
+ * the poll and returns the held batch, so the route answers its status at once.
  */
 
 export const PEER_POLL_HOLD = Duration.seconds(25);

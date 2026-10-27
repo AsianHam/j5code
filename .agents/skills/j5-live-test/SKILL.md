@@ -268,8 +268,8 @@ with the same steps, each on its own server as for screenshots.
    Upload" profile from `preview_status` as `profileId`. If there is no PR
    yet, open its tracking issue. That profile is signed in to the developer's
    GitHub account: open nothing else under it.
-3. Call `preview_upload` with `locator: "#fc-new_comment_field"` and the MP4's
-   path. GitHub uploads it and writes a
+3. Call `preview_act` with `action: "upload"`, `locator: "#fc-new_comment_field"`
+   and the MP4's path in `paths`. GitHub uploads it and writes a
    `https://github.com/user-attachments/assets/<id>` URL into the comment
    box. `preview_wait_for` cannot see text in that box, so read
    `document.getElementById("new_comment_field").value` with

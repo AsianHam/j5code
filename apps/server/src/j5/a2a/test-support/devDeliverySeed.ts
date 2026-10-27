@@ -4,16 +4,10 @@ import { SourceControlProviderRegistry } from "../../../sourceControl/SourceCont
 import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 /**
- * Dev-only disposable A2A delivery seed support.
- *
- * A6 multi-statement-truncation lesson: never seed this flow with a raw
- * multi-statement SQL string. Each scenario's durable state is written by
- * production services. A scenario is not one transaction: the orchestrator's
- * terminal-run reactor takes a thread's lock and then reads the database, so
- * holding a transaction across a dispatch to that thread deadlocks. A run
- * that fails part way leaves partial rows; discard the disposable home.
- * Run only while the target T3 server is stopped; this process owns the
- * one database accessor and exits completely after printing its receipt.
+ * Dev-only disposable A2A delivery seed. State is written by production services, never raw
+ * multi-statement SQL. A scenario is not one transaction: the terminal-run reactor takes a thread's
+ * lock then reads the database, so a transaction held across a dispatch deadlocks; a partial run
+ * leaves rows, so discard the home. Run only with the target server stopped.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {

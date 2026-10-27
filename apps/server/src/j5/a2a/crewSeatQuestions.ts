@@ -1,15 +1,10 @@
 import type { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 
 /**
- * Crew seats do not get native question tools (issue #325, Jackson's 2026-09-26 decision). A seat
- * runs out of the person's view, so a question it raises in its own thread waits unseen. A seat
- * that needs a decision asks its Captain with `j5_send_message`; the Captain answers, or asks the
- * person with its own question tool, inline in the Captain thread the person watches. Captains
- * and every other thread keep their native question tools.
- *
- * The runtime policy carries `crewSeat` (resolved in `crewSeatRuntime.ts`); the adapters spread
- * these helpers where they already build their native options. Kept as a leaf module so the
- * adapters import no Crew store code.
+ * Crew seats get no native question tools: a seat runs out of view, so its questions would wait
+ * unseen. It asks its Captain with `j5_send_message`, and the Captain answers or asks the person
+ * inline. The runtime policy carries `crewSeat` (`crewSeatRuntime.ts`); this leaf module keeps the
+ * adapters free of Crew store code.
  */
 
 /** Appended to a seat's standing instructions, after any provider text that says to ask the user. */
@@ -31,11 +26,9 @@ export const j5ClaudeCrewSeatQueryOverrides = (
   isCrewSeat(policy) ? { disallowedTools: J5_CLAUDE_CREW_SEAT_DISALLOWED_TOOLS } : {};
 
 /**
- * Codex's `request_user_input` switches, as dotted session overrides (the same shape as
- * `codex -c key=value`), so neither replaces the user's own `[features]` or `[tools]` tables.
- * `features.default_mode_request_user_input` offers the tool in Default mode;
- * `tools.experimental_request_user_input.enabled` is the tool's own switch. Both are booleans in
- * Codex 0.155's config schema (a non-boolean value fails config load).
+ * Codex's `request_user_input` switches as dotted session overrides (like `codex -c key=value`), so
+ * neither replaces the user's own `[features]` or `[tools]` tables. Both are booleans in Codex
+ * 0.155's schema; a non-boolean value fails config load.
  */
 export const J5_CODEX_CREW_SEAT_CONFIG = {
   "features.default_mode_request_user_input": false,

@@ -31,6 +31,7 @@ export function AgentEditorModal(props: {
   const read = useAtomCommand(agentPersonaEnvironment.readAgentPersona, {
     reportFailure: false,
   });
+  // oxlint-disable-next-line t3code/react-effect-budget -- loads the persona's instructions once when the editor opens; the read is a command, not an atom.
   useEffect(() => {
     let cancelled = false;
     void read({ environmentId: props.environmentId, input: { personaId: props.initial.personaId } })

@@ -13,13 +13,10 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { credentialConnectionId, routeHttpBaseUrl } from "../connection/routes.ts";
 
 /**
- * Renews the session of a server a client reaches with a saved bearer token, when J5 ended it for
- * a change of its person's level (People and access AC17). The connection is then refused for
- * authentication; this asks that server's renewal route with the old token, stores the new one
- * and connects again, once. A token the server will not renew is left as it is, and the person
- * pairs that server again by hand, as upstream has it.
- *
- * The browser's own server renews through its cookie instead, in the web client's sign-in gate.
+ * Renews a saved bearer token's session that J5 ended for a change of its person's level (People
+ * and access AC17): asks the renewal route with the old token, stores the new one and connects
+ * again, once. A token the server will not renew is left for the person to pair again. The
+ * browser's own server renews through its cookie instead, in the web client's sign-in gate.
  */
 
 const decodeRenewal = HttpClientResponse.schemaBodyJson(SessionRenewal);

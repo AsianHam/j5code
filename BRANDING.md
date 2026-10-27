@@ -37,7 +37,8 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   The device tools' state on a remote simulator host also keeps upstream's path, `~/.t3/device`
   (`apps/server/src/device/sshDeviceScript.ts`).
 - Release archives and installers (FORK.md case 40): `packages/shared/src/cliRelease.ts`
-  (`CLI_RELEASE_REPOSITORY`), `scripts/install.sh`, `scripts/install.ps1`, and
+  (`CLI_RELEASE_REPOSITORY`), `scripts/install.sh`, `scripts/install.ps1` (whose GitHub requests
+  send the User-Agent `j5-install`, where upstream's send `t3-install`), and
   `scripts/smoke-cli-archive.ts` (scratch `J5CODE_HOME`). Update everything
   (`apps/web/src/components/sidebar/useUpdateEverything.ts`) checks J5's GitHub release through
   `apps/web/src/j5/updates/releasePublished.ts` and says "J5 Code <version> is not released yet";
@@ -124,8 +125,9 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   The mobile header's `components/CompactBrandTitle.tsx` draws `J5Wordmark` and labels itself
   "J5 Code, …" (as do `WorkspaceRootScreen.tsx` and `PullRequestToolbar.android.tsx`), and
   `ThreadFeed.tsx` says "Sent by J5 Code".
-- Mobile developer tooling: `scripts/mobile-native-client.ts` (development bundle id and the
-  prebuilt iOS project/scheme/app name), `scripts/mobile-showcase.ts` (production app id, scheme
+- Mobile developer tooling: `scripts/mobile-native-client.ts` (development bundle id, the
+  prebuilt iOS project/scheme/app name, the built iOS artifact's name and the dev-client deep
+  link's scheme), `scripts/mobile-showcase.ts` (production app id, scheme
   and iOS project name), and `.agents/skills/test-t3-mobile/scripts/pair-client.sh` (app id and
   link scheme) read `J5_BRANDING.mobile`; `mobileNativeProjectName` mirrors Expo's prebuild
   naming (`J5 Code Dev` → `J5CodeDev`). The skill's `SKILL.md` documents the same app name and
@@ -143,6 +145,10 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   itself (`TimelineUserMessageRow.tsx`). `TimelineToolActivityIcon.tsx` draws `J5Wordmark` on
   t3-code MCP tool rows. `branding.ts`'s `DESKTOP_DOWNLOAD_URL` is `https://j5.codes/download`;
   `HostedEmptyState.tsx` builds its `j5 connect` and `j5 pair` commands on `CLI_COMMAND`;
+  the boot error page in `apps/web/src/lib/bootError.ts` (with `bootError.test.ts`) names J5 Code
+  in its six strings, falls back to `j5 triage`, links `https://j5.codes/download` and files bug
+  reports on `Jacksondr5/j5code`; the preview shortcut's "Open J5 Code in the desktop app" toast
+  is in `apps/web/src/shortcuts/chatRouteCommands.ts` (in `routes/_chat.tsx` until v0.1.3);
   `settings/SavedEnvironmentRows.tsx` says `j5 connect link`; and
   `pullRequest/PullRequestsPage.tsx` asks to update J5 Code servers.
 - Shared client copy: `packages/client-runtime` has no branding import, so its user-visible
@@ -166,7 +172,10 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   messages and AppArmor comment (`j5 browser setup`) in `preview/PreviewBrowserHost.ts`, and
   Claude's notice that it "could not confirm Claude bypass permissions", which says J5 in
   `orchestration-v2/Adapters/ClaudeAdapterV2.ts`. Agent-visible MCP
-  tool descriptions and errors say "J5 thread"; `THREAD_READ_OBJECT` in
+  tool descriptions and errors say "J5 thread", and `request_secret`'s delivery description in
+  `packages/contracts/src/orchestratorMcp.ts` says "a J5 tool". Since v0.1.3 the preview tools'
+  shared descriptions are in `packages/contracts/src/previewAutomation.ts`; it names no product,
+  and its one J5 edit is FORK.md case 74's profile wording, not branding. `THREAD_READ_OBJECT` in
   `apps/web/src/components/chat/MessagesTimeline.logic.ts` (`" a J5 thread"`) must keep matching
   the label in `packages/shared/src/t3McpToolPresentation.ts`.
   The compact mark on t3-code MCP tool rows and the mobile header is `J5Wordmark`
@@ -265,8 +274,9 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   identifiers and the `T3CODE_TELEMETRY_ENABLED=false` opt-out are upstream's, unchanged. J5's release
   workflows stamp each build's `T3CODE_TELEMETRY_CHANNEL`, which upstream's set only in its own
   repository. Keep J5's token and host when an upstream advance touches those defaults.
-  Dev servers started by `scripts/dev-runner.ts` report to a second project, "J5 Code Dev"
-  (`scripts/lib/j5-dev-telemetry.ts`).
+  Dev servers started by `scripts/dev-runner.ts` send nothing unless started with
+  `T3CODE_TELEMETRY_ENABLED=true` (upstream's default since v0.1.3), and then report to a second
+  project, "J5 Code Dev" (`scripts/lib/j5-dev-telemetry.ts`).
 
 ## 2026-09-06 verification boundary
 

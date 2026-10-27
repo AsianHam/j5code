@@ -94,11 +94,10 @@ export interface AgentCrewInstanceServiceShape {
     input: RecordAgentCrewInput,
   ) => Effect.Effect<AgentCrewInstance, SqlError | CrewStepAlreadyOwnedError>;
   /**
-   * Append approved seats and bump the version; idempotent per seat identity, so a replay of the
-   * same seats reports `added` and writes nothing. The count, the cap, a same-name clash with a
-   * different participant, the retired stamp, the version bump, and the ordinal base are all
-   * decided inside one transaction with an optimistic version check, so two additions approved
-   * at once cannot both slip under the cap, both take one name, or both own one playbook step.
+   * Append approved seats and bump the version; idempotent per seat identity, so a replay reports
+   * `added` and writes nothing. The cap, name clashes, the retired stamp, the version and the
+   * ordinal base are decided in one transaction with an optimistic version check, so two additions
+   * approved at once cannot both slip under the cap, take one name, or own one playbook step.
    */
   readonly addMembers: (
     id: string,
@@ -150,12 +149,10 @@ export interface AgentCrewInstanceServiceShape {
   /** Makes a Crew that retired with its Captain live again; false when it was not one. */
   readonly restoreWithCaptain: (id: string) => Effect.Effect<boolean, SqlError>;
   /**
-   * Run one unit step on a Crew with no other unit step on it: a launch or addition from its
-   * record or reservation through its briefs, and a unit archive from its roster read through
-   * the retired stamp. A seat is therefore either created before an archive reads the roster, so
-   * the archive retires it, or its reservation runs after the stamp and is refused. Held in this
-   * process only; a restart drops the steps it interrupted along with the lock, and an archive
-   * cut short never reached the stamp, so the Crew it leaves is still live.
+   * Run one unit step on a Crew with no other unit step on it (a launch or addition through its
+   * briefs, a unit archive through the retired stamp), so a seat is either created before an
+   * archive reads the roster or refused after the stamp. In-process only: a restart drops
+   * interrupted steps, and an archive cut short never reached the stamp, so its Crew stays live.
    */
   readonly serialize: <A, E, R>(
     id: string,

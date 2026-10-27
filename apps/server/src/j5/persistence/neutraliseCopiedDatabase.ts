@@ -39,12 +39,9 @@ export interface NeutralisedJ5State {
 const REASON = "Stood down in a development copy of this database.";
 
 /**
- * Stands down every J5 row that makes a server act on start, on the database the ambient
- * `SqlClient` has open. Only ever run it on a copy: it deletes credentials and ends live work
- * without the ledger events the product writes for those endings, so the copy is a test set, not
- * a ledger to rebuild projections from.
- *
- * Human-inbox Exchanges stay open. Nothing acts on them until the person answers.
+ * Stands down every J5 row that makes a server act on start. Only for a copy: it deletes
+ * credentials and ends live work without ledger events, so the result is a test set, not a
+ * ledger. Human-inbox Exchanges stay open, since nothing acts on them until the person answers.
  */
 export const neutraliseJ5State = Effect.fn("j5.neutraliseJ5State")(function* () {
   const sql = yield* SqlClient.SqlClient;

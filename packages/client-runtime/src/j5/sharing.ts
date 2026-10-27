@@ -22,14 +22,9 @@ import {
 } from "../state/runtime.ts";
 
 /**
- * What one connection is on its server (docs/j5/product/features/people-and-access.md), and the
- * level that decides what it may do with each thread. Every answer here only shapes what a client
- * shows: the server checks each request against the level at the scope it names, and a device
- * holds only its level's upstream permissions.
- *
- * `null` means the server has not answered, or cannot (one from before people). Nothing is
- * withheld then, so a composer does not flicker to read-only while the answer is on its way, and
- * upstream's own permissions decide.
+ * What one connection is on its server; it only shapes what a client shows, since the server
+ * checks every request. `null` means no answer yet, or a server from before people: nothing is
+ * withheld then, so a composer does not flicker to read-only, and upstream's permissions decide.
  */
 export type KnownConnectionAccess = ConnectionAccess | null;
 

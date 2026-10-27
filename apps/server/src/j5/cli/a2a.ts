@@ -1,11 +1,8 @@
 /**
- * `j5 a2a` - the machine-sender CLI: send, list, whoami, participant create,
- * token issue. Scripts and watchdogs use it in place of an agent session. The
- * `peer` group is the operator's side of peering: credential, add, list, remove.
- *
- * Stable exit codes, kept in `A2A_EXIT_CODES`: 0 ok, 2 usage, 3 unauthenticated,
- * 4 recipient not found or ambiguous, 5 refused by policy, 6 server unreachable,
- * 1 anything else. Nothing here ever prompts: a missing input is a usage error.
+ * `j5 a2a`, the machine-sender CLI for scripts and watchdogs, plus the operator's `peer` group.
+ * Exit codes are stable (`A2A_EXIT_CODES`): 0 ok, 2 usage, 3 unauthenticated, 4 recipient not
+ * found or ambiguous, 5 refused by policy, 6 server unreachable, 1 anything else. Nothing here
+ * prompts: a missing input is a usage error.
  */
 import { AuthA2ASendScope, AuthStandardClientScopes } from "@t3tools/contracts";
 import {

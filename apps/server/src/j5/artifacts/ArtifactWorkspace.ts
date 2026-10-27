@@ -124,11 +124,10 @@ const looksBinary = (bytes: Uint8Array) => {
   return inspected.some((byte) => byte === 0);
 };
 
-// Versioned files. The whole file is rendered from the versions it holds, so a retried write
-// converges and a hand-edited or pre-existing file is simply treated as version 1. The marker on
-// the first line lists every kept version as `<number>@<timestamp>`, and the parser only treats a
-// line as a boundary when it equals the heading rendered for one of those entries. Bodies are
-// never trimmed of separators, so a handoff may quote an earlier heading or end with `---`.
+// A versioned file is rendered whole from its versions, so a retried write converges and a
+// hand-edited file counts as version 1. The first-line marker lists `<number>@<timestamp>`, and
+// only a line equal to one of those headings is a boundary, so a body may quote an earlier heading
+// or end with `---`.
 
 const VERSIONED_MARKER = /^<!-- j5-artifact-versions: .*?; (.*?) -->\s*$/;
 

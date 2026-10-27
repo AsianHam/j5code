@@ -26,11 +26,9 @@ import {
 } from "./PlaybookStore.ts";
 
 /**
- * Step notices derive both their command id and their message id from the run and the landing's
- * request. Exactly-once rests on two layers, and both are wanted: a re-dispatch after a crash
- * between the dispatch and its record replays the orchestrator's command receipt, and the
- * deterministic message id keeps a second copy out of the thread even if a receipt were lost.
- * PlaybookCrewRelay.integration.test.ts only fails when both ids vary.
+ * Step notices derive their command id and message id from the run and the landing's request.
+ * Both layers are wanted: a re-dispatch after a crash replays the command receipt, and the fixed
+ * message id keeps a second copy out of the thread even if a receipt were lost.
  */
 export const PLAYBOOK_STEP_SESSION = "j5-playbook-step";
 

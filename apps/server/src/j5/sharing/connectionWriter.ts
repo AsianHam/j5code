@@ -6,11 +6,9 @@ import { PersonAccess, type SessionIdentity, isWide } from "./PersonAccess.ts";
 import { SharedThreads } from "./SharedThreads.ts";
 
 /**
- * What a connection may do with the threads a request names, for a request that is not a
- * command upstream checks: reading or answering a Crew's prompts, deciding a roster, stopping or
- * archiving a Crew (Crews AC23). A service session and someone who writes to every thread pass
- * without the thread being looked up; anyone else passes where their level there allows; a
- * device no one has claimed nowhere.
+ * What a connection may do with the threads a non-command request names: Crew prompts, rosters,
+ * stop and archive (Crews AC23). Service sessions and server-wide writers pass without a lookup;
+ * others pass where their level allows; an unclaimed device nowhere.
  */
 
 const unreadable = () =>

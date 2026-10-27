@@ -1,19 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Share links: bringing a guest in.
-//
-// `j5_a2a_guest_link` says which guest a pairing link was made for. Upstream's
-// pairing link carries a subject and scopes and nothing about a person, and J5
-// adds no column to upstream's table, so the person is recorded here beside it.
-// The row is found again when the link is used, by a hash of the credential the
-// person presents: that is what upstream's pairing code holds at the moment it
-// issues the session. The link's own id is kept so the people list can show a
-// link that has not been used yet. A row whose link upstream has since used,
-// expired or revoked is inert, since that credential pairs nothing.
-//
-// A grant also keeps the optional line a member writes when sharing, saying
-// what the guest is there for (Shared conversations AC6).
+// J5 adds no column to upstream's pairing link, so the guest a link was made for is recorded
+// here, found again by a hash of the presented credential (what upstream holds when it issues the
+// session). A row whose link upstream used, expired or revoked is inert. A grant keeps the
+// optional line a member writes on what the guest is there for.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

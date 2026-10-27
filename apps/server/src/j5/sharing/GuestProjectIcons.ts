@@ -23,20 +23,10 @@ import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
 
 /**
- * A project's favicon for a guest (Shared server, Jackson 2026-10-12: "have J5 serve the
- * favicon"). Upstream's client asks for a favicon by the project's folder on the host, and the
- * link upstream signs for it carries that folder in readable base64, so a guest can be given
- * neither. Here the project is named by its id from end to end:
- *
- * - a guest's reduced project carries `guestIconPath(projectId)` where upstream's has the path of
- *   a favicon override, which upstream's client sends back as the request's `path`;
- * - the guest gate answers that request itself with a link to J5's own route, signed by J5,
- *   naming the project id and an expiry and nothing else;
- * - the route finds the project by id and serves what upstream's own favicon resolution and
- *   asset serving give for it, with upstream's response headers.
- *
- * Nothing here is a service: it runs in whichever fiber calls it, on the services upstream's own
- * asset request and asset route already run on there.
+ * A project's favicon for a guest. Upstream's favicon request and signed link carry the host
+ * folder (readable base64), so here the project is named by id end to end: the reduced project
+ * carries `guestIconPath(projectId)`, the gate answers with a J5-signed link, and J5's route
+ * serves upstream's own favicon resolution for it. Not a service; it runs in the caller's fiber.
  */
 
 /** Where a guest's client fetches a project's favicon. The link carries its own proof. */
@@ -124,11 +114,9 @@ const upstreamFavicon = Effect.fn("j5.sharing.guestProjectIcons.upstreamFavicon"
 const lastSegment = (relativeUrl: string) => relativeUrl.slice(relativeUrl.lastIndexOf("/") + 1);
 
 /**
- * The answer to a guest's request for a project's favicon: a link to J5's route. Its last
- * segment is upstream's own "no favicon" marker when the project has none, which upstream's
- * client reads as "draw the default icon" and never fetches. Otherwise it is a name made from
- * the project and the favicon's revision, so the client's cache follows the file when it changes,
- * and it keeps the file's extension and none of its name.
+ * A link to J5's favicon route. Its last segment is upstream's "no favicon" marker when there is
+ * none, so the client draws the default and never fetches; otherwise a name from the project and
+ * the favicon's revision, so the cache follows changes, keeping only the file's extension.
  */
 export const issueGuestProjectIconUrl = (
   projectId: ProjectId,
@@ -189,11 +177,9 @@ const notFound = HttpServerResponse.text("Not Found", {
 });
 
 /**
- * Serves a project's favicon to whoever holds a link J5 signed for that project. It takes no
- * sign-in, as upstream's asset route takes none: an `<img>` cannot send one. The link names the
- * project only, so it resolves that project's favicon and nothing else, whatever path follows
- * it. The file is found and served by upstream's own code: its favicon resolution, its check
- * that the file is inside the project, and its response headers (no sniffing, SVG sandboxed).
+ * Serves a project's favicon to whoever holds a link J5 signed for it, without sign-in (an `<img>`
+ * cannot send one). The link names only the project, so nothing else resolves. Upstream's code
+ * finds and serves the file: its resolution, its inside-project check and its headers.
  */
 export const guestProjectIconRouteLayer = HttpRouter.add(
   "GET",

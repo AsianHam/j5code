@@ -24,13 +24,9 @@ import { getLocalOperatorHumanPersonId } from "../a2a/HumanPersonRegistry.ts";
 import { ReadChanges, layer as readChangesLayer } from "../a2a/ReadChanges.ts";
 
 /**
- * People, their levels at scopes, and the devices that are theirs
- * (docs/j5/product/features/people-and-access.md). A device is one of upstream's auth sessions. A
- * person's level at the server covers everything; at a project, its threads; at a thread, the
- * thread and the agents beneath it. Where two levels cover one thing the higher applies.
- *
- * What a device reaches is read here on every request, by its session id. A change of what a
- * person holds is made through `Access`, which also renews their devices' sessions.
+ * People, their levels at scopes, and their devices (upstream auth sessions). A server level
+ * covers everything, a project's its threads, a thread's the agents beneath it; the higher of two
+ * applies. Reach is read here on every request; changes go through `Access`, which renews sessions.
  */
 
 /**
@@ -46,13 +42,10 @@ export const isServiceSubject = (subject: string) =>
   subject === "cli-issued-session";
 
 /**
- * Sessions that are the first owner's by how they were issued: the link the server prints when
- * it starts, the desktop app on its own machine, T3 Connect, and the development credential
- * (AC2). Upstream mints Connect's credential only for the cloud account the server was linked
- * to, which is the server's own; J5 does not know which person linked it, so it is the first
- * owner's. The first three are bound to the first owner as they are issued (`PairingIntents`);
- * the subject decides for the development credential, which upstream never stores, and for a
- * session from before.
+ * Sessions that are the first owner's by how they were issued (AC2): the startup link, the
+ * desktop app, T3 Connect (minted only for the server's own linked account), and the development
+ * credential. The first three are bound as issued (`PairingIntents`); the subject decides for the
+ * dev credential, which upstream never stores, and for older sessions.
  */
 export const FIRST_OWNER_SUBJECTS: ReadonlySet<string> = new Set([
   "administrative-bootstrap",
@@ -633,12 +626,9 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
       Effect.mapError(storage("read whether a project is in a person's sidebar")),
     );
 
-    // Whether a person is on a list of who reaches a thread or project the viewer reaches
-    // (`scopePeople` behind AC26): some thread both reach, or a project the viewer reaches whose
-    // level the person holds. A removed person holds no level, so is on none. Each thread's
-    // levels come from one line of ancestors, so two people share a thread exactly when one
-    // reaches a thread the other holds, or a thread in a project the other holds; checking each
-    // one's own levels is enough.
+    // Whether a person is on a roster the viewer can read (`scopePeople`, AC26): a thread both
+    // reach, or a viewer-reached project the person holds a level in. Each thread's levels come
+    // from one line of ancestors, so checking each one's own levels is enough.
     const onReadableRoster = Effect.fn("j5.sharing.personAccess.onReadableRoster")(function* (
       viewerId: ParticipantId,
       personId: ParticipantId,

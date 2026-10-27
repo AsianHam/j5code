@@ -28,11 +28,9 @@ const refusal = (status: number, error: string, message: string) =>
   HttpServerResponse.jsonUnsafe({ error, message }, { status });
 
 /**
- * Where someone who opens a link is told what it opens, and joins (People and access AC31 to
- * AC43). Neither takes a sign-in, as upstream's pairing does not: the link's token, sent in the
- * body, is all they trust. A browser's cookie is read only to tell what it already is here, which
- * decides whether it may join (AC32, AC33, AC43). Every link that does not work is answered alike.
- * The routes exist only on a server where sharing is wired in, read once when they are built.
+ * Where someone who opens a link is told what it opens, and joins (AC31 to AC43). No sign-in, as
+ * with upstream's pairing: the token in the body is all they trust. A browser's cookie only says
+ * what it already is here, which decides whether it may join. Every dead link is answered alike.
  */
 export const linkHttpRouteLayer = Layer.unwrap(
   Effect.gen(function* () {

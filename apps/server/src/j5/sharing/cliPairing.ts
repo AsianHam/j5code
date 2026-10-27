@@ -45,22 +45,10 @@ import {
 } from "./PersonAccess.ts";
 
 /**
- * `j5 pair` and `j5 auth pairing create` name the person a device is for (register D36, People
- * and access AC4). Upstream's commands carry these flags and make their link through
- * `pairingLinkForPerson` (FORK.md case 79). A name that matches someone makes the link for them
- * at their levels; one that matches no one creates that person at the level and scope given.
- * Upstream's `--scope` keeps its meaning: it narrows the device's permissions within the level,
- * and becomes the device's ceiling.
- *
- * `j5 pair` refuses without `--person`. `j5 auth pairing create` without it makes upstream's own
- * link, for a device the server will ask about: upstream's desktop app runs that bare command on
- * a host it reaches over SSH, and knows no one's name there. Such a device reaches nothing until
- * it says whose it is (AC5), so it never silently belongs to someone the server assumed.
- *
- * While a server runs for the home, the commands ask it to make the link
- * (`CliPairingHttp.ts`): only the running server can tell open clients, such as a People page,
- * that someone was added. With none running, they write the database themselves, holding the
- * home's server lock (`serverOwnership.ts`) so that none starts meanwhile.
+ * `j5 pair` and `j5 auth pairing create` name the device's person (D36, AC4; FORK.md case 79): an
+ * existing name pairs at their levels, a new one is created at the given level and scope, and
+ * `--scope` caps the device. A bare `auth pairing create` (upstream's SSH desktop flow) makes a
+ * device that reaches nothing until claimed. A running server makes the link (`CliPairingHttp.ts`).
  */
 
 export const personPairingFlags = {

@@ -35,19 +35,10 @@ import {
 } from "./PersonAccess.ts";
 
 /**
- * Every change to what a person holds, and what follows from it (People and access AC12, AC17).
- *
- * A device's permissions are fixed in its session when upstream issues it, and whether a
- * connection is narrowed is decided when it opens. So a change that lowers or takes away anything
- * a person holds, moves them between narrowed and not, or changes the permissions their level
- * gives, revokes each of their devices' sessions for renewal: upstream closes the sockets open on
- * a revoked session at once, and the device then renews on J5's route with its old token
- * (`SessionRenewal.ts`), getting a session that holds its new permissions. A change that only adds
- * a scope stays live: a narrowed connection checks its scope on every request, and the feeds it
- * has open follow `PersonAccess.subscribeChanges`.
- *
- * The change, the renewal marks and the revocations commit together, so a lowered level never
- * outlives a failed revocation. What is told to subscribers is told after the commit.
+ * Every change to what a person holds (People and access AC12, AC17). Permissions are fixed in a
+ * session and narrowing at socket open, so a change that lowers access, flips narrowing or changes
+ * a level's permissions revokes their sessions for renewal (`SessionRenewal.ts`); an added scope
+ * stays live through `PersonAccess.subscribeChanges`. Change and revocations commit together.
  */
 
 export class AccessRenewalError extends Schema.TaggedError<AccessRenewalError>()(
@@ -177,12 +168,10 @@ export interface AccessShape {
 export class Access extends Context.Service<Access, AccessShape>()("t3/j5/sharing/Access") {}
 
 /**
- * Runs inside the transaction of every change `Access` makes to a person, after the change is
- * written and before it commits (and, through `beforeChange`, before it is written): a level set or removed, a scope left, a device claimed, a person
- * removed or renamed. What it records commits with the change or not at all. Shared
- * conversations record here that a thread gained a second writer, which a notice told after the
- * commit could miss when the writer was added and removed before it was read. Optional: without
- * it, a change does nothing more.
+ * Runs inside the transaction of every change `Access` makes to a person, after it is written
+ * (and through `beforeChange`, before), so what it records commits with the change or not at all.
+ * Shared conversations record a thread's second writer here, which a post-commit notice could
+ * miss if the writer came and went first. Optional.
  */
 export class AccessWriteHook extends Context.Service<
   AccessWriteHook,

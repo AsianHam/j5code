@@ -30,13 +30,10 @@ import {
 } from "./contracts.ts";
 
 /**
- * The receiving side of a cross-server delivery. A peer's message becomes the
- * receiver project's own `message.received` row, which the ledger projects into
- * the pending delivery the worker then carries to the agent's thread. An ask
- * also opens the Exchange here, so the local agent's reply is an ordinary
- * same-project reply and the silence detector measures the debt; a reply
- * closes the Exchange the local agent opened. One command id per origin
- * message makes a retry a replay.
+ * The receiving side of a cross-server delivery: a peer's message becomes the receiver project's
+ * own `message.received` row, which the worker delivers. An ask also opens the Exchange here, so
+ * the local reply is an ordinary same-project reply and the silence detector measures the debt. One
+ * command id per origin message makes a retry a replay.
  */
 
 export interface PeerInboundInput extends PeerDeliveryRequest {
@@ -250,12 +247,9 @@ const localMessageIdFor = (input: {
 
 /** Refuse the sender kinds, channels and roles a peer may not use, before anything is read. */
 /**
- * Who a peer may speak as. Its agents, on the peer channel, never a terminal
- * notice. Or the platform itself, as exactly one of two notices, each in the
- * shape its producer writes: the lifecycle's terminal notice (the fact that
- * ends an Exchange) or the silence detector's notice (not part of any
- * Exchange, naming the one whose answerer went quiet). The receive path then
- * checks the Exchange is one this peer is party to.
+ * Who a peer may speak as: its agents on the peer channel, or the platform as exactly one of two
+ * notices in its producer's shape, the lifecycle's terminal notice or the silence detector's
+ * notice. The receive path then checks the Exchange is one this peer is party to.
  */
 const assertSenderShape = Effect.fn("assertSenderShape")(function* (input: PeerInboundInput) {
   const senderId = ParticipantId.make(input.senderId);

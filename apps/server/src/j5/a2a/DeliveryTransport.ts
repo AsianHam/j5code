@@ -667,14 +667,10 @@ export const live: Layer.Layer<
                   }),
                 )
               : Effect.void;
-          // Upstream starts a message sent to an idle thread at once, even past a held queue, and
-          // leaves the held messages waiting. A delivery keeps its place instead: it resumes the
-          // queue, so the held messages run first and it joins the back (#580). A retry of an
-          // accepted delivery never resumes again. A delivery to a thread stopped by a usage limit
-          // waits unsent until the thread continues, held queue or not: upstream would start it
-          // into the same limit, or leave it behind messages that wait for the continue (#718).
-          // Delivered then, it joins the back of the queue. One whose worktree setup failed waits
-          // when messages are held there (`idleQueueHold`); upstream holds any other itself.
+          // Upstream starts a message to an idle thread at once, past a held queue; a delivery
+          // resumes the queue and joins its back (an accepted one's retry never resumes again). To
+          // a thread a usage limit stopped it waits unsent for the continue, never starting into
+          // the limit. After a failed worktree setup it waits only behind held messages.
           const heldQueueRun = target.runs.find(
             (run) => run.status === "queued" && run.queueHeld === true,
           );

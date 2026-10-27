@@ -42,11 +42,9 @@ import {
 import { PersonAccess } from "./PersonAccess.ts";
 
 /**
- * `j5 pair --person` and `j5 auth pairing create` while a server runs for the home: the running
- * server makes the change, so its own change signal moves and an open People page re-reads
- * (#643). The server here is the route over the home's database, holding the home's lock and
- * publishing where it listens, as `server.ts` does; the CLI side runs in its own layers over the
- * same files, as a separate process would.
+ * `j5 pair --person` and `j5 auth pairing create` against a running server: the server makes the
+ * change, so its change signal moves and an open People page re-reads. The server holds the home's
+ * lock and publishes where it listens, as `server.ts` does; the CLI runs in separate layers.
  */
 
 const homeConfig = ServerConfig.ServerConfig.pipe(

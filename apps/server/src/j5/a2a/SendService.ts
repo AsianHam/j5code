@@ -1224,11 +1224,10 @@ const rawLayer: Layer.Layer<
     });
 
     /**
-     * A receiver on a peer server is named by where it lives; the recorded row
-     * says which, on a replay too. When that server polls this one and is
-     * offline, and the message still waits, the result says it waits for it
-     * and since when it was last available. The send is already committed, so
-     * a fact this server cannot read never turns it into a failure.
+     * A receiver on a peer server is named by where it lives, from the recorded row, replays
+     * included. When that server polls this one, is offline, and the message still waits, the
+     * result says so and since when. The send is already committed, so a fact this server cannot
+     * read never fails it.
      */
     const withReceiverServer = Effect.fn("j5.a2a.send.withReceiverServer")(
       function* (result: SendMessageResult) {

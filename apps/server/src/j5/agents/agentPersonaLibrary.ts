@@ -123,12 +123,10 @@ export function createAgentPersonaLibrary(storage?: {
   });
 
   /**
-   * Every definition file under a folder, walking subfolders in sorted order like the
-   * import picker does. Dot-directories such as .git and `node_modules` are skipped, and so is
-   * an entry that vanished or is a dangling link; depth is capped so a symlink cycle cannot spin
-   * forever. With a `limit`, the walk stops once it has found more files than that, so a caller
-   * refusing an oversized selection need not scan the rest of the tree. Returns null when the
-   * root does not exist.
+   * Every definition file under a folder, in the import picker's sorted order, skipping
+   * dot-directories, `node_modules` and vanished or dangling entries; depth is capped against
+   * symlink cycles. With a `limit`, stops past it so an oversized selection is refused without
+   * scanning the rest. Null when the root does not exist.
    */
   const listDefinitionFiles = Effect.fn("AgentPersonaLibrary.listDefinitionFiles")(function* (
     root: string,

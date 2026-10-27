@@ -33,12 +33,10 @@ import {
 } from "./peerProtocol.ts";
 
 /**
- * The peer registry: the other servers this one exchanges agent messages
- * with. A peer is recorded only after this server has reached it at the
- * stated origin with the credential it issued to us and that credential named
- * us. The credential the peer holds for this server is an ordinary session in
- * the auth database; a record reports whether that session is still live, so
- * a revoked or expired peer shows as such instead of looking healthy.
+ * The peer registry: the other servers this one exchanges agent messages with. A peer is recorded
+ * only once reached at the stated origin with the credential it issued us, naming us. The peer's
+ * credential for this server is an auth session; a record reports whether it is live, so a revoked
+ * or expired peer never looks healthy.
  */
 
 const PEER_HELLO_TIMEOUT = Duration.seconds(5);
@@ -333,11 +331,9 @@ export interface PeerRegistryServiceShape {
     readonly at: string;
   }) => Effect.Effect<boolean, SqlError>;
   /**
-   * Records a poll, and its time as the heartbeat a peer's online and offline
-   * are read from, ending any last error. On the storing server it is what
-   * the poller told it, at arrival: a poll held there proves the poller is
-   * there. On the poller it is what the storing server answered (no roster).
-   * Answers with the roster hash held for the poller.
+   * Records a poll and its time as the heartbeat online and offline are read from, ending any last
+   * error: on the storing server at arrival (a held poll proves the poller is there), on the poller
+   * when the storing server answered. Answers with the roster hash held for the poller.
    */
   readonly recordPoll: (
     facts: PeerPollFacts,
@@ -499,23 +495,19 @@ export const layer: Layer.Layer<
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const changes = yield* PubSub.unbounded<void>();
     const changed = PubSub.publish(changes, undefined);
-    // Published by each write below that changes what `list` reports: a peer recorded, rotated,
-    // adopted or removed, a heartbeat that shows (`heartbeatShows`), the last error and a peer's name. A write `list` does not
-    // show publishes nothing: a store grant, capabilities, and a roster snapshot apart from the
-    // heartbeat it arrives with. Waiting messages are deliveries, which `ReadChangeFeeds` follows
-    // in the ledger. A session revoked or expired in the auth database by some other path has no
-    // signal; a client's read on focus covers it.
+    // Published by each write that changes what `list` reports (a peer recorded, rotated, adopted
+    // or removed, a shown heartbeat, the last error, a name), never by grants, capabilities or
+    // rosters. Waiting messages are deliveries, which `ReadChangeFeeds` follows. A session ended in
+    // the auth database by another path has no signal; a client's read on focus covers it.
     const listChanges = yield* PubSub.unbounded<void>();
     const listChanged = PubSub.publish(listChanges, undefined).pipe(Effect.asVoid);
     const listChangedWhen = (rows: ReadonlyArray<unknown>) =>
       rows.length > 0 ? listChanged : Effect.void;
     /**
-     * Whether a heartbeat at `at` will change what a client shows for the peer. A client reads
-     * online or offline from the last heartbeat it was given against a two-minute window, so one
-     * a minute keeps that right; a heartbeat also shows when it ends an error or brings a new
-     * name. Asked before the write, since the update cannot say what it replaced. The minute is
-     * counted from the last heartbeat clients were told of, which is kept here and not stored:
-     * after a restart the first heartbeat is told.
+     * Whether a heartbeat at `at` changes what a client shows: clients read online from the last
+     * heartbeat against a two-minute window, so one a minute keeps that right, plus any ending an
+     * error or bringing a name. Asked before the write, which cannot say what it replaced. The last
+     * told heartbeat is kept in memory, so after a restart the first is told.
      */
     const heartbeatToldAt = new Map<string, number>();
     const heartbeatShows = (environmentId: string, at: string, label?: string) =>

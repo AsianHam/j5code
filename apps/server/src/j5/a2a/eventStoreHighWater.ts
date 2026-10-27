@@ -11,11 +11,10 @@ const retrySchedule = Schedule.exponential("250 millis").pipe(
 );
 
 /**
- * The event store's latest committed sequence: where a J5 daemon starts tailing
- * `streamStoredEventsFrom` on boot, after its reconciliation sweep has caught up on what the
- * stream will not replay. A failed read logs and retries with capped backoff and never falls
- * back to 0, because starting at 0 replays the whole event history and re-fires reactions to
- * old events, such as a Captain archive retiring live Crews (#349).
+ * The event store's latest committed sequence, where a J5 daemon starts tailing after its
+ * reconciliation sweep. A failed read logs and retries with capped backoff and never falls back to
+ * 0, which would replay all history and re-fire old reactions, such as a Captain archive retiring
+ * live Crews.
  */
 export const readEventStoreHighWater = Effect.fn(
   "j5.a2a.eventStoreHighWater.readEventStoreHighWater",

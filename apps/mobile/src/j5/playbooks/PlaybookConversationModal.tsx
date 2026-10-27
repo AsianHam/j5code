@@ -124,7 +124,9 @@ export function PlaybookConversationModal({
         const { target } = launch.current;
         const result = await startTurn(target);
         if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-        navigation.navigate("Thread", { environmentId, threadId: target.input.threadId });
+        navigation.dispatch(
+          StackActions.push("Thread", { environmentId, threadId: target.input.threadId }),
+        );
       }
     });
     setBusy(false);

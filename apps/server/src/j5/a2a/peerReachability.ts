@@ -3,13 +3,10 @@ import type * as NodeOS from "node:os";
 import { formatHostForUrl, isLoopbackHost, isWildcardHost } from "../../startupAccess.ts";
 
 /**
- * The origins this server thinks others might reach it at, for the check the
- * client runs before peering. A server bound to one address offers that one;
- * one bound to every interface offers each non-loopback address, only IPv4
- * ones when it is bound to every IPv4 interface alone; one that listens on
- * loopback only offers none, which the client reads as a direction it cannot
- * test. The client compares who answers each probe, so a guess that
- * lands on another server is only ever a miss.
+ * The origins others might reach this server at, for the client's pre-peering check: its bound
+ * address, or each non-loopback address (IPv4 only if bound to every IPv4 interface), or none when
+ * it listens on loopback only, which the client reads as untestable. The client compares who
+ * answers, so a guess that lands on another server is only a miss.
  */
 export const peerAddressOrigins = (input: {
   readonly host: string | undefined;

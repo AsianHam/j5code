@@ -26,6 +26,7 @@ import { makeHarness, modelSelection, projectId } from "../test-support/threadLa
 import { personaLibraryLayer } from "../test-support/personaLibrary.ts";
 import { noDocumentTextLayer } from "../test-support/documentText.ts";
 
+const isThreadLaunchError = Schema.is(ThreadLaunch.ThreadLaunchError);
 function launchInput(input: {
   readonly command: string;
   readonly thread: string;
@@ -513,7 +514,7 @@ it.effect("releases claimed uploads when persona resolution refuses a launch", (
       },
     }).pipe(Effect.flip);
     assert.instanceOf(error, ThreadLaunch.ThreadLaunchError);
-    if (!Schema.is(ThreadLaunch.ThreadLaunchError)(error)) return;
+    if (!isThreadLaunchError(error)) return;
     assert.equal(error.operation, "resolve-agent-persona");
     assert.deepStrictEqual(
       (yield* fs.readDirectory(config.attachmentsDir)).toSorted(),

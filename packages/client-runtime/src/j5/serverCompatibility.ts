@@ -3,11 +3,9 @@ import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import { ConnectionBlockedError } from "../connection/model.ts";
 
 /**
- * A J5 server from before its ledger was re-keyed to projects still reports the old ledger and
- * not the new one. This client's J5 views cannot read that ledger, so it does not connect: the
- * person updates the server instead of meeting views that quietly show nothing. A server that
- * reports neither (plain T3 Code, for one) has no J5 ledger at all and connects as it always has,
- * with the J5 views reporting that source as unsupported.
+ * Refuses a J5 server whose ledger predates the re-key to projects: this client's J5 views cannot
+ * read it, and the person should update the server rather than see views that quietly show
+ * nothing. A server with no J5 ledger (plain T3 Code) connects, its J5 views unsupported.
  */
 export function j5ServerCompatibilityError(
   descriptor: ExecutionEnvironmentDescriptor,

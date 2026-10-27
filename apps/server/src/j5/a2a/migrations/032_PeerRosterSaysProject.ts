@@ -1,11 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// The peer wire names a project where it named a Squadron (peer protocol 2). A
-// storing server keeps each polling peer's last roster as the JSON the peer
-// sent, so the snapshots already stored carry the old field names. This renames
-// them in place, so the peer's agents stay listed from the upgrade until that
-// peer next sends its roster.
+// The peer wire now names a project where it named a Squadron (peer protocol 2). Stored roster
+// snapshots are the JSON the peer sent, so they are renamed in place to keep the peer's agents
+// listed until it next sends its roster.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`

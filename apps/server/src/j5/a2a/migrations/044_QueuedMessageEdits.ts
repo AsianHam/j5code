@@ -1,15 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// A queued message can be edited in its receiver's queue, by a person or by the agent that sent
-// it (#136). The ledger records each edit as a `message.edited` event, and the delivery row it
-// projects to carries the new text with who edited it, when, and the orchestration event that
-// carried the edit, so a replayed earlier event is never applied over it. A claim names who issued
-// an edit command, read when the edit is observed: the person's client or the editing agent picks
-// the command id, and the queue's own event names no one.
-//
-// SQLite cannot widen a CHECK in place, so the event log is rebuilt with the new kind. No row is
-// added, removed or renumbered, and its indexes are recreated from their own definitions.
+// A queued message can be edited by a person or by its sending agent. The delivery row carries
+// the new text, its editor, and the orchestration event that carried it, so a replayed earlier
+// event never overwrites it; a claim names the command's issuer, since the queue's own event names
+// no one. The event log is rebuilt to widen its CHECK, no row changed.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

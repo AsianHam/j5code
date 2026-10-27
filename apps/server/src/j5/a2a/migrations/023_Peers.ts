@@ -1,13 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// A peer is another server this one exchanges agent messages with. One row per
-// peer environment: the origin this server reaches it at, the credential that
-// server issued to us, and when that credential expires. The session we issued
-// to the peer lives in the auth database like any other session; removing a
-// peer revokes it there.
-// TODO(#282): the credential is stored in clear text, like the session tokens
-// beside it; moving it into ServerSecretStore is tracked separately.
+// A peer is another server this one exchanges agent messages with: its origin, the credential it
+// issued us, and when that expires. The session we issued it lives in the auth database, and
+// removing the peer revokes it there.
+// TODO(Jacksondr5/j5code#282): the credential is stored in clear text, like the session tokens.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
