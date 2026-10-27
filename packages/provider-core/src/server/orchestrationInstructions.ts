@@ -1,6 +1,9 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 
-import { J5_ORCHESTRATION_SECTIONS } from "../j5/orchestrationInstructions.ts";
+import {
+  J5_ACP_MCP_FALLBACK_INSTRUCTIONS,
+  J5_ORCHESTRATION_SECTIONS,
+} from "../j5/orchestrationInstructions.ts";
 
 // J5: every consumer of these sections, and of the instructions joined from them below, gets J5's
 // text (FORK.md case 8). Upstream's literal is removed, so an upstream edit to it conflicts here;
@@ -14,19 +17,14 @@ ${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
-## J5 Code collaborative browser
+## J5 Code browser
 
-You are running inside J5 Code. The \`t3-code\` MCP server is the product-native collaborative browser shared with the user. When it exposes \`preview_*\` tools, prefer those tools for browser navigation, inspection, interaction, screenshots, and recordings.
-
-For browser work, first call \`preview_status\`. If no automation-capable preview is attached, call \`preview_open\` before concluding that the browser is unavailable. Then use \`preview_navigate\`, \`preview_snapshot\`, and the focused interaction tools. Prefer snapshot-provided locators over coordinates.
-
-\`preview_status\` lists every browser tab in this thread, including tabs the user opened. When the user asks about "this page" or a page they have open, read their tab: pass its \`tabId\` to \`preview_snapshot\` or \`preview_wait_for\`, or omit \`tabId\` when you have no tab of your own. You may act on the user's tab, including \`preview_evaluate\`, only while its owner is \`unclaimed\`; while it is \`human\`, the user is driving, so read it with \`preview_snapshot\` or open your own tab. To use a browser profile (a set of saved logins), pass \`profileId\` from \`preview_status\` profiles to \`preview_open\`.
-
-Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Inspect a failed preview call and retry with corrected arguments when the error is actionable. Use another browser system when:
-- the J5 preview tools are absent, or \`preview_open\` returns an explicit unsupported/unavailable error;
-- the user asks for another browser, or invokes a skill or documented repository workflow that names one; follow that workflow and report any prerequisite it is missing;
-- preview calls on an open tab have failed twice on the same step (timeouts, \`chrome-error://\` pages, a different client answering). Quote the raw error and switch without asking the user which browser to use.
+When browser work was asked, \`preview_*\` is the browser you share with the user: \`preview_status\` first, then \`preview_open\` if no tab can be automated. Prefer snapshot locators over coordinates. Switch browsers only if the tools are absent or \`preview_open\` says unsupported, the user asks, or two preview calls fail on one step. Then quote the error and switch.
 `;
+
+// ACP only: some ACP agents accept the injected MCP server but never expose
+// its tools, so they need the terminal transport other harnesses never use.
+const T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS = J5_ACP_MCP_FALLBACK_INSTRUCTIONS;
 
 const T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## J5 Code interaction mode: Default
 
@@ -41,10 +39,7 @@ export interface T3AcpInstructionState {
   readonly hasT3Mcp: boolean;
 }
 
-/**
- * ACP has no system/developer prompt field, so send T3-owned context in the
- * first user prompt and whenever the available tools or interaction mode change.
- */
+/** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
 export function t3AcpPromptWithInstructions(input: {
   readonly prompt: string;
   readonly state: T3AcpInstructionState;
@@ -63,15 +58,16 @@ export function t3AcpPromptWithInstructions(input: {
       ? T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS
       : T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS,
     ...(input.state.hasT3Mcp
-      ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(), T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim()]
+      ? [
+          T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
+          T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
+          T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
+        ]
       : []),
   ];
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
 
-/**
- * Keep the wrapper explicit so it cannot be mistaken for text authored by the user.
- */
 function prependT3OrchestrationInstructions(prompt: string): string {
   return `<t3_code_orchestration_instructions>${T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
 }

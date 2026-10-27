@@ -126,7 +126,11 @@ export class A2ADeliveryHooks extends Context.Service<A2ADeliveryHooks, A2ADeliv
 
 export const noopHooks = Layer.succeed(
   A2ADeliveryHooks,
-  A2ADeliveryHooks.of({ afterTransportSuccess: () => Effect.void }),
+  A2ADeliveryHooks.of({
+    afterTransportSuccess: Effect.fn("A2ADeliveryHooks.afterTransportSuccess")(function () {
+      return Effect.void;
+    }),
+  }),
 );
 
 export interface A2ADeliveryWorkerShape {
@@ -1046,27 +1050,37 @@ const makeLayer = (daemon: boolean) =>
       return A2ADeliveryWorker.of({
         // Each kind of row under the permit its receipts take, side by side, so a
         // stored row is cancelled at once while a slow direct attempt holds the drain.
-        cancelParticipantDeliveries: (participantId) =>
-          Effect.all(
-            [
-              drainPermit.withPermit(cancelDirectDeliveries(participantId)),
-              storePermit.withPermit(cancelStoredDeliveries(participantId)),
-            ],
-            { concurrency: "unbounded", discard: true },
-          ).pipe(Effect.mapError(workerError("cancel participant deliveries"))),
+        cancelParticipantDeliveries: Effect.fn("A2ADeliveryWorker.cancelParticipantDeliveries")(
+          function (participantId) {
+            return Effect.all(
+              [
+                drainPermit.withPermit(cancelDirectDeliveries(participantId)),
+                storePermit.withPermit(cancelStoredDeliveries(participantId)),
+              ],
+              { concurrency: "unbounded", discard: true },
+            ).pipe(Effect.mapError(workerError("cancel participant deliveries")));
+          },
+        ),
         notify: Queue.offer(wakeups, undefined).pipe(Effect.asVoid),
         wake,
-        handOutToPeer: (environmentId) =>
-          storePermit
+        handOutToPeer: Effect.fn("A2ADeliveryWorker.handOutToPeer")(function (environmentId) {
+          return storePermit
             .withPermit(handOutToPeer(environmentId))
-            .pipe(Effect.mapError(workerError("hand out to a polling peer"))),
-        acknowledgePeer: (environmentId, acks) =>
-          storePermit
-            .withPermit(acknowledgePeer(environmentId, acks))
-            .pipe(Effect.mapError(workerError("record a polling peer's acknowledgements"))),
+            .pipe(Effect.mapError(workerError("hand out to a polling peer")));
+        }),
+        acknowledgePeer: Effect.fn("A2ADeliveryWorker.acknowledgePeer")(
+          function (environmentId, acks) {
+            return storePermit
+              .withPermit(acknowledgePeer(environmentId, acks))
+              .pipe(Effect.mapError(workerError("record a polling peer's acknowledgements")));
+          },
+        ),
         runOnce,
-        peerAttemptInFlight: (projectId, messageId) =>
-          Effect.sync(() => peerAttemptsInFlight.has(`${projectId} ${messageId}`)),
+        peerAttemptInFlight: Effect.fn("A2ADeliveryWorker.peerAttemptInFlight")(
+          function (projectId, messageId) {
+            return Effect.sync(() => peerAttemptsInFlight.has(`${projectId} ${messageId}`));
+          },
+        ),
         drain,
         listAlarms: sql<{
           readonly project_id: string;

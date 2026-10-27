@@ -679,10 +679,9 @@ it.effect("rejects first and last step movement and stale back or completion req
 it.effect("serializes concurrent starts and advancement without double-advancing", () =>
   Effect.gen(function* () {
     const { store, workspaceRoot } = yield* makeFixture;
-    const starts = yield* Effect.all(
-      ["start-1", "start-2"].map((key) =>
-        store.start(owner, workspaceRoot, "demo", key).pipe(Effect.result),
-      ),
+    const starts = yield* Effect.forEach(
+      ["start-1", "start-2"],
+      (key) => store.start(owner, workspaceRoot, "demo", key).pipe(Effect.result),
       { concurrency: "unbounded" },
     );
     assert.equal(starts.filter(Result.isSuccess).length, 1);
@@ -691,8 +690,9 @@ it.effect("serializes concurrent starts and advancement without double-advancing
       ["already_active"],
     );
     const run = yield* store.current(owner);
-    const results = yield* Effect.all(
-      ["next-1", "next-2"].map((key) =>
+    const results = yield* Effect.forEach(
+      ["next-1", "next-2"],
+      (key) =>
         store
           .mutate(owner, {
             operation: "next",
@@ -701,7 +701,6 @@ it.effect("serializes concurrent starts and advancement without double-advancing
             client_request_id: key,
           })
           .pipe(Effect.result),
-      ),
       { concurrency: "unbounded" },
     );
     assert.equal(results.filter(Result.isSuccess).length, 1);
@@ -738,8 +737,9 @@ it.effect("serializes concurrent back and completion requests", () =>
         expectedStepId: "research",
         client_request_id: `advance-${operation}`,
       });
-      const results = yield* Effect.all(
-        ["one", "two"].map((key) =>
+      const results = yield* Effect.forEach(
+        ["one", "two"],
+        (key) =>
           store
             .mutate(owner, {
               operation,
@@ -748,7 +748,6 @@ it.effect("serializes concurrent back and completion requests", () =>
               client_request_id: `${operation}-${key}`,
             })
             .pipe(Effect.result),
-        ),
         { concurrency: "unbounded" },
       );
       assert.equal(results.filter(Result.isSuccess).length, 1);

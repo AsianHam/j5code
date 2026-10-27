@@ -65,7 +65,9 @@ export const layer: Layer.Layer<RuntimePolicyV2> = Layer.effect(
   Effect.gen(function* () {
     const resolve = yield* resolveThreadPolicy;
     return RuntimePolicyV2.of({
-      resolve: (input) => resolve({ thread: input.thread, cwd: input.thread.worktreePath }),
+      resolve: Effect.fn("RuntimePolicyV2.resolve")(function (input) {
+        return resolve({ thread: input.thread, cwd: input.thread.worktreePath });
+      }),
     });
   }),
 );

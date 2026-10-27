@@ -95,6 +95,7 @@ import {
   type J5SpawnAgentInput,
   type J5StopAgentInput,
 } from "./tools.ts";
+import { noDocumentTextLayer } from "../../test-support/documentText.ts";
 
 const decodeJ5ListParticipantsResult = Schema.decodeUnknownEffect(J5ListParticipantsResult);
 const hasKey = (value: unknown, key: string): boolean => {
@@ -183,6 +184,7 @@ const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "j5-mcp-handlers-",
 }).pipe(Layer.provide(NodeServices.layer));
 const unusedLifecycleDependencies = Layer.mergeAll(
+  noDocumentTextLayer,
   Layer.mock(A2AHomeRegistrar)({
     getHomeForThread: (threadId) => Effect.fail(new A2AHomeNotFoundError({ threadId })),
   }),
@@ -430,6 +432,7 @@ it.effect(
         acceptsUrgency: participant.kind === "human",
       });
       const dependencies = Layer.mergeAll(
+        noDocumentTextLayer,
         Layer.succeed(
           A2ASendService,
           A2ASendService.of({
@@ -1276,6 +1279,7 @@ it.effect("preflights home before creation and records facts before the one stab
         }),
     });
     const dependencies = Layer.mergeAll(
+      noDocumentTextLayer,
       sendService,
       homeService,
       ledger,
@@ -1437,6 +1441,7 @@ it.effect("refuses spawn before thread creation when the caller is a Subagent", 
   Effect.gen(function* () {
     const dispatches = yield* Ref.make(0);
     const dependencies = Layer.mergeAll(
+      noDocumentTextLayer,
       Layer.mock(A2AHomeRegistrar)({
         getHomeForThread: (threadId) => Effect.fail(new A2AHomeNotFoundError({ threadId })),
       }),
@@ -1573,6 +1578,7 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
       acceptsUrgency: false,
     } satisfies ParticipantDirectoryRow;
     const dependencies = Layer.mergeAll(
+      noDocumentTextLayer,
       Layer.mock(A2ASendService)({ listParticipants: () => Effect.succeed([callerRow]) }),
       Layer.mock(A2AHomeRegistrar)({
         getHomeForThread: () =>
@@ -2174,6 +2180,7 @@ it.effect("routes crew proposals through a captain that is not itself a crew mem
       reportedAt: null,
     });
     const dependencies = Layer.mergeAll(
+      noDocumentTextLayer,
       Layer.mock(A2ASendService)({ listParticipants: () => Effect.succeed([callerRow]) }),
       Layer.mock(A2AHomeRegistrar)({
         getHomeForThread: () =>
@@ -2500,11 +2507,7 @@ it.effect(
                   },
                 ]).pipe(
                   // The limit upstream re-checks under the target's lock rides with the Stop.
-                  Effect.andThen(
-                    Effect.gen(function* () {
-                      return yield* DispatchModeLimit;
-                    }),
-                  ),
+                  Effect.andThen(DispatchModeLimit),
                   Effect.tap((limit) =>
                     Ref.update(stopLimits, (items) => [...items, limit?.runtimeMode]),
                   ),

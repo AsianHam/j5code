@@ -381,14 +381,15 @@ export const layer: Layer.Layer<
     return ClientReadsService.of({
       participantIdentities,
       openInboxCount,
-      humanInbox: (input) =>
-        inbox
+      humanInbox: Effect.fn("ClientReadsService.humanInbox")(function (input) {
+        return inbox
           .resolvePersonId(input.personId)
           .pipe(
             Effect.flatMap((personId) =>
               inbox.list(personId, input.status).pipe(Effect.map((items) => ({ personId, items }))),
             ),
-          ),
+          );
+      }),
       crewProposals: proposals.listOpen().pipe(
         Effect.flatMap((open) => Effect.forEach(open, projectProposal)),
         Effect.map((listed) => ({ proposals: listed })),

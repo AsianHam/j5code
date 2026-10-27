@@ -576,75 +576,108 @@ export const layerGatedEnvironmentAuth = Layer.effect(
 
     return EnvironmentAuth.EnvironmentAuth.of({
       ...inner,
-      createBrowserSession: (credential, requestMetadata, previousSessionToken) =>
-        previousSession(credential, previousSessionToken).pipe(
-          Effect.flatMap(({ decision, replaced }) =>
-            decision === "refuse"
-              ? // Refused before upstream is called, so the link is not used up.
-                Effect.fail(
-                  new EnvironmentAuth.ServerAuthInvalidCredentialError({
-                    diagnostic: PAIRED_AS_SOMEONE_ELSE,
-                  }),
-                )
-              : inner.createBrowserSession(credential, requestMetadata, previousSessionToken).pipe(
-                  Effect.tap(() =>
-                    replaced === undefined
-                      ? Effect.void
-                      : access.unbindSession(replaced).pipe(
-                          // The browser is paired; the old session is revoked upstream either
-                          // way. This is logged so a binding left behind can be found.
-                          Effect.catch((cause) =>
-                            Effect.logError(
-                              "J5 access gate could not cut a replaced session loose",
-                              {
-                                cause,
-                              },
+      createBrowserSession: Effect.fn("EnvironmentAuth.EnvironmentAuth.createBrowserSession")(
+        function (credential, requestMetadata, previousSessionToken) {
+          return previousSession(credential, previousSessionToken).pipe(
+            Effect.flatMap(({ decision, replaced }) =>
+              decision === "refuse"
+                ? // Refused before upstream is called, so the link is not used up.
+                  Effect.fail(
+                    new EnvironmentAuth.ServerAuthInvalidCredentialError({
+                      diagnostic: PAIRED_AS_SOMEONE_ELSE,
+                    }),
+                  )
+                : inner
+                    .createBrowserSession(credential, requestMetadata, previousSessionToken)
+                    .pipe(
+                      Effect.tap(() =>
+                        replaced === undefined
+                          ? Effect.void
+                          : access.unbindSession(replaced).pipe(
+                              // The browser is paired; the old session is revoked upstream either
+                              // way. This is logged so a binding left behind can be found.
+                              Effect.catch((cause) =>
+                                Effect.logError(
+                                  "J5 access gate could not cut a replaced session loose",
+                                  {
+                                    cause,
+                                  },
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                  ),
-                ),
-          ),
-        ),
-      revokeSession: (sessionId) =>
-        unbound(access.unbindSession(sessionId), inner.revokeSession(sessionId)),
-      revokeOtherSessionsExcept: (sessionId) =>
-        unbound(access.unbindOtherSessions(sessionId), inner.revokeOtherSessionsExcept(sessionId)),
-      revokeClientSession: (currentSessionId, targetSessionId) =>
-        currentSessionId === targetSessionId
-          ? inner.revokeClientSession(currentSessionId, targetSessionId)
-          : unbound(
-              access.unbindSession(targetSessionId),
-              inner.revokeClientSession(currentSessionId, targetSessionId),
+                      ),
+                    ),
             ),
-      revokeOtherClientSessions: (currentSessionId) =>
-        unbound(
+          );
+        },
+      ),
+      revokeSession: Effect.fn("EnvironmentAuth.EnvironmentAuth.revokeSession")(
+        function (sessionId) {
+          return unbound(access.unbindSession(sessionId), inner.revokeSession(sessionId));
+        },
+      ),
+      revokeOtherSessionsExcept: Effect.fn(
+        "EnvironmentAuth.EnvironmentAuth.revokeOtherSessionsExcept",
+      )(function (sessionId) {
+        return unbound(
+          access.unbindOtherSessions(sessionId),
+          inner.revokeOtherSessionsExcept(sessionId),
+        );
+      }),
+      revokeClientSession: Effect.fn("EnvironmentAuth.EnvironmentAuth.revokeClientSession")(
+        function (currentSessionId, targetSessionId) {
+          return currentSessionId === targetSessionId
+            ? inner.revokeClientSession(currentSessionId, targetSessionId)
+            : unbound(
+                access.unbindSession(targetSessionId),
+                inner.revokeClientSession(currentSessionId, targetSessionId),
+              );
+        },
+      ),
+      revokeOtherClientSessions: Effect.fn(
+        "EnvironmentAuth.EnvironmentAuth.revokeOtherClientSessions",
+      )(function (currentSessionId) {
+        return unbound(
           access.unbindOtherSessions(currentSessionId),
           inner.revokeOtherClientSessions(currentSessionId),
-        ),
+        );
+      }),
       // An MCP client is approved by an Owner; one approved before an Owner was lowered or
       // removed is refused its session, and approved again, and one issued is recorded as its
       // approver's (`Access.issueMcpClient`). Upstream issues one only from an exchange
       // `McpApproval` gave the approval to.
-      issueMcpClientSession: (input) =>
-        Effect.serviceOption(McpExchangeApproval).pipe(
-          Effect.flatMap(
-            Option.match({
-              onNone: () => Effect.fail(new StaleMcpApprovalError({})),
-              onSome: (approval) =>
-                changes.issueMcpClient(approval, inner.issueMcpClientSession(input)),
-            }),
-          ),
-          Effect.mapError((cause) =>
-            isServerAuthInternalError(cause)
-              ? cause
-              : new EnvironmentAuth.ServerAuthSessionTokenIssueError({ cause }),
-          ),
-        ),
-      authenticateHttpRequest: (request) =>
-        inner.authenticateHttpRequest(request).pipe(Effect.flatMap((s) => gate(request, s))),
-      authenticateWebSocketUpgrade: (request) =>
-        inner.authenticateWebSocketUpgrade(request).pipe(Effect.flatMap((s) => gate(request, s))),
+      issueMcpClientSession: Effect.fn("EnvironmentAuth.EnvironmentAuth.issueMcpClientSession")(
+        function (input) {
+          return Effect.serviceOption(McpExchangeApproval).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.fail(new StaleMcpApprovalError({})),
+                onSome: (approval) =>
+                  changes.issueMcpClient(approval, inner.issueMcpClientSession(input)),
+              }),
+            ),
+            Effect.mapError((cause) =>
+              isServerAuthInternalError(cause)
+                ? cause
+                : new EnvironmentAuth.ServerAuthSessionTokenIssueError({ cause }),
+            ),
+          );
+        },
+      ),
+      authenticateHttpRequest: Effect.fn("EnvironmentAuth.EnvironmentAuth.authenticateHttpRequest")(
+        function (request) {
+          return inner
+            .authenticateHttpRequest(request)
+            .pipe(Effect.flatMap((s) => gate(request, s)));
+        },
+      ),
+      authenticateWebSocketUpgrade: Effect.fn(
+        "EnvironmentAuth.EnvironmentAuth.authenticateWebSocketUpgrade",
+      )(function (request, use) {
+        return inner
+          .authenticateWebSocketUpgrade(request, use)
+          .pipe(Effect.flatMap((s) => gate(request, s)));
+      }),
     });
   }),
 );
@@ -888,8 +921,9 @@ export const layerRpcAuthorization = (
                   Effect.flatMap((inFeed) =>
                     inFeed ? issueGuestProjectIconUrl(projectId) : Effect.succeed(null),
                   ),
-                  Effect.flatMap((link) =>
-                    link === null ? Effect.fail(notSharedError()) : Effect.succeed(link),
+                  Effect.filterOrFail(
+                    (link) => link !== null,
+                    () => notSharedError(),
                   ),
                 );
                 return inner(answer as unknown as typeof effect, options);

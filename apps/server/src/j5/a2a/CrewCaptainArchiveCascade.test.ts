@@ -292,6 +292,7 @@ const seatProjection = (
             {
               id: "message:seat",
               role: "user",
+              text: "Next step",
               createdBy: "user",
               updatedAt: DateTime.makeUnsafe(facts.userMessageAt),
             },

@@ -92,7 +92,7 @@ export function sharedMessageTypedText(
 }
 
 /**
- * A thread's messages for the composer's up-arrow recall, as its timeline shows them (#612), read
+ * A thread's messages for the composer's up-arrow recall, as its timeline shows them, read
  * as the key is pressed; see `recallableMessages`. `null` for a draft, which holds only what was
  * typed here.
  */
@@ -158,13 +158,10 @@ function observeMessages(seen: SeenMessages, entries: ReadonlyArray<MessageEntry
 }
 
 /**
- * A thread's timeline as a shared conversation shows it (Shared conversations AC16). Each
- * person's message the server records an author for is shown as typed, and the note it carried
- * to the agent becomes a notice just before it. An answer to the agent's question is shown as
- * given. A message whose author the server has not answered for yet is shown as this client's
- * person typed it, or held back for the moment until the answer comes, so no line meant for the
- * agent is drawn. Every other entry, and every entry of a thread only one person has ever been
- * able to write to, is returned as it came.
+ * Shared conversations AC16: an authored message is shown as typed, with its note to the agent as a
+ * notice just before it. A message whose author is not answered yet is shown as this client's
+ * person typed it, or held back until the answer comes, so no line meant for the agent is drawn.
+ * Other entries, and all of a thread only one person could write to, are returned as they came.
  */
 export function useSharedConversationEntries<Entry extends MessageEntry>(
   threadRef: ScopedThreadRef | null,
@@ -240,8 +237,7 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
     return { entries: out, pendingKey: pending.join("|") };
   })();
 
-  // A message waiting on its author is asked about once more; the server's change feed usually
-  // brings the answer first.
+  // oxlint-disable-next-line t3code/react-effect-budget -- asks once more about a message waiting on its author, in case the change feed is slow.
   useEffect(() => {
     if (shown.pendingKey !== "") refresh();
   }, [refresh, shown.pendingKey]);

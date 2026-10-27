@@ -5,12 +5,13 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { memo, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { shouldOpenMarkdownFileLinkInEditor } from "../../markdown-links";
 import type { markdownFileCopyPaths } from "../../markdownFileHostPath";
+import { documentIconColorForFileName } from "../../pierre-icons";
 import { ContextChip } from "../ContextChip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -326,6 +327,9 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenInBrowser,
     canOpenInPanel,
   });
+  // J5 (case 33): an artifact chip keeps its own colours, not the file type's accent.
+  const accent = artifact ? undefined : documentIconColorForFileName(iconPath);
+  const chipStyle = accent ? ({ "--context-chip-accent": accent } as CSSProperties) : undefined;
   const chipContent = artifact ? (
     <ArtifactFileChipContent label={label} />
   ) : (
@@ -345,6 +349,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                 MARKDOWN_FILE_LINK_CLASS_NAME,
                 artifact && ARTIFACT_FILE_LINK_CLASS_NAME,
               )}
+              style={chipStyle}
               data-artifact={artifact ? "" : undefined}
               data-markdown-copy={copyMarkdown}
               onClick={(event) => {
@@ -376,6 +381,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                 "select-text",
                 artifact && ARTIFACT_FILE_LINK_CLASS_NAME,
               )}
+              style={chipStyle}
               data-artifact={artifact ? "" : undefined}
               data-markdown-copy={copyMarkdown}
               onClick={handleContextMenu}

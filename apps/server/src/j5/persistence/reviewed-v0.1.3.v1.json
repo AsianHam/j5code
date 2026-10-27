@@ -1,0 +1,907 @@
+{
+  "sourceRef": "70d60e03a7a35c6fa131825bbfa05ec893e69912",
+  "targetRef": "d2c440312e5f39d59827ed466838a623516454d6",
+  "note": "Reviewed 2026-10-24/27 for J5's advance from 70d60e03a7 to upstream stable v0.1.3. Migrations 063-069 are appended above the high-water mark (063 drops six V1 projection tables J5 never reads; 069 adds the message full-text index). Migrations 027, 031, 037, 044, 046, 053, 056, 058 and 060, and two of 055's OrchestrationV2 helper files, changed comments only (upstream's comment pruning, pingdotgg/t3code#21514); their SQL is identical. Migration 050 now imports a frozen copy of its pull-request key helper (Migrations/legacyThreadPullRequestKey.ts, #23992) instead of @t3tools/shared, so the live source-control refactor cannot change what it computes; a recorded 050 never reruns, and only a fresh database executes the frozen copy. No migration was renumbered or removed.",
+  "sourceMigrations": [
+    {
+      "id": 1,
+      "name": "OrchestrationEvents",
+      "path": "apps/server/src/persistence/Migrations/001_OrchestrationEvents.ts",
+      "sha256": "aa225c01eb205ed475b473b04e230da564af8fd32324d9e803f52bb9df26330a"
+    },
+    {
+      "id": 2,
+      "name": "OrchestrationCommandReceipts",
+      "path": "apps/server/src/persistence/Migrations/002_OrchestrationCommandReceipts.ts",
+      "sha256": "f178d1d325229e8423d416d14ad1bc85766704b539baa30a28f17350dc1f02ee"
+    },
+    {
+      "id": 3,
+      "name": "CheckpointDiffBlobs",
+      "path": "apps/server/src/persistence/Migrations/003_CheckpointDiffBlobs.ts",
+      "sha256": "415f5e22bae6eb552edf4454a9fd1ae8be3f8e9ba4fa0305d675d7f925b6591d"
+    },
+    {
+      "id": 4,
+      "name": "ProviderSessionRuntime",
+      "path": "apps/server/src/persistence/Migrations/004_ProviderSessionRuntime.ts",
+      "sha256": "50314dde817ac5fb6df98b994cd23cad71f99f320e45834030c006b82d2fc56a"
+    },
+    {
+      "id": 5,
+      "name": "Projections",
+      "path": "apps/server/src/persistence/Migrations/005_Projections.ts",
+      "sha256": "0481e15f8c3c5bfda781c49254adab94a76505b651b78ce688870677c9e7a668"
+    },
+    {
+      "id": 6,
+      "name": "ProjectionThreadSessionRuntimeModeColumns",
+      "path": "apps/server/src/persistence/Migrations/006_ProjectionThreadSessionRuntimeModeColumns.ts",
+      "sha256": "99e38d1e7256163363ec05a12b9da628da9c9adfd2b6017c70c7d96c06595c06"
+    },
+    {
+      "id": 7,
+      "name": "ProjectionThreadMessageAttachments",
+      "path": "apps/server/src/persistence/Migrations/007_ProjectionThreadMessageAttachments.ts",
+      "sha256": "8e5d73873c2a94148324ca8f7596fc1275b9579dc3aa450dabb40fa19dfe3283"
+    },
+    {
+      "id": 8,
+      "name": "ProjectionThreadActivitySequence",
+      "path": "apps/server/src/persistence/Migrations/008_ProjectionThreadActivitySequence.ts",
+      "sha256": "96ca6659302b9e540f170e144a8b04fa479d55d2da720d71cf600f191cb7ca40"
+    },
+    {
+      "id": 9,
+      "name": "ProviderSessionRuntimeMode",
+      "path": "apps/server/src/persistence/Migrations/009_ProviderSessionRuntimeMode.ts",
+      "sha256": "5c030fbfc48f8421c8dab0cca4d7f3881d8acda0e1284ea044e58e61d4539872"
+    },
+    {
+      "id": 10,
+      "name": "ProjectionThreadsRuntimeMode",
+      "path": "apps/server/src/persistence/Migrations/010_ProjectionThreadsRuntimeMode.ts",
+      "sha256": "12e22e580587a189805d023f22c783875bfd518dec761498204debd1bd0a9a0f"
+    },
+    {
+      "id": 11,
+      "name": "OrchestrationThreadCreatedRuntimeMode",
+      "path": "apps/server/src/persistence/Migrations/011_OrchestrationThreadCreatedRuntimeMode.ts",
+      "sha256": "4b538c411942f8b87315a5175a69122eeaec87fc54901a58b2cefcbcd7484647"
+    },
+    {
+      "id": 12,
+      "name": "ProjectionThreadsInteractionMode",
+      "path": "apps/server/src/persistence/Migrations/012_ProjectionThreadsInteractionMode.ts",
+      "sha256": "aaddb34da8566adb41d6d95c9d70a39552ef09fbc3ee28fcfbc95088aee69c9d"
+    },
+    {
+      "id": 13,
+      "name": "ProjectionThreadProposedPlans",
+      "path": "apps/server/src/persistence/Migrations/013_ProjectionThreadProposedPlans.ts",
+      "sha256": "28ef4061f620b5ed4a910b93cfb0b480a44c1beeea6e4a932e11bd1369d20a74"
+    },
+    {
+      "id": 14,
+      "name": "ProjectionThreadProposedPlanImplementation",
+      "path": "apps/server/src/persistence/Migrations/014_ProjectionThreadProposedPlanImplementation.ts",
+      "sha256": "1d9f32d83654f55de8b6fb7648d03b254e009ab179ce25225347f80d1e2ccdf5"
+    },
+    {
+      "id": 15,
+      "name": "ProjectionTurnsSourceProposedPlan",
+      "path": "apps/server/src/persistence/Migrations/015_ProjectionTurnsSourceProposedPlan.ts",
+      "sha256": "076af803a18ab4831b114c20e1176f74b3e830701aa24535dddc7b796d6bafd3"
+    },
+    {
+      "id": 16,
+      "name": "CanonicalizeModelSelections",
+      "path": "apps/server/src/persistence/Migrations/016_CanonicalizeModelSelections.ts",
+      "sha256": "4a0318c843c382933a3ad9de5958b0388115cc1ac09efa60f82d50b6bb7618f3"
+    },
+    {
+      "id": 17,
+      "name": "ProjectionThreadsArchivedAt",
+      "path": "apps/server/src/persistence/Migrations/017_ProjectionThreadsArchivedAt.ts",
+      "sha256": "de8143887e32a54b171c246426bf2bba0cabe9ec489c0d4d7683577cc281c22d"
+    },
+    {
+      "id": 18,
+      "name": "ProjectionThreadsArchivedAtIndex",
+      "path": "apps/server/src/persistence/Migrations/018_ProjectionThreadsArchivedAtIndex.ts",
+      "sha256": "762a1dd2d1d48114586c6dc00d10c8e8d5ede71bb6e8af9364d2a1bae5c88e08"
+    },
+    {
+      "id": 19,
+      "name": "ProjectionSnapshotLookupIndexes",
+      "path": "apps/server/src/persistence/Migrations/019_ProjectionSnapshotLookupIndexes.ts",
+      "sha256": "1d978ca2748a7d10dd752e889e3fdb461abaedb0c1333c5fe1a04bcc79e37878"
+    },
+    {
+      "id": 20,
+      "name": "AuthAccessManagement",
+      "path": "apps/server/src/persistence/Migrations/020_AuthAccessManagement.ts",
+      "sha256": "e7f75eab7041b3c16ef6bcc6498504a20f909a8576d046cd28594927e1052c6e"
+    },
+    {
+      "id": 21,
+      "name": "AuthSessionClientMetadata",
+      "path": "apps/server/src/persistence/Migrations/021_AuthSessionClientMetadata.ts",
+      "sha256": "1b18ae36ea15e4038e9e6bd3b2444e7509fd166ce9c215e79b117a17079b3615"
+    },
+    {
+      "id": 22,
+      "name": "AuthSessionLastConnectedAt",
+      "path": "apps/server/src/persistence/Migrations/022_AuthSessionLastConnectedAt.ts",
+      "sha256": "f9ba82833dbb18e372d1a5dc16fe1b0dbbc8a93affb258eb9da40762bea85a88"
+    },
+    {
+      "id": 23,
+      "name": "ProjectionThreadShellSummary",
+      "path": "apps/server/src/persistence/Migrations/023_ProjectionThreadShellSummary.ts",
+      "sha256": "43c383aa768853d0ca414c46812a19191c16819c5b50c464e19d648d0d43dc7a"
+    },
+    {
+      "id": 24,
+      "name": "BackfillProjectionThreadShellSummary",
+      "path": "apps/server/src/persistence/Migrations/024_BackfillProjectionThreadShellSummary.ts",
+      "sha256": "a2b08fda4c34067def9e3aaff39b3f77d035ef832bab65994943dcd22a8270cd"
+    },
+    {
+      "id": 25,
+      "name": "CleanupInvalidProjectionPendingApprovals",
+      "path": "apps/server/src/persistence/Migrations/025_CleanupInvalidProjectionPendingApprovals.ts",
+      "sha256": "62be9faa4eaa578bfb50ed2664fed33249ab20f5d62afe36fceea42bf18ac6f6"
+    },
+    {
+      "id": 26,
+      "name": "CanonicalizeModelSelectionOptions",
+      "path": "apps/server/src/persistence/Migrations/026_CanonicalizeModelSelectionOptions.ts",
+      "sha256": "876fc627879ff217ecee6b0bd38b84e37e8bfbfb879dcd6f1cb74dd3d3c2a8ab"
+    },
+    {
+      "id": 27,
+      "name": "ProviderSessionRuntimeInstanceId",
+      "path": "apps/server/src/persistence/Migrations/027_ProviderSessionRuntimeInstanceId.ts",
+      "sha256": "c31ee132a72f747da6948da9e5738d62fde5baac4ba6d5168f688c7300d99828"
+    },
+    {
+      "id": 28,
+      "name": "ProjectionThreadSessionInstanceId",
+      "path": "apps/server/src/persistence/Migrations/028_ProjectionThreadSessionInstanceId.ts",
+      "sha256": "e2e2e58e00a5271044ec7b94ef3bcdab330cb6b37830c8eb72942e735dfb0226"
+    },
+    {
+      "id": 29,
+      "name": "ProjectionThreadDetailOrderingIndexes",
+      "path": "apps/server/src/persistence/Migrations/029_ProjectionThreadDetailOrderingIndexes.ts",
+      "sha256": "17f5960e7cb335cda677c13819958c51ca20dea4a06dd92a23b877ee82f95e50"
+    },
+    {
+      "id": 30,
+      "name": "ProjectionThreadShellArchiveIndexes",
+      "path": "apps/server/src/persistence/Migrations/030_ProjectionThreadShellArchiveIndexes.ts",
+      "sha256": "73cac2da2cd4f075a654603a33f569ddd3f636d43013761be6bcde4446bf9420"
+    },
+    {
+      "id": 31,
+      "name": "AuthAuthorizationScopes",
+      "path": "apps/server/src/persistence/Migrations/031_AuthAuthorizationScopes.ts",
+      "sha256": "713a3cf006f5537c69e4adc9d1fd1415c7465be7ca3e8dec5b8b189cf76dfce1"
+    },
+    {
+      "id": 32,
+      "name": "AuthPairingProofKeyThumbprint",
+      "path": "apps/server/src/persistence/Migrations/032_AuthPairingProofKeyThumbprint.ts",
+      "sha256": "7d57cd71d51ac792a367454e397c9727c28cd2a49031306f6e16d812900ccbca"
+    },
+    {
+      "id": 33,
+      "name": "ProjectionThreadsSettled",
+      "path": "apps/server/src/persistence/Migrations/033_ProjectionThreadsSettled.ts",
+      "sha256": "6b8fe1e3279742984049324846fec89aa13f3311356dcaff0a2d50505ecba8ec"
+    },
+    {
+      "id": 34,
+      "name": "ProjectionThreadsSnoozed",
+      "path": "apps/server/src/persistence/Migrations/034_ProjectionThreadsSnoozed.ts",
+      "sha256": "faa08abfa76ff62b668bd1c9ad4e9d22e5c026bc32d0071e4ae02763988d644b"
+    },
+    {
+      "id": 35,
+      "name": "ProjectionThreadTitleRegeneration",
+      "path": "apps/server/src/persistence/Migrations/035_ProjectionThreadTitleRegeneration.ts",
+      "sha256": "df6c7cde68cb4b97936d38147cc007cf8df5ff44ad012133c045cf71ebee6a6a"
+    },
+    {
+      "id": 36,
+      "name": "ProjectionThreadsPinned",
+      "path": "apps/server/src/persistence/Migrations/036_ProjectionThreadsPinned.ts",
+      "sha256": "0470ce6f46dd4f0a78e9ca24a15e75810e629c5e79ea57f5860139cc61382555"
+    },
+    {
+      "id": 37,
+      "name": "ProjectionTurnsKeysetIndex",
+      "path": "apps/server/src/persistence/Migrations/037_ProjectionTurnsKeysetIndex.ts",
+      "sha256": "7f10e757adf75b2e18adc73a26a63de682027c897f9eaa73bbc5ac9f362748f3"
+    },
+    {
+      "id": 38,
+      "name": "ProjectionThreadsPinOrderKey",
+      "path": "apps/server/src/persistence/Migrations/038_ProjectionThreadsPinOrderKey.ts",
+      "sha256": "93189f7a875ed9699980cf03d8c1621f57ba5802445545b72d282ab472529cd4"
+    },
+    {
+      "id": 39,
+      "name": "ProjectionProjectsDefaultThreadEnvMode",
+      "path": "apps/server/src/persistence/Migrations/039_ProjectionProjectsDefaultThreadEnvMode.ts",
+      "sha256": "b5b645eafd93898d5d88f51b151da1c4e9c6ca6dfa48ad7f0eae037085c97c43"
+    },
+    {
+      "id": 40,
+      "name": "ProjectionProjectFaviconPath",
+      "path": "apps/server/src/persistence/Migrations/040_ProjectionProjectFaviconPath.ts",
+      "sha256": "ea42d11d4e1cdcb291e17009a17ccc0b78ad5dba65b6c86ba81bf61fdf96941e"
+    },
+    {
+      "id": 41,
+      "name": "AuthSessionClientConnection",
+      "path": "apps/server/src/persistence/Migrations/041_AuthSessionClientConnection.ts",
+      "sha256": "7819c6962d564750b655212e0b60be7785be54e1e67fb9cd0f065f49cd25d409"
+    },
+    {
+      "id": 42,
+      "name": "ProjectionThreadLinkedPullRequest",
+      "path": "apps/server/src/persistence/Migrations/042_ProjectionThreadLinkedPullRequest.ts",
+      "sha256": "41a329f0ce4d0f83974cf8887b5d7537a21d20114e1a6f66e69fc2d9a8cb7cce"
+    },
+    {
+      "id": 43,
+      "name": "ProjectionThreadsUnsettledAt",
+      "path": "apps/server/src/persistence/Migrations/043_ProjectionThreadsUnsettledAt.ts",
+      "sha256": "0aab73864a1b2c518b0eb069d6836202e6aad98b85423a009de62c54c3fd2f15"
+    },
+    {
+      "id": 44,
+      "name": "ClearAutomaticProjectModelDefaults",
+      "path": "apps/server/src/persistence/Migrations/044_ClearAutomaticProjectModelDefaults.ts",
+      "sha256": "e80307260109a2689a355efb9b6ee510ce73b6a29ac36b6e940bb2a7e5117722"
+    },
+    {
+      "id": 45,
+      "name": "ProjectionProjectsAutoPull",
+      "path": "apps/server/src/persistence/Migrations/045_ProjectionProjectsAutoPull.ts",
+      "sha256": "185bd8d00e14dd0f516cab070dadc932d99257476081017a3ede965f218d0e7b"
+    },
+    {
+      "id": 46,
+      "name": "RepairAutomaticSettlementTimestamps",
+      "path": "apps/server/src/persistence/Migrations/046_RepairAutomaticSettlementTimestamps.ts",
+      "sha256": "82c705e2d6dc9112aab8288fb6d23437729cae6e58b423981692456e9b1a336f"
+    },
+    {
+      "id": 47,
+      "name": "ProjectionProjectIcon",
+      "path": "apps/server/src/persistence/Migrations/047_ProjectionProjectIcon.ts",
+      "sha256": "5e4c1cb47fc2262d58aa0fa665a516e0c2162365ebe9faa223326e773d4a36ba"
+    },
+    {
+      "id": 48,
+      "name": "ProjectionThreadBranchPullRequest",
+      "path": "apps/server/src/persistence/Migrations/048_ProjectionThreadBranchPullRequest.ts",
+      "sha256": "0363078d9a7b2ed7abaf802571dafce90d3abcc15fa8f9fc04b8bdb3100d74fe"
+    },
+    {
+      "id": 49,
+      "name": "ProjectionThreadsActiveOrderKey",
+      "path": "apps/server/src/persistence/Migrations/049_ProjectionThreadsActiveOrderKey.ts",
+      "sha256": "59e0256214bb60c17168cd9be01ea6b50750aeb2475c46319893888635e938f1"
+    },
+    {
+      "id": 50,
+      "name": "ProjectionThreadPullRequests",
+      "path": "apps/server/src/persistence/Migrations/050_ProjectionThreadPullRequests.ts",
+      "sha256": "e105d1c2056551950a24a2915c52c55e131161232909875b342ef37846fba41e",
+      "dependencies": [
+        {
+          "path": "packages/shared/src/changeRequestUrl.ts",
+          "sha256": "d8f96175f6e85043a8f15b749571743e39cdf51714adf5c27b590834e7722661"
+        },
+        {
+          "path": "packages/shared/src/sourceControl.ts",
+          "sha256": "12f9d932de9cdfe9ce9f2385292009909bc00ab599dc6e86343c24e37494af96"
+        },
+        {
+          "path": "packages/shared/src/threadPullRequests.ts",
+          "sha256": "51f784eb7c620309acbf7a2d93fbedadf555509eb88623f78d3f5d3c0b26ebb9"
+        }
+      ]
+    },
+    {
+      "id": 51,
+      "name": "ProjectionThreadMessageContext",
+      "path": "apps/server/src/persistence/Migrations/051_ProjectionThreadMessageContext.ts",
+      "sha256": "9fc9d0def90a4666987ad93ccaf71d8d409ccdaf006bc20dedac7bb68f152038"
+    },
+    {
+      "id": 52,
+      "name": "ProjectionThreadTitleState",
+      "path": "apps/server/src/persistence/Migrations/052_ProjectionThreadTitleState.ts",
+      "sha256": "244b593bf245d6efe72626d0e00054d56e1b2ead9230285d65b702db37112cae"
+    },
+    {
+      "id": 53,
+      "name": "PullRequestFilesViewed",
+      "path": "apps/server/src/persistence/Migrations/053_PullRequestFilesViewed.ts",
+      "sha256": "b6c75ef7ab4b4c1dba1646df6e7a49a74e65f702a13f510a5f8a045a70df2485"
+    },
+    {
+      "id": 54,
+      "name": "ProjectionThreadsAutoSettleDisabledAt",
+      "path": "apps/server/src/persistence/Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts",
+      "sha256": "319eff3863637e8bc0410e8d1155e75d3e9128b4a3902aabcc15651e1cbd833c"
+    },
+    {
+      "id": 55,
+      "name": "OrchestrationV2",
+      "path": "apps/server/src/persistence/Migrations/055_OrchestrationV2.ts",
+      "sha256": "dc233da2cb27cfc538009066845bd77aeaa3317122c3365530c62b883674fd4e",
+      "dependencies": [
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ApplicationEventSequenceIndexes.ts",
+          "sha256": "2a0201e505ad468d0a2cbfc5860725d1b9ded91e1d0f4e275cdb106b26d5dcd9"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ApplicationEventSource.ts",
+          "sha256": "dfe597889b0e45c9efd11f4c61361c660abf4982f6689691782b9cd8ad4e0e86"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/EffectCancellation.ts",
+          "sha256": "d73145d2b0fe4907074cfc13cdfdcc319efd17a4440d2649897fc816d30f8204"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/Foundation.ts",
+          "sha256": "c3f68a5c4b305ffe6b0c713764142bc46bcd0e7def3f71c38fb2664fa416490e"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/LegacyV1ImportState.ts",
+          "sha256": "c2203e889f42da49d3ef3fdbb9ae496d7845f22db62a92cbc52fc8882de058de"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ProviderSessionBindings.ts",
+          "sha256": "d3c5034eb8c65439a7add498961544f0331a19fb238b1e45e21c74cc5737df93"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/RecoveryIndexes.ts",
+          "sha256": "0954303e99cbab38b0647b262732073ae13f0526ffa4c59f070e02d245f34482"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ScheduledTasks.ts",
+          "sha256": "d67ca2d3167bafd4ad9bb0917a2fe89a7d0ec42355a33992c7b99ba48ebf9771"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ShellIndexes.ts",
+          "sha256": "88344a427cf5591ed6431f2ad5542f8ef111fccc61a365412968af36fe6eea82"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/Subagents.ts",
+          "sha256": "bdb4c2396affa5edadddbdbcb9a5bddd5e8cd346ebaa0cbbb89f182d95846ef7"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ThreadLaunchWorkflows.ts",
+          "sha256": "4b1fe33c74cd5d674f70d762655b3eafa9e26cb31d6b1480d4e6968734891bc2"
+        }
+      ]
+    },
+    {
+      "id": 56,
+      "name": "RemoveRedundantProjectionIndexes",
+      "path": "apps/server/src/persistence/Migrations/056_RemoveRedundantProjectionIndexes.ts",
+      "sha256": "d0bf6d59788f250e80a9e2aef4eaaafd8d3eb744ce8944a6730b7287d69b9cd9"
+    },
+    {
+      "id": 57,
+      "name": "ScheduledTaskWebhooks",
+      "path": "apps/server/src/persistence/Migrations/057_ScheduledTaskWebhooks.ts",
+      "sha256": "a3f26d7083036c6db7320236edb9ffec31971d3a5a68ec27b1055796374c31d0"
+    },
+    {
+      "id": 58,
+      "name": "WebhookRelayDeliveries",
+      "path": "apps/server/src/persistence/Migrations/058_WebhookRelayDeliveries.ts",
+      "sha256": "c9da7bad3b5ef9f1dd7f21ca7a71d1a09abb200e842558fb9f11ad958c01042e"
+    },
+    {
+      "id": 59,
+      "name": "McpAppModelContext",
+      "path": "apps/server/src/persistence/Migrations/059_McpAppModelContext.ts",
+      "sha256": "1d70437548e1aa091a6aaebe3b2195842896994b264980763aa6f9c2005c6483"
+    },
+    {
+      "id": 60,
+      "name": "ThreadSnapshotWindowIndexes",
+      "path": "apps/server/src/persistence/Migrations/060_ThreadSnapshotWindowIndexes.ts",
+      "sha256": "8de4ca621b7fb52a6b678a1a54b70ce3a7022c59b032666eb62f03d9c96ea6d3"
+    },
+    {
+      "id": 61,
+      "name": "PullRequestReviewGuides",
+      "path": "apps/server/src/persistence/Migrations/061_PullRequestReviewGuides.ts",
+      "sha256": "959d601f0d2743542485b332525bf9db069bb9212bcd7d19101ed7f271ea2e34"
+    },
+    {
+      "id": 62,
+      "name": "ThreadFailureLookupIndex",
+      "path": "apps/server/src/persistence/Migrations/062_ThreadFailureLookupIndex.ts",
+      "sha256": "28a2260ec10fc403e838b3564ee3408683f0aa8267807694ee2e44678217de06"
+    }
+  ],
+  "targetMigrations": [
+    {
+      "id": 1,
+      "name": "OrchestrationEvents",
+      "path": "apps/server/src/persistence/Migrations/001_OrchestrationEvents.ts",
+      "sha256": "aa225c01eb205ed475b473b04e230da564af8fd32324d9e803f52bb9df26330a"
+    },
+    {
+      "id": 2,
+      "name": "OrchestrationCommandReceipts",
+      "path": "apps/server/src/persistence/Migrations/002_OrchestrationCommandReceipts.ts",
+      "sha256": "f178d1d325229e8423d416d14ad1bc85766704b539baa30a28f17350dc1f02ee"
+    },
+    {
+      "id": 3,
+      "name": "CheckpointDiffBlobs",
+      "path": "apps/server/src/persistence/Migrations/003_CheckpointDiffBlobs.ts",
+      "sha256": "415f5e22bae6eb552edf4454a9fd1ae8be3f8e9ba4fa0305d675d7f925b6591d"
+    },
+    {
+      "id": 4,
+      "name": "ProviderSessionRuntime",
+      "path": "apps/server/src/persistence/Migrations/004_ProviderSessionRuntime.ts",
+      "sha256": "50314dde817ac5fb6df98b994cd23cad71f99f320e45834030c006b82d2fc56a"
+    },
+    {
+      "id": 5,
+      "name": "Projections",
+      "path": "apps/server/src/persistence/Migrations/005_Projections.ts",
+      "sha256": "0481e15f8c3c5bfda781c49254adab94a76505b651b78ce688870677c9e7a668"
+    },
+    {
+      "id": 6,
+      "name": "ProjectionThreadSessionRuntimeModeColumns",
+      "path": "apps/server/src/persistence/Migrations/006_ProjectionThreadSessionRuntimeModeColumns.ts",
+      "sha256": "99e38d1e7256163363ec05a12b9da628da9c9adfd2b6017c70c7d96c06595c06"
+    },
+    {
+      "id": 7,
+      "name": "ProjectionThreadMessageAttachments",
+      "path": "apps/server/src/persistence/Migrations/007_ProjectionThreadMessageAttachments.ts",
+      "sha256": "8e5d73873c2a94148324ca8f7596fc1275b9579dc3aa450dabb40fa19dfe3283"
+    },
+    {
+      "id": 8,
+      "name": "ProjectionThreadActivitySequence",
+      "path": "apps/server/src/persistence/Migrations/008_ProjectionThreadActivitySequence.ts",
+      "sha256": "96ca6659302b9e540f170e144a8b04fa479d55d2da720d71cf600f191cb7ca40"
+    },
+    {
+      "id": 9,
+      "name": "ProviderSessionRuntimeMode",
+      "path": "apps/server/src/persistence/Migrations/009_ProviderSessionRuntimeMode.ts",
+      "sha256": "5c030fbfc48f8421c8dab0cca4d7f3881d8acda0e1284ea044e58e61d4539872"
+    },
+    {
+      "id": 10,
+      "name": "ProjectionThreadsRuntimeMode",
+      "path": "apps/server/src/persistence/Migrations/010_ProjectionThreadsRuntimeMode.ts",
+      "sha256": "12e22e580587a189805d023f22c783875bfd518dec761498204debd1bd0a9a0f"
+    },
+    {
+      "id": 11,
+      "name": "OrchestrationThreadCreatedRuntimeMode",
+      "path": "apps/server/src/persistence/Migrations/011_OrchestrationThreadCreatedRuntimeMode.ts",
+      "sha256": "4b538c411942f8b87315a5175a69122eeaec87fc54901a58b2cefcbcd7484647"
+    },
+    {
+      "id": 12,
+      "name": "ProjectionThreadsInteractionMode",
+      "path": "apps/server/src/persistence/Migrations/012_ProjectionThreadsInteractionMode.ts",
+      "sha256": "aaddb34da8566adb41d6d95c9d70a39552ef09fbc3ee28fcfbc95088aee69c9d"
+    },
+    {
+      "id": 13,
+      "name": "ProjectionThreadProposedPlans",
+      "path": "apps/server/src/persistence/Migrations/013_ProjectionThreadProposedPlans.ts",
+      "sha256": "28ef4061f620b5ed4a910b93cfb0b480a44c1beeea6e4a932e11bd1369d20a74"
+    },
+    {
+      "id": 14,
+      "name": "ProjectionThreadProposedPlanImplementation",
+      "path": "apps/server/src/persistence/Migrations/014_ProjectionThreadProposedPlanImplementation.ts",
+      "sha256": "1d9f32d83654f55de8b6fb7648d03b254e009ab179ce25225347f80d1e2ccdf5"
+    },
+    {
+      "id": 15,
+      "name": "ProjectionTurnsSourceProposedPlan",
+      "path": "apps/server/src/persistence/Migrations/015_ProjectionTurnsSourceProposedPlan.ts",
+      "sha256": "076af803a18ab4831b114c20e1176f74b3e830701aa24535dddc7b796d6bafd3"
+    },
+    {
+      "id": 16,
+      "name": "CanonicalizeModelSelections",
+      "path": "apps/server/src/persistence/Migrations/016_CanonicalizeModelSelections.ts",
+      "sha256": "4a0318c843c382933a3ad9de5958b0388115cc1ac09efa60f82d50b6bb7618f3"
+    },
+    {
+      "id": 17,
+      "name": "ProjectionThreadsArchivedAt",
+      "path": "apps/server/src/persistence/Migrations/017_ProjectionThreadsArchivedAt.ts",
+      "sha256": "de8143887e32a54b171c246426bf2bba0cabe9ec489c0d4d7683577cc281c22d"
+    },
+    {
+      "id": 18,
+      "name": "ProjectionThreadsArchivedAtIndex",
+      "path": "apps/server/src/persistence/Migrations/018_ProjectionThreadsArchivedAtIndex.ts",
+      "sha256": "762a1dd2d1d48114586c6dc00d10c8e8d5ede71bb6e8af9364d2a1bae5c88e08"
+    },
+    {
+      "id": 19,
+      "name": "ProjectionSnapshotLookupIndexes",
+      "path": "apps/server/src/persistence/Migrations/019_ProjectionSnapshotLookupIndexes.ts",
+      "sha256": "1d978ca2748a7d10dd752e889e3fdb461abaedb0c1333c5fe1a04bcc79e37878"
+    },
+    {
+      "id": 20,
+      "name": "AuthAccessManagement",
+      "path": "apps/server/src/persistence/Migrations/020_AuthAccessManagement.ts",
+      "sha256": "e7f75eab7041b3c16ef6bcc6498504a20f909a8576d046cd28594927e1052c6e"
+    },
+    {
+      "id": 21,
+      "name": "AuthSessionClientMetadata",
+      "path": "apps/server/src/persistence/Migrations/021_AuthSessionClientMetadata.ts",
+      "sha256": "1b18ae36ea15e4038e9e6bd3b2444e7509fd166ce9c215e79b117a17079b3615"
+    },
+    {
+      "id": 22,
+      "name": "AuthSessionLastConnectedAt",
+      "path": "apps/server/src/persistence/Migrations/022_AuthSessionLastConnectedAt.ts",
+      "sha256": "f9ba82833dbb18e372d1a5dc16fe1b0dbbc8a93affb258eb9da40762bea85a88"
+    },
+    {
+      "id": 23,
+      "name": "ProjectionThreadShellSummary",
+      "path": "apps/server/src/persistence/Migrations/023_ProjectionThreadShellSummary.ts",
+      "sha256": "43c383aa768853d0ca414c46812a19191c16819c5b50c464e19d648d0d43dc7a"
+    },
+    {
+      "id": 24,
+      "name": "BackfillProjectionThreadShellSummary",
+      "path": "apps/server/src/persistence/Migrations/024_BackfillProjectionThreadShellSummary.ts",
+      "sha256": "a2b08fda4c34067def9e3aaff39b3f77d035ef832bab65994943dcd22a8270cd"
+    },
+    {
+      "id": 25,
+      "name": "CleanupInvalidProjectionPendingApprovals",
+      "path": "apps/server/src/persistence/Migrations/025_CleanupInvalidProjectionPendingApprovals.ts",
+      "sha256": "62be9faa4eaa578bfb50ed2664fed33249ab20f5d62afe36fceea42bf18ac6f6"
+    },
+    {
+      "id": 26,
+      "name": "CanonicalizeModelSelectionOptions",
+      "path": "apps/server/src/persistence/Migrations/026_CanonicalizeModelSelectionOptions.ts",
+      "sha256": "876fc627879ff217ecee6b0bd38b84e37e8bfbfb879dcd6f1cb74dd3d3c2a8ab"
+    },
+    {
+      "id": 27,
+      "name": "ProviderSessionRuntimeInstanceId",
+      "path": "apps/server/src/persistence/Migrations/027_ProviderSessionRuntimeInstanceId.ts",
+      "sha256": "60af7fdb331cd363b9ac7f72886659aa4c353353a80b3b83d0e87b66fbf2200a"
+    },
+    {
+      "id": 28,
+      "name": "ProjectionThreadSessionInstanceId",
+      "path": "apps/server/src/persistence/Migrations/028_ProjectionThreadSessionInstanceId.ts",
+      "sha256": "e2e2e58e00a5271044ec7b94ef3bcdab330cb6b37830c8eb72942e735dfb0226"
+    },
+    {
+      "id": 29,
+      "name": "ProjectionThreadDetailOrderingIndexes",
+      "path": "apps/server/src/persistence/Migrations/029_ProjectionThreadDetailOrderingIndexes.ts",
+      "sha256": "17f5960e7cb335cda677c13819958c51ca20dea4a06dd92a23b877ee82f95e50"
+    },
+    {
+      "id": 30,
+      "name": "ProjectionThreadShellArchiveIndexes",
+      "path": "apps/server/src/persistence/Migrations/030_ProjectionThreadShellArchiveIndexes.ts",
+      "sha256": "73cac2da2cd4f075a654603a33f569ddd3f636d43013761be6bcde4446bf9420"
+    },
+    {
+      "id": 31,
+      "name": "AuthAuthorizationScopes",
+      "path": "apps/server/src/persistence/Migrations/031_AuthAuthorizationScopes.ts",
+      "sha256": "d6e348a94be92491500fbf5e9b0ede8650c981f10621772ce54a8fc6e732bc74"
+    },
+    {
+      "id": 32,
+      "name": "AuthPairingProofKeyThumbprint",
+      "path": "apps/server/src/persistence/Migrations/032_AuthPairingProofKeyThumbprint.ts",
+      "sha256": "7d57cd71d51ac792a367454e397c9727c28cd2a49031306f6e16d812900ccbca"
+    },
+    {
+      "id": 33,
+      "name": "ProjectionThreadsSettled",
+      "path": "apps/server/src/persistence/Migrations/033_ProjectionThreadsSettled.ts",
+      "sha256": "6b8fe1e3279742984049324846fec89aa13f3311356dcaff0a2d50505ecba8ec"
+    },
+    {
+      "id": 34,
+      "name": "ProjectionThreadsSnoozed",
+      "path": "apps/server/src/persistence/Migrations/034_ProjectionThreadsSnoozed.ts",
+      "sha256": "faa08abfa76ff62b668bd1c9ad4e9d22e5c026bc32d0071e4ae02763988d644b"
+    },
+    {
+      "id": 35,
+      "name": "ProjectionThreadTitleRegeneration",
+      "path": "apps/server/src/persistence/Migrations/035_ProjectionThreadTitleRegeneration.ts",
+      "sha256": "df6c7cde68cb4b97936d38147cc007cf8df5ff44ad012133c045cf71ebee6a6a"
+    },
+    {
+      "id": 36,
+      "name": "ProjectionThreadsPinned",
+      "path": "apps/server/src/persistence/Migrations/036_ProjectionThreadsPinned.ts",
+      "sha256": "0470ce6f46dd4f0a78e9ca24a15e75810e629c5e79ea57f5860139cc61382555"
+    },
+    {
+      "id": 37,
+      "name": "ProjectionTurnsKeysetIndex",
+      "path": "apps/server/src/persistence/Migrations/037_ProjectionTurnsKeysetIndex.ts",
+      "sha256": "172e115d52964d52aa0ece415ad0f3a6d070fd9cda905be5e15a92ff31d9d0f6"
+    },
+    {
+      "id": 38,
+      "name": "ProjectionThreadsPinOrderKey",
+      "path": "apps/server/src/persistence/Migrations/038_ProjectionThreadsPinOrderKey.ts",
+      "sha256": "93189f7a875ed9699980cf03d8c1621f57ba5802445545b72d282ab472529cd4"
+    },
+    {
+      "id": 39,
+      "name": "ProjectionProjectsDefaultThreadEnvMode",
+      "path": "apps/server/src/persistence/Migrations/039_ProjectionProjectsDefaultThreadEnvMode.ts",
+      "sha256": "b5b645eafd93898d5d88f51b151da1c4e9c6ca6dfa48ad7f0eae037085c97c43"
+    },
+    {
+      "id": 40,
+      "name": "ProjectionProjectFaviconPath",
+      "path": "apps/server/src/persistence/Migrations/040_ProjectionProjectFaviconPath.ts",
+      "sha256": "ea42d11d4e1cdcb291e17009a17ccc0b78ad5dba65b6c86ba81bf61fdf96941e"
+    },
+    {
+      "id": 41,
+      "name": "AuthSessionClientConnection",
+      "path": "apps/server/src/persistence/Migrations/041_AuthSessionClientConnection.ts",
+      "sha256": "7819c6962d564750b655212e0b60be7785be54e1e67fb9cd0f065f49cd25d409"
+    },
+    {
+      "id": 42,
+      "name": "ProjectionThreadLinkedPullRequest",
+      "path": "apps/server/src/persistence/Migrations/042_ProjectionThreadLinkedPullRequest.ts",
+      "sha256": "41a329f0ce4d0f83974cf8887b5d7537a21d20114e1a6f66e69fc2d9a8cb7cce"
+    },
+    {
+      "id": 43,
+      "name": "ProjectionThreadsUnsettledAt",
+      "path": "apps/server/src/persistence/Migrations/043_ProjectionThreadsUnsettledAt.ts",
+      "sha256": "0aab73864a1b2c518b0eb069d6836202e6aad98b85423a009de62c54c3fd2f15"
+    },
+    {
+      "id": 44,
+      "name": "ClearAutomaticProjectModelDefaults",
+      "path": "apps/server/src/persistence/Migrations/044_ClearAutomaticProjectModelDefaults.ts",
+      "sha256": "3b8fa6004728a0ccad94d13edddbb8211781f968fe68f6f5c5783869fcdbc15f"
+    },
+    {
+      "id": 45,
+      "name": "ProjectionProjectsAutoPull",
+      "path": "apps/server/src/persistence/Migrations/045_ProjectionProjectsAutoPull.ts",
+      "sha256": "185bd8d00e14dd0f516cab070dadc932d99257476081017a3ede965f218d0e7b"
+    },
+    {
+      "id": 46,
+      "name": "RepairAutomaticSettlementTimestamps",
+      "path": "apps/server/src/persistence/Migrations/046_RepairAutomaticSettlementTimestamps.ts",
+      "sha256": "c32d4c2c1e398c52ba53520034c1b7489f54823340addbdbaa2805071acb8325"
+    },
+    {
+      "id": 47,
+      "name": "ProjectionProjectIcon",
+      "path": "apps/server/src/persistence/Migrations/047_ProjectionProjectIcon.ts",
+      "sha256": "5e4c1cb47fc2262d58aa0fa665a516e0c2162365ebe9faa223326e773d4a36ba"
+    },
+    {
+      "id": 48,
+      "name": "ProjectionThreadBranchPullRequest",
+      "path": "apps/server/src/persistence/Migrations/048_ProjectionThreadBranchPullRequest.ts",
+      "sha256": "0363078d9a7b2ed7abaf802571dafce90d3abcc15fa8f9fc04b8bdb3100d74fe"
+    },
+    {
+      "id": 49,
+      "name": "ProjectionThreadsActiveOrderKey",
+      "path": "apps/server/src/persistence/Migrations/049_ProjectionThreadsActiveOrderKey.ts",
+      "sha256": "59e0256214bb60c17168cd9be01ea6b50750aeb2475c46319893888635e938f1"
+    },
+    {
+      "id": 50,
+      "name": "ProjectionThreadPullRequests",
+      "path": "apps/server/src/persistence/Migrations/050_ProjectionThreadPullRequests.ts",
+      "sha256": "d3535907adde3386901a833c7c4b229b2c07bd917d53229306b48e964ac45fc1",
+      "dependencies": [
+        {
+          "path": "apps/server/src/persistence/Migrations/legacyThreadPullRequestKey.ts",
+          "sha256": "ea546b8c6464107c68e8f918598782ad370b721f17e64311412afc02e2f61cb1"
+        }
+      ]
+    },
+    {
+      "id": 51,
+      "name": "ProjectionThreadMessageContext",
+      "path": "apps/server/src/persistence/Migrations/051_ProjectionThreadMessageContext.ts",
+      "sha256": "9fc9d0def90a4666987ad93ccaf71d8d409ccdaf006bc20dedac7bb68f152038"
+    },
+    {
+      "id": 52,
+      "name": "ProjectionThreadTitleState",
+      "path": "apps/server/src/persistence/Migrations/052_ProjectionThreadTitleState.ts",
+      "sha256": "244b593bf245d6efe72626d0e00054d56e1b2ead9230285d65b702db37112cae"
+    },
+    {
+      "id": 53,
+      "name": "PullRequestFilesViewed",
+      "path": "apps/server/src/persistence/Migrations/053_PullRequestFilesViewed.ts",
+      "sha256": "5ac7e583f3b9dd777fb247c682a6580596909b418e3be5667b4a98340b079ab8"
+    },
+    {
+      "id": 54,
+      "name": "ProjectionThreadsAutoSettleDisabledAt",
+      "path": "apps/server/src/persistence/Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts",
+      "sha256": "319eff3863637e8bc0410e8d1155e75d3e9128b4a3902aabcc15651e1cbd833c"
+    },
+    {
+      "id": 55,
+      "name": "OrchestrationV2",
+      "path": "apps/server/src/persistence/Migrations/055_OrchestrationV2.ts",
+      "sha256": "dc233da2cb27cfc538009066845bd77aeaa3317122c3365530c62b883674fd4e",
+      "dependencies": [
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ApplicationEventSequenceIndexes.ts",
+          "sha256": "2a0201e505ad468d0a2cbfc5860725d1b9ded91e1d0f4e275cdb106b26d5dcd9"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ApplicationEventSource.ts",
+          "sha256": "b0e4ed8c72dd7b9186c822c9c38dc7f191336abcd92cf5f367049574a06dafa1"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/EffectCancellation.ts",
+          "sha256": "d73145d2b0fe4907074cfc13cdfdcc319efd17a4440d2649897fc816d30f8204"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/Foundation.ts",
+          "sha256": "9aff1639ac0181deafe319c9e3bad80e572b1e8b3a4a23bc6657abdbfa4ee961"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/LegacyV1ImportState.ts",
+          "sha256": "c2203e889f42da49d3ef3fdbb9ae496d7845f22db62a92cbc52fc8882de058de"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ProviderSessionBindings.ts",
+          "sha256": "d3c5034eb8c65439a7add498961544f0331a19fb238b1e45e21c74cc5737df93"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/RecoveryIndexes.ts",
+          "sha256": "0954303e99cbab38b0647b262732073ae13f0526ffa4c59f070e02d245f34482"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ScheduledTasks.ts",
+          "sha256": "d67ca2d3167bafd4ad9bb0917a2fe89a7d0ec42355a33992c7b99ba48ebf9771"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ShellIndexes.ts",
+          "sha256": "88344a427cf5591ed6431f2ad5542f8ef111fccc61a365412968af36fe6eea82"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/Subagents.ts",
+          "sha256": "bdb4c2396affa5edadddbdbcb9a5bddd5e8cd346ebaa0cbbb89f182d95846ef7"
+        },
+        {
+          "path": "apps/server/src/persistence/Migrations/OrchestrationV2/ThreadLaunchWorkflows.ts",
+          "sha256": "4b1fe33c74cd5d674f70d762655b3eafa9e26cb31d6b1480d4e6968734891bc2"
+        }
+      ]
+    },
+    {
+      "id": 56,
+      "name": "RemoveRedundantProjectionIndexes",
+      "path": "apps/server/src/persistence/Migrations/056_RemoveRedundantProjectionIndexes.ts",
+      "sha256": "596cee2068cf5da46ab791fdd6957d5c969da77cd28cb01fd95c95004220e05e"
+    },
+    {
+      "id": 57,
+      "name": "ScheduledTaskWebhooks",
+      "path": "apps/server/src/persistence/Migrations/057_ScheduledTaskWebhooks.ts",
+      "sha256": "a3f26d7083036c6db7320236edb9ffec31971d3a5a68ec27b1055796374c31d0"
+    },
+    {
+      "id": 58,
+      "name": "WebhookRelayDeliveries",
+      "path": "apps/server/src/persistence/Migrations/058_WebhookRelayDeliveries.ts",
+      "sha256": "73a55a4746e746c13ac25f26abdba817a8337452becfd0d4a829da12477fe957"
+    },
+    {
+      "id": 59,
+      "name": "McpAppModelContext",
+      "path": "apps/server/src/persistence/Migrations/059_McpAppModelContext.ts",
+      "sha256": "1d70437548e1aa091a6aaebe3b2195842896994b264980763aa6f9c2005c6483"
+    },
+    {
+      "id": 60,
+      "name": "ThreadSnapshotWindowIndexes",
+      "path": "apps/server/src/persistence/Migrations/060_ThreadSnapshotWindowIndexes.ts",
+      "sha256": "2e0b0f9cc6e9c4081b8ac6f26c5d3aae0e249b4af6499bda42d6ba6d6770e39e"
+    },
+    {
+      "id": 61,
+      "name": "PullRequestReviewGuides",
+      "path": "apps/server/src/persistence/Migrations/061_PullRequestReviewGuides.ts",
+      "sha256": "959d601f0d2743542485b332525bf9db069bb9212bcd7d19101ed7f271ea2e34"
+    },
+    {
+      "id": 62,
+      "name": "ThreadFailureLookupIndex",
+      "path": "apps/server/src/persistence/Migrations/062_ThreadFailureLookupIndex.ts",
+      "sha256": "28a2260ec10fc403e838b3564ee3408683f0aa8267807694ee2e44678217de06"
+    },
+    {
+      "id": 63,
+      "name": "DropUnusedV1Projections",
+      "path": "apps/server/src/persistence/Migrations/063_DropUnusedV1Projections.ts",
+      "sha256": "454b5e8158a301a94a054c9ec1b9f1cd639b46e02dd41e6a9ea2d60565ed3801"
+    },
+    {
+      "id": 64,
+      "name": "CanonicalizeThreadPullRequestLinks",
+      "path": "apps/server/src/persistence/Migrations/064_CanonicalizeThreadPullRequestLinks.ts",
+      "sha256": "417535a406ffa69e9302770dd33d48152054c16291300694ef096063e94ad55c"
+    },
+    {
+      "id": 65,
+      "name": "CodexUsageNativeTurnIndex",
+      "path": "apps/server/src/persistence/Migrations/065_CodexUsageNativeTurnIndex.ts",
+      "sha256": "d41430575d2b67daf211a9db38819e57f112bcd748ae68f9b1a62f1d2d0b7a99"
+    },
+    {
+      "id": 66,
+      "name": "RepairClientSettlementTimestamps",
+      "path": "apps/server/src/persistence/Migrations/066_RepairClientSettlementTimestamps.ts",
+      "sha256": "12071d9678d33e3bc092234c6c250f690bf3e839fbdfdceff9dcfec70364c400"
+    },
+    {
+      "id": 67,
+      "name": "WebhookDedupe",
+      "path": "apps/server/src/persistence/Migrations/067_WebhookDedupe.ts",
+      "sha256": "3ca19c7871e64d639238e3bd11259abc361d4ba40467d3ca09922d04e81e9bb9"
+    },
+    {
+      "id": 68,
+      "name": "ShellStopRequestIndex",
+      "path": "apps/server/src/persistence/Migrations/068_ShellStopRequestIndex.ts",
+      "sha256": "d9538360b5c59f68a6dd74c8f166254631e8945e20c2b03b8de95471c567ce4e"
+    },
+    {
+      "id": 69,
+      "name": "ThreadMessageSearch",
+      "path": "apps/server/src/persistence/Migrations/069_ThreadMessageSearch.ts",
+      "sha256": "29458e7622e55b2ced26438386ba1fc8262ae7e0b89347b5fc2a41af49bed283"
+    }
+  ]
+}

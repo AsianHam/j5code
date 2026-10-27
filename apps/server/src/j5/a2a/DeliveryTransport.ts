@@ -894,8 +894,8 @@ export const live: Layer.Layer<
             : new A2ADeliveryTransportError({ operation: "deliver to peer", cause }),
         ),
       ),
-      deliverHuman: (input) =>
-        input.envelopeChannel === "lifecycle_notice"
+      deliverHuman: Effect.fn("A2ADeliveryTransport.deliverHuman")(function (input) {
+        return input.envelopeChannel === "lifecycle_notice"
           ? Effect.gen(function* () {
               const terminal = yield* sql`SELECT 1 FROM j5_a2a_human_inbox
                 WHERE person_id = ${input.receiverId} AND project_id = ${input.originProjectId}
@@ -1005,7 +1005,8 @@ export const live: Layer.Layer<
               Effect.mapError(
                 (cause) => new A2ADeliveryTransportError({ operation: "deliver human", cause }),
               ),
-            ),
+            );
+      }),
     });
   }),
 );

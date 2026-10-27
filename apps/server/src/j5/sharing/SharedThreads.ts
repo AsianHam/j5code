@@ -165,14 +165,17 @@ const make = Effect.gen(function* () {
     writers,
     projectWriters,
 
-    writerLevel: (personId, threadId) =>
-      access.threadLevel(personId, threadId).pipe(Effect.map(asWriterLevel)),
+    writerLevel: Effect.fn("SharedThreads.writerLevel")(function (personId, threadId) {
+      return access.threadLevel(personId, threadId).pipe(Effect.map(asWriterLevel));
+    }),
 
-    writesTo: (personId, agent) =>
-      (agent.threadId === null
-        ? access.projectLevel(personId, agent.projectId as ProjectId)
-        : access.threadLevel(personId, agent.threadId)
-      ).pipe(Effect.map((level) => asWriterLevel(level) !== null)),
+    writesTo: Effect.fn("SharedThreads.writesTo")(function (personId, agent) {
+      return (
+        agent.threadId === null
+          ? access.projectLevel(personId, agent.projectId as ProjectId)
+          : access.threadLevel(personId, agent.threadId)
+      ).pipe(Effect.map((level) => asWriterLevel(level) !== null));
+    }),
 
     isShared: Effect.fn("j5.sharing.sharedThreads.isShared")(function* (
       threadId,

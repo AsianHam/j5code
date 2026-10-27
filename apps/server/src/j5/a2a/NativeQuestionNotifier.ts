@@ -126,7 +126,7 @@ const make = Effect.gen(function* () {
         const guidance =
           request.responseCapability.type === "live" ||
           request.responseCapability.type === "message"
-            ? `Read it with t3_pending_request_read using threadId ${event.threadId} and requestId ${request.id}. Answer it with t3_pending_request_respond only when your modes permit and the answer follows from the task or the person's instructions; otherwise ask the person to answer in [the agent's thread](${link}). If it is no longer pending, it was answered or dismissed.`
+            ? `Read it with t3_pending_request action read, threadId ${event.threadId} and requestId ${request.id}. Answer it with action respond only when your modes permit and the answer follows from the task or the person's instructions; otherwise ask the person to answer in [the agent's thread](${link}). If it is no longer pending, it was answered or dismissed.`
             : `Inspect [the agent's thread](${link}); this request cannot currently take an answer through the pending-request tools.`;
         yield* threads.dispatch({
           type: "message.dispatch",

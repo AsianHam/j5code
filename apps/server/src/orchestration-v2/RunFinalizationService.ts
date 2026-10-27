@@ -87,8 +87,8 @@ const make = Effect.gen(function* () {
     }
   });
   return RunFinalizationService.of({
-    finalize: (input) =>
-      finalize(input).pipe(
+    finalize: Effect.fn("RunFinalizationService.finalize")(function (input) {
+      return finalize(input).pipe(
         Effect.tapError((cause) =>
           queuedRunWatchdog.recordVcsFailure({
             threadId: input.threadId,
@@ -97,7 +97,8 @@ const make = Effect.gen(function* () {
             cause,
           }),
         ),
-      ),
+      );
+    }),
   });
 });
 

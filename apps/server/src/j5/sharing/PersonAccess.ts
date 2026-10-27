@@ -719,8 +719,8 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         Effect.mapError(storage("read a person's level on a project")),
       ),
 
-      scheduledTaskHome: (taskId) =>
-        sql<{ readonly project_id: string; readonly thread_id: string | null }>`
+      scheduledTaskHome: Effect.fn("PersonAccess.scheduledTaskHome")(function (taskId) {
+        return sql<{ readonly project_id: string; readonly thread_id: string | null }>`
           SELECT project_id, thread_id FROM scheduled_tasks WHERE task_id = ${taskId}
         `.pipe(
           Effect.map((rows) =>
@@ -733,10 +733,11 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           ),
           Effect.mapError(storage("read where a scheduled task is bound")),
           Effect.withSpan("j5.sharing.personAccess.scheduledTaskHome"),
-        ),
+        );
+      }),
 
-      projectRoots: (personId) =>
-        sql<{ readonly workspace_root: string }>`
+      projectRoots: Effect.fn("PersonAccess.projectRoots")(function (personId) {
+        return sql<{ readonly workspace_root: string }>`
           SELECT project.workspace_root
           FROM j5_a2a_person_level AS held
           JOIN projection_projects AS project
@@ -746,16 +747,18 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           Effect.map((rows) => rows.map((row) => row.workspace_root)),
           Effect.mapError(storage("read the folders of a person's projects")),
           Effect.withSpan("j5.sharing.personAccess.projectRoots"),
-        ),
+        );
+      }),
 
-      threadProject: (threadId) =>
-        sql<{ readonly project_id: string }>`
+      threadProject: Effect.fn("PersonAccess.threadProject")(function (threadId) {
+        return sql<{ readonly project_id: string }>`
           SELECT project_id FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}
         `.pipe(
           Effect.map((rows) => (rows[0] === undefined ? null : (rows[0].project_id as ProjectId))),
           Effect.mapError(storage("read a thread's project")),
           Effect.withSpan("j5.sharing.personAccess.threadProject"),
-        ),
+        );
+      }),
 
       projectInFeed,
 
@@ -900,14 +903,15 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
         Effect.withSpan("j5.sharing.personAccess.listPeople"),
       ),
 
-      listLevels: (personId) =>
-        levelsOf(personId).pipe(
+      listLevels: Effect.fn("PersonAccess.listLevels")(function (personId) {
+        return levelsOf(personId).pipe(
           Effect.mapError(storage("list a person's levels")),
           Effect.withSpan("j5.sharing.personAccess.listLevels"),
-        ),
+        );
+      }),
 
-      listDevices: (personId) =>
-        sql<DeviceRow>`
+      listDevices: Effect.fn("PersonAccess.listDevices")(function (personId) {
+        return sql<DeviceRow>`
           SELECT session_id, person_id, ceiling_scopes, renew_pending_since
           FROM j5_a2a_person_session WHERE person_id = ${personId}
           ORDER BY bound_at, session_id
@@ -915,7 +919,8 @@ const make: Layer.Layer<PersonAccess, never, SqlClient.SqlClient | ReadChanges> 
           Effect.map((rows) => rows.map(toDevice)),
           Effect.mapError(storage("list a person's devices")),
           Effect.withSpan("j5.sharing.personAccess.listDevices"),
-        ),
+        );
+      }),
 
       createPerson: Effect.fn("j5.sharing.personAccess.createPerson")(
         function* (input) {

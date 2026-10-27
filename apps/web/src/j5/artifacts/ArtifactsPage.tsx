@@ -36,6 +36,7 @@ import { listArtifacts, readArtifact, deleteArtifact, deleteAllArtifacts } from 
 import { artifactPreviewRevision } from "./artifactPreview.logic";
 import { nextArtifactRefreshGeneration } from "./artifactRefresh";
 
+const isJ5ActionError = Schema.is(J5ActionError);
 const MARKDOWN_EXTENSIONS = new Set(["md", "markdown", "mdx"]);
 const IMAGE_MEDIA_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -157,11 +158,9 @@ export function ArtifactsPage({
   const selectedProjectId = selectedProject?.id ?? null;
   const selectedWorkspaceRoot = selectedProject?.workspaceRoot;
   const selectedKey = selectedProject === null ? null : projectKey(selectedProject);
-  // The artifact client reads the environment's prepared connection from an atom that only holds
-  // a value while something subscribes to it. Inside a thread the chat surface keeps it mounted;
-  // on the standalone route this page is the only subscriber, so it must hold the subscription
-  // itself. The list is read over the socket, which comes up after the prepared connection, so
-  // the page waits for both before fetching, or the read fails as "not connected".
+  // The prepared-connection atom only holds a value while subscribed, and on the standalone route
+  // this page is the only subscriber. The socket comes up after the prepared connection, so the
+  // page waits for both before fetching, or the read fails as "not connected".
   const prepared = Option.isSome(usePreparedConnection(selectedEnvironmentId));
   const connected =
     prepared &&
@@ -203,6 +202,7 @@ export function ArtifactsPage({
   }
   // Names the read, so a refresh that changes nothing else still reads again.
   const listRead = connected ? listInputs : null;
+  // oxlint-disable-next-line t3code/react-effect-budget -- lists the selected project's artifacts from the server, and drops a stale answer when the selection changes.
   useEffect(() => {
     if (listRead === null || selectedEnvironmentId === null || selectedProjectId === null) return;
     let current = true;
@@ -226,7 +226,7 @@ export function ArtifactsPage({
         setEntries([]);
         setSelectedPath(null);
         setError(cause instanceof Error ? cause.message : "Artifacts could not be loaded.");
-        if (Schema.is(J5ActionError)(cause) && cause.code === "ArtifactListTooLargeError") {
+        if (isJ5ActionError(cause) && cause.code === "ArtifactListTooLargeError") {
           setOversizedProjectKey(`${selectedEnvironmentId}:${selectedProjectId}`);
         }
         setListState("error");
@@ -271,6 +271,7 @@ export function ArtifactsPage({
       setContentState("loading");
     }
   }
+  // oxlint-disable-next-line t3code/react-effect-budget -- reads the selected artifact from the server, and drops a stale answer when the selection changes.
   useEffect(() => {
     if (
       contentRead === null ||
@@ -306,6 +307,7 @@ export function ArtifactsPage({
   const selectionKey = JSON.stringify([selectedEnvironmentId, selectedProjectId, selectedPath]);
   const currentSelection = useRef(selectionKey);
   const currentProjectKey = useRef(selectedKey);
+  // oxlint-disable-next-line t3code/react-effect-budget -- async handlers compare against the latest selection, and render may not write refs.
   useEffect(() => {
     currentSelection.current = selectionKey;
     currentProjectKey.current = selectedKey;

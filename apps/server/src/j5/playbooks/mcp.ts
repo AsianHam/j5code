@@ -159,7 +159,7 @@ const readsPlaybooks = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R
   );
 
 export const playbookHandlers = {
-  j5_playbook_save: runsPlaybook((input: typeof PlaybookSaveRequest.Type) =>
+  j5_playbook_save: runsPlaybook((input: PlaybookSaveRequest) =>
     Effect.gen(function* () {
       yield* ownerScope;
       const caller = yield* readCaller();

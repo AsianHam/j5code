@@ -93,13 +93,9 @@ const seatBadgeWithSteps = (
 };
 
 /**
- * The Roster (SB6): every agent on every connected environment, by project, in three
- * sections. Active holds one table of everything still in motion, indented by placement with
- * Crews as collapsible units under their Captain; Settled and Retired are collapsed expanders
- * for what upstream's settle mechanic marked done and for the Crews that were archived. Status
- * and last activity come from the client's thread state; placement, provenance, seats, and owed
- * asks come from each environment's ledger read. Unknowns render as "?" because a visibly
- * missing fact beats a plausible fake.
+ * The Roster (SB6). Status and last activity come from the client's thread state; placement,
+ * provenance, seats, and owed asks come from each environment's ledger read. Unknowns render as
+ * "?" because a visibly missing fact beats a plausible fake.
  */
 export function FleetPage() {
   const navigate = useNavigate();
@@ -494,11 +490,9 @@ function FleetNodeRows(
 }
 
 /**
- * Retired Crews of every project as one-line rows, each naming its project, that open to the
- * brief and the approved roster with each seat's approval version and reason, so a successor can
- * be proposed from what was decided rather than from memory (Crews AC20). A retired Crew comes
- * back only with its Captain (AC17), so its row offers no action beyond naming its Captain, whose
- * thread holds the ledger; handoffs live on the Artifacts page.
+ * Each row opens to the brief and approved roster with each seat's approval version and reason, so
+ * a successor is proposed from what was decided (Crews AC20). A retired Crew comes back only with
+ * its Captain (AC17), so the row offers no action beyond naming the Captain.
  */
 function RetiredCrews(
   props: FleetRowsProps & {

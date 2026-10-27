@@ -9,11 +9,14 @@ import type {
 } from "@t3tools/provider-core/server/driver";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import type * as Scope from "effect/Scope";
 import type { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 import { resolveProviderSkillPaths } from "./skillPaths.ts";
 
@@ -42,15 +45,10 @@ export function retainFailedWorkspaceSnapshot(
   };
 }
 
-/**
- * The registry's workspace scan. It follows upstream's `refreshWorkspaceSnapshot`
- * (TTL, `fresh`, the latest claim for a cwd is the only one that may write, and
- * only over the snapshot the scan started from) and adds J5's failure retention,
- * link-target resolution and `force`: a rescan of one cwd that supersedes a
- * pending one without upstream's `fresh` side effects (the machine refresh and
- * dropping other instances' snapshots), for callers that already refresh every
- * affected instance.
- */
+// Upstream's `refreshWorkspaceSnapshot` (TTL, `fresh`, latest claim writes, detached scan that
+// callers wait on) plus J5's failure retention, link-target resolution and `force`: a rescan of
+// one cwd that supersedes a pending one without `fresh`'s machine refresh or dropping other
+// instances' snapshots, for callers that already refresh every affected instance.
 export const makeSkillWorkspaceRefresh = Effect.fn("j5.skills.makeWorkspaceRefresh")(function* ({
   instanceRegistry,
   providersRef,
@@ -58,6 +56,7 @@ export const makeSkillWorkspaceRefresh = Effect.fn("j5.skills.makeWorkspaceRefre
   refreshInstance,
   upsertProviderWorkspaceSnapshot,
   dropProviderWorkspaceSnapshot,
+  serviceScope,
 }: {
   readonly instanceRegistry: ProviderInstanceRegistry["Service"];
   readonly providersRef: Ref.Ref<ReadonlyArray<ServerProvider>>;
@@ -71,11 +70,12 @@ export const makeSkillWorkspaceRefresh = Effect.fn("j5.skills.makeWorkspaceRefre
     scopedSnapshot: ProviderWorkspaceSnapshot,
   ) => ServerProvider;
   readonly dropProviderWorkspaceSnapshot: (provider: ServerProvider, cwd: string) => ServerProvider;
+  readonly serviceScope: Scope.Scope;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspaceRefreshesRef = yield* Ref.make<
-    ReadonlyMap<ProviderInstance, ReadonlyMap<string, symbol>>
+    ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
   >(new Map());
   const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
     readonly instanceId: ProviderInstanceId;
@@ -114,21 +114,13 @@ export const makeSkillWorkspaceRefresh = Effect.fn("j5.skills.makeWorkspaceRefre
     const instance = yield* instanceRegistry.getInstance(input.instanceId);
     if (!instance?.snapshotForCwd) return providers;
     const snapshotForCwd = instance.snapshotForCwd;
-    const request = Symbol();
-    const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
-      const current = refreshes.get(instance);
-      if (!replace && current?.has(input.cwd)) return [false, refreshes] as const;
-      const next = new Map(refreshes);
-      next.set(instance, new Map(current).set(input.cwd, request));
-      return [true, next] as const;
-    });
-    if (!claimed) return yield* Ref.get(providersRef);
+    const request = yield* Deferred.make<void>();
     const refreshMachineSnapshot = input.fresh
       ? (instance.invalidateCaches ?? Effect.void).pipe(
           Effect.andThen(refreshInstance(input.instanceId)),
         )
       : Effect.void;
-    return yield* refreshMachineSnapshot.pipe(
+    const runScan = refreshMachineSnapshot.pipe(
       Effect.andThen(
         snapshotForCwd(input.cwd).pipe(
           Effect.flatMap((snapshot) =>
@@ -141,7 +133,7 @@ export const makeSkillWorkspaceRefresh = Effect.fn("j5.skills.makeWorkspaceRefre
           // Upstream lets a failed scan fail this effect. J5 records it on the cwd instead,
           // so Settings → Skills can say discovery failed while keeping the last inventory.
           Effect.catchCause((cause) =>
-            Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.succeed(undefined),
+            Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.void,
           ),
         ),
       ),
@@ -198,9 +190,33 @@ export const makeSkillWorkspaceRefresh = Effect.fn("j5.skills.makeWorkspaceRefre
           if (current.size) next.set(instance, current);
           else next.delete(instance);
           return next;
-        }),
+        }).pipe(Effect.andThen(Deferred.succeed(request, undefined))),
       ),
     );
+    // The claim and the fork happen together, so the request is always completed. The scan is
+    // detached so a disconnecting owner cannot cancel the result its waiters depend on.
+    const claim = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const inFlight = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
+          const current = refreshes.get(instance);
+          const running = current?.get(input.cwd);
+          if (!replace && running) return [running, refreshes] as const;
+          const next = new Map(refreshes);
+          next.set(instance, new Map(current).set(input.cwd, request));
+          return [undefined, next] as const;
+        });
+        if (inFlight) return { inFlight } as const;
+        return {
+          // Starting now attaches the scan's `ensuring` before anything can close the scope.
+          scan: yield* Effect.forkIn(runScan, serviceScope, { startImmediately: true }),
+        } as const;
+      }),
+    );
+    // Wait for the running scan: on-demand clients get its result only in this reply.
+    if ("inFlight" in claim) {
+      return yield* Deferred.await(claim.inFlight).pipe(Effect.andThen(Ref.get(providersRef)));
+    }
+    return yield* Fiber.join(claim.scan);
   });
 
   return {

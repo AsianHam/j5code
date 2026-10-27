@@ -78,9 +78,7 @@ export const fakeSpawnWorkspaceLayer = (options: {
       Layer.mergeAll(
         Layer.mock(ProjectService)({
           getById: (id) =>
-            Effect.succeed(
-              Option.some({ id, workspaceRoot: options.workspaceRoot ?? "/repo" } as never),
-            ),
+            Effect.succeedSome({ id, workspaceRoot: options.workspaceRoot ?? "/repo" } as never),
         }),
         Layer.mock(GitWorkflowService)({
           listRefs: Effect.fn("j5.a2a.spawnWorkspaceFakes.listRefs")(function* (input) {

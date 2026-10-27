@@ -55,6 +55,7 @@ import {
   type SpawnCheckout,
 } from "./spawnWorkspace.ts";
 import { type FakeCheckout, fakeSpawnWorkspaceLayer } from "./test-support/spawnWorkspaceFakes.ts";
+import { noDocumentTextLayer } from "../test-support/documentText.ts";
 
 const checkout = (
   overrides: Partial<Extract<SpawnCheckout, { readonly readable: true }>> = {},
@@ -201,6 +202,7 @@ const spawnHarness = (input: {
       acceptsUrgency: false,
     } satisfies ParticipantDirectoryRow;
     const dependencies = Layer.mergeAll(
+      noDocumentTextLayer,
       Layer.mock(A2ASendService)({ listParticipants: () => Effect.succeed([callerRow]) }),
       Layer.mock(A2AHomeRegistrar)({
         getHomeForThread: () =>
@@ -263,24 +265,24 @@ const spawnHarness = (input: {
                   } as never),
           ).pipe(
             // A thread this harness has created exists from then on, as a real one does.
-            Effect.flatMap((shell) =>
-              shell !== null
-                ? Effect.succeed(shell)
-                : Ref.get(commands).pipe(
-                    Effect.map((all) => {
-                      const create = all.find(
-                        (command) =>
-                          command.type === "thread.create" && command.threadId === threadId,
-                      );
-                      return create?.type === "thread.create"
-                        ? ({
-                            ...callerThread(threadId, create.runtimeMode).thread,
-                            archivedAt: null,
-                            deletedAt: null,
-                          } as never)
-                        : null;
-                    }),
-                  ),
+            Effect.filterOrElse(
+              (shell) => shell !== null,
+              () =>
+                Ref.get(commands).pipe(
+                  Effect.map((all) => {
+                    const create = all.find(
+                      (command) =>
+                        command.type === "thread.create" && command.threadId === threadId,
+                    );
+                    return create?.type === "thread.create"
+                      ? ({
+                          ...callerThread(threadId, create.runtimeMode).thread,
+                          archivedAt: null,
+                          deletedAt: null,
+                        } as never)
+                      : null;
+                  }),
+                ),
             ),
           ),
         dispatch: (command) =>

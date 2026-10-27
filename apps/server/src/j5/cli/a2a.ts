@@ -124,7 +124,7 @@ const usage = (message: string) =>
   new A2ACliFailure({ exitCode: A2A_EXIT_CODES.usage, error: "usage", message });
 
 const requireFlag = <A>(value: Option.Option<A>, flag: string) =>
-  Option.isSome(value) ? Effect.succeed(value.value) : Effect.fail(usage(`${flag} is required.`));
+  Effect.fromOption(value).pipe(Effect.mapError(() => usage(`${flag} is required.`)));
 
 const resolveOrigin = Effect.fn("j5.a2a.cli.resolveOrigin")(function* (flags: ConnectionFlags) {
   const explicit = Option.orElse(flags.origin, () => Option.none<string>());

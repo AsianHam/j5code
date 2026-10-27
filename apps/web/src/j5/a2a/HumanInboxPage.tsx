@@ -584,6 +584,7 @@ export function HumanInboxPage() {
   const runtimeSources = useAtomValue(crewRuntimeRequestSourcesAtom);
   const nativeQuestions = useNativeQuestionInbox();
   const previousOpenItems = useRef(new Map<EnvironmentId, ReadonlySet<string>>());
+  // oxlint-disable-next-line t3code/react-effect-budget -- an answered item leaving the open list rereads the answered list; it reacts to data arriving, not to a handler here.
   useEffect(() => {
     const next = new Map<EnvironmentId, ReadonlySet<string>>();
     for (const source of openSources.sources) {
@@ -636,6 +637,7 @@ export function HumanInboxPage() {
     await refreshHumanInboxes(environmentId, true);
   };
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- prunes answer attempts for scopes this person no longer has; render may not write refs.
   useEffect(() => {
     const keep = keepForPersonScopes(personScopes);
     for (const key of answerAttempts.current.keys())

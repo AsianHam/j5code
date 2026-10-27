@@ -68,12 +68,10 @@ export interface CatalogActionableInput {
 }
 
 /**
- * Actions (Apply, Update, group toggles) are enabled only when the input
- * shows the configured source and status has loaded for exactly that source.
- * A failed save leaves the draft visible against the old settings, so Apply
- * stays disabled instead of submitting the previous source; an external
- * A → B change disables actions until B's status arrives instead of
- * submitting A.
+ * Enabled only when the input shows the configured source and status has loaded for exactly that
+ * source. A failed save leaves the draft against the old settings, so Apply stays disabled rather
+ * than submit the previous source; an external A → B change disables actions until B's status
+ * arrives.
  */
 export function isCatalogActionable(input: CatalogActionableInput): boolean {
   if (input.busy || input.isPending || !input.hasData) return false;

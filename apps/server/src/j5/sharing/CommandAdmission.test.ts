@@ -155,7 +155,7 @@ it.layer(conversationLayer)("CommandAdmission", (it) => {
       const launch = (projectId: string) =>
         admission.admitLaunch({ projectId } as unknown as OrchestrationV2ThreadLaunchInput).pipe(
           Effect.as("admitted"),
-          Effect.catch(() => Effect.succeed("refused")),
+          Effect.orElseSucceed(() => "refused"),
         );
       assert.strictEqual(yield* launch(PROJECT), "admitted");
       assert.strictEqual(yield* launch(OTHER_PROJECT), "refused");

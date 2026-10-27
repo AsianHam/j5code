@@ -7,9 +7,7 @@ import { useOwnedEnvironments } from "../../j5/sharing/settingsAccess";
 export function useSettingsProjectGroups() {
   // J5 (case 72): Settings manages only the projects of servers the person owns.
   const projects = useOwnedEnvironments(useProjects());
-  // Read the grouping fields one by one: a selector that builds an object hands back a new
-  // identity on every client settings write, which rebuilds every group and, through the
-  // settings scope, re-renders every settings row.
+  // Avoid object selector identities that rebuild groups and every settings row on each write.
   const sidebarProjectGroupingMode = useClientSettings(
     (settings) => settings.sidebarProjectGroupingMode,
   );

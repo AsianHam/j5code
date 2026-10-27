@@ -44,14 +44,15 @@ const make = Effect.gen(function* () {
     sharing: startedAt,
   });
   return ReadChanges.of({
-    notify: (...keys) =>
-      keys.length === 0
+    notify: Effect.fn("ReadChanges.notify")(function (...keys: ReadonlyArray<J5ReadRevisionKey>) {
+      return keys.length === 0
         ? Effect.void
         : SubscriptionRef.update(revisions, (current) => {
             const next = { ...current };
             for (const key of new Set(keys)) next[key] += 1;
             return next;
-          }),
+          });
+    }),
     changes: SubscriptionRef.changes(revisions).pipe(
       // Only that something moved matters here; what is sent is read after the window.
       Stream.buffer({ capacity: 1, strategy: "sliding" }),

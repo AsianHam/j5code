@@ -410,16 +410,15 @@ const make = Effect.gen(function* () {
             git.invalidateLocalStatus(worktree.path).pipe(
               Effect.andThen(git.localStatus({ cwd: worktree.path })),
               Effect.map((status) => ({ path: worktree.path, branch: status.refName })),
-              Effect.catch(() => Effect.succeed({ path: worktree.path, branch: null })),
+              Effect.orElseSucceed(() => ({ path: worktree.path, branch: null })),
             )
           : Effect.succeed(worktree),
       );
       const missingBaseRefs = yield* Effect.filter(caller.baseRefs, (base) =>
         git.hasCommit({ cwd, refName: base.ref }).pipe(
-          Effect.flatMap((found) =>
-            found || !base.startFromOrigin
-              ? Effect.succeed(found)
-              : git.hasCommit({ cwd, refName: `refs/remotes/origin/${base.ref}` }),
+          Effect.filterOrElse(
+            (found) => found || !base.startFromOrigin,
+            () => git.hasCommit({ cwd, refName: `refs/remotes/origin/${base.ref}` }),
           ),
           Effect.map((found) => !found),
         ),
@@ -450,7 +449,7 @@ const make = Effect.gen(function* () {
         worktrees: listed.worktrees,
       };
     },
-    Effect.catch(() => Effect.succeed(NO_WORKSPACE_OPTIONS)),
+    Effect.orElseSucceed(() => NO_WORKSPACE_OPTIONS),
   );
 
   const withSpawnStart: SpawnWorkspaceServiceShape["withSpawnStart"] = (input, effect) =>

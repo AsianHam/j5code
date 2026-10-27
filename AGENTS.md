@@ -157,7 +157,11 @@ A copy of real data is for a server the developer will use, or for rehearsing a 
 - Upon request, user-visible frontend changes should get one integrated pass in a real client: `test-t3-app` for web, `test-t3-mobile` for mobile. The primary agent does this once after integrating. Subagents do not launch their own dev servers. Ask permission before doing computer use or spinning up browsers.
 - When you are asked or authorized to live-test, the `j5-live-test` skill sets up a safe server and says what to cover and how to report.
 
-For authorized mobile verification, a missing or outdated native client is a build step, not a blocker. Run `node scripts/mobile-native-client.ts ensure <ios|android> <device-id>` on the simulator host before starting Metro. It checks the local Expo fingerprint and builds/installs when needed. See `test-t3-mobile` for the full workflow.
+For authorized mobile verification, a missing or outdated native client is an install step, not a blocker. Run `vp run mobile:install <ios|android> [device-id]` on the device host before starting Metro; it targets the only booted simulator or connected Android device when the id is omitted. It installs the dev client for this checkout's native fingerprint from the shared cache in seconds and builds only when no machine has built it yet, so prefer it over `expo run:*`, `xcodebuild`, or `gradlew`, which rebuild from scratch. Its stdout is one JSON line; build output goes to the log it names. See `test-t3-mobile` for the full workflow.
+
+## Evals
+
+`evals/` checks how real models behave with upstream's model-facing text: agent instructions, MCP tool descriptions and schemas, and generated titles. Before you change that text, read [evals/README.md](evals/README.md) and run the evals it names. When you fix a model behavior bug, add a case that fails before the fix. Evals call paid models, so ask the developer before running one.
 
 ## Pull requests
 
@@ -179,7 +183,7 @@ Most code changes do not need a documentation change. Agents can read the code.
 - **User docs** help users accomplish tasks. Give each major feature a concise section explaining what it does, how to start, and anything unintuitive. A settings path is useful; descriptions of visible buttons, icons, layouts, animations, or every UI state are not. Keep them in the shipped product's voice, without implementation details or contributor tooling. J5's go in `docs/j5/user/`; `docs/user/` is upstream's.
 - **Upstream's docs** (`docs/user/`, `docs/internals/`, `docs/operations/`) are upstream's. J5 doesn't add files there or edit its internal docs; J5's own go under `docs/j5/`.
 - Do not document every feature, enumerate fields or methods, narrate control flow, maintain file catalogs, or append PR summaries. Types, tests, and code already record the implementation.
-- Keep a local implementation explanation in a nearby code comment. Link to the relevant source instead of copying it.
+- A local reason the code can't show goes in a short nearby code comment. Link to the relevant source instead of copying it.
 - When a documented decision or constraint changes, rewrite or remove the affected text. Do not append another account of the new behavior.
 
 ## Plans and work artifacts
@@ -216,7 +220,8 @@ Upstream's architecture and its constraints: `docs/internals/overview.md`. Upstr
 - Every web file compiles under the React Compiler, so do not write `useMemo`, `useCallback`, or `memo` there (`t3code/no-manual-memo`); its bailout rules are lint errors. Mobile is still ratcheting toward full coverage and allows the memo hooks for now.
 - No em dashes in strings or JSX text that people or agents read (`t3code/no-em-dash-copy`). Use a period, comma, colon, or parentheses.
 - Inferred types over annotations. `any` is the enemy.
-- Comments say why: a constraint, an external quirk, or an invariant the code can't show. Don't restate names or signatures, narrate steps, or record history. `t3code/no-low-value-comments` catches the mechanical cases.
+- Default to no comment. Write one only for a constraint, an external quirk, or an invariant the code can't show, in one line where you can and four at most. Don't restate names or signatures, narrate steps, record history, or explain the fix you just made; the PR carries that. `t3code/no-low-value-comments` enforces the length cap and the mechanical cases.
+- React effects are for synchronizing with something outside React. Derive in render and act in handlers instead of syncing state, but don't hide real lifecycle work in refs or stores to dodge one. The `t3code/react-effect-budget` lint rule holds each file to its count in `scripts/effect-budget.json`; a new effect states its reason with `// oxlint-disable-next-line t3code/react-effect-budget -- <why>`.
 - Our users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations; they peg the GPU on high-refresh displays.
 - If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
 

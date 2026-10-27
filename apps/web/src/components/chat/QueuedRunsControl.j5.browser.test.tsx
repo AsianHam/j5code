@@ -96,6 +96,7 @@ it("labels a queued peer message by its sender, keeps its attachments for editin
         { id: MessageId.make("message-1"), inputIntent: "queued_turn", text: peerMessage },
       ]}
       editingRunId={null}
+      editBlockedReason={null}
       onEditQueuedRun={onEditQueuedRun}
       onCancelEdit={() => {}}
     />,

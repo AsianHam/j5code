@@ -132,6 +132,7 @@ export function SkillInventoryPanel({ environmentId }: { readonly environmentId:
 
   // The effect reads only hook values and primitives, and comes before the derived lists: the
   // compiler caches a value only when no hook call sits between its uses.
+  // oxlint-disable-next-line t3code/react-effect-budget -- refreshes a provider's skills from the server once per selection, for the providers that have no snapshot yet.
   useEffect(() => {
     const selectedProvider = providers.find(
       (provider) => offersSkillLinks(provider) && provider.instanceId === filter,

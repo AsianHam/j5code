@@ -6,11 +6,6 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { PlacementCommandId } from "./placementContracts.ts";
 import { dispatchCommand as dispatchIntakeCommand } from "../../orchestration-v2/ThreadMessageIntake.ts";
 import { J5AdaptedThreadToolkit, J5AdaptedThreadHandlersLive } from "./mcp/threadTools.ts";
-import { handlersFor } from "./mcp/upstreamCatalog.ts";
-import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
-import * as ThreadHandlers from "../../mcp/toolkits/thread/handlers.ts";
-import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
-import { Toolkit } from "effect/ai";
 import { claimPersonQueuedEdit } from "./queuedEdits.ts";
 import {
   A2ASilenceDetector,
@@ -174,6 +169,7 @@ import {
   ParticipantId,
   type AgentParticipant,
 } from "./contracts.ts";
+import { noDocumentTextLayer } from "../test-support/documentText.ts";
 
 const decodeSentFact = Schema.decodeUnknownEffect(Schema.fromJsonString(MessageSentPayload));
 const decodeToolFailure = Schema.decodeUnknownEffect(
@@ -401,7 +397,7 @@ const makeTestLayer = (
     ),
     Layer.provide(
       Layer.mock(ProjectService.ProjectService)({
-        getById: () => Effect.succeed(Option.none()),
+        getById: () => Effect.succeedNone,
       }),
     ),
     Layer.provide(mcpSessionRegistryTestLayer),
@@ -421,8 +417,9 @@ const makeTestLayer = (
         ...threads,
         getThreadProjection: (threadId) =>
           Ref.get(harness.staleProjection).pipe(
-            Effect.flatMap((stale) =>
-              stale === undefined ? threads.getThreadProjection(threadId) : Effect.succeed(stale),
+            Effect.filterOrElse(
+              (stale) => stale !== undefined,
+              () => threads.getThreadProjection(threadId),
             ),
           ),
         sendToThread: (input) =>
@@ -2918,6 +2915,7 @@ it.effect(
       const base = makeMessageLifecycleLayer(harness).pipe(
         Layer.provideMerge(serverConfigLayer),
         Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(noDocumentTextLayer),
       );
       const layer = base;
       yield* Effect.gen(function* () {
@@ -3054,6 +3052,7 @@ it.effect(
       const base = makeMessageLifecycleLayer(harness).pipe(
         Layer.provideMerge(serverConfigLayer),
         Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(noDocumentTextLayer),
       );
       yield* Effect.gen(function* () {
         const registrar = yield* A2AHomeRegistrar;
@@ -3136,23 +3135,25 @@ it.effect(
         yield* sendSource("second");
         yield* startPendingTestTurn(source.threadId);
         const toolkit = yield* J5AdaptedThreadToolkit;
-        const invokeFork = toolkit.handle("t3_thread_fork", { sourcePoint }).pipe(
-          Stream.unwrap,
-          Stream.run(Sink.last()),
-          Effect.flatMap(Effect.fromOption),
-          Effect.provideService(McpInvocationContext, {
-            environmentId: EnvironmentId.make("environment:fork-test"),
-            requestNamespace: "fork-test",
-            thread: {
-              threadId: source.threadId,
-              providerSessionId: "fork-test",
-              providerInstanceId: modelSelection.instanceId,
-            },
-            client: undefined,
-            capabilities: new Set(["orchestration"] as const),
-            issuedAt: 1,
-          }),
-        );
+        const invokeFork = toolkit
+          .handle("t3_thread_transfer", { action: "fork", sourcePoint })
+          .pipe(
+            Stream.unwrap,
+            Stream.run(Sink.last()),
+            Effect.flatMap(Effect.fromOption),
+            Effect.provideService(McpInvocationContext, {
+              environmentId: EnvironmentId.make("environment:fork-test"),
+              requestNamespace: "fork-test",
+              thread: {
+                threadId: source.threadId,
+                providerSessionId: "fork-test",
+                providerInstanceId: modelSelection.instanceId,
+              },
+              client: undefined,
+              capabilities: new Set(["orchestration"] as const),
+              issuedAt: 1,
+            }),
+          );
         yield* sql`CREATE TEMP TRIGGER fail_mcp_fork_placement BEFORE INSERT ON j5_a2a_placement_event
           BEGIN SELECT RAISE(ABORT, 'injected MCP placement failure'); END`;
         const mcpFailure = yield* invokeFork;
@@ -4338,15 +4339,6 @@ it.effect("registers an archived older thread as archived, in one step or not at
   }),
 );
 
-/** Upstream's queue cancel and promote, run on upstream's handlers as `/mcp` registers them. */
-const QueueRemovalToolkit = Toolkit.make(
-  ThreadToolkit.tools.t3_queue_cancel,
-  ThreadToolkit.tools.t3_queue_promote_to_steer,
-);
-const QueueRemovalHandlersLive = McpToolAccess.HandlersLayer.layer(
-  handlersFor(QueueRemovalToolkit, ThreadHandlers.layer),
-);
-
 it.effect(
   "an agent edits only its own queued message, inside its envelope, and the ledger follows every edit",
   () =>
@@ -4357,6 +4349,7 @@ it.effect(
         Layer.provideMerge(makeMessageLifecycleLayer(harness)),
         Layer.provideMerge(serverConfigLayer),
         Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(noDocumentTextLayer),
       );
       yield* Effect.gen(function* () {
         const registrar = yield* A2AHomeRegistrar;
@@ -4430,7 +4423,12 @@ it.effect(
           Effect.gen(function* () {
             const toolkit = yield* J5AdaptedThreadToolkit;
             return yield* toolkit
-              .handle("t3_queue_edit", { threadId: receiver.threadId, queuedRunId, text })
+              .handle("t3_queue", {
+                action: "edit",
+                threadId: receiver.threadId,
+                queuedRunId,
+                text,
+              })
               .pipe(
                 Stream.unwrap,
                 Stream.run(Sink.last()),
@@ -4438,7 +4436,7 @@ it.effect(
                 Effect.provideService(McpInvocationContext, scope),
               );
           }).pipe(Effect.provide(J5AdaptedThreadHandlersLive));
-        const removals = yield* Effect.provide(QueueRemovalToolkit, QueueRemovalHandlersLive);
+        const removals = yield* Effect.provide(J5AdaptedThreadToolkit, J5AdaptedThreadHandlersLive);
         const asEditor = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
           stream.pipe(
             Stream.run(Sink.last()),
@@ -4524,7 +4522,7 @@ it.effect(
         const othersFailure = yield* decodeToolFailure(refusedOthers.result);
         assert.equal(othersFailure.code, "capability_denied");
         assert.include(othersFailure.message, other.receiverId);
-        assert.include(othersFailure.message, "t3_queue_cancel");
+        assert.include(othersFailure.message, "cancel, reorder and promote_to_steer");
         const personQueued = yield* queued(MessageId.make("message:edit:person"));
         const refusedPerson = yield* edit(personQueued.run.id, "Hijacked");
         assert.isTrue(refusedPerson.isFailure);
@@ -4629,7 +4627,8 @@ it.effect(
         assert.isFalse(
           (yield* asEditor(
             Stream.unwrap(
-              removals.handle("t3_queue_promote_to_steer", {
+              removals.handle("t3_queue", {
+                action: "promote_to_steer",
                 threadId: receiver.threadId,
                 queuedRunId: promotedQueued.run.id,
                 targetRunId: receiverRun.id,
@@ -4708,7 +4707,8 @@ it.effect(
         assert.isFalse(
           (yield* asEditor(
             Stream.unwrap(
-              removals.handle("t3_queue_cancel", {
+              removals.handle("t3_queue", {
+                action: "cancel",
                 threadId: receiver.threadId,
                 queuedRunId: othersQueued.run.id,
               }),

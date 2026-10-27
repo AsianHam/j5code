@@ -7,19 +7,15 @@ import { renewPrimarySession } from "./sessionRenewal";
 const ATTEMPTS_PER_DROP = 2;
 
 /**
- * Renews the primary server's session when its connection drops because J5 ended the session
- * for a change of level, and reloads the page once on the new one, which is the reconnect the
- * person sees (People and access AC17). A device whose session was ended for good, because its
- * person was removed or it was ended, is sent the way upstream sends a browser with no session:
- * to pair. The first try can reach the server before the change that ended the session has
- * committed, so the next refused phase tries once more; and a reload that renewal refused goes
- * through the sign-in gate, which asks again. A drop for any other reason finds the session live,
- * and nothing happens.
+ * A session J5 ended for a change of level is renewed and the page reloads once (People and access
+ * AC17); one ended for good is sent to pair, as upstream does. The first try can reach the server
+ * before the change that ended the session commits, so the next refused phase tries once more.
  * Mounted once, beside J5's dialogs.
  */
 export function SessionRenewalWatcher() {
   const phase = usePrimaryEnvironment()?.connection.phase ?? null;
   const attempts = useRef<number | null>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- renews the session in response to the connection dropping, which no handler here causes.
   useEffect(() => {
     if (phase === "connected") {
       attempts.current = 0;

@@ -20,7 +20,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -159,18 +158,16 @@ const makeFixture = (
       }),
       Layer.mock(ProjectService)({
         getById: () =>
-          Effect.succeed(
-            Option.some({
-              id: projectId,
-              title: "Project",
-              workspaceRoot: projectRoot,
-              defaultModelSelection: null,
-              scripts: [],
-              createdAt,
-              updatedAt: createdAt,
-              deletedAt: null,
-            }),
-          ),
+          Effect.succeedSome({
+            id: projectId,
+            title: "Project",
+            workspaceRoot: projectRoot,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt,
+            updatedAt: createdAt,
+            deletedAt: null,
+          }),
       }),
       Layer.mock(OrchestratorV2)({}),
       Layer.mock(OrchestratorMcpService)({}),

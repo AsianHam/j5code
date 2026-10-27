@@ -36,6 +36,7 @@ export function useRereadWhenListed(
       environmentId === null || threadId === null ? null : scopeThreadRef(environmentId, threadId),
     ) !== null;
   const wasListed = useRef(listed);
+  // oxlint-disable-next-line t3code/react-effect-budget -- rereads a shared conversation when its thread is listed again, which the server's snapshot decides.
   useEffect(() => {
     if (listed && !wasListed.current) {
       if (read !== null) appAtomRegistry.refresh(read);
@@ -78,6 +79,7 @@ export function useThreadAuthors(
   const authors = useEnvironmentQuery(query);
   const revision = useEnvironmentQuery(changes).data?.revision;
   useRereadWhenListed(environmentId, threadId, query, changes);
+  // oxlint-disable-next-line t3code/react-effect-budget -- rereads message authors when the server's change counter moves.
   useEffect(() => {
     if (query !== null && revision !== undefined && revision > 0) appAtomRegistry.refresh(query);
   }, [query, revision]);

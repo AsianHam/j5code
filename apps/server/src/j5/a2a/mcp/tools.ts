@@ -26,6 +26,7 @@ import { McpAttachmentInput } from "../../../mcp/toolkits/attachment/input.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import { DocumentText } from "../../../provider/DocumentText.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { AgentCrewInstanceService } from "../AgentCrewInstanceService.ts";
 import { ArchiveCrewService } from "../ArchiveCrewService.ts";
@@ -599,6 +600,7 @@ const sendDependencies = [
   // Attachments are claimed into the receiver's thread before the message is committed.
   ServerConfig,
   FileSystem.FileSystem,
+  DocumentText,
   // A steer or restart to an agent on a peer server needs that server to support it.
   PeerDirectory,
   PeerRegistryService,
@@ -636,6 +638,7 @@ const spawnDependencies = [
   ManagedProjectFolders,
   ServerConfig,
   FileSystem.FileSystem,
+  DocumentText,
 ];
 
 const crewProposalDependencies = [

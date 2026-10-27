@@ -237,16 +237,14 @@ export const validateIsolatedBaseDir = Effect.fn("j5.a2a.devDeliverySeed.validat
     const configuredSharedHomes = [".t3", ".j5code"].map((name) =>
       path.resolve(NodeOS.homedir(), name),
     );
-    const sharedHomes = yield* Effect.all(
-      configuredSharedHomes.map((sharedHome) =>
-        fileSystem
-          .exists(sharedHome)
-          .pipe(
-            Effect.flatMap((exists) =>
-              exists ? fileSystem.realPath(sharedHome) : Effect.succeed(sharedHome),
-            ),
+    const sharedHomes = yield* Effect.forEach(configuredSharedHomes, (sharedHome) =>
+      fileSystem
+        .exists(sharedHome)
+        .pipe(
+          Effect.flatMap((exists) =>
+            exists ? fileSystem.realPath(sharedHome) : Effect.succeed(sharedHome),
           ),
-      ),
+        ),
     );
     let existingParent = requested;
     while (!(yield* fileSystem.exists(existingParent))) {
@@ -343,8 +341,9 @@ const makeRuntimeLayer = (databasePath: string, baseDir: string, cwd: string) =>
     textGeneration: {} as ProviderInstance["textGeneration"],
   };
   const providers = Layer.succeed(ProviderInstanceRegistry, {
-    getInstance: (instanceId) =>
-      Effect.succeed(instanceId === fakeProviderInstanceId ? fakeProvider : undefined),
+    getInstance: Effect.fn("ProviderInstanceRegistry.getInstance")(function (instanceId) {
+      return Effect.succeed(instanceId === fakeProviderInstanceId ? fakeProvider : undefined);
+    }),
     listInstances: Effect.succeed([fakeProvider]),
     listUnavailable: Effect.succeed([]),
     streamChanges: Stream.empty,
@@ -364,7 +363,7 @@ const makeRuntimeLayer = (databasePath: string, baseDir: string, cwd: string) =>
     ),
     Layer.provide(
       Layer.mock(ProjectService.ProjectService)({
-        getById: () => Effect.succeed(Option.none()),
+        getById: () => Effect.succeedNone,
       }),
     ),
     Layer.provide(mcpSessionRegistryTestLayer),
@@ -971,10 +970,9 @@ export const runDevDeliverySeed = Effect.fn("j5.a2a.devDeliverySeed.runDevDelive
     } satisfies DevDeliverySeedReceipt;
   }).pipe(Effect.provide(runtime));
   return yield* seed.pipe(
-    Effect.catch((cause) =>
-      isDevDeliverySeedServerOffError(cause) || !isDatabaseContention(cause)
-        ? Effect.fail(cause)
-        : Effect.fail(new DevDeliverySeedServerOffError({ cause })),
+    Effect.catchIf(
+      (cause) => !isDevDeliverySeedServerOffError(cause) && isDatabaseContention(cause),
+      (cause) => Effect.fail(new DevDeliverySeedServerOffError({ cause })),
     ),
   );
 }, Effect.provide(NodeServices.layer));

@@ -24,6 +24,7 @@ import { BUILT_IN_AGENT_PERSONAS } from "./agentPersonas.ts";
 import { resolveAgentPersonaRuntime } from "./agentPersonaRuntime.ts";
 import { makeHarness, modelSelection, projectId } from "../test-support/threadLaunchHarness.ts";
 import { personaLibraryLayer } from "../test-support/personaLibrary.ts";
+import { noDocumentTextLayer } from "../test-support/documentText.ts";
 
 function launchInput(input: {
   readonly command: string;
@@ -524,7 +525,11 @@ it.effect("releases claimed uploads when persona resolution refuses a launch", (
     );
   }).pipe(
     Effect.provide(
-      harness.layer.pipe(Layer.provideMerge(environment), Layer.provideMerge(NodeServices.layer)),
+      harness.layer.pipe(
+        Layer.provideMerge(environment),
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(noDocumentTextLayer),
+      ),
     ),
     Effect.scoped,
   );

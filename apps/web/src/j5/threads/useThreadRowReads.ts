@@ -38,6 +38,7 @@ export function useThreadRowReads(refs: ReadonlyArray<ScopedThreadRef>) {
   // The sidebar's list spans every thread and re-renders while a turn streams, so the effect keys
   // on the serialized row set instead of the list's identity.
   const key = JSON.stringify(refs);
+  // oxlint-disable-next-line t3code/react-effect-budget -- asks the servers for Crew chips and spawned children of the rows on screen, batched across rows.
   useEffect(() => {
     const requested = JSON.parse(key) as ReadonlyArray<ScopedThreadRef>;
     requestCrewMemberships(requested, connections);

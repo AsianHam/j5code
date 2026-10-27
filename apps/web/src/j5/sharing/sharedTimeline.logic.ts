@@ -3,17 +3,10 @@ import { type MessageAuthor, typedText } from "@t3tools/contracts/j5";
 export { typedText };
 
 /**
- * How one person's message in a thread is shown:
- * - `authored`: the server records who sent it. It is shown as typed, with the note it carried
- *   to the agent, and whose it is.
- * - `plain`: the server has answered for it and records no one, so it is a message as upstream
- *   draws it, from before the thread was shared or from a thread only one person writes to.
- * - `pending`: the server's copy has arrived but no read of who sent it has come back since. Its
- *   stored text may begin with lines for the agent, so it is shown as this client's person typed
- *   it when they sent it here (`typed`), and otherwise not yet.
- *
- * Whose a message is is read by its id, never from its words: two people can send the same words,
- * and anyone can type a line that looks like the platform's.
+ * `authored`: shown as typed, with its note to the agent and whose it is. `plain`: no sender
+ * recorded, drawn as upstream does. `pending`: no sender read yet and the stored text may begin
+ * with lines for the agent, so it shows only as this client's person `typed` it. The sender is
+ * read by message id, never its words: anyone can type a line that looks like the platform's.
  */
 export type SharedMessageView =
   | { readonly kind: "plain" }
@@ -50,11 +43,9 @@ export function sharedMessageView(input: {
 }
 
 /**
- * A thread's messages for the composer's up-arrow recall (#612), each as the timeline shows it
- * (`viewOf`, `undefined` for one it has not drawn): an authored message by the words its author
- * typed, a message no one is recorded for as stored, and a message the timeline holds back while
- * its author is unknown by what this client's person typed, or not at all. A line meant for the
- * agent is never recalled, since a draft is not cleaned again.
+ * Up-arrow recall shows each message as the timeline does (`viewOf`, `undefined` if not drawn):
+ * authored by the words typed, unrecorded as stored, held back by what this client's person typed
+ * or not at all. A line meant for the agent is never recalled, since a draft is not cleaned again.
  */
 export function recallableMessages<
   Message extends { readonly role: string; readonly text: string },

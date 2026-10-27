@@ -19,33 +19,36 @@ export const layer = Layer.effect(
     const inner = yield* ThreadManagementService;
     return ThreadManagementService.of({
       ...inner,
-      getThreadRecords: (threadId, fields, filter) =>
-        inner.getThreadRecords(threadId, fields, filter).pipe(
-          Effect.flatMap((records) => {
-            const { messages } = records as Partial<ProjectionRecords<"messages">>;
-            if (messages === undefined) return Effect.succeed(records);
-            return sql<{ readonly message_id: string; readonly stored_prefix: string }>`
+      getThreadRecords: Effect.fn("ThreadManagementService.getThreadRecords")(
+        function (threadId, fields, filter) {
+          return inner.getThreadRecords(threadId, fields, filter).pipe(
+            Effect.flatMap((records) => {
+              const { messages } = records as Partial<ProjectionRecords<"messages">>;
+              if (messages === undefined) return Effect.succeed(records);
+              return sql<{ readonly message_id: string; readonly stored_prefix: string }>`
               SELECT message_id, stored_prefix
               FROM j5_a2a_message_author
               WHERE thread_id = ${threadId} AND stored_prefix <> ''
             `.pipe(
-              Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-              Effect.map((rows) => {
-                if (rows.length === 0) return records;
-                const prefixes = new Map(rows.map((row) => [row.message_id, row.stored_prefix]));
-                return {
-                  ...records,
-                  messages: messages.map((message) => {
-                    const storedPrefix = prefixes.get(message.id);
-                    return storedPrefix === undefined
-                      ? message
-                      : { ...message, text: typedText(message.text, { storedPrefix }) };
-                  }),
-                } as typeof records;
-              }),
-            );
-          }),
-        ),
+                Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+                Effect.map((rows) => {
+                  if (rows.length === 0) return records;
+                  const prefixes = new Map(rows.map((row) => [row.message_id, row.stored_prefix]));
+                  return {
+                    ...records,
+                    messages: messages.map((message) => {
+                      const storedPrefix = prefixes.get(message.id);
+                      return storedPrefix === undefined
+                        ? message
+                        : { ...message, text: typedText(message.text, { storedPrefix }) };
+                    }),
+                  } as typeof records;
+                }),
+              );
+            }),
+          );
+        },
+      ),
     });
   }),
 );

@@ -31,6 +31,7 @@ export function LeftOnNothingRedirect() {
   const threadCount = useEnvironmentThreadRefs(narrowEnvironmentId).length;
   const navigate = useNavigate();
   const leftOnNothing = narrow && shell.data?.snapshot._tag === "Some" && threadCount === 0;
+  // oxlint-disable-next-line t3code/react-effect-budget -- leaves a page once the server's snapshot shows nothing is left to this person.
   useEffect(() => {
     if (leftOnNothing) void navigate({ to: "/", replace: true });
   }, [leftOnNothing, navigate]);

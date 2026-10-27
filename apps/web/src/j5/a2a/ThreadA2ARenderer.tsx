@@ -106,7 +106,7 @@ export function renderThreadA2ADelivery(props: ThreadA2ADeliveryCompositionInput
   }
 
   // A platform notice this client cannot read yet keeps today's raw card until the notices are
-  // redrawn (#698): upstream's row would draw it as the reader's own message.
+  // redrawn: upstream's row would draw it as the reader's own message.
   return (
     <section
       className="rounded-md border border-border/60 bg-muted/20 p-2.5"
@@ -123,14 +123,10 @@ export function literalUserMessageContext(text: string): ResolvedUserMessageCont
 }
 
 /**
- * Upstream's user-row presentation with J5's reading of who is speaking (groups 1 to 3). `text`
- * is the words without any envelope; `authorName` names the sender for the identity line and the
- * row's heading, and is null for the reader's own message.
- *
- * Words J5 took out of an envelope or a brief are literal authored text, so `literalContext`
- * stands in for upstream's context resolution: the composer never attached context records to
- * them, and upstream's upgrade of legacy trailing blocks (`<terminal_context>`,
- * `<element_context>`, preview annotations) would cut the tail off a letter that quotes one.
+ * `authorName` is null for the reader's own message. Words J5 took out of an envelope or a brief
+ * are literal authored text, so `literalContext` stands in for upstream's context resolution:
+ * upstream's upgrade of legacy trailing blocks (`<terminal_context>`, `<element_context>`, preview
+ * annotations) would cut the tail off a letter that quotes one.
  */
 export function useJ5UserMessagePresentation(message: ChatMessage) {
   const ctx = use(TimelineRowCtx);

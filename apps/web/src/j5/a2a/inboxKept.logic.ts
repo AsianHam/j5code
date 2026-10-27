@@ -1,9 +1,7 @@
 /**
- * Inbox items someone had typed an answer into when they closed (Inbox AC17): they stay in place,
- * with the words, until the person clears them or leaves the page. `previous` and `current` are
- * the open items before and after a read, and `answers` what is typed into each. An answer this
- * client is sending keeps its words until the server confirms it, which clears them: if someone
- * else's answer won, the words stay, with who answered.
+ * Items with a typed answer when they closed stay, with the words, until the person clears them or
+ * leaves the page (Inbox AC17). An answer this client is sending keeps its words until the server
+ * confirms it, which clears them; if someone else's answer won, the words stay, with who answered.
  */
 export function nextKeptItems<Item>(input: {
   readonly previous: ReadonlyArray<Item>;

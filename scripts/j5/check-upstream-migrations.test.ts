@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import reviewedNightly3238 from "../../apps/server/src/j5/persistence/reviewed-v0.1.1-nightly.20261017.3238.v1.json" with { type: "json" };
+import reviewedV013 from "../../apps/server/src/j5/persistence/reviewed-v0.1.3.v1.json" with { type: "json" };
 import reviewed from "../../apps/server/src/j5/persistence/reviewed-v2-reconcile.v1.json" with { type: "json" };
 import {
   inspectMigrationChanges,
@@ -89,6 +90,28 @@ describe("reviewed pin → upstream nightly 3238", () => {
       [61, "PullRequestReviewGuides"],
       [62, "ThreadFailureLookupIndex"],
     ]);
+  });
+});
+
+describe("reviewed pin → upstream v0.1.3", () => {
+  it("chains from the 3238 review, appends 063 to 069, and audits 050's frozen helper", () => {
+    const { sourceMigrations, targetMigrations, targetRef } = reviewedV013;
+    expect(sourceMigrations).toEqual(reviewedNightly3238.targetMigrations);
+    expect(matchesReviewedBridge(sourceMigrations, targetMigrations, targetRef)).toBe(true);
+    expect(
+      matchesReviewedBridge(sourceMigrations, targetMigrations, reviewedNightly3238.targetRef),
+    ).toBe(false);
+    expect(
+      inspectMigrationChanges(sourceMigrations, targetMigrations)
+        .filter(({ kind }) => kind !== "implementation_changed")
+        .map(({ kind }) => kind),
+    ).toEqual([]);
+    expect(targetMigrations.slice(-7).map(({ id }) => id)).toEqual([63, 64, 65, 66, 67, 68, 69]);
+    expect(
+      targetMigrations
+        .find(({ name }) => name === "ProjectionThreadPullRequests")
+        ?.dependencies?.map(({ path }) => path),
+    ).toEqual(["apps/server/src/persistence/Migrations/legacyThreadPullRequestKey.ts"]);
   });
 });
 

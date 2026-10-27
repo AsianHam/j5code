@@ -57,14 +57,10 @@ const SEAMS: ReadonlyArray<Seam> = [
     file: "features/threads/new-task-flow-provider.tsx",
     record: "Saved-agent mentions: draft-as-agent entry point; case 45",
     from: "../../j5/agents/agentDraftState",
-    reaches: [
-      "selectDraftAgent(draftKey, message.creation.agentPersonaId ?? null)",
-      "readDraftAgentPersonaId(",
-      "expandPlaybookPrompt(draft.text.trim())",
-    ],
+    reaches: ["readDraftAgentPersonaId(", "expandPlaybookPrompt(draft.text.trim())"],
   },
   {
-    file: "state/use-thread-outbox-drain.ts",
+    file: "state/threadOutboxDelivery.ts",
     record: "Saved-agent mentions: draft-as-agent entry point",
     from: "../j5/agents/agentDraftState",
     reaches: ["selectDraftAgent(draftKey, queuedMessage.creation.agentPersonaId ?? null)"],
@@ -103,7 +99,9 @@ const SEAMS: ReadonlyArray<Seam> = [
     file: "features/threads/thread-list-v2-items.tsx",
     record: "Saved-agent mentions: agent identity",
     from: "../../j5/agents/AgentIdentityChip",
-    reaches: ["<AgentIdentityChip assignment={thread.agentPersonaAssignment} />"],
+    reaches: [
+      "<AgentIdentityChip assignment={thread.agentPersonaAssignment} inset={titleTextInset} />",
+    ],
   },
   {
     file: "features/settings/SettingsAgentsRouteScreen.tsx",
@@ -115,13 +113,13 @@ const SEAMS: ReadonlyArray<Seam> = [
     file: "Stack.tsx",
     record: "PR #75–#86 role library: Personas settings",
     from: "./features/settings/SettingsAgentsRouteScreen",
-    reaches: ["screen: SettingsAgentsRouteScreen", 'linking: "personas"'],
+    reaches: ["screen: SettingsAgentsRouteScreen", 'linking: "settings/personas"'],
   },
   {
     file: "features/settings/SettingsRouteScreen.tsx",
     record: "PR #75–#86 role library: Personas settings",
     from: "",
-    reaches: ['target="SettingsAgents"'],
+    reaches: ['page("SettingsAgents", "person.2", "Personas")'],
   },
   {
     file: "App.tsx",

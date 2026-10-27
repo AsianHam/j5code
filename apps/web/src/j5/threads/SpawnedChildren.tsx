@@ -66,11 +66,9 @@ export interface SpawnedChildActions {
 }
 
 /**
- * SB5 refinement: agent-spawned Peer Agents stay out of the flat list, but the row that spawned
- * them (a Captain or any spawner) can expand into its placed children so the work is one click
- * away. Each Crew the row commands is its own named, collapsible group, and the solo peers it
- * spawned form one more; collapsed by default, with a measured "needs a human" fact on any child
- * shown on the collapsed header.
+ * SB5: agent-spawned Peer Agents stay out of the flat list, but their spawner's row expands into
+ * them. Each Crew the row commands is its own collapsible group and its solo peers form one more;
+ * collapsed by default, with any child's "needs a human" fact shown on the collapsed header.
  */
 export function SpawnedChildren(
   props: SpawnedChildActions & { readonly thread: EnvironmentThreadShell },

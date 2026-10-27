@@ -124,11 +124,18 @@ export class PeerDirectory extends Context.Service<PeerDirectory, PeerDirectoryS
 export const noneLayer = Layer.succeed(
   PeerDirectory,
   PeerDirectory.of({
-    listAgents: () => Effect.succeed({ agents: [], unreadPeers: [], selfName: null }),
-    resolveAgent: () => Effect.succeed({ agents: [], unreadPeers: [], selfName: null }),
-    snapshotAgent: () => Effect.succeed(null),
-    serverStatus: (environmentId) =>
-      Effect.succeed({ name: environmentId, available: null, lastAvailableAt: null }),
+    listAgents: Effect.fn("PeerDirectory.listAgents")(function () {
+      return Effect.succeed({ agents: [], unreadPeers: [], selfName: null });
+    }),
+    resolveAgent: Effect.fn("PeerDirectory.resolveAgent")(function () {
+      return Effect.succeed({ agents: [], unreadPeers: [], selfName: null });
+    }),
+    snapshotAgent: Effect.fn("PeerDirectory.snapshotAgent")(function () {
+      return Effect.succeed(null);
+    }),
+    serverStatus: Effect.fn("PeerDirectory.serverStatus")(function (environmentId) {
+      return Effect.succeed({ name: environmentId, available: null, lastAvailableAt: null });
+    }),
   }),
 );
 

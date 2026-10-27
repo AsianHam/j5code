@@ -211,7 +211,7 @@ function OwnedServerPeople({
   const canManage = useAtomValue(sharingManage.setLevel.permissionAtom(environmentId));
   const people = useEnvironmentQuery(peopleQuery(environmentId));
   const links = useEnvironmentQuery(linksQuery(environmentId));
-  // People join, leave and pair devices without this client doing anything.
+  // oxlint-disable-next-line t3code/react-effect-budget -- people join, leave and pair devices without this client, so each opening reads again.
   useEffect(() => refreshSharing(environmentId), [environmentId]);
   const nowMs = Date.parse(useNowMinute());
   const everyone = (people.data?.people ?? []).toSorted(byStanding);

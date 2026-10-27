@@ -114,15 +114,33 @@ export function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
     Layer.succeed(ProjectService.ProjectService, {
-      create: () => Effect.die("unused"),
-      bootstrap: () => Effect.die("unused"),
-      update: () => Effect.die("unused"),
-      delete: () => Effect.die("unused"),
-      getById: (id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
-      getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
+      create: Effect.fn("ProjectService.ProjectService.create")(function () {
+        return Effect.die("unused");
+      }),
+      bootstrap: Effect.fn("ProjectService.ProjectService.bootstrap")(function () {
+        return Effect.die("unused");
+      }),
+      update: Effect.fn("ProjectService.ProjectService.update")(function () {
+        return Effect.die("unused");
+      }),
+      delete: Effect.fn("ProjectService.ProjectService.delete")(function () {
+        return Effect.die("unused");
+      }),
+      getById: Effect.fn("ProjectService.ProjectService.getById")(function (id) {
+        return Effect.succeed(id === projectId ? Option.some(project) : Option.none());
+      }),
+      getByWorkspaceRoot: Effect.fn("ProjectService.ProjectService.getByWorkspaceRoot")(
+        function () {
+          return Effect.succeedSome(project);
+        },
+      ),
       snapshot: Effect.die("unused"),
-      getShell: () => Effect.die("unused"),
-      listShells: () => Effect.die("unused"),
+      getShell: Effect.fn("ProjectService.ProjectService.getShell")(function () {
+        return Effect.die("unused");
+      }),
+      listShells: Effect.fn("ProjectService.ProjectService.listShells")(function () {
+        return Effect.die("unused");
+      }),
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
@@ -146,7 +164,7 @@ export function makeHarness(options: HarnessOptions = {}) {
     ProviderRegistryMock.layer(options.providers),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       namedProjectsRoot: "/projects",
-      folderForThread: () => Effect.succeed(Option.none()),
+      folderForThread: () => Effect.succeedNone,
       isScratchProject: () => Effect.succeed(false),
     }),
   );

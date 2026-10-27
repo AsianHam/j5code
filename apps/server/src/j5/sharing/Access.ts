@@ -377,9 +377,13 @@ const make = Effect.gen(function* () {
     ).pipe(Effect.tap(() => tell({ personId, kind: "reach" })));
 
   return Access.of({
-    setLevel: (input) => changing(input.personId, people.setLevel(input)),
+    setLevel: Effect.fn("Access.setLevel")(function (input) {
+      return changing(input.personId, people.setLevel(input));
+    }),
 
-    removeLevel: (input) => changing(input.personId, people.removeLevel(input)),
+    removeLevel: Effect.fn("Access.removeLevel")(function (input) {
+      return changing(input.personId, people.removeLevel(input));
+    }),
 
     leave: Effect.fn("j5.sharing.access.leave")(function* (session, scope) {
       const reach = yield* people.sessionReach(session);
@@ -503,8 +507,8 @@ const make = Effect.gen(function* () {
 
     ownersGeneration: committed(Ref.get(ownersGeneration)),
 
-    issueMcpClient: (approval, issue) =>
-      committed(
+    issueMcpClient: Effect.fn("Access.issueMcpClient")(function (approval, issue) {
+      return committed(
         Effect.gen(function* () {
           if ((yield* Ref.get(ownersGeneration)) !== approval.generation) {
             return yield* new StaleMcpApprovalError({});
@@ -513,7 +517,8 @@ const make = Effect.gen(function* () {
           if (approval.approver !== null) yield* recordMcpApprover(approval.approver, issued);
           return issued;
         }),
-      ),
+      );
+    }),
   });
 });
 

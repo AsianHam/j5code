@@ -5,11 +5,10 @@ import { DESCRIBE_TIMEOUT_MS } from "./joinPage.logic";
 import { renewPrimarySession } from "./sessionRenewal";
 
 /**
- * Asks the server what a link opens and what this browser already is there; `status` is `null`
- * when it could not be asked or did not answer in time. The server reads the cookie to tell who
- * the browser is, so a session J5 ended for a change of level is renewed first: the app renews it
- * as it loads, but not on the pairing page, and the person would otherwise be asked for a name
- * that is already theirs.
+ * `status` is `null` when the server could not be asked or did not answer in time. The server
+ * tells who the browser is by its cookie, so a session J5 ended for a change of level is renewed
+ * first: the app renews it on load but not on the pairing page, and the person would otherwise be
+ * asked for a name that is already theirs.
  */
 export async function describeLink(
   token: string,

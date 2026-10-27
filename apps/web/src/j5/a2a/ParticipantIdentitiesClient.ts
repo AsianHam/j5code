@@ -26,6 +26,7 @@ export function useParticipantIdentities(
   const key = `${environmentId}\n${idsKey}`;
   const connected = useConnectedEnvironmentIds().includes(environmentId);
   const [result, setResult] = useState({ key: "", identities: NO_IDENTITIES });
+  // oxlint-disable-next-line t3code/react-effect-budget -- reads identities from the server for the ids on screen, and drops a stale answer when they change.
   useEffect(() => {
     if (idsKey === "" || !connected) return;
     const ids = idsKey.split("\0");
@@ -71,6 +72,7 @@ export function useScopedParticipantLabels(refs: ReadonlyArray<ScopedParticipant
   const [labels, setLabels] = useState<ReadonlyMap<EnvironmentId, ReadonlyMap<string, string>>>(
     () => new Map(),
   );
+  // oxlint-disable-next-line t3code/react-effect-budget -- reads labels from each server for the participants on screen, and drops a stale answer when they change.
   useEffect(() => {
     const byEnvironment = new Map<EnvironmentId, Array<string>>();
     for (const entry of key === "" ? [] : key.split("\n")) {

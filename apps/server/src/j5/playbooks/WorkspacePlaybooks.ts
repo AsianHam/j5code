@@ -49,12 +49,12 @@ export const makeWorkspacePlaybooks = Effect.fn("makeWorkspacePlaybooks")(functi
               ),
             )
           : run(root).pipe(
-              Effect.catch((error) =>
-                error.code === "operation_failed"
-                  ? Effect.logError(failed, { cause: error }).pipe(
-                      Effect.andThen(Effect.fail(playbookError("operation_failed", failed))),
-                    )
-                  : Effect.fail(error),
+              Effect.catchIf(
+                (error) => error.code === "operation_failed",
+                (error) =>
+                  Effect.logError(failed, { cause: error }).pipe(
+                    Effect.andThen(Effect.fail(playbookError("operation_failed", failed))),
+                  ),
               ),
             ),
       ),

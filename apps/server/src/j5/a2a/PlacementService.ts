@@ -817,10 +817,11 @@ export const layer: Layer.Layer<
     });
 
     const service = ParticipantPlacementService.of({
-      recordCreation: (input) =>
-        mutationPermit
+      recordCreation: Effect.fn("ParticipantPlacementService.recordCreation")(function (input) {
+        return mutationPermit
           .withPermit(sql.withTransaction(recordCreationInTransaction(input)))
-          .pipe(Effect.mapError(preserveDomainError("record participant placement"))),
+          .pipe(Effect.mapError(preserveDomainError("record participant placement")));
+      }),
       readPlacement: Effect.fn("j5.a2a.placement.readPlacement")(
         function* ({ projectId, participantId }) {
           yield* ensureProjectLedger(projectId);
@@ -828,10 +829,13 @@ export const layer: Layer.Layer<
         },
         Effect.mapError(preserveDomainError("read participant placement")),
       ),
-      listParticipants: (projectId) =>
-        listParticipantsEffect(projectId).pipe(
-          Effect.mapError(preserveDomainError("list participant placements")),
-        ),
+      listParticipants: Effect.fn("ParticipantPlacementService.listParticipants")(
+        function (projectId) {
+          return listParticipantsEffect(projectId).pipe(
+            Effect.mapError(preserveDomainError("list participant placements")),
+          );
+        },
+      ),
       listSubtree: Effect.fn("j5.a2a.placement.listSubtree")(
         function* ({ projectId, participantId }) {
           yield* ensureProjectLedger(projectId);
@@ -875,7 +879,9 @@ export const layer: Layer.Layer<
       ),
     });
     const transactionWriter = ParticipantPlacementTransactionWriter.of({
-      withPermit: (effect) => mutationPermit.withPermit(effect),
+      withPermit: Effect.fn("ParticipantPlacementTransactionWriter.withPermit")(function (effect) {
+        return mutationPermit.withPermit(effect);
+      }),
       recordCreationInTransaction,
     });
     return Context.make(ParticipantPlacementService, service).pipe(

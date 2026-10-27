@@ -1,4 +1,4 @@
-import { ScheduledTaskId } from "@t3tools/contracts";
+import { GuestMessageId, ScheduledTaskId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -313,6 +313,29 @@ describe("groups 1 and 2: people", () => {
     expect(resolveJ5UserMessagePresentation(typed)).toMatchObject({
       text: "Ship it.",
       attribution: null,
+    });
+  });
+
+  it("leaves a guest's message to upstream, which shows the guest's own words and name", () => {
+    const guest = {
+      id: "message:guest",
+      role: "user",
+      text: "Message from guest Sam, sent by the owner:\n\nWhy?",
+      createdBy: "user" as const,
+      context: {
+        guest: {
+          guestMessageId: GuestMessageId.make("guest-message:one"),
+          name: "Sam",
+          text: "Why?",
+        },
+      },
+    };
+    expect(presentJ5UserMessage(guest)).toBeNull();
+    expect(resolveJ5UserMessagePresentation(guest)).toMatchObject({
+      text: "Why?",
+      attribution: "guest",
+      guestName: "Sam",
+      j5: null,
     });
   });
 });

@@ -390,12 +390,10 @@ const fixture = Effect.gen(function* () {
                 (yield* Ref.get(archiveFailures)).has(command.threadId)) ||
               (command.type === "message.dispatch" && (yield* Ref.get(noticeFailure)))
             )
-              return yield* Effect.fail(
-                new OrchestratorDispatchError({
-                  commandId: command.commandId,
-                  commandType: command.type,
-                }),
-              );
+              return yield* new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+              });
             yield* Ref.update(notices, (items) => [...items, command]);
             return { events: [], effects: [] } as never;
           }),

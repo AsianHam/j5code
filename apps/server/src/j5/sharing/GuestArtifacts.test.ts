@@ -14,7 +14,6 @@ import { J5_CLIENT_READ_WS_METHODS } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { HttpRouter, HttpServer } from "effect/http";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -76,7 +75,7 @@ const testLayer = Layer.mergeAll(
 );
 
 const projects = Layer.mock(ProjectService.ProjectService)({
-  getById: () => Effect.succeed(Option.some({ workspaceRoot: "/workspace" } as never)),
+  getById: () => Effect.succeedSome({ workspaceRoot: "/workspace" } as never),
 });
 
 /** Both projects with one artifact each, and the two guests with their grants. */

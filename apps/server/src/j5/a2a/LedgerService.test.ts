@@ -204,10 +204,9 @@ it.effect("publishes committed events in their per-project sequence order", () =
       Effect.forkChild({ startImmediately: true }),
     );
 
-    yield* Effect.all(
-      [1, 2, 3].map((index) => ledger.append(appendCommand(projectId, index))),
-      { concurrency: "unbounded" },
-    );
+    yield* Effect.forEach([1, 2, 3], (index) => ledger.append(appendCommand(projectId, index)), {
+      concurrency: "unbounded",
+    });
     const observed = yield* Fiber.join(observedFiber);
 
     assert.deepStrictEqual(

@@ -84,7 +84,7 @@ export const planShellCleanup = Effect.fn("j5.cli.plan_shell_cleanup")(function*
   });
   for (const file of files) {
     const contents = yield* fs.readFile(file).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchTags({
         PlatformError: (error) =>
           error.reason._tag === "NotFound"
@@ -119,7 +119,7 @@ export const removeAppLinks = Effect.fn("j5.cli.remove_app_links")(function* (
   for (const link of links) {
     const removed = yield* fs.remove(link, { force: true }).pipe(
       Effect.as(true),
-      Effect.catch(() => Effect.succeed(false)),
+      Effect.orElseSucceed(() => false),
     );
     yield* Console.log(
       removed

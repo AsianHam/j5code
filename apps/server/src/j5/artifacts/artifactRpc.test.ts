@@ -72,7 +72,7 @@ it.effect("lists a project's artifacts, and refuses a project that is not availa
 it.effect("preserves a stable size-limit refusal code for project cleanup", () =>
   Effect.gen(function* () {
     const handlers = makeArtifactRpcHandlers({
-      projects: { getById: () => Effect.succeed(Option.some({ id: projectId } as never)) },
+      projects: { getById: () => Effect.succeedSome({ id: projectId } as never) },
       artifacts: {
         watch: () => Effect.die("unused") as never,
         list: () => Effect.fail(new ArtifactListTooLargeError({ maximumFiles: 500 })),

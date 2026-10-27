@@ -206,6 +206,7 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
   // publish its counts into B's panel when another client switches sources
   // mid-operation. Written in an effect, since render may not write refs.
   const selectionScopeRef = useRef(selectionScope);
+  // oxlint-disable-next-line t3code/react-effect-budget -- async handlers compare against the latest selection, and render may not write refs.
   useEffect(() => {
     selectionScopeRef.current = selectionScope;
   }, [selectionScope, selectionScopeRef]);

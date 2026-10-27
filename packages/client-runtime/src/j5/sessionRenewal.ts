@@ -94,7 +94,7 @@ const follow = Effect.fn("j5.sessionRenewal.follow")(function* (
       ),
     ),
     Stream.runDrain,
-    Effect.catch(() => Effect.void),
+    Effect.ignore,
   );
 });
 

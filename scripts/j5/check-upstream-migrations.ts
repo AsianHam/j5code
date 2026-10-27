@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
 import reviewedNightly3238 from "../../apps/server/src/j5/persistence/reviewed-v0.1.1-nightly.20261017.3238.v1.json" with { type: "json" };
+import reviewedV013 from "../../apps/server/src/j5/persistence/reviewed-v0.1.3.v1.json" with { type: "json" };
 import reviewedV2Reconcile from "../../apps/server/src/j5/persistence/reviewed-v2-reconcile.v1.json" with { type: "json" };
 
 export interface MigrationRecord {
@@ -93,9 +94,7 @@ const sameManifest = (
   });
 
 /** Reviewed transitions, oldest first. Each is a record of one advance, never regenerated. */
-const reviewedBridges = [reviewedV2Reconcile, reviewedNightly3238];
-/** The newest review names which helper files each audited migration reaches. */
-const reviewed = reviewedBridges.at(-1)!;
+const reviewedBridges = [reviewedV2Reconcile, reviewedNightly3238, reviewedV013];
 
 /** Reviewed upstream targets. A candidate must contain one of these exact commits. */
 export const reviewedTargetRefs = reviewedBridges.map((bridge) => bridge.targetRef);
@@ -128,6 +127,21 @@ const composedName = "OrchestrationV2";
 const backfillName = "ProjectionThreadPullRequests";
 const auditedNames = new Set([composedName, backfillName]);
 
+const migrationsDir = "apps/server/src/persistence/Migrations/";
+
+/** The import specifiers a reviewed dependency list implies for one audited migration. */
+function expectedDirectImports(
+  name: string,
+  dependencies: ReadonlyArray<{ readonly path: string }>,
+): ReadonlyArray<string> {
+  if (name === composedName)
+    return dependencies.map(({ path }) => `./OrchestrationV2/${NodePath.posix.basename(path)}`);
+  // Before v0.1.3, 050 imported the shared module; since then a frozen helper beside it.
+  return dependencies.every(({ path }) => path.startsWith(migrationsDir))
+    ? dependencies.map(({ path }) => `./${NodePath.posix.basename(path)}`)
+    : ["@t3tools/shared/threadPullRequests"];
+}
+
 /**
  * Hash the reviewed V2 setup and the functions reached by the PR backfill.
  * This is a bounded dependency list, not a module resolver: implementation changes
@@ -143,14 +157,23 @@ export function readMigrationDependencies(
   const imports = [...implementation.matchAll(/from "([^"\n]+)"/g)].map((match) => match[1]!);
   if (/\bimport\s*\(/.test(implementation))
     throw new Error("Unreviewed dynamic migration dependency");
-  const expected: NonNullable<MigrationRecord["dependencies"]> =
-    reviewed.targetMigrations.find((row) => row.name === name)?.dependencies ?? [];
-  const direct = imports.filter((specifier) => !specifier.startsWith("effect/"));
-  const expectedDirect =
-    name === composedName
-      ? expected.map(({ path }) => `./OrchestrationV2/${NodePath.posix.basename(path)}`)
-      : ["@t3tools/shared/threadPullRequests"];
-  if (direct.toSorted().join("\n") !== expectedDirect.toSorted().join("\n")) {
+  const direct = imports
+    .filter((specifier) => !specifier.startsWith("effect/"))
+    .toSorted()
+    .join("\n");
+  // Each review records the helper files one version of the migration reaches. Base and candidate
+  // can be different versions (050 moved to a frozen local helper in v0.1.3), so the audit is the
+  // reviewed list whose imports match this implementation, newest first.
+  const expected = reviewedBridges
+    .toReversed()
+    .flatMap((bridge) => [bridge.targetMigrations, bridge.sourceMigrations])
+    .map((rows) => rows.find((row) => row.name === name)?.dependencies)
+    .find(
+      (dependencies) =>
+        dependencies !== undefined &&
+        expectedDirectImports(name, dependencies).toSorted().join("\n") === direct,
+    );
+  if (expected === undefined) {
     throw new Error("Unreviewed migration composition; update its dependency audit first");
   }
   return expected.map(({ path }) => ({

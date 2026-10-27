@@ -51,7 +51,7 @@ export const agentPersonaFolderGitStatus = Effect.fn("j5.agentPersonaFolderGitSt
     };
   }).pipe(
     Effect.timeout(GIT_TIMEOUT),
-    Effect.catch(() => Effect.succeed(null)),
+    Effect.orElseSucceed(() => null),
   );
   return status;
 });

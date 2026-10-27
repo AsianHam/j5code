@@ -19,6 +19,7 @@ export function CompletionSoundSettings() {
   const [sound, setSound] = useState<CompletionSound | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- reads the saved sound from browser storage when the row mounts.
   useEffect(() => {
     let active = true;
     void completionSoundManager.read().then(
@@ -51,9 +52,8 @@ export function CompletionSoundSettings() {
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save the completion sound.");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   }
 
   return (

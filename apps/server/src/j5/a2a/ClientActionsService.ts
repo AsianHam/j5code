@@ -127,18 +127,23 @@ const make = Effect.gen(function* () {
   const projectProposal = projectCrewProposal(yield* PlaybookStore);
 
   return ClientActionsService.of({
-    previewCrewProposal: (input) => proposals.preview(input),
-    resolveCrewProposal: (input, decidedBy) =>
-      proposals.resolve({ ...input, decidedBy }).pipe(
-        Effect.flatMap((result) =>
-          projectProposal(result.proposal).pipe(
-            Effect.map((proposal) => ({
-              proposal,
-              crewInstanceId: result.instance?.id ?? null,
-            })),
+    previewCrewProposal: Effect.fn("ClientActionsService.previewCrewProposal")(function (input) {
+      return proposals.preview(input);
+    }),
+    resolveCrewProposal: Effect.fn("ClientActionsService.resolveCrewProposal")(
+      function (input, decidedBy) {
+        return proposals.resolve({ ...input, decidedBy }).pipe(
+          Effect.flatMap((result) =>
+            projectProposal(result.proposal).pipe(
+              Effect.map((proposal) => ({
+                proposal,
+                crewInstanceId: result.instance?.id ?? null,
+              })),
+            ),
           ),
-        ),
-      ),
+        );
+      },
+    ),
     stopCrew: Effect.fn("j5.a2a.clientActions.stopCrew")(
       function* ({ crewInstanceId }) {
         const requestKey = yield* freshId;
@@ -188,17 +193,20 @@ const make = Effect.gen(function* () {
       });
       return { crewInstanceId, status: result.status, members: createdSeats(result.members) };
     }),
-    respondCrewRuntimeRequest: ({ threadId, requestId, decision }, claim) =>
-      freshId.pipe(
-        Effect.flatMap((id) => {
-          // Fresh per answer, so a second answer is refused by the request's state.
-          const commandId = CommandId.make(`j5-crew-runtime-request:${id}`);
-          return (claim?.({ threadId, requestId, commandId }) ?? Effect.void).pipe(
-            Effect.andThen(runtimeRequests.respond({ threadId, requestId, decision, commandId })),
-          );
-        }),
-        Effect.as({ threadId, requestId }),
-      ),
+    respondCrewRuntimeRequest: Effect.fn("ClientActionsService.respondCrewRuntimeRequest")(
+      function ({ threadId, requestId, decision }, claim) {
+        return freshId.pipe(
+          Effect.flatMap((id) => {
+            // Fresh per answer, so a second answer is refused by the request's state.
+            const commandId = CommandId.make(`j5-crew-runtime-request:${id}`);
+            return (claim?.({ threadId, requestId, commandId }) ?? Effect.void).pipe(
+              Effect.andThen(runtimeRequests.respond({ threadId, requestId, decision, commandId })),
+            );
+          }),
+          Effect.as({ threadId, requestId }),
+        );
+      },
+    ),
     answerHumanExchange: Effect.fn("j5.a2a.clientActions.answerHumanExchange")(
       function* (input, beforeReply) {
         const acceptedAt = DateTime.formatIso(yield* DateTime.now);

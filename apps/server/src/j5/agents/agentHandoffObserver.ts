@@ -89,8 +89,8 @@ export const layer = Layer.effect(
 
     return RunFinalization.RunFinalizationObserver.of({
       refreshAfterTurn: upstream.refreshAfterTurn,
-      refresh: (input) =>
-        upstream.refresh(input).pipe(
+      refresh: Effect.fn("RunFinalization.RunFinalizationObserver.refresh")(function (input) {
+        return upstream.refresh(input).pipe(
           Effect.andThen(
             check(input).pipe(
               Effect.catchCause((cause) =>
@@ -102,7 +102,8 @@ export const layer = Layer.effect(
               ),
             ),
           ),
-        ),
+        );
+      }),
     });
   }),
 );

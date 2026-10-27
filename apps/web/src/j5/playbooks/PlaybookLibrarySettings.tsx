@@ -120,6 +120,7 @@ function PlaybookLibrary({
   );
   const detail = query.data?.playbooks.find((entry) => entry.name === details);
   const { refresh } = query;
+  // oxlint-disable-next-line t3code/react-effect-budget -- rereads the library when the window regains focus, since Playbooks change on disk.
   useEffect(() => {
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);

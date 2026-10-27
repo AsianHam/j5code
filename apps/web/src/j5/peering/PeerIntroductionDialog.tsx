@@ -65,15 +65,10 @@ export interface StepReport {
 }
 
 /**
- * The introduction, between any two servers this client is connected to; the
- * first is one it manages, defaulting to its own. Choosing the remote runs a quick check: each server tests
- * the direction it would connect in, and each descriptor says how the server is
- * run. The dialog then shows one setup built from what the check found, in
- * plain lines saying how messages travel each way, and asks only what the
- * check could not settle. "Set up differently" opens the manual form. A server
- * too old for poll mode gets only "update J5 there" and Close. A pair the first
- * server already records is removed under Peer servers before it is peered
- * again; an old record of the first server left on the other one is cleared first.
+ * The introduction between any two servers this client is connected to; the first is one it
+ * manages. Each server tests the direction it would connect in, so the dialog asks only what that
+ * check could not settle. A server too old for poll mode gets only "update J5 there". A pair the
+ * first server already records is removed before peering again; a stale one on the other, cleared.
  */
 export function PeerIntroductionDialog({
   open,
@@ -168,6 +163,7 @@ export function PeerIntroductionDialog({
     local !== null && remote !== null && recordsRead && !heldHere && bothSupportPoll
       ? `${local.environmentId}|${remote.environmentId}`
       : null;
+  // oxlint-disable-next-line t3code/react-effect-budget -- runs the peering check against both servers whenever the pair changes, and drops a stale answer.
   useEffect(() => {
     if (checkKey === null || local === null || remote === null) return;
     let cancelled = false;

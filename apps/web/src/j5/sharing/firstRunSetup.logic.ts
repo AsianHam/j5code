@@ -1,11 +1,10 @@
 import type { KnownConnectionAccess } from "@t3tools/client-runtime/j5/sharing";
 
 /**
- * Whether the setup wizard may be offered: only to an Owner of the server the client opened
- * first, by that server's answer (People and access AC30), and only once they have given their
- * name, which comes first (AC6). Until it answers nothing is offered, and upstream's gate decides
- * again when it does, so an Owner of a fresh server still gets it. An answer that failed, or never
- * came, offers nothing: it is not an Owner's answer.
+ * Offered only to an Owner of the server the client opened first (People and access AC30), once
+ * they have given their name (AC6). Nothing is offered until it answers, and upstream's gate
+ * decides again when it does, so an Owner of a fresh server still gets it. A failed or missing
+ * answer offers nothing: it is not an Owner's answer.
  */
 export const firstRunSetupOffered = (input: {
   readonly authenticated: boolean;

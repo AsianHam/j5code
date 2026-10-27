@@ -272,8 +272,8 @@ const make = Effect.gen(function* () {
   return PeerAdminService.of({
     issueCredential,
     list: peers.list().pipe(Effect.map((listed) => ({ peers: listed }))),
-    add: (input) =>
-      DateTime.now.pipe(
+    add: Effect.fn("PeerAdminService.add")(function (input) {
+      return DateTime.now.pipe(
         Effect.flatMap((now) =>
           peers.add({
             origin: input.origin,
@@ -283,9 +283,10 @@ const make = Effect.gen(function* () {
             acceptedAt: DateTime.formatIso(now),
           }),
         ),
-      ),
-    changeOrigin: (input) =>
-      DateTime.now.pipe(
+      );
+    }),
+    changeOrigin: Effect.fn("PeerAdminService.changeOrigin")(function (input) {
+      return DateTime.now.pipe(
         Effect.flatMap((now) =>
           peers.changeOrigin({
             environmentId: input.environmentId,
@@ -294,9 +295,10 @@ const make = Effect.gen(function* () {
           }),
         ),
         Effect.map((peer) => ({ peer })),
-      ),
-    remove: (input) =>
-      rotationPermit
+      );
+    }),
+    remove: Effect.fn("PeerAdminService.remove")(function (input) {
+      return rotationPermit
         .withPermit(
           Effect.all({
             revokedSessions: revokeSessionsForSubject(
@@ -312,7 +314,8 @@ const make = Effect.gen(function* () {
             revokedSessions: outcome.revokedSessions,
           })),
           Effect.mapError((cause) => new PeerAdminOperationError({ operation: "remove", cause })),
-        ),
+        );
+    }),
     addresses: Effect.sync(() => ({
       origins: peerAddressOrigins({
         host: config.host,
@@ -320,9 +323,14 @@ const make = Effect.gen(function* () {
         interfaces: NodeOS.networkInterfaces(),
       }),
     })),
-    probe: (input) => peers.probe(input.origin),
-    completeRotation: (session) =>
-      rotationPermit.withPermit(revokeSessionsForSubject(session.subject, session.sessionId)),
+    probe: Effect.fn("PeerAdminService.probe")(function (input) {
+      return peers.probe(input.origin);
+    }),
+    completeRotation: Effect.fn("PeerAdminService.completeRotation")(function (session) {
+      return rotationPermit.withPermit(
+        revokeSessionsForSubject(session.subject, session.sessionId),
+      );
+    }),
   });
 });
 

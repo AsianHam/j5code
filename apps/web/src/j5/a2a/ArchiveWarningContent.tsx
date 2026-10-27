@@ -188,6 +188,7 @@ export function ArchiveWarningContent({ payload }: { readonly payload: ArchiveWa
           {payload.threadTitle} keep{payload.placement.participants.length === 1 ? "s" : ""}{" "}
           running:{" "}
           {payload.placement.participants.map((participant, index) => (
+            // oxlint-disable-next-line react/no-array-index-key -- a fixed list read once for the dialog; entries have no id and may repeat.
             <span key={`${participant.displayName}-${index}`}>
               {index > 0 ? ", " : null}
               <ArchiveWarningParticipantName participant={participant} />
@@ -201,6 +202,7 @@ export function ArchiveWarningContent({ payload }: { readonly payload: ArchiveWa
           <p className="mb-2 font-medium text-foreground">{askHeader}</p>
           <ol className="space-y-2">
             {payload.openAsks.map((row, index) => (
+              // oxlint-disable-next-line react/no-array-index-key -- a fixed list read once for the dialog; entries have no id and may repeat.
               <ArchiveWarningRowView key={`${row.direction}-${row.openedAt}-${index}`} row={row} />
             ))}
           </ol>

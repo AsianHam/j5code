@@ -55,7 +55,6 @@ import {
   personNamed,
   raisesToWriting,
   sameScope,
-  widerLabel,
   writingWarning,
 } from "./people.logic";
 import { useAccessRows, useScopeTitle } from "./scopeAccess";
@@ -100,7 +99,7 @@ export function ShareDialog({
   const access = useAccessRows(environmentId, scope);
   const people = useEnvironmentQuery(canManage ? peopleQuery(environmentId) : null);
   const links = useEnvironmentQuery(canManage ? linksQuery(environmentId) : null);
-  // People join and links are used without this client doing anything; each opening reads again.
+  // oxlint-disable-next-line t3code/react-effect-budget -- people join and links are used without this client, so each opening reads again.
   useEffect(() => refreshSharing(environmentId), [environmentId]);
   const nowMs = Date.parse(useNowMinute());
   const [made, setMade] = useState<PeopleLink | null>(null);

@@ -20,7 +20,7 @@ const HIDE_BELOW_CLASS_NAME = isElectron
   : "@max-[11rem]/utility:hidden";
 
 /**
- * The highlights button in the sidebar's utility row (#624): shown while this client has unseen
+ * The highlights button in the sidebar's utility row: shown while this client has unseen
  * highlights, or while the palette's "What's new" has the list open. Opens on click only, since
  * the update button beside it opens on hover.
  */
@@ -36,7 +36,7 @@ export function SidebarHighlightsButton() {
   const popover = useHighlightsPopover();
   const showingNew = popover.open && popover.mode === "new";
 
-  // Dismissing the last unseen entry removes the button, and with it the list.
+  // oxlint-disable-next-line t3code/react-effect-budget -- dismissing the last unseen entry removes the button, and with it the list's anchor.
   useEffect(() => {
     if (showingNew && unseen.length === 0) closeHighlights();
   }, [showingNew, unseen.length]);

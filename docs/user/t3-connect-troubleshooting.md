@@ -7,12 +7,12 @@ A T3 Connect connection goes through four parts, in this order:
 3. **The host's tunnel** (cloudflared on the host) carries the request to the host.
 4. **T3 Code on the host** answers.
 
-When a connection fails, open **Settings > Connections**, find the environment,
+When a connection fails, open **Settings > Environments**, find the environment,
 and select **Details**. The first part marked as failed is the cause. Find its
 section below.
 
 To see the host's side, run `j5 connect status` on the host, or open
-**Settings > Connections** on the host. Both check the host's T3 Connect
+**Settings > Sharing & access** on the host. Both check the host's T3 Connect
 address from the host, and say why it fails. `j5 connect` runs the same check
 when it finishes setup. This check cannot test another device's network. For a
 problem on one device, use **Details** on that device.
@@ -105,7 +105,7 @@ T3 Connect does not have an active link between your account and the host.
   account on this device and on the host. On the host, run `j5 connect logout`,
   then `j5 connect`.
 - **T3 Connect is off on the host, or the host only publishes agent activity.**
-  On the host, open **Settings > Connections** and turn **T3 Connect** on, or
+  On the host, open **Settings > Sharing & access** and turn **T3 Connect** on, or
   run `j5 connect`.
 - **The host was linked, but the server did not apply the link yet.** Run
   `j5 service restart` on the host, or restart `j5 serve`.

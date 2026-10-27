@@ -562,21 +562,29 @@ export const layerNotifying = Layer.effect(
     const changed = changes.notify("crew");
     return AgentCrewInstanceService.of({
       ...store,
-      record: (input) => store.record(input).pipe(Effect.tap(() => changed)),
-      addMembers: (id, members, options) =>
-        store
+      record: Effect.fn("AgentCrewInstanceService.record")(function (input) {
+        return store.record(input).pipe(Effect.tap(() => changed));
+      }),
+      addMembers: Effect.fn("AgentCrewInstanceService.addMembers")(function (id, members, options) {
+        return store
           .addMembers(id, members, options)
-          .pipe(Effect.tap((outcome) => (outcome.status === "added" ? changed : Effect.void))),
-      removeMembers: (id, seatNames) =>
-        store
+          .pipe(Effect.tap((outcome) => (outcome.status === "added" ? changed : Effect.void)));
+      }),
+      removeMembers: Effect.fn("AgentCrewInstanceService.removeMembers")(function (id, seatNames) {
+        return store
           .removeMembers(id, seatNames)
-          .pipe(Effect.tap((removed) => (removed.length > 0 ? changed : Effect.void))),
-      markArchived: (id, archivedAt, options) =>
-        store.markArchived(id, archivedAt, options).pipe(Effect.tap(() => changed)),
-      restoreWithCaptain: (id) =>
-        store
+          .pipe(Effect.tap((removed) => (removed.length > 0 ? changed : Effect.void)));
+      }),
+      markArchived: Effect.fn("AgentCrewInstanceService.markArchived")(
+        function (id, archivedAt, options) {
+          return store.markArchived(id, archivedAt, options).pipe(Effect.tap(() => changed));
+        },
+      ),
+      restoreWithCaptain: Effect.fn("AgentCrewInstanceService.restoreWithCaptain")(function (id) {
+        return store
           .restoreWithCaptain(id)
-          .pipe(Effect.tap((restored) => (restored ? changed : Effect.void))),
+          .pipe(Effect.tap((restored) => (restored ? changed : Effect.void)));
+      }),
     });
   }),
 ).pipe(Layer.provide(layer));

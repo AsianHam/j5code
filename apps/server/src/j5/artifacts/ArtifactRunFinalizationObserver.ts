@@ -38,8 +38,8 @@ export const layer = Layer.effect(
     const upstream = yield* RunFinalization.RunFinalizationObserver;
     return RunFinalization.RunFinalizationObserver.of({
       refreshAfterTurn: upstream.refreshAfterTurn,
-      refresh: (input) =>
-        upstream.refresh(input).pipe(
+      refresh: Effect.fn("RunFinalization.RunFinalizationObserver.refresh")(function (input) {
+        return upstream.refresh(input).pipe(
           Effect.andThen(
             Effect.gen(function* () {
               const projection = yield* projections.getThreadProjection(input.threadId);
@@ -60,7 +60,8 @@ export const layer = Layer.effect(
               ),
             ),
           ),
-        ),
+        );
+      }),
     });
   }),
 );

@@ -49,8 +49,8 @@ export const placementFactsLayer = Layer.effect(
   Effect.gen(function* () {
     const placements = yield* ParticipantPlacementService;
     return A2AArchivePlacementFactsProvider.of({
-      readSubtree: (input) =>
-        placements.listSubtree(input).pipe(
+      readSubtree: Effect.fn("A2AArchivePlacementFactsProvider.readSubtree")(function (input) {
+        return placements.listSubtree(input).pipe(
           Effect.map((subtree) => {
             const descendantIds = subtree
               .filter(
@@ -71,7 +71,8 @@ export const placementFactsLayer = Layer.effect(
                 cause,
               }),
           ),
-        ),
+        );
+      }),
     });
   }),
 );

@@ -843,7 +843,9 @@ const make = Effect.gen(function* () {
           : new PersonAccessStorageError({ operation: "record a reply's author", cause }),
       ),
     ),
-    claimAnswer: (personId, answer) => recordAnswer(personId, answer, false),
+    claimAnswer: Effect.fn("SharedConversation.claimAnswer")(function (personId, answer) {
+      return recordAnswer(personId, answer, false);
+    }),
   });
 });
 

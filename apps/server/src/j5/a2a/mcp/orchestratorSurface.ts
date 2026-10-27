@@ -78,7 +78,7 @@ export const mapJ5OrchestratorCapabilities = (
 });
 
 export const J5_ORCHESTRATOR_CAPABILITIES_DESCRIPTION =
-  "List the provider instances, a short list of their models from the same live catalog as the composer with each model's selectable options, the provider instance, model and model options this thread runs with (inheritedProviderInstanceId, inheritedModel, inheritedOptions), provider constraints, and the runtime and interaction modes available to this caller. The list has the user's favorite and custom models, your own model, every current Codex, Claude, Muse and Grok model, and the first 8 current models of other providers. Other legacy models are left out. omittedModels counts models left out; pass search, such as 'sonnet 4.6', to find them. delegate_task and j5_spawn_agent accept any catalog model, listed or not.";
+  "List providers, models, options, and runtime modes for `delegate_task` and `j5_spawn_agent`, and the provider, model and options this thread runs with. Short list. `search` finds others. Any catalog model works.";
 
 export const J5OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description: J5_ORCHESTRATOR_CAPABILITIES_DESCRIPTION,

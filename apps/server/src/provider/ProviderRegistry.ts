@@ -56,11 +56,7 @@ export class ProviderRegistry extends Context.Service<
       provider?: ProviderDriverKind,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
-    /**
-     * When the instance id is unknown the call resolves with the currently
-     * cached list (no error) — matching the legacy `refresh` shim behaviour so
-     * transport layers don't have to special-case unknowns.
-     */
+    /** Unknown instance ids return the cached list without error. */
     readonly refreshInstance: (
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
@@ -162,9 +158,7 @@ export function upsertProviderWorkspaceSnapshot(
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
   if (provider.driver === ProviderDriverKind.make("pi")) {
-    // Pi reports known auth only after RPC inventory discovery completes.
-    // An empty inventory is warning/unauthenticated; failed or interactive
-    // discovery stays ready/unknown and must keep the last known models.
+    // Pi auth becomes known only after inventory discovery: empty means unauthenticated; failed/interactive discovery preserves unknown auth and cached models.
     return !(
       provider.installed &&
       (provider.status === "ready" || provider.status === "warning") &&
@@ -173,18 +167,18 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   }
 
   if (provider.driver === ProviderDriverKind.make("acpRegistry")) {
-    // ACP Registry discovery probes return the agent's complete inventory, so
-    // a completed probe replaces the model list — otherwise agents that rename
-    // or collapse models leave stale entries pinned forever through the
-    // snapshot cache. Only a completed probe reports `nativeSessions`;
-    // readiness-only and failed probe snapshots only know the "default"
-    // placeholder and stay partial. Auth is no signal here: agents without
-    // sign-in stay "unknown" after every probe.
+    // Only completed ACP discovery provides nativeSessions and inventory; placeholder probes cannot establish auth for agents without sign-in.
     return !(
       provider.installed &&
       provider.status === "ready" &&
       provider.nativeSessions !== undefined
     );
+  }
+
+  if (provider.driver === ProviderDriverKind.make("grok")) {
+    // Grok reports ready only after it discovers a model list; the pending,
+    // ACP-failed, empty-inventory, and logged-out probes are warning/error.
+    return !(provider.installed && provider.status === "ready");
   }
 
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
@@ -247,11 +241,7 @@ const mergeProviderModels = (
     : mergedModels;
 };
 
-/**
- * Antigravity's health check only initializes the agent, so after a server
- * restart it reports the account as unchecked. The saved Google login still
- * works, and the previous snapshot proves it.
- */
+/** Antigravity health checks only initialize; preserve previously verified Google auth across restarts. */
 const carrySavedAntigravityAccount = (
   previousProvider: ServerProvider,
   nextProvider: ServerProvider,
@@ -335,9 +325,7 @@ const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
   return provider.instanceId;
 };
 
-// Each call re-captures the instance's `snapshot` closures, so after
-// `ProviderInstanceRegistry` rebuilds an instance (e.g. because its settings
-// changed), a fresh source rides the new PubSub instead of a closed one.
+// Rebuilt instances have new PubSubs; capture their fresh closures instead of a closed source.
 const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => ({
   instanceId: instance.instanceId,
   driverKind: instance.driverKind,
@@ -547,8 +535,7 @@ export const layer = Layer.effect(
       },
     ) {
       const providers = yield* upsertProviders([provider], options);
-      // Reclassify the current read model after fetching. Never republish the
-      // probe captured before the fetch: a newer health result may have landed.
+      // Reclassify the current model after fetch; republishing the old probe could overwrite newer health results.
       if (!(yield* Ref.getAndSet(compatibilityRefreshRunning, true))) {
         yield* manifestService.refresh.pipe(
           Effect.andThen(upsertProviders([], { persist: false })),
@@ -641,8 +628,7 @@ export const layer = Layer.effect(
         },
       );
       if (claimed.owner) {
-        // Detached so an interrupted first caller cannot cancel the pass that
-        // other callers are already awaiting.
+        // Detach shared passes so the first caller's interruption cannot cancel other callers' work.
         yield* getLiveSources.pipe(
           Effect.flatMap((sources) =>
             Effect.forEach(sources, (source) => refreshOneSource(source), {
@@ -759,9 +745,7 @@ export const layer = Layer.effect(
       provider: ProviderDriverKind,
       options?: { readonly fresh?: boolean },
     ) {
-      // Read the instance registry, not `liveSubsRef`: the latter trails
-      // reconciliation, and an update must never run a retired instance's
-      // command against a freshly configured executable.
+      // liveSubsRef trails reconciliation and could run a retired instance's command; read the registry.
       const instance = yield* instanceRegistry.getInstance(instanceId);
       if (!instance || instance.driverKind !== provider) {
         return makeManualProviderMaintenanceCapabilities(provider);
@@ -820,10 +804,7 @@ export const layer = Layer.effect(
           }
         }
 
-        // Fork long-lived subscriptions to each new/rebuilt instance's
-        // change stream before reading its current snapshot. If the
-        // driver's own initial probe finishes during this sync, either
-        // the current read or the active subscriber observes the result.
+        // Subscribe before reading so a probe completing mid-sync is observed by at least one path.
         for (const [, instance] of newlyAdded) {
           const source = buildSnapshotSource(instance);
           yield* Stream.runForEach(source.streamChanges, (provider) =>
@@ -936,6 +917,7 @@ export const layer = Layer.effect(
       refreshInstance,
       upsertProviderWorkspaceSnapshot,
       dropProviderWorkspaceSnapshot,
+      serviceScope,
     });
 
     return {

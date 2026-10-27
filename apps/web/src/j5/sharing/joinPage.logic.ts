@@ -62,11 +62,10 @@ export type JoinPageState =
 export const DESCRIBE_TIMEOUT_MS = 5_000;
 
 /**
- * What the pairing page does with a link. Only a link carrying J5's mark is J5's: every link J5
- * makes carries it, and an ordinary pairing link is handed to upstream's page at once, with no
- * request made about it. A marked link the server describes gets J5's page; one the server
- * refuses to describe does not work, one state whatever the reason (AC42); and when the server
- * cannot be asked or does not answer in time (`status` is `null`), upstream's page takes it.
+ * Only a link carrying J5's mark is J5's; an ordinary pairing link goes to upstream's page at once,
+ * with no request made. A marked link the server refuses to describe does not work, one state
+ * whatever the reason (AC42). When the server cannot be asked or does not answer in time (`status`
+ * is `null`), upstream's page takes it.
  */
 export function joinPageState(input: {
   readonly marked: boolean;

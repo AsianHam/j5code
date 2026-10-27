@@ -7,7 +7,6 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -30,7 +29,7 @@ it("reads an artifact through the authenticated project boundary", async () => {
         : Effect.fail(new EnvironmentAuth.ServerAuthMissingCredentialError({})),
   });
   const projects = Layer.mock(ProjectService.ProjectService)({
-    getById: () => Effect.succeed(Option.some({ workspaceRoot: "/workspace" } as never)),
+    getById: () => Effect.succeedSome({ workspaceRoot: "/workspace" } as never),
   });
   const artifacts = Layer.mock(ArtifactWorkspace)({
     read: ({ projectId: requestedProjectId, relativePath }) =>

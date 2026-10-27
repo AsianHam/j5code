@@ -70,6 +70,7 @@ export function JoinLinkPairingSurface(props: ComponentProps<typeof PairingRoute
     token: peekPairingTokenFromUrl(),
     marked: isMarkedShareLink(window.location.href),
   }));
+  // oxlint-disable-next-line t3code/react-effect-budget -- follows the URL fragment, which a pasted link changes without a navigation.
   useEffect(() => {
     const onHashChange = () => {
       const token = peekPairingTokenFromUrl();
@@ -94,6 +95,7 @@ function LinkSurface({
     token === null || !marked ? { kind: "upstream" } : null,
   );
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- asks the server what a marked link opens, and drops a stale answer when the link changes.
   useEffect(() => {
     if (token === null || !marked) return;
     let cancelled = false;

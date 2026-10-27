@@ -82,6 +82,7 @@ import {
   J5StopAgentResult,
   J5Toolkit,
 } from "./tools.ts";
+import { noDocumentTextLayer } from "../../test-support/documentText.ts";
 
 const orchestrationLayer = RuntimeLayer.layer.pipe(Layer.provideMerge(J5ThreadRegistrationLayer));
 
@@ -248,7 +249,7 @@ const liveLayer = Layer.mergeAll(
   ),
   Layer.provide(
     Layer.mock(ProjectService.ProjectService)({
-      getById: () => Effect.succeed(Option.none()),
+      getById: () => Effect.succeedNone,
     }),
   ),
   Layer.provide(mcpSessionRegistryTestLayer),
@@ -274,7 +275,7 @@ const liveLayer = Layer.mergeAll(
   ),
   Layer.provide(NodeServices.layer),
 );
-const testLayer = Layer.mergeAll(liveLayer, NodeServices.layer);
+const testLayer = Layer.mergeAll(liveLayer, NodeServices.layer, noDocumentTextLayer);
 
 const runStatus = (threadId: ThreadId, statuses: ReadonlySet<string>) =>
   Effect.gen(function* () {

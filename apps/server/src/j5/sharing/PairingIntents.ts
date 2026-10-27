@@ -268,8 +268,8 @@ const make: Layer.Layer<PairingIntents, never, SqlClient.SqlClient | ReadChanges
 
         intentOf,
 
-        forget: (pairingLinkId) =>
-          sql`
+        forget: Effect.fn("PairingIntents.forget")(function (pairingLinkId) {
+          return sql`
           DELETE FROM j5_a2a_pairing_intent WHERE pairing_link_id = ${pairingLinkId}
           RETURNING pairing_link_id
         `.pipe(
@@ -277,7 +277,8 @@ const make: Layer.Layer<PairingIntents, never, SqlClient.SqlClient | ReadChanges
             Effect.mapError(storage),
             Effect.tap((forgotten) => (forgotten ? peopleChanged : Effect.void)),
             Effect.withSpan("j5.sharing.pairingIntents.forget"),
-          ),
+          );
+        }),
 
         approvesMcpClient: Effect.fn("j5.sharing.pairingIntents.approvesMcpClient")(
           function* (grant, credential) {

@@ -1,4 +1,5 @@
 import type {
+  GuestMessageAttribution,
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   ScheduledTaskId,
@@ -19,6 +20,7 @@ export interface J5UserMessageInput {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
+  readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
 }
 
 /** What a message asks of its reader, in the Inbox's words. */
@@ -113,13 +115,13 @@ export const isJ5DeliveryMessage = (message: J5UserMessageInput) =>
 export const isJ5SpawnBriefMessage = (message: J5UserMessageInput) =>
   message.role === "user" && SPAWN_BRIEF_MESSAGE_ID_PATTERN.test(String(message.id ?? ""));
 
-// J5's tools gained a `j5_` prefix on 2026-10-10 (#508). Stored deliveries keep the name they
-// were written with, so both are accepted.
+// J5's tools gained a `j5_` prefix. Stored deliveries keep the name they were written with, so
+// both are accepted.
 const SEND_TOOL_NAMES = ["j5_send_message", "send_message"] as const;
 
-// The footer of a plain message said "No reply is required." until 2026-10-12 (#566). Stored
-// deliveries keep the sentence they were written with, so both are recognised. The newer one was
-// never written with the older tool name.
+// The footer of a plain message once said "No reply is required." Stored deliveries keep the
+// sentence they were written with, so both are recognised. The newer one was never written with
+// the older tool name.
 const PLAIN_DELIVERY_INSTRUCTIONS = new Set([
   "The sender did not request a reply to this message. Use j5_send_message without exchange_id only if a new message is needed.",
   ...SEND_TOOL_NAMES.map(
@@ -165,11 +167,10 @@ function parseKnownInstruction(input: {
   return rest.length === 0 ? { exchange: "expects-reply" } : null;
 }
 
-// A header names the sender and where it works. Messages stored before Squadrons were retired
-// say "in squadron <id>"; newer ones say "in project <id>" with the project's title after it,
-// and a sender on a peer server adds ", on <server>". Stored history keeps the old wording, so
-// both are read. The sender group is lazy because a project title may itself contain
-// " in project ".
+// A header names the sender and where it works: "in squadron <id>" in history stored before
+// Squadrons were retired, else "in project <id>" and the project's title, plus ", on <server>"
+// for a peer. Both are read. The sender group is lazy because a project title may itself
+// contain " in project ".
 const ENVELOPE_ORIGIN = "in (?:project|squadron) [^\\]\\n]+";
 const PEER_HEADER = new RegExp(
   `^\\[Cross-agent message from ([^\\]\\n]+?) ${ENVELOPE_ORIGIN}\\]\\n\\n`,
@@ -424,12 +425,9 @@ const UPSTREAM_PROMPT_IDS: ReadonlyArray<readonly [string, J5PromptKind]> = [
 ];
 
 /**
- * Classifies a user-role message by who is speaking. Null for a message that is not
- * user-role, and for a J5 message whose envelope this does not recognize: upstream's row then
- * shows it as stored, visibly, rather than hiding text the agent received.
- *
- * `viewerParticipantId` is the reading person's participant id, when the client knows it; an
- * Inbox reply is the reader's own only when it matches.
+ * Classifies a user-role message by who is speaking. Null when not user-role, and for a J5
+ * envelope this does not recognize, so upstream's row shows it as stored. An Inbox reply is the
+ * reader's own only when `viewerParticipantId` (the reader's participant id, if known) matches.
  */
 export function presentJ5UserMessage(
   message: J5UserMessageInput,
@@ -516,6 +514,8 @@ export function presentJ5UserMessage(
   }
 
   const upstream = resolveUserMessagePresentation(message);
+  // A guest's message is upstream's to draw: its row names the guest and shows their own words.
+  if (upstream.attribution === "guest") return null;
   if (upstream.attribution === "automation") {
     return { group: "prompt", side: "left", kind: "automation", text: upstream.text };
   }

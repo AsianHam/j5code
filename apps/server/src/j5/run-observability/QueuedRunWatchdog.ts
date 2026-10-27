@@ -221,7 +221,7 @@ export const layer = Layer.effect(
       readonly runId: OrchestrationV2Run["id"];
       readonly phase: "start" | "finalization";
       readonly cause: unknown;
-    }) => recordVcsFailureEffect(input).pipe(Effect.catchCause(() => Effect.void));
+    }) => recordVcsFailureEffect(input).pipe(Effect.ignoreCause);
 
     return { scan, recordVcsFailure };
   }),

@@ -1,13 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
 
 /**
- * Shared art kit for highlight tiles. A highlight's PR adds its scene beside PeeringTile.tsx and
- * names it in HighlightArt (client-runtime) and HighlightsList's table.
- *
- * The marketing site's paper boats, drawn
- * once as a sprite and reused with <use>. Colours come from --hl-* custom
- * properties set on the tile container (see highlightArtThemeClassName), so
- * one sprite serves both themes. Still images only: nothing here animates.
+ * A new highlight's scene goes beside PeeringTile.tsx and is named in HighlightArt (client-runtime)
+ * and HighlightsList's table. Colours come from --hl-* properties on the tile container (see
+ * highlightArtThemeClassName), so one sprite serves both themes. Still images only.
  */
 
 /** Theme tokens for a tile, as Tailwind arbitrary properties. Put this on the tile container. */
