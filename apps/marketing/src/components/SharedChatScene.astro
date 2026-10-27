@@ -1,10 +1,8 @@
 ---
 /**
- * Share chats with others: one agent and a person on a dock, talking. A second
- * dock grows in across the water with another person on it, who talks to the
- * same agent. Each reply goes back to the one who asked. The second dock goes
- * before the loop restarts. 12s loop, gated by the motion controller; under
- * reduced motion both docks stand.
+ * Two people on two docks talk to one agent, each reply going back to the one
+ * who asked. The second dock leaves before the loop restarts. 12s loop, gated by
+ * the motion controller; under reduced motion both docks stand.
  */
 import { WIDTH, HEIGHT, WATER, DECK, wave, boat, sailor, arc } from "./horizonScene";
 

@@ -47,6 +47,19 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
+// J5 (case 80): the timeline holds back a person's message until the thread's authorship read
+// answers, which neither fake environment does. Answer it as a thread only one person writes to.
+const soloThreadAuthors = vi.hoisted(() => ({ shared: false, authors: [], answers: [] }));
+vi.mock(import("~/j5/sharing/sharedConversation"), async (original) => ({
+  ...(await original()),
+  useThreadAuthors: () => ({
+    record: soloThreadAuthors,
+    readAt: 0,
+    failed: false,
+    refresh: () => {},
+  }),
+}));
+
 const HISTORY_TURNS = 20;
 const STREAM_DELTAS = 30;
 const TYPED_TEXT = "fix the flaky tests!";

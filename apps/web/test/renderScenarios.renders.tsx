@@ -37,6 +37,18 @@ vi.mock(import("~/state/query"), async (original) => ({
     refresh: () => {},
   })) as never,
 }));
+// J5 (case 80): the timeline holds back a person's message until the thread's authorship read
+// answers, which neither fake environment does. Answer it as a thread only one person writes to.
+const soloThreadAuthors = vi.hoisted(() => ({ shared: false, authors: [], answers: [] }));
+vi.mock(import("~/j5/sharing/sharedConversation"), async (original) => ({
+  ...(await original()),
+  useThreadAuthors: () => ({
+    record: soloThreadAuthors,
+    readAt: 0,
+    failed: false,
+    refresh: () => {},
+  }),
+}));
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const CREATED_AT = "2026-03-17T19:12:28.000Z";

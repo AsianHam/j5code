@@ -1,10 +1,8 @@
 /**
- * Runs the page's continuous motion only while it can be seen. Each scene
- * carries [data-motion]; its descendants declare
- * `animation-play-state: var(--motion-state, paused)` so nothing runs until
- * this controller says so. Motion stops when the scene scrolls out, when the
- * tab is hidden, and when the visitor prefers reduced motion. The optional
- * parallax leans a field of marks toward a fine pointer, as upstream's hero does.
+ * Runs continuous motion only while it can be seen: scenes ([data-motion]) use
+ * `animation-play-state: var(--motion-state, paused)`, and this sets the state
+ * off when a scene scrolls out, the tab hides, or reduced motion is preferred.
+ * The optional parallax leans a field of marks toward a fine pointer.
  */
 export function startMotion({
   scenes,

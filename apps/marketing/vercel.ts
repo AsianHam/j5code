@@ -7,9 +7,6 @@ export const config: VercelConfig = {
   installCommand: "npm install -g vite-plus && vp install --filter '@t3tools/marketing...'",
   buildCommand: "vp run --filter @t3tools/marketing build",
   outputDirectory: "dist",
-  // `curl … | sh` needs the installer served as a plain shell script. Caches may
-  // keep it for up to five minutes, so a changed installer reaches everyone
-  // within five minutes of a deploy.
   // A thread prompt link, j5.codes/<environment>/<thread>?prompt=…, shows the /new page, which
   // reads the thread from the address. Vercel serves the site's own pages before any rewrite.
   rewrites: [
@@ -19,6 +16,9 @@ export const config: VercelConfig = {
       destination: "/new/index.html",
     },
   ],
+  // `curl … | sh` needs the installer served as a plain shell script. Caches may
+  // keep it for up to five minutes, so a changed installer reaches everyone
+  // within five minutes of a deploy.
   headers: [
     {
       source: "/install.sh",

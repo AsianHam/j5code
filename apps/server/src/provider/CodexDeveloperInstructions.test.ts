@@ -62,13 +62,18 @@ describe("Codex orchestration context", () => {
       .map(([, entry]) => entry.value)
       .join("\n");
 
-    NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
+    // J5: the sections are J5's text (FORK.md case 8), which words the same routing its own way
+    // and has no `t3_thread_send` clause.
+    NodeAssert.ok(
+      orchestration.includes(
+        "use your provider's native Subagent mechanism when the child uses your provider",
+      ),
+    );
     NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
     NodeAssert.ok(orchestration.includes("A native type running another provider's model"));
     NodeAssert.ok(
-      orchestration.includes("Every new delegate review or re-check is a new `delegate_task`"),
+      orchestration.includes("Every new delegated review or re-check is a new `delegate_task`"),
     );
-    NodeAssert.ok(orchestration.includes("never a `t3_thread_send`"));
     NodeAssert.ok(!orchestration.includes("inheritedOptions"));
     NodeAssert.ok(!orchestration.includes("Prefer native"));
     // The ACP terminal fallback is ACP-only; Codex agents never need it.

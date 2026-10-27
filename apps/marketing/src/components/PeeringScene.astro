@@ -1,25 +1,9 @@
 ---
 /**
- * One of the peering page's three scenes: a cloud VM on the left and a second
- * device on the right, with an agent on each. Boats are agents and dots are messages. A route that
- * goes directly is drawn as an arc of chevrons pointing at the receiver, one
- * arc per direction, and its messages fly along it. Polled messages have no
- * arc: they wait on the VM's pier until the barge fetches them.
- *
- * - direct: both devices can reach each other; asks and replies go straight
- *   across, 8s loop.
- * - firewall: the laptop can't be reached, so asks for it wait on the VM's
- *   pier and the flagless barge (J5 polling) fetches each one and hands it to
- *   its agent. Replies go directly. 7s loop.
- * - asleep: the laptop sleeps while three asks wait, then wakes and the barge
- *   fetches them all. 16s loop.
- *
- * The compact layout, for phones, is the same scene drawn at half the width
- * so everything reads larger: the page renders both and shows one.
- *
- * Gated by the motion controller through --motion-state. Under reduced motion
- * each scene holds one still: the firewall scene an ask waiting with the barge
- * at home, the asleep scene the laptop asleep with three asks waiting.
+ * The peering page's scenes: direct (8s), firewall (7s; the barge is J5 polling
+ * an unreachable laptop) and asleep (16s). The compact (phone) layout is drawn at
+ * half the width so it reads larger; the page renders both and shows one. Under
+ * reduced motion each scene holds one still, gated through --motion-state.
  */
 import { routeChevrons, routePath, type Route } from "../lib/route";
 
