@@ -2,6 +2,7 @@ import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { layer as j5ThreadLineageLayer } from "../j5/a2a/ThreadLineage.ts";
 import { layer as j5ScheduledRunsLayer } from "../j5/sharing/scheduledRuns.ts";
+import { layer as j5TitleSourceLayer } from "../j5/sharing/titleSource.ts";
 import * as Layer from "effect/Layer";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
@@ -324,6 +325,8 @@ const queuedRunWatchdogWorkerProvided = queuedRunWatchdogWorkerLive.pipe(
   Layer.provide(queuedRunWatchdogProvided),
 );
 const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.layer.pipe(
+  // J5: a title is made from a person's words, not a shared conversation's lines (FORK.md case 86).
+  Layer.provide(j5TitleSourceLayer),
   Layer.provide(
     Layer.mergeAll(layerThreadManagementProvided, ProjectStore.layer, TextGeneration.layer),
   ),

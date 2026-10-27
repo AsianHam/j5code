@@ -541,11 +541,49 @@ const make = Effect.gen(function* () {
     const recorded = yield* sql<{ readonly found: number }>`
       SELECT 1 AS found FROM j5_a2a_shared_thread WHERE thread_id = ${threadId}
     `;
-    const authors = yield* sql<AuthorRow & { readonly created_at: string }>`
+    // A fork shows the messages of the thread it was forked from up to the run it was forked at,
+    // and that thread's own source's before them, as upstream's `buildVisibleTurnItems` does from
+    // the thread's `forkedFrom` and its runs' ordinals; those messages keep their authors here
+    // (#612). Only the messages a fork shows are read, so nothing after its fork point is named.
+    // A fork's reader need not reach the thread it was forked from, so for a reader an inherited
+    // record is read only where the stored text the fork shows begins with its prefix: then it
+    // restates what they already receive. A command carries no prefix, and a record an edit wrote that
+    // upstream then refused names an editor the stored text does not.
+    const authors = yield* sql<
+      AuthorRow & { readonly created_at: string; readonly inherited: 0 | 1 }
+    >`
+      WITH RECURSIVE source (thread_id, run_id) AS (
+        SELECT json_extract(payload_json, '$.forkedFrom.threadId'),
+          json_extract(payload_json, '$.forkedFrom.runId')
+        FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${threadId} AND json_extract(payload_json, '$.forkedFrom.type') = 'run'
+        UNION
+        SELECT json_extract(thread.payload_json, '$.forkedFrom.threadId'),
+          json_extract(thread.payload_json, '$.forkedFrom.runId')
+        FROM source
+        JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = source.thread_id
+        WHERE json_extract(thread.payload_json, '$.forkedFrom.type') = 'run'
+      )
       SELECT message_id, person_id, display_name, level, edited_by, note, told_json,
-        stored_prefix, created_at
+        stored_prefix, created_at, 0 AS inherited
       FROM j5_a2a_message_author
       WHERE thread_id = ${threadId}
+      UNION ALL
+      SELECT author.message_id, author.person_id, author.display_name, author.level,
+        author.edited_by, author.note, author.told_json, author.stored_prefix, author.created_at,
+        1 AS inherited
+      FROM source
+      JOIN orchestration_v2_projection_runs AS forked_at ON forked_at.run_id = source.run_id
+      JOIN j5_a2a_message_author AS author ON author.thread_id = source.thread_id
+      JOIN orchestration_v2_projection_messages AS message
+        ON message.message_id = author.message_id
+      JOIN orchestration_v2_projection_runs AS run
+        ON run.run_id = message.run_id AND run.ordinal <= forked_at.ordinal
+      WHERE ${viewer === null ? 1 : 0} = 1 OR (
+        author.stored_prefix <> ''
+        AND substr(json_extract(message.payload_json, '$.text'), 1, length(author.stored_prefix))
+          = author.stored_prefix
+      )
       ORDER BY created_at, message_id
     `;
     const answers = yield* sql<{
@@ -561,17 +599,40 @@ const make = Effect.gen(function* () {
       WHERE answer.thread_id = ${threadId} AND ${settledItsPrompt}
       ORDER BY answer.answered_at, answer.request_id
     `;
+    // An inherited message's writer is named when the reader may know them (`participantVisible`,
+    // AC26); otherwise it is told with only its prefix, to take it off.
+    const known = new Map<string, boolean>();
+    const mayKnow = Effect.fn("j5.sharing.sharedConversation.mayKnowWriter")(function* (
+      personId: string,
+    ) {
+      if (viewer === null) return true;
+      const cached = known.get(personId);
+      if (cached !== undefined) return cached;
+      const visible = yield* people.participantVisible(viewer, {
+        participantId: personId,
+        threadId: null,
+      });
+      known.set(personId, visible);
+      return visible;
+    });
+    const told = yield* Effect.forEach(authors, (row) =>
+      Effect.gen(function* () {
+        const author: MessageAuthor = {
+          messageId: row.message_id,
+          name: row.display_name,
+          level: row.level,
+          editedBy: row.edited_by,
+          you: row.person_id === viewer,
+          note: row.note,
+          storedPrefix: row.stored_prefix,
+        };
+        if (row.inherited === 0 || (yield* mayKnow(row.person_id))) return author;
+        return { ...author, name: null, editedBy: null, note: null };
+      }),
+    );
     return {
       shared: recorded.length > 0,
-      authors: authors.map((row): MessageAuthor => ({
-        messageId: row.message_id,
-        name: row.display_name,
-        level: row.level,
-        editedBy: row.edited_by,
-        you: row.person_id === viewer,
-        note: row.note,
-        storedPrefix: row.stored_prefix,
-      })),
+      authors: told,
       answers: answers.map((row): PromptAnswer => ({
         requestId: row.request_id,
         name: row.display_name,

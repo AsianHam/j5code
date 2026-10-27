@@ -1,16 +1,6 @@
-import type { MessageAuthor } from "@t3tools/contracts/j5";
+import { type MessageAuthor, typedText } from "@t3tools/contracts/j5";
 
-/**
- * A message's words as its author typed them: the stored text without the platform's lines at its
- * start (the note, the author's line and any edited-by line), which the server names exactly in
- * `storedPrefix` so that nothing here reads their format. Text that does not begin with them is
- * returned as it is.
- */
-export function typedText(text: string, author: Pick<MessageAuthor, "storedPrefix">): string {
-  return author.storedPrefix !== "" && text.startsWith(author.storedPrefix)
-    ? text.slice(author.storedPrefix.length)
-    : text;
-}
+export { typedText };
 
 /**
  * How one person's message in a thread is shown:
@@ -57,6 +47,29 @@ export function sharedMessageView(input: {
   }
   if (!input.fromServer || input.answeredFor || !input.mayBeShared) return { kind: "plain" };
   return { kind: "pending", typed: input.typedHere };
+}
+
+/**
+ * A thread's messages for the composer's up-arrow recall (#612), each as the timeline shows it
+ * (`viewOf`, `undefined` for one it has not drawn): an authored message by the words its author
+ * typed, a message no one is recorded for as stored, and a message the timeline holds back while
+ * its author is unknown by what this client's person typed, or not at all. A line meant for the
+ * agent is never recalled, since a draft is not cleaned again.
+ */
+export function recallableMessages<
+  Message extends { readonly role: string; readonly text: string },
+>(
+  messages: ReadonlyArray<Message>,
+  viewOf: (message: Message) => SharedMessageView | undefined,
+): ReadonlyArray<Message> {
+  return messages.flatMap((message) => {
+    if (message.role !== "user") return [message];
+    const view = viewOf(message);
+    if (view === undefined) return [];
+    if (view.kind === "plain") return [message];
+    if (view.kind === "authored") return [{ ...message, text: view.typed }];
+    return view.typed === null ? [] : [{ ...message, text: view.typed }];
+  });
 }
 
 /**

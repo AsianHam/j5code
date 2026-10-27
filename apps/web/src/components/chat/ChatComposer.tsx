@@ -1,4 +1,5 @@
 import { useViewOnlyComposerProps } from "../../j5/sharing/viewOnlyComposer";
+import { sharedPromptHistoryMessages } from "../../j5/sharing/sharedTimeline";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { useAgentMentionPicker } from "../../j5/agents/useAgentMentionPicker";
 import { applyAgentMentionSelection } from "@t3tools/client-runtime/j5/agent-mentions";
@@ -4196,7 +4197,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     const step = stepComposerPromptHistory({
       direction,
-      entries: buildComposerPromptHistoryEntries(promptHistoryMessagesRef.current),
+      // J5 (case 86): a shared conversation's messages are recalled as their authors typed them.
+      entries: buildComposerPromptHistoryEntries(
+        sharedPromptHistoryMessages(
+          isServerThread ? routeThreadRef : null,
+          promptHistoryMessagesRef.current,
+        ),
+      ),
       position,
       currentPrompt: promptRef.current,
     });

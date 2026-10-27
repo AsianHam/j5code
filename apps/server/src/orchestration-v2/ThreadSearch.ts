@@ -14,6 +14,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
+import { typedMessageMatchesSql, typedMessageTextSql } from "../j5/sharing/typedMessageText.ts";
+
 export class ThreadSearchError extends Schema.TaggedError<ThreadSearchError>()(
   "ThreadSearchError",
   {
@@ -96,6 +98,7 @@ export const make = Effect.gen(function* () {
           AND messages.streaming = 0
           AND messages.role IN ('user', 'assistant')
           AND json_extract(messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
+          AND ${typedMessageMatchesSql(sql, "messages", pattern)}
       ),
       ranked AS (
         SELECT
@@ -104,6 +107,7 @@ export const make = Effect.gen(function* () {
           role AS source,
           match_text,
           message_created_at,
+          message_id,
           CASE role WHEN 'user' THEN 0 ELSE 1 END AS match_rank,
           thread_updated_at,
           ROW_NUMBER() OVER (
@@ -119,7 +123,8 @@ export const make = Effect.gen(function* () {
         thread_id AS "threadId",
         project_id AS "projectId",
         source,
-        match_text AS "matchText",
+        -- J5: a person's words, without a shared conversation's lines (FORK.md case 86).
+        ${sql.literal(typedMessageTextSql("ranked", "match_text"))} AS "matchText",
         message_created_at AS "messageCreatedAt"
       FROM ranked
       WHERE thread_match_rank = 1
