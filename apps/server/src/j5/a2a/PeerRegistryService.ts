@@ -169,6 +169,44 @@ export class PeerPollUnsupportedError extends Schema.TaggedError<PeerPollUnsuppo
   }
 }
 
+export class PeerNotFoundError extends Schema.TaggedError<PeerNotFoundError>()(
+  "PeerNotFoundError",
+  { environmentId: Schema.String },
+) {
+  override get message(): string {
+    return `No peer ${this.environmentId} is recorded here.`;
+  }
+}
+
+/** A storing server never reaches its poller, so it has no address to change. */
+export class PeerWithoutOriginError extends Schema.TaggedError<PeerWithoutOriginError>()(
+  "PeerWithoutOriginError",
+  { label: Schema.String },
+) {
+  override get message(): string {
+    return `${this.label} polls this server, so this server never reaches it at an address. Change the address ${this.label} reaches this server at, on ${this.label}.`;
+  }
+}
+
+/** The new origin answered, but not as the recorded peer with the credential held for it. */
+export class PeerOriginMismatchError extends Schema.TaggedError<PeerOriginMismatchError>()(
+  "PeerOriginMismatchError",
+  { origin: Schema.String, label: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `The server at ${this.origin} is not ${this.label}: ${this.reason}. The address was not changed.`;
+  }
+}
+
+export type ChangePeerOriginError =
+  | SqlError
+  | PeerSessionReadError
+  | PeerNotFoundError
+  | PeerWithoutOriginError
+  | PeerOriginMismatchError
+  | PeerUnreachableError
+  | PeerProtocolMismatchError;
+
 export type AddPeerError =
   | SqlError
   | PeerSessionReadError
@@ -240,6 +278,15 @@ export interface PeerRegistryServiceShape {
   readonly add: (
     input: AddPeerInput,
   ) => Effect.Effect<{ readonly peer: PeerRecord; readonly created: boolean }, AddPeerError>;
+  /**
+   * Moves a recorded peer to a new origin, once that origin answers as the same peer to the
+   * credential already held for it. Nothing is issued, revoked or cancelled.
+   */
+  readonly changeOrigin: (input: {
+    readonly environmentId: string;
+    readonly origin: string;
+    readonly changedAt: string;
+  }) => Effect.Effect<PeerRecord, ChangePeerOriginError>;
   readonly get: (
     environmentId: string,
   ) => Effect.Effect<PeerRecord | null, SqlError | PeerSessionReadError>;
@@ -665,6 +712,77 @@ export const layer: Layer.Layer<
       return { peer: recordFromRow(row, live, waiting), created: existing === null };
     });
 
+    const changeOrigin: PeerRegistryServiceShape["changeOrigin"] = Effect.fn(
+      "j5.a2a.peer.changeOrigin",
+    )(function* (input) {
+      const rows = yield* sql<PeerConnectionRow>`
+        SELECT environment_id, label, link_mode, origin, credential, credential_expires_at,
+          last_polled_at, last_error, roster_json, created_at, updated_at
+        FROM j5_a2a_peer
+        WHERE environment_id = ${input.environmentId}
+        LIMIT 1
+      `;
+      const existing = rows[0];
+      if (existing === undefined) {
+        return yield* new PeerNotFoundError({ environmentId: input.environmentId });
+      }
+      const label = reportedLabel(existing.label) ?? existing.environment_id;
+      if (existing.link_mode === "store" || existing.credential === null) {
+        return yield* new PeerWithoutOriginError({ label });
+      }
+      // The credential is the peer's own session, so only the peer accepts it; a different
+      // server at the origin refuses it, which is what proves the move.
+      const hello = yield* helloAtOriginBounded({
+        origin: input.origin,
+        credential: existing.credential,
+      }).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.catchTags({
+          PeerCredentialRejectedError: (rejected) =>
+            Effect.fail(
+              new PeerOriginMismatchError({
+                origin: input.origin,
+                label,
+                reason: `it refused the credential ${label} issued to this server (HTTP ${String(rejected.status)}). If the address is right, ${label} has revoked that credential: remove the peer and peer again`,
+              }),
+            ),
+        }),
+      );
+      if (hello.environmentId !== existing.environment_id) {
+        return yield* new PeerOriginMismatchError({
+          origin: input.origin,
+          label,
+          reason: `it answered as environment ${hello.environmentId}`,
+        });
+      }
+      const updated = yield* sql<PeerRow>`
+        UPDATE j5_a2a_peer
+        SET origin = ${input.origin},
+            label = ${reportedLabel(hello.label) ?? existing.label},
+            peer_protocol_version = ${hello.peerProtocolVersion ?? 1},
+            peer_capabilities = ${encodeCapabilities(hello.capabilities ?? {})},
+            last_error = NULL,
+            updated_at = ${input.changedAt}
+        WHERE environment_id = ${existing.environment_id}
+          AND credential = ${existing.credential}
+          AND created_at = ${existing.created_at}
+        RETURNING environment_id, label, link_mode, origin, credential_expires_at, last_polled_at,
+          last_error, created_at, updated_at
+      `;
+      const row = updated[0];
+      // Removed or re-peered while the hello was out: the record it proved is gone.
+      if (row === undefined) {
+        return yield* new PeerNotFoundError({ environmentId: input.environmentId });
+      }
+      yield* changed;
+      yield* listChanged;
+      return recordFromRow(
+        row,
+        yield* liveSubjects,
+        yield* waitingByEnvironment(row.environment_id),
+      );
+    });
+
     const get: PeerRegistryServiceShape["get"] = Effect.fn("j5.a2a.peer.get")(
       function* (environmentId) {
         const row = yield* readRow(environmentId);
@@ -923,6 +1041,7 @@ export const layer: Layer.Layer<
       connections,
       connection,
       add,
+      changeOrigin,
       get,
       list,
       remove,

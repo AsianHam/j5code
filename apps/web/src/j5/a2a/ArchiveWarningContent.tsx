@@ -89,6 +89,9 @@ const urgencyPresentation = {
   none: { label: "No urgency", variant: "secondary" as const },
 };
 
+/** Agent names can be a whole brief, so one may already end its own sentence. */
+export const sentenceEnd = (lastWords: string) => (/[.!?…]$/.test(lastWords.trimEnd()) ? "" : ".");
+
 function ArchiveWarningParticipantName({
   participant,
 }: {
@@ -190,7 +193,7 @@ export function ArchiveWarningContent({ payload }: { readonly payload: ArchiveWa
               <ArchiveWarningParticipantName participant={participant} />
             </span>
           ))}
-          .
+          {sentenceEnd(payload.placement.participants.at(-1)?.displayName ?? "")}
         </p>
       ) : null}
       {askCount > 0 ? (

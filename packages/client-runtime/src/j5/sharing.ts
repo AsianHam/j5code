@@ -113,6 +113,25 @@ export const sharingAllowsOperate = (input: {
   readonly level: PersonLevel | null;
 }): boolean => input.access === null || levelReaches(input.level, "collaborator");
 
+/**
+ * Whether a connection may start something new on its server: a thread, or a fork, in a project,
+ * which the project's level decides (People and access AC14), or, given no project, a project of
+ * its own, which only a level at server scope reaches (AC19). A level on one thread starts nothing.
+ */
+export const sharingAllowsStart = (
+  access: KnownConnectionAccess,
+  projectId: string | null,
+): boolean =>
+  sharingAllowsOperate({
+    access,
+    level:
+      projectId !== null
+        ? projectLevelFor(access, projectId)
+        : access?.kind === "service"
+          ? "owner"
+          : serverLevelOf(access),
+  });
+
 const asksThreadLevel = (access: KnownConnectionAccess) =>
   access?.kind === "person" && !access.wide;
 

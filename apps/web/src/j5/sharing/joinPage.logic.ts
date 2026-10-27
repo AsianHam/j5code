@@ -145,7 +145,7 @@ export function refusalWords(refusal: JoinRefusal, description: LinkDescription)
     case "dead":
       return "This link does not work. It may have been used, expired or revoked. Ask whoever sent it for a new one.";
     case "name_taken":
-      return `Someone on ${description.serverName} already has that name.`;
+      return `Someone on ${description.serverName} already has that name.${nameTakenAdvice(description)}`;
     case "paired_as_someone_else":
       return someoneElsesWords(description.personName);
     case "already_yours":
@@ -154,6 +154,17 @@ export function refusalWords(refusal: JoinRefusal, description: LinkDescription)
       return "Give the name people and agents should call you, then join.";
   }
 }
+
+/**
+ * What to do when the name taken is the person's own. A browser already on the server joins a
+ * link for many as itself, but is turned away by a link for one person.
+ */
+const nameTakenAdvice = (description: LinkDescription) =>
+  description.kind === "device"
+    ? ""
+    : description.use === "many"
+      ? " If it is yours, open the link on the device you paired before, or ask for a link for this device."
+      : " If it is yours, ask whoever sent this link for a link for this device.";
 
 export const ALREADY_YOURS =
   "This device is already yours. Open the link on the device you want to add.";

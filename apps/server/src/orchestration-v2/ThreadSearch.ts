@@ -29,6 +29,7 @@ import {
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 import { indexedMessageCondition } from "./messageSearchIndex.ts";
+import { typedMessageTextSql } from "../j5/sharing/typedMessageText.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
 // rank recency; agent notices in the user role do not count.
@@ -185,7 +186,8 @@ export const messageHitsQuery = (
             messages.thread_id AS "threadId",
             eligible.project_id AS "projectId",
             messages.role AS source,
-            json_extract(messages.payload_json, '$.text') AS text,
+            -- J5: a person's words, without a shared conversation's lines (FORK.md case 91).
+            ${sql.literal(typedMessageTextSql("messages", "json_extract(messages.payload_json, '$.text')"))} AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_projection_messages AS messages
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
@@ -202,7 +204,8 @@ export const messageHitsQuery = (
             messages.thread_id AS "threadId",
             eligible.project_id AS "projectId",
             messages.role AS source,
-            json_extract(messages.payload_json, '$.text') AS text,
+            -- J5: a person's words, without a shared conversation's lines (FORK.md case 91).
+            ${sql.literal(typedMessageTextSql("messages", "json_extract(messages.payload_json, '$.text')"))} AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_message_search
           INNER JOIN orchestration_v2_projection_messages AS messages

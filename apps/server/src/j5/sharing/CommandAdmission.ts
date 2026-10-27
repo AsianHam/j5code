@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import type { CrewSeatArchiveGuard } from "../a2a/crewSeatArchiveGuard.ts";
+import { claimPersonQueuedEdit, releaseQueuedEditClaim } from "../a2a/queuedEdits.ts";
 import {
   PersonAccess,
   type PersonAccessStorageError,
@@ -146,12 +147,14 @@ const OWNERS_ONLY =
   "Only an Owner of this server archives or deletes a thread, for now. Ask an Owner to do it.";
 
 export interface CommandAdmission {
-  readonly admit: (
+  /**
+   * A person's command, admitted and then handed to upstream's `dispatch`. `ws.ts` wraps upstream's
+   * dispatch with this (FORK.md case 78).
+   */
+  readonly dispatchCommand: <A, E, R>(
     command: OrchestrationV2Command,
-  ) => Effect.Effect<
-    OrchestrationV2Command,
-    EnvironmentAuthorizationError | OrchestrationV2DispatchCommandError
-  >;
+    dispatch: (command: OrchestrationV2Command) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | EnvironmentAuthorizationError | OrchestrationV2DispatchCommandError, R>;
   readonly admitLaunch: (
     input: OrchestrationV2ThreadLaunchInput,
   ) => Effect.Effect<OrchestrationV2ThreadLaunchInput, EnvironmentAuthorizationError>;
@@ -227,42 +230,72 @@ export const makeCommandAdmission = Effect.fn("j5.sharing.commandAdmission.makeC
       Effect.catchTags({ PersonAccessStorageError: refuseUnreadable }),
     );
 
-    const checked: CommandAdmission["admit"] = Effect.fn("j5.sharing.commandAdmission.checked")(
-      function* (command) {
-        if (OWNER_ONLY_COMMANDS.has(command.type)) {
-          const owner =
-            reach.kind === "service" ||
-            (reach.kind === "person" && levelReaches(reach.serverLevel, "owner"));
-          if (!owner) return yield* refused(OWNERS_ONLY);
-          yield* crewSeatArchiveGuard(command).pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestrationV2DispatchCommandError({
-                  commandId: command.commandId,
-                  commandType: command.type,
-                  message: cause.message,
-                  detail: cause.message,
-                  cause,
-                }),
-            ),
-          );
-          return command;
-        }
-        if (isWide(reach)) return command;
-        const scopeOf = NARROWED_COMMAND_SCOPES[command.type] as
-          | ((command: OrchestrationV2Command) => CommandScope)
-          | undefined;
-        if (scopeOf === undefined) return yield* refused(NOT_SHARED);
-        yield* requireLevel(scopeOf(command), "collaborator");
+    const checked = Effect.fn("j5.sharing.commandAdmission.checked")(function* (
+      command: OrchestrationV2Command,
+    ) {
+      if (OWNER_ONLY_COMMANDS.has(command.type)) {
+        const owner =
+          reach.kind === "service" ||
+          (reach.kind === "person" && levelReaches(reach.serverLevel, "owner"));
+        if (!owner) return yield* refused(OWNERS_ONLY);
+        yield* crewSeatArchiveGuard(command).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationV2DispatchCommandError({
+                commandId: command.commandId,
+                commandType: command.type,
+                message: cause.message,
+                detail: cause.message,
+                cause,
+              }),
+          ),
+        );
         return command;
-      },
-    );
+      }
+      if (isWide(reach)) return command;
+      const scopeOf = NARROWED_COMMAND_SCOPES[command.type] as
+        | ((command: OrchestrationV2Command) => CommandScope)
+        | undefined;
+      if (scopeOf === undefined) return yield* refused(NOT_SHARED);
+      yield* requireLevel(scopeOf(command), "collaborator");
+      return command;
+    });
 
     const person = reachPersonId(reach);
-    const admit: CommandAdmission["admit"] = (command) =>
+
+    // A person's edit of a queued agent message is recorded in the ledger under their name
+    // (`queuedEdits.ts`). A failure to claim it names no one and does not stop the edit.
+    const claimEdit = (command: OrchestrationV2Command) =>
+      person === null || command.type !== "queued-run.edit"
+        ? Effect.succeed(false)
+        : claimPersonQueuedEdit(command, person).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+            Effect.catch((cause) =>
+              Effect.logError("J5 could not record who edited a queued message", { cause }).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+    const releaseEdit = (command: OrchestrationV2Command) =>
+      releaseQueuedEditClaim(command.commandId).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.catch((cause) =>
+          Effect.logError("J5 could not release a refused queued edit's claim", { cause }),
+        ),
+      );
+    const dispatchCommand: CommandAdmission["dispatchCommand"] = (command, dispatch) =>
       checked(command).pipe(
-        Effect.flatMap((admitted) => conversation.admit(person, admitted)),
-        Effect.withSpan("j5.sharing.commandAdmission.admit"),
+        Effect.flatMap((admitted) =>
+          conversation.dispatch(person, admitted, (stamped) =>
+            Effect.gen(function* () {
+              const claimed = yield* claimEdit(stamped);
+              return yield* dispatch(stamped).pipe(
+                Effect.tapError(() => (claimed ? releaseEdit(stamped) : Effect.void)),
+              );
+            }),
+          ),
+        ),
+        Effect.withSpan("j5.sharing.commandAdmission.dispatchCommand"),
       );
 
     const admitLaunch: CommandAdmission["admitLaunch"] = Effect.fn(
@@ -313,6 +346,6 @@ export const makeCommandAdmission = Effect.fn("j5.sharing.commandAdmission.makeC
       });
     };
 
-    return { admit, admitLaunch, upsertScheduledTask };
+    return { dispatchCommand, admitLaunch, upsertScheduledTask };
   },
 );

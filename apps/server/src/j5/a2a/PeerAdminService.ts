@@ -5,6 +5,8 @@ import {
   peerSubjectForEnvironment,
   type AddPeerRequest,
   type AddPeerResponse,
+  type ChangePeerOriginRequest,
+  type ChangePeerOriginResponse,
   type IssuePeerCredentialRequest,
   type IssuePeerCredentialResponse,
   type PeerAddressesResponse,
@@ -25,7 +27,11 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import { ServerConfig } from "../../config.ts";
-import { type AddPeerError, PeerRegistryService } from "./PeerRegistryService.ts";
+import {
+  type AddPeerError,
+  type ChangePeerOriginError,
+  PeerRegistryService,
+} from "./PeerRegistryService.ts";
 import { PeerRemovalService } from "./PeerRemovalService.ts";
 import { peerAddressOrigins } from "./peerReachability.ts";
 
@@ -83,7 +89,8 @@ export const peerAdminRefusal = (
     | PeerCredentialForSelfError
     | PeerCredentialLinkModeError
     | PeerAdminOperationError
-    | AddPeerError,
+    | AddPeerError
+    | ChangePeerOriginError,
 ): {
   readonly status: number;
   readonly code: string;
@@ -115,13 +122,19 @@ export const peerAdminRefusal = (
       return refusal(409, "peer_protocol_mismatch");
     case "PeerPollUnsupportedError":
       return refusal(409, "peer_poll_unsupported");
+    case "PeerNotFoundError":
+      return refusal(404, "peer_not_found");
+    case "PeerWithoutOriginError":
+      return refusal(409, "peer_without_origin");
+    case "PeerOriginMismatchError":
+      return refusal(409, "peer_origin_mismatch");
     case "PeerAdminOperationError":
       return { status: 500, code: tagOf(error.cause), message: error.message, internal: true };
     default:
       return {
         status: 500,
         code: tagOf(error),
-        message: "Adding the peer failed.",
+        message: "The peer operation failed.",
         internal: true,
       };
   }
@@ -153,6 +166,10 @@ export class PeerAdminService extends Context.Service<
     >;
     /** Prove the credential at the origin, then record the peer. */
     readonly add: (input: AddPeerRequest) => Effect.Effect<AddPeerResponse, AddPeerError>;
+    /** Reach a recorded peer at a new origin with the credential it already issued here. */
+    readonly changeOrigin: (
+      input: ChangePeerOriginRequest,
+    ) => Effect.Effect<ChangePeerOriginResponse, ChangePeerOriginError>;
     /**
      * End both directions: the session the peer held here first, so it cannot deliver or poll
      * during the wipe, then this server's record of it with everything still waiting on it.
@@ -266,6 +283,17 @@ const make = Effect.gen(function* () {
             acceptedAt: DateTime.formatIso(now),
           }),
         ),
+      ),
+    changeOrigin: (input) =>
+      DateTime.now.pipe(
+        Effect.flatMap((now) =>
+          peers.changeOrigin({
+            environmentId: input.environmentId,
+            origin: input.origin,
+            changedAt: DateTime.formatIso(now),
+          }),
+        ),
+        Effect.map((peer) => ({ peer })),
       ),
     remove: (input) =>
       rotationPermit

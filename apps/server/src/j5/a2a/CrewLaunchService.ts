@@ -528,7 +528,7 @@ export const layer = Layer.effect(
           threadId: member.threadId,
           projectId: captain.thread.projectId,
           // The seat's name alone: the sidebar group and the Crew chip already say which Crew.
-          title: spawnTitle(seatName, undefined),
+          title: spawnTitle(seatName),
           modelSelection: member.modelSelection,
           runtimeMode: member.runtimeMode,
           interactionMode: captain.thread.interactionMode,
@@ -679,7 +679,7 @@ export const layer = Layer.effect(
               ledgerProjectId: captain.projectId,
               projectId: captain.thread.projectId,
               threadId: member.threadId,
-              title: spawnTitle(member.seat.name, undefined),
+              title: spawnTitle(member.seat.name),
               messageId: spawnMessageId(member.stableInput),
               text,
               modelSelection: member.modelSelection,

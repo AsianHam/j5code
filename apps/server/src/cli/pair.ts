@@ -19,20 +19,16 @@ import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
-import { cliEnvironmentAuth as j5CliEnvironmentAuth } from "../j5/sharing/AccessGate.ts";
 import {
   type PairingScopes as J5PairingScopes,
   type PersonPairingFlags as J5PersonPairingFlags,
-  pairingLinkForPerson as j5PairingLinkForPerson,
+  pairingLinkFromCli as j5PairingLinkFromCli,
   pairingScopesFlag as j5PairingScopesFlag,
   personPairingFlags as j5PersonPairingFlags,
 } from "../j5/sharing/cliPairing.ts";
@@ -452,29 +448,17 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
   readonly label: Option.Option<string>;
   readonly person: J5PersonPairingFlags;
 }) {
-  return yield* Effect.gen(function* () {
-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    // J5: the link is for the person `--person` names, and says so (FORK.md case 79).
-    return yield* j5PairingLinkForPerson({
-      flags: input.person,
-      scopes: input.scopes,
-      withoutPerson: "refuse",
-      mint: (scopes) =>
-        environmentAuth.createPairingLink({
-          scopes,
-          subject: "one-time-token",
-          label: Option.getOrElse(input.label, () => "j5 pair"),
-          ...(Option.isSome(input.ttl) ? { ttl: input.ttl.value } : {}),
-        }),
-    });
-  }).pipe(
-    Effect.provide(
-      j5CliEnvironmentAuth(EnvironmentAuth.layerRuntime).pipe(
-        Layer.provide(ServerConfig.layer(input.config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, input.config.logLevel)),
-      ),
-    ),
-  );
+  // J5: the link is for the person `--person` names, says so, and is made by the running server
+  // (FORK.md case 79).
+  return yield* j5PairingLinkFromCli({
+    config: input.config,
+    minimumLogLevel: input.config.logLevel,
+    flags: input.person,
+    scopes: input.scopes,
+    ttl: input.ttl,
+    label: Option.orElse(input.label, () => Option.some("j5 pair")),
+    withoutPerson: "refuse",
+  });
 });
 
 const ttlFlag = Flag.String("ttl").pipe(

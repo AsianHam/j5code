@@ -15,6 +15,7 @@ import {
   RunId,
   RuntimeMode,
   ThreadId,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
@@ -106,7 +107,7 @@ export const J5SendMessageInput = Schema.Struct({
     Schema.NullOr(
       SendMode.annotate({
         description:
-          "Set this to interrupt an agent that is mid-turn. steer puts your message into the turn it is running now. restart stops that turn and starts it again on your message. queue, the default, is ordinary delivery: after the turn ends for most agents, and into the running turn for Codex GPT 6 agents.",
+          "Set this to interrupt an agent that is mid-turn. steer puts your message into the turn it is running now. restart stops that turn and starts it again on your message. queue, the default, is ordinary delivery: into the running turn for Claude and Codex GPT 6 agents, and after the turn ends for the others.",
       }),
     ),
   ),
@@ -286,7 +287,10 @@ export type J5SpawnAgentWorkspace = typeof J5SpawnAgentWorkspace.Type;
 
 export const J5SpawnAgentInput = Schema.Struct({
   brief: NonEmptyString,
-  title: Schema.optional(NonEmptyString),
+  title: TrimmedNonEmptyString.annotate({
+    description:
+      "A short name for the agent, a few words, shown in the sidebar and Fleet. Not the brief.",
+  }),
   project_id: Schema.optional(
     LedgerProjectId.annotate({
       description:

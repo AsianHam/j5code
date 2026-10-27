@@ -21,8 +21,10 @@ import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
 import { canBeNotified } from "./deliveryNotices.ts";
 import { A2ADeliveryWorker } from "./DeliveryWorker.ts";
 import { deliveryMessageId, ledgerMessageIdOfDelivery } from "./DeliveryTransport.ts";
+import { j5ForgetClaudeSteers } from "./claudeAgentSteers.ts";
+import { recordQueuedEdit } from "./queuedEdits.ts";
 import { formatSilenceNoticeEnvelope } from "./EnvelopeFormatter.ts";
-import { A2ALedger } from "./LedgerService.ts";
+import { A2ALedger, A2ALedgerTransactionWriter } from "./LedgerService.ts";
 import { findPeerCounterparty } from "./peerCounterparty.ts";
 import {
   CommCommandId,
@@ -151,6 +153,8 @@ interface RemovedDeliveryRow {
   readonly message_id: string;
   readonly sender_id: string;
   readonly message_text: string;
+  readonly edited_by: string | null;
+  readonly edited_at: string | null;
 }
 
 interface CursorRow {
@@ -169,6 +173,11 @@ const terminalRun = (stored: OrchestrationV2StoredEvent): OrchestrationV2Run | u
     ? event.payload
     : undefined;
 };
+
+/** A run starting on a thread: whatever held its agent's messages has lifted. */
+const runStarted = ({ event }: OrchestrationV2StoredEvent) =>
+  (event.type === "run.created" || event.type === "run.updated") &&
+  event.payload.status === "starting";
 
 const stablePart = (value: string) => encodeURIComponent(value);
 
@@ -194,17 +203,28 @@ export const REMOVED_NOTICE_TYPE = "queued-message-removed" as const;
 
 const REMOVED_NOTICE_EXCERPT_LENGTH = 200;
 
-/** Told to the sender of a queued message that was taken out of the receiver's queue unread. */
+/**
+ * Told to the sender of a queued message that was taken out of the receiver's queue unread.
+ * `editedBy` is set when someone other than the sender edited it in the queue first: null when J5
+ * could not tell who.
+ */
 export const removedNoticeMessage = (
   subjectId: ParticipantId,
   messageId: string,
   text: string,
+  editedBy?: string | null,
 ): string => {
   const excerpt =
     text.length > REMOVED_NOTICE_EXCERPT_LENGTH
       ? `${text.slice(0, REMOVED_NOTICE_EXCERPT_LENGTH)}…`
       : text;
-  return `Your message ${messageId} to ${subjectId} was removed from its queue before it ran, so ${subjectId} never read it. Send it again if it still matters. The message began: ${excerpt}`;
+  const edited =
+    editedBy === undefined
+      ? ""
+      : editedBy === null
+        ? " It had been edited in the queue."
+        : ` ${editedBy} had edited it in the queue.`;
+  return `Your message ${messageId} to ${subjectId} was removed from its queue before it ran, so ${subjectId} never read it. Send it again if it still matters.${edited} The message began: ${excerpt}`;
 };
 
 const noticeMessage = (payload: SilenceNoticePayload, exchangeId: ExchangeId): string => {
@@ -243,6 +263,7 @@ const makeLayer = (daemon: boolean) =>
     A2ASilenceDetector,
     Effect.gen(function* () {
       const ledger = yield* A2ALedger;
+      const ledgerWriter = yield* A2ALedgerTransactionWriter;
       const deliveryWorker = yield* A2ADeliveryWorker;
       const threads = yield* ThreadManagement.ThreadManagementService;
       const events = yield* EventSinkV2;
@@ -507,7 +528,7 @@ const makeLayer = (daemon: boolean) =>
           return [];
         }
         const rows = yield* sql<RemovedDeliveryRow>`
-          SELECT project_id, message_id, sender_id, message_text
+          SELECT project_id, message_id, sender_id, message_text, edited_by, edited_at
           FROM j5_a2a_delivery
           WHERE message_id = ${messageId}
             AND receiver_id = ${subjectId}
@@ -545,7 +566,14 @@ const makeLayer = (daemon: boolean) =>
                 messageId: LedgerMessageId.make(`message:j5:a2a:removed:${identity}`),
                 text: formatSilenceNoticeEnvelope({
                   noticeType: REMOVED_NOTICE_TYPE,
-                  message: removedNoticeMessage(subjectId, row.message_id, row.message_text),
+                  message: removedNoticeMessage(
+                    subjectId,
+                    row.message_id,
+                    row.message_text,
+                    row.edited_at === null || row.edited_by === row.sender_id
+                      ? undefined
+                      : row.edited_by,
+                  ),
                 }),
                 originProjectId: LedgerProjectId.make(row.project_id),
                 receiverProjectId: LedgerProjectId.make(row.project_id),
@@ -670,8 +698,36 @@ const makeLayer = (daemon: boolean) =>
       const handleStoredEventRaw = Effect.fn("j5.a2a.silence.handleStoredEvent")(function* (
         stored: OrchestrationV2StoredEvent,
       ) {
+        // The same stream carries edits to queued deliveries, which the ledger follows (#136).
+        if (stored.event.type === "message.updated") {
+          return yield* recordQueuedEdit(stored).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+            Effect.provideService(A2ALedgerTransactionWriter, ledgerWriter),
+          );
+        }
+        if (runStarted(stored)) {
+          // Deliveries held while the agent was stopped on a usage limit, its queue was held,
+          // or its worktree setup had failed go now, together and in send order.
+          const started = yield* sql<{ readonly participant_id: string }>`
+            SELECT participant_id FROM j5_a2a_membership
+            WHERE thread_id = ${stored.event.threadId} AND archived_at IS NULL
+          `;
+          for (const membership of started) {
+            yield* deliveryWorker.wake(ParticipantId.make(membership.participant_id));
+          }
+          return [];
+        }
         const run = terminalRun(stored);
         if (run === undefined || run.completedAt === null) return [];
+        // FORK.md case 89: Stop and query failures may end without a clean SDK result.
+        if (run.status !== "completed") {
+          const records = yield* readRunsAndMessages(stored.event.threadId);
+          j5ForgetClaudeSteers(
+            records.messages
+              .filter((message) => message.runId === run.id)
+              .map((message) => message.id),
+          );
+        }
         const memberships = yield* sql<MembershipRow>`
           SELECT project_id, participant_id
           FROM j5_a2a_membership

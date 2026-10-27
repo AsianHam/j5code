@@ -1,5 +1,4 @@
 import {
-  J5_LINK_DESCRIBE_PATH,
   J5_LINK_JOIN_PATH,
   isMarkedShareLink,
   isPersonName,
@@ -23,11 +22,11 @@ import {
   submitServerAuthCredential,
 } from "../../environments/primary";
 import { APP_DISPLAY_NAME } from "../../branding";
+import { describeLink } from "./describeLink";
 import { NAME_NOT_USABLE } from "./shareLink.logic";
 import {
   ALREADY_YOURS,
   asYourselfWords,
-  DESCRIBE_TIMEOUT_MS,
   invitationFor,
   joinPageState,
   joinRefusal,
@@ -37,10 +36,9 @@ import {
   type JoinPageState,
 } from "./joinPage.logic";
 
-const post = (path: string, body: unknown, signal?: AbortSignal) =>
+const post = (path: string, body: unknown) =>
   fetch(resolvePrimaryEnvironmentHttpUrl(path), {
     method: "POST",
-    ...(signal === undefined ? {} : { signal }),
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
     credentials: "include",
@@ -99,16 +97,10 @@ function LinkSurface({
   useEffect(() => {
     if (token === null || !marked) return;
     let cancelled = false;
-    void post(J5_LINK_DESCRIBE_PATH, { token }, AbortSignal.timeout(DESCRIBE_TIMEOUT_MS))
-      .then(async (response) => ({
-        status: response.status as number | null,
-        body: (await response.json().catch(() => null)) as unknown,
-      }))
-      .catch(() => ({ status: null, body: null }))
-      .then((answer) => {
-        if (cancelled) return;
-        setState(joinPageState({ marked, ...answer }));
-      });
+    void describeLink(token).then((answer) => {
+      if (cancelled) return;
+      setState(joinPageState({ marked, ...answer }));
+    });
     return () => {
       cancelled = true;
     };

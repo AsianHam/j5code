@@ -154,3 +154,22 @@ export const formatReceiverBacklogNotice = (input: {
     waiting: String(input.waiting),
     fromYou: String(input.fromYou),
   });
+
+/**
+ * Told to a sender whose message waits on a receiver stopped by a usage limit. `resetAt` is when
+ * upstream continues it, or null when it waits for a person.
+ */
+export const formatReceiverLimitNotice = (input: {
+  readonly receiverId: ParticipantId;
+  readonly resetAt: string | null;
+}): string =>
+  input.resetAt === null
+    ? render(config.receiverLimitPausedNotice, { receiverId: input.receiverId })
+    : render(config.receiverLimitAutoResumeNotice, {
+        receiverId: input.receiverId,
+        resetAt: input.resetAt,
+      });
+
+/** Told to a sender whose message waits until a person resumes the receiver's held queue. */
+export const formatReceiverQueueHeldNotice = (input: { readonly receiverId: ParticipantId }) =>
+  render(config.receiverQueueHeldNotice, { receiverId: input.receiverId });

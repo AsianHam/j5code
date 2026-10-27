@@ -22,6 +22,7 @@ import {
   type ExchangeId,
   MessageDeliveredPayload,
   MessageDeliveryFailedPayload,
+  MessageEditedPayload,
   type CommEvent,
   MessageReceivedPayload,
   MessageSentPayload,
@@ -210,6 +211,7 @@ const decodeMessageSent = Schema.decodeUnknownEffect(MessageSentPayload);
 const decodeMessageReceived = Schema.decodeUnknownEffect(MessageReceivedPayload);
 const decodeMessageDelivered = Schema.decodeUnknownEffect(MessageDeliveredPayload);
 const decodeMessageDeliveryFailed = Schema.decodeUnknownEffect(MessageDeliveryFailedPayload);
+const decodeMessageEdited = Schema.decodeUnknownEffect(MessageEditedPayload);
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 // The one payload with optional keys has its own encoder, so every other caller keeps the Json check.
@@ -221,6 +223,11 @@ const encodeEventPayload = (event: CommEvent) =>
     : encodeJson(event.payload);
 
 /** The pending delivery both a local send and a peer-received row project; origin columns are NULL for local sends. */
+/**
+ * `accept_order` is the order the row was accepted on this server, across every project's ledger,
+ * which the delivery worker keeps per receiver. The insert takes the next value in one statement,
+ * and a unique index holds it to one row.
+ */
 const insertPendingDelivery = (
   sql: SqlClient.SqlClient,
   row: {
@@ -247,12 +254,13 @@ const insertPendingDelivery = (
     project_id, message_id, command_id, sent_seq, sender_id, receiver_id, receiver_project_id,
     exchange_id, exchange_role, envelope_channel, correlation_id, message_text,
     status, attempts, last_error, next_attempt_at, delivered_seq, created_at, updated_at,
-    origin_project_id, origin_environment_id, receiver_environment_id
+    origin_project_id, origin_environment_id, receiver_environment_id, accept_order
   ) VALUES (
     ${row.projectId}, ${row.messageId}, ${row.commandId}, ${row.sentSeq}, ${row.senderId}, ${row.receiverId}, ${row.receiverProjectId},
     ${row.exchangeId}, ${row.exchangeRole}, ${row.envelopeChannel}, ${row.correlationId}, ${row.messageText},
     'pending', 0, NULL, NULL, NULL, ${row.createdAt}, ${row.createdAt},
-    ${row.originProjectId}, ${row.originEnvironmentId}, ${row.receiverEnvironmentId}
+    ${row.originProjectId}, ${row.originEnvironmentId}, ${row.receiverEnvironmentId},
+    (SELECT COALESCE(MAX(accept_order), 0) + 1 FROM j5_a2a_delivery)
   )
 `;
 
@@ -586,6 +594,8 @@ export const layer: Layer.Layer<
             SET
               status = ${payload.alarmed ? "alarmed" : "retry_scheduled"},
               attempts = ${payload.attempt},
+              held_attempts = held_attempts + ${payload.held === true ? 1 : 0},
+              last_held = ${payload.held === true ? 1 : 0},
               last_error = ${payload.error},
               next_attempt_at = ${payload.nextAttemptAt},
               updated_at = ${event.createdAt}
@@ -604,6 +614,24 @@ export const layer: Layer.Layer<
           const payload = yield* decodeMessageCancelled(event.payload);
           yield* sql`UPDATE j5_a2a_delivery SET status = 'cancelled', next_attempt_at = NULL, last_error = ${payload.reason}, updated_at = ${event.createdAt}
             WHERE project_id = ${event.projectId} AND message_id = ${payload.messageId} AND status <> 'delivered'`;
+          return;
+        }
+        case "message.edited": {
+          const payload = yield* decodeMessageEdited(event.payload);
+          const rows = yield* sql<{ readonly message_id: string }>`
+            UPDATE j5_a2a_delivery
+            SET
+              message_text = ${payload.text},
+              edited_by = ${event.sender},
+              edited_at = ${event.createdAt},
+              edit_source_sequence = ${payload.sourceSequence},
+              updated_at = ${event.createdAt}
+            WHERE project_id = ${event.projectId} AND message_id = ${payload.messageId}
+            RETURNING message_id
+          `;
+          if (rows[0] === undefined) {
+            return yield* new A2AStorageError({ operation: "project edited message" });
+          }
           return;
         }
         case "message.received": {

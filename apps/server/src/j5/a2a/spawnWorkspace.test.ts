@@ -415,6 +415,7 @@ const spawnHarness = (input: {
 
 const spawnArgs = {
   brief: "Fix the login bug and report back.",
+  title: "Login fixer",
   provider: ProviderInstanceId.make("codex"),
   model: "gpt-5.6-sol",
   reasoning: "high",

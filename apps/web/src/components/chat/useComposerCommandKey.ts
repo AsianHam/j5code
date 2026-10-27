@@ -1,4 +1,5 @@
 import type { ChatComposerProps } from "./ChatComposer";
+import { sharedPromptHistoryMessages } from "../../j5/sharing/sharedTimeline";
 import { type ComposerCommandItem } from "./ComposerCommandMenu";
 import {
   type ComposerDispatchMode,
@@ -39,6 +40,8 @@ export function useComposerCommandKey(input: {
   readonly isLiteralPendingAnswer: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly promptHistoryMessages: ChatComposerProps["promptHistoryMessages"];
+  /** J5 (FORK.md case 91): the server thread whose shared messages are recalled as typed. */
+  readonly j5PromptHistoryThreadRef: ChatComposerProps["routeThreadRef"] | null;
   readonly promptHistoryPositionRef: RefObject<{
     targetKey: string;
     position: ComposerPromptHistoryPosition;
@@ -164,7 +167,13 @@ export function useComposerCommandKey(input: {
     }
     const step = stepComposerPromptHistory({
       direction,
-      entries: buildComposerPromptHistoryEntries(promptHistoryMessagesRef.current),
+      // J5 (case 91): a shared conversation's messages are recalled as their authors typed them.
+      entries: buildComposerPromptHistoryEntries(
+        sharedPromptHistoryMessages(
+          input.j5PromptHistoryThreadRef,
+          promptHistoryMessagesRef.current,
+        ),
+      ),
       position,
       currentPrompt: promptRef.current,
     });

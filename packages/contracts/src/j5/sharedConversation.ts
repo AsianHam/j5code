@@ -48,6 +48,17 @@ export const MessageAuthor = Schema.Struct({
 });
 export type MessageAuthor = typeof MessageAuthor.Type;
 
+/**
+ * A message's words as its author typed them: the stored text without the platform's lines at its
+ * start, which the server names exactly in `storedPrefix` so that nothing reads their format. Text
+ * that does not begin with them is returned as it is.
+ */
+export function typedText(text: string, author: Pick<MessageAuthor, "storedPrefix">): string {
+  return author.storedPrefix !== "" && text.startsWith(author.storedPrefix)
+    ? text.slice(author.storedPrefix.length)
+    : text;
+}
+
 /** Who answered one of the agent's prompts: a question, an approval or a Crew roster (AC10). */
 export const PromptAnswer = Schema.Struct({
   requestId: Schema.String,

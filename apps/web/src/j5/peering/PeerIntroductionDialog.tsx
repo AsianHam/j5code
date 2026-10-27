@@ -56,9 +56,9 @@ import {
 import { addPeer, issuePeerCredential, removePeer } from "./peeringClient";
 
 /** Where "How does this work?" goes: the explainer for sending directly and polling. */
-const EXPLAINER_URL = "https://j5.codes/peering";
+export const EXPLAINER_URL = "https://j5.codes/peering";
 
-interface StepReport {
+export interface StepReport {
   readonly title: string;
   readonly status: "done" | "failed" | "skipped";
   readonly detail: string | null;
@@ -576,13 +576,13 @@ function CheckCard({
   );
 }
 
-function ReachLine({
+export function ReachLine({
   from,
   to,
   reach,
 }: {
-  readonly from: PeeringServer;
-  readonly to: PeeringServer;
+  readonly from: Pick<PeeringServer, "label">;
+  readonly to: Pick<PeeringServer, "label">;
   readonly reach: PeeringReach;
 }) {
   switch (reach.kind) {
@@ -809,7 +809,7 @@ function ManualForm({
   );
 }
 
-function OriginField({
+export function OriginField({
   title,
   value,
   onChange,
@@ -838,7 +838,7 @@ function OriginField({
   );
 }
 
-function StepList({ steps }: { readonly steps: ReadonlyArray<StepReport> }) {
+export function StepList({ steps }: { readonly steps: ReadonlyArray<StepReport> }) {
   const failedAfterIssuing =
     steps.some((step) => step.status === "failed") &&
     steps.some((step) => step.status === "done" && step.title.startsWith("Issue"));

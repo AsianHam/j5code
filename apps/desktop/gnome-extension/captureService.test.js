@@ -1,4 +1,5 @@
 import { expect, it } from "vite-plus/test";
+import { resolveLinuxDesktopEntryName } from "../src/app/DesktopEarlyElectronStartup.ts";
 import { CaptureService, CLIENT_NAMES, isWaylandSession } from "./captureService.js";
 
 it("supports GNOME 50 without the removed X11 API, rejecting older X11 sessions", () => {
@@ -26,6 +27,12 @@ it("rejects other clients before looking at the active window", async () => {
   await expect(service.capture(":1.99")).rejects.toThrow("Only J5 Code");
   expect(snapshots()).toBe(0);
   expect(await service.capture(":1.23")).toBe("pixels");
+});
+
+it("accepts the bus names the J5 desktop app requests", () => {
+  const busName = (isDevelopment) =>
+    `${resolveLinuxDesktopEntryName(isDevelopment).replace(/\.desktop$/, "")}.SnapShot`;
+  expect(CLIENT_NAMES).toEqual([busName(false), busName(true)]);
 });
 
 it("rechecks the name owner on each capture", async () => {

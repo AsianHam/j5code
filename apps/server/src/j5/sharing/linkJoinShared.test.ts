@@ -42,17 +42,21 @@ it.effect("a person brought in as a Collaborator on a thread makes it shared as 
     const priya = (yield* people.listPeople).find(
       (record) => record.person.displayName === "Priya",
     )!.person.personId;
-    const admitted = (yield* (yield* SharedConversation).admit(priya, {
-      type: "message.dispatch",
-      commandId: CommandId.make("command:first"),
-      threadId,
-      messageId: MessageId.make("message:first"),
-      text: "Hello.",
-      attachments: [],
-      createdBy: "user",
-      creationSource: "web",
-      dispatchMode: { type: "start_immediately" },
-    } as unknown as OrchestrationV2Command)) as { readonly text: string };
+    const admitted = (yield* (yield* SharedConversation).dispatch(
+      priya,
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make("command:first"),
+        threadId,
+        messageId: MessageId.make("message:first"),
+        text: "Hello.",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      } as unknown as OrchestrationV2Command,
+      Effect.succeed,
+    )) as { readonly text: string };
     assert.include(admitted.text, "Who can write: Jackson (owner), Priya (collaborator).");
     assert.isTrue(admitted.text.endsWith("[Message from Priya (collaborator)]\n\nHello."));
   }).pipe(Effect.provide(linksLayer.pipe(Layer.provideMerge(conversationLayer)))),

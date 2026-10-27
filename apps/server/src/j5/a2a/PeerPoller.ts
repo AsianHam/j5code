@@ -445,11 +445,9 @@ const make = Effect.fn("j5.a2a.peer.poller.make")(function* (daemon: boolean) {
   if (daemon) {
     const scope = yield* Effect.scope;
     // One loop per poll peer. A loop that stopped is restarted only when the
-    // peer is recorded again with a new credential, which is what fixes it.
-    const running = new Map<
-      string,
-      { readonly credential: string | null; fiber: Fiber.Fiber<void> | null }
-    >();
+    // peer is recorded again with a new credential, which is what fixes it, or
+    // moved to a new origin, which also ends any backoff against the old one.
+    const running = new Map<string, { readonly link: string; fiber: Fiber.Fiber<void> | null }>();
     const reconcile = Effect.gen(function* () {
       const read = yield* Effect.result(peers.connections());
       if (read._tag === "Failure") {
@@ -460,17 +458,19 @@ const make = Effect.fn("j5.a2a.peer.poller.make")(function* (daemon: boolean) {
       const polled = new Map(
         read.success
           .filter((peer) => peer.linkMode === "poll")
-          .map((peer) => [peer.environmentId, peer.credential] as const),
+          .map(
+            (peer) => [peer.environmentId, JSON.stringify([peer.credential, peer.origin])] as const,
+          ),
       );
       for (const [environmentId, entry] of running) {
-        if (polled.get(environmentId) === entry.credential) continue;
+        if (polled.get(environmentId) === entry.link) continue;
         if (entry.fiber !== null) yield* Fiber.interrupt(entry.fiber);
         running.delete(environmentId);
       }
-      for (const [environmentId, credential] of polled) {
+      for (const [environmentId, link] of polled) {
         if (running.has(environmentId)) continue;
-        const entry: { readonly credential: string | null; fiber: Fiber.Fiber<void> | null } = {
-          credential,
+        const entry: { readonly link: string; fiber: Fiber.Fiber<void> | null } = {
+          link,
           fiber: null,
         };
         running.set(environmentId, entry);

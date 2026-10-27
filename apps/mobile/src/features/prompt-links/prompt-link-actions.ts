@@ -1,9 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
-import {
-  buildNewThreadLink,
-  promptLinkDeepLink,
-  type LinkedPrompt,
-} from "@t3tools/shared/promptLinks";
+import { buildNewThreadLink, type LinkedPrompt } from "@t3tools/shared/promptLinks";
 
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
@@ -41,9 +37,7 @@ export async function applyLinkedPromptToThreadDraft(
 }
 
 export async function copyPromptLink(prompt: string): Promise<void> {
-  // J5: a `j5code://` link that opens J5's apps; J5 has no hosted app to point at.
-  const link = promptLinkDeepLink(buildNewThreadLink({ prompt }));
-  if (!(await tryCopyTextWithHaptic(link, { target: "prompt link" }))) {
+  if (!(await tryCopyTextWithHaptic(buildNewThreadLink({ prompt }), { target: "prompt link" }))) {
     Dialog.alert("Could not copy", "Try again.");
   }
 }

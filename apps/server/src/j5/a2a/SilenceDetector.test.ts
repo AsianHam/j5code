@@ -1,3 +1,5 @@
+import type { SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
   MessageId,
@@ -10,6 +12,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -35,6 +38,13 @@ import {
   AgentCrewInstanceService,
   layer as crewInstanceLayer,
 } from "./AgentCrewInstanceService.ts";
+import type { ClaudeAgentSdkQuerySession } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import {
+  j5ClaudeSteerFields,
+  j5ObserveClaudeSteer,
+  j5OfferClaudeSteer,
+  j5ClaudeSteerHoldsResult,
+} from "./claudeAgentSteers.ts";
 import { A2ADeliveryWorker, manualLayer as deliveryWorkerLayer } from "./DeliveryWorker.ts";
 import {
   A2ADeliveryTransport,
@@ -733,6 +743,9 @@ const seedQueuedMessage = Effect.fn("test.j5.a2a.silence.seedQueuedMessage")(fun
   return { removed, messageId: sent.messageId };
 });
 
+const claudeLifecycle = (commandUuid: string, state: string) =>
+  ({ type: "command_lifecycle", command_uuid: commandUuid, state }) as unknown as SDKMessage;
+
 const readRemovedNotices = Effect.fn("test.j5.a2a.silence.readRemovedNotices")(function* () {
   return yield* (yield* SqlClient.SqlClient)<{
     readonly receiver_id: string;
@@ -770,6 +783,64 @@ it.effect("tells the sender once when its queued message is removed before it ru
       "it names the message by the id its send returned",
     );
   }).pipe(Effect.provide(makeTestLayer())),
+);
+
+// FORK.md case 89: cleanup survives removal of the unread-after-Stop notice (#694).
+it.effect.each([
+  { status: "interrupted", registered: true },
+  { status: "failed", registered: true },
+  { status: "cancelled", registered: true },
+  { status: "rolled_back", registered: true },
+  { status: "interrupted", registered: false },
+] as const)(
+  "releases a $status Claude turn's waiting steer without a notice (registered=$registered)",
+  ({ status, registered }) =>
+    Effect.gen(function* () {
+      yield* seed();
+      const sent = yield* (yield* A2ASendService).send({
+        commandId: CommCommandId.make(`command:silence:send:steered:${status}`),
+        senderThreadId: waiter.threadId,
+        to: subject.id,
+        message: "Steered update",
+        acceptedAt: iso(1),
+      });
+      const threadMessageId = deliveryMessageId(sent.messageId);
+      thread.messages.push({ id: threadMessageId, runId: carrierRunId });
+      const query = {} as ClaudeAgentSdkQuerySession;
+      const providerTurnId = `provider-turn:silence:${status}`;
+      const steer = yield* j5ClaudeSteerFields({ createdBy: "agent" }, yield* Crypto.Crypto);
+      yield* j5OfferClaudeSteer({
+        query,
+        providerTurnId,
+        messageId: threadMessageId,
+        steer,
+        offer: Effect.void,
+      });
+      j5ObserveClaudeSteer(query, claudeLifecycle(steer.uuid!, "queued"));
+      const result = {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        terminal_reason: "completed",
+      } as SDKResultMessage;
+      assert.isTrue(j5ClaudeSteerHoldsResult(query, providerTurnId, result));
+      const ended = terminalEvent(status, 100, {
+        id: carrierRunId,
+        userMessageId: MessageId.make("message:silence:upstream"),
+        completedAtSecond: 3,
+      });
+      thread.runs = [runOf(ended)];
+      if (!registered) {
+        yield* (yield* SqlClient.SqlClient)`
+          DELETE FROM j5_a2a_membership WHERE thread_id = ${subject.threadId}
+        `;
+      }
+
+      yield* (yield* A2ASilenceDetector).handleStoredEvent(ended);
+
+      assert.lengthOf(yield* readRemovedNotices(), 0);
+      assert.isFalse(j5ClaudeSteerHoldsResult(query, providerTurnId, result));
+    }).pipe(Effect.provide(Layer.merge(makeTestLayer(), NodeCrypto.layer))),
 );
 
 it.effect.each(["promoted into the running turn", "archived with its receiver"] as const)(

@@ -57,6 +57,7 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_CLIENT_ACTION_WS_METHODS.issuePeerCredential]: AuthAccessWriteScope,
   [J5_CLIENT_ACTION_WS_METHODS.addPeer]: AuthAccessWriteScope,
   [J5_CLIENT_ACTION_WS_METHODS.removePeer]: AuthAccessWriteScope,
+  [J5_CLIENT_ACTION_WS_METHODS.changePeerOrigin]: AuthAccessWriteScope,
   [J5_CLIENT_ACTION_WS_METHODS.listPeerAddresses]: AuthAccessWriteScope,
   [J5_CLIENT_ACTION_WS_METHODS.probePeer]: AuthAccessWriteScope,
 

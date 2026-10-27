@@ -604,6 +604,41 @@ it.effect(
 );
 
 it.effect(
+  "polls a peer moved to a new origin at once, not after the backoff against the old one",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      const changes = yield* Queue.unbounded<void>();
+      let current = vmPeer;
+      harness.answers.push({ unreachable: "ECONNREFUSED" }, { unreachable: "ECONNREFUSED" });
+      yield* Effect.gen(function* () {
+        yield* PeerPoller;
+        yield* Queue.take(harness.sent);
+        yield* TestClock.adjust("1 second");
+        yield* Queue.take(harness.sent);
+        // The loop now waits two seconds before trying the old origin again.
+        current = { ...vmPeer, origin: "https://vm-moved.example:9444" };
+        yield* Queue.offer(changes, undefined);
+        yield* Queue.take(harness.sent);
+        assert.equal(
+          harness.sentAtMs[2],
+          harness.sentAtMs[1],
+          "no time passed before the new poll",
+        );
+      }).pipe(
+        Effect.provide(
+          makeTestLayer(harness, {
+            daemon: true,
+            connections: () => Effect.sync(() => [current]),
+            changes: Stream.fromQueue(changes),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+);
+
+it.effect(
   "retries a proxy's error page that states no protocol, rather than reading a mismatch",
   () =>
     Effect.gen(function* () {

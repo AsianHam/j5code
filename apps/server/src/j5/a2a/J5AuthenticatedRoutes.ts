@@ -4,6 +4,7 @@ import { machineSenderHttpRouteLayer } from "./MachineSenderHttp.ts";
 import { peerHttpRouteLayer } from "./PeerHttp.ts";
 import { artifactHttpRouteLayer } from "../artifacts/ArtifactHttp.ts";
 import { layer as artifactWorkspaceLayer } from "../artifacts/ArtifactWorkspace.ts";
+import { cliPairingHttpRouteLayer } from "../sharing/CliPairingHttp.ts";
 import { guestProjectIconRouteLayer } from "../sharing/GuestProjectIcons.ts";
 import { linkHttpRouteLayer } from "../sharing/LinkHttp.ts";
 import { sessionRenewalRouteLayer } from "../sharing/SessionRenewal.ts";
@@ -24,4 +25,5 @@ export const j5AuthenticatedRoutesLayer = Layer.mergeAll(
   guestProjectIconRouteLayer,
   sessionRenewalRouteLayer,
   linkHttpRouteLayer,
+  cliPairingHttpRouteLayer,
 ).pipe(Layer.provide(artifactWorkspaceLayer));

@@ -1318,6 +1318,7 @@ it.effect("preflights home before creation and records facts before the one stab
       const args = {
         workspace: { type: "shared" as const },
         brief: "Prove the post-#18 verb slice and report the result.",
+        title: "Verb slice prover",
         provider: ProviderInstanceId.make("codex-luna"),
         model: "gpt-5.6-luna",
         reasoning: "high",
@@ -1358,6 +1359,7 @@ it.effect("preflights home before creation and records facts before the one stab
       assert.equal(create?.type, "thread.create");
       if (create?.type === "thread.create") {
         assert.notProperty(create, "parentThreadId");
+        assert.equal(create.title, args.title);
         assert.deepStrictEqual(create.modelSelection, {
           instanceId: ProviderInstanceId.make("codex-luna"),
           model: "gpt-5.6-luna",
@@ -1472,6 +1474,7 @@ it.effect("refuses spawn before thread creation when the caller is a Subagent", 
         .handle("j5_spawn_agent", {
           workspace: { type: "shared" as const },
           brief: "This must never start.",
+          title: "Never starts",
           provider: ProviderInstanceId.make("codex-luna"),
           model: "gpt-5.6-luna",
           reasoning: "high",
@@ -1700,6 +1703,7 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
       const scout = {
         workspace: { type: "shared" as const },
         brief: "Collect evidence about the auth flow and report back.",
+        title: "Auth scout",
         persona: "scout",
         provider: ProviderInstanceId.make("codex"),
         model: "gpt-5.6-terra",
@@ -1748,6 +1752,7 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
       const plain = yield* call({
         workspace: { type: "shared" as const },
         brief: "No saved agent here.",
+        title: "Plain agent",
         provider: ProviderInstanceId.make("codex"),
         model: "gpt-5.6-sol",
         reasoning: "high",
@@ -2383,6 +2388,7 @@ it.effect("routes crew proposals through a captain that is not itself a crew mem
       const spawned = yield* run("j5_spawn_agent", {
         workspace: { type: "shared" as const },
         brief: "Help me",
+        title: "Helper",
         provider: "codex",
         model: "gpt-5.6-terra",
         reasoning: "high",

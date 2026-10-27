@@ -2302,6 +2302,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isLiteralPendingAnswer,
     pendingUserInputs,
     promptHistoryMessages,
+    j5PromptHistoryThreadRef: isServerThread ? routeThreadRef : null,
     promptHistoryPositionRef,
     composerDraftTarget,
     promptRef,

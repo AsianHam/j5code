@@ -730,6 +730,15 @@ export const RemovePeerResponse = Schema.Struct({
 });
 export type RemovePeerResponse = typeof RemovePeerResponse.Type;
 
+/** Reach a recorded peer at a new origin with the credential already held for it; nothing else changes. */
+export const ChangePeerOriginRequest = Schema.Struct({
+  environmentId: Schema.String.check(Schema.isNonEmpty()),
+  origin: PeerOrigin,
+});
+export type ChangePeerOriginRequest = typeof ChangePeerOriginRequest.Type;
+export const ChangePeerOriginResponse = Schema.Struct({ peer: PeerRecord });
+export type ChangePeerOriginResponse = typeof ChangePeerOriginResponse.Type;
+
 /**
  * Peer servers' own wire protocol. A breaking change bumps the version and a
  * mismatch stops peering until both servers match; an additive change is an
@@ -960,6 +969,7 @@ export const J5_PEER_API_PATHS = {
   peers: "/api/j5/a2a/peers",
   credentials: "/api/j5/a2a/peers/credentials",
   remove: "/api/j5/a2a/peers/remove",
+  origin: "/api/j5/a2a/peers/origin",
   hello: "/api/j5/a2a/peers/hello",
   roster: "/api/j5/a2a/peers/roster",
   deliver: "/api/j5/a2a/peers/deliver",
@@ -981,6 +991,7 @@ export const J5_CLIENT_ACTION_WS_METHODS = {
   issuePeerCredential: "j5.peers.issueCredential",
   addPeer: "j5.peers.add",
   removePeer: "j5.peers.remove",
+  changePeerOrigin: "j5.peers.changeOrigin",
   listPeerAddresses: "j5.peers.addresses",
   probePeer: "j5.peers.probe",
 } as const;
@@ -1031,6 +1042,11 @@ export const J5ClientActionRpcGroup = RpcGroup.make(
   Rpc.make(J5_CLIENT_ACTION_WS_METHODS.removePeer, {
     payload: RemovePeerRequest,
     success: RemovePeerResponse,
+    error: clientActionError,
+  }),
+  Rpc.make(J5_CLIENT_ACTION_WS_METHODS.changePeerOrigin, {
+    payload: ChangePeerOriginRequest,
+    success: ChangePeerOriginResponse,
     error: clientActionError,
   }),
   Rpc.make(J5_CLIENT_ACTION_WS_METHODS.listPeerAddresses, {

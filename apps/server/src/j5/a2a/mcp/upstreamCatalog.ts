@@ -62,10 +62,13 @@ export const J5OrchestratorToolkit = Toolkit.make(
   OrchestratorToolkit.tools.t3_workflow_stop,
 );
 
-// `t3_thread_fork` and `t3_thread_organize` are J5's own (see threadTools.ts).
+// `t3_thread_fork`, `t3_thread_organize` and `t3_queue_edit` are J5's own (see threadTools.ts).
 export const J5ThreadToolkit = Toolkit.make(
   ThreadToolkit.tools.t3_queue_list,
   ThreadToolkit.tools.t3_queue_read,
+  ThreadToolkit.tools.t3_queue_cancel,
+  ThreadToolkit.tools.t3_queue_reorder,
+  ThreadToolkit.tools.t3_queue_promote_to_steer,
   ThreadToolkit.tools.t3_pending_request_list,
   ThreadToolkit.tools.t3_pending_request_read,
   ThreadToolkit.tools.t3_pending_request_respond,

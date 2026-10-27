@@ -85,11 +85,12 @@ export class A2ADeliveryHeldError extends Schema.TaggedError<A2ADeliveryHeldErro
   "A2ADeliveryHeldError",
   {
     participantId: Schema.String,
-    runId: Schema.String,
+    /** The held or limited run it waits on, or the earlier message it waits behind. */
+    waitingOn: Schema.String,
   },
 ) {
   override get message(): string {
-    return `${this.participantId} holds queued messages until someone resumes its thread; run ${this.runId} is queued, not delivered.`;
+    return `${this.participantId} holds this message, not delivered: it waits on ${this.waitingOn}.`;
   }
 }
 
@@ -185,10 +186,10 @@ export const deliveryCommandId = (messageId: LedgerMessageId) =>
   CommandId.make(`command:j5:a2a:delivery:${stablePart(messageId)}`);
 
 /**
- * The command an asked-for steer or restart, or a steer into a GPT 6 run, is dispatched under. It
- * is not the delivery's own: upstream records a rejected command for good, and rejects a restart
- * aimed at a turn that has just ended and a steer to a run that Stop has reached, so the plain
- * delivery that follows must keep a command id that nothing has refused.
+ * The command an asked-for steer or restart, or a peer's steer into a running GPT 6 or Claude turn,
+ * is dispatched under. It is not the delivery's own: upstream records a rejected command for good,
+ * and rejects a restart aimed at a turn that has just ended and a steer to a run that Stop has
+ * reached, so the plain delivery that follows must keep a command id that nothing has refused.
  */
 export const askedDeliveryCommandId = (
   messageId: LedgerMessageId,
@@ -253,8 +254,11 @@ const assertPersonReply = (input: AgentDeliveryInput): never => {
 const isGpt6Model = (model: string | null) =>
   model !== null && /^gpt-6[-.]/.test(codexModelFamily(model));
 
-/** Use the active run's selection, not the picker selection for future runs. */
-export const gpt6PeerSteeringRun = (
+/**
+ * The running turn a peer's update steers into without being asked: a Codex GPT 6 turn or a
+ * Claude turn. Use the active run's selection, not the picker selection for future runs.
+ */
+export const peerSteeringRun = (
   target: Pick<
     OrchestrationV2ThreadProjection,
     "thread" | "runs" | "providerTurns" | "providerThreads" | "providerSessions"
@@ -270,12 +274,18 @@ export const gpt6PeerSteeringRun = (
   const session = target.providerSessions.find(
     (candidate) => candidate.id === providerThread?.providerSessionId,
   );
-  return providerThread?.driver === "codex" &&
-    session?.driver === "codex" &&
-    session.capabilities.turns.supportsActiveSteering === true &&
-    isGpt6Model(normalizeModelSlug(run.modelSelection.model, providerThread.driver))
-    ? run
-    : undefined;
+  if (providerThread === undefined || session?.driver !== providerThread.driver) return undefined;
+  const turns = session.capabilities.turns;
+  // Claude's adapter sends an agent's steer with priority "next", which waits for the running
+  // tool calls instead of cancelling them (case 89). Its capability still reports that steering
+  // interrupts tools, because a person's steer does.
+  const claudeTakesPeerUpdates =
+    providerThread.driver === "claudeAgent" && turns.supportsActiveSteering === true;
+  const gpt6TakesPeerUpdates =
+    providerThread.driver === "codex" &&
+    turns.supportsActiveSteering === true &&
+    isGpt6Model(normalizeModelSlug(run.modelSelection.model, providerThread.driver));
+  return claudeTakesPeerUpdates || gpt6TakesPeerUpdates ? run : undefined;
 };
 
 /**
@@ -304,6 +314,35 @@ export const requestedSteeringRun = (
   if (turns === undefined) return undefined;
   const restarts = turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart;
   return (mode === "steer" ? turns.supportsActiveSteering || restarts : restarts) ? run : undefined;
+};
+
+/**
+ * Why a delivery to an idle agent waits unsent. Upstream refuses to resume a thread stopped by a
+ * usage limit and would start the delivery into the same limit, and it holds a message queued
+ * after a failed worktree setup (`worktreeMissingRun` in Orchestrator.ts), as resuming would run it
+ * in the project checkout.
+ */
+export const idleQueueHold = (
+  target: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "turnItems" | "providerSessions"
+  >,
+) => {
+  const sessionError =
+    target.providerSessions
+      .filter((session) => session.providerInstanceId === target.thread.providerInstanceId)
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+      )[0]?.lastError ?? null;
+  const limitedRun = usageLimitBlockedRun(target.runs, target.turnItems, sessionError);
+  if (limitedRun !== null) return { type: "usage_limit" as const, run: limitedRun };
+  const latestRun = latestExecutedRun(target.runs);
+  return (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
+    latestRun.workspacePreparation?.type === "worktree" &&
+    target.thread.worktreePath === null
+    ? { type: "worktree_setup_failed" as const, run: latestRun }
+    : undefined;
 };
 
 export const formatAgentDeliveryEnvelope = (
@@ -521,14 +560,14 @@ export const live: Layer.Layer<
             (effect) => effect.request.type === "provider-turn.steer",
           );
           if (priorSteer !== undefined) return yield* awaitSteeringOutcome(priorSteer.id);
-          // GPT 6 models can receive peer updates during their long turns. Other models
-          // and platform notices retain QS1's queue policy (Claude issue #73).
+          // GPT 6 and Claude agents take peer updates during their long turns. Other models
+          // and platform notices retain QS1's queue policy.
           const alreadyAccepted = target.messages.some(
             (message) => message.id === deliveryMessageId(input.messageId),
           );
           const steeringRun = alreadyAccepted
             ? undefined
-            : gpt6PeerSteeringRun(target, input.envelopeChannel);
+            : peerSteeringRun(target, input.envelopeChannel);
           // The header names the sender's project by id, with its title when the sender is on this
           // server. A peer server's project is not one of ours, so it is named by id alone.
           const originProject =
@@ -622,46 +661,33 @@ export const live: Layer.Layer<
           const heldRun = (run: OrchestrationV2Run | undefined) =>
             run?.status === "queued" && run.queueHeld === true
               ? Effect.fail(
-                  new A2ADeliveryHeldError({ participantId: input.receiverId, runId: run.id }),
+                  new A2ADeliveryHeldError({
+                    participantId: input.receiverId,
+                    waitingOn: `run ${run.id}`,
+                  }),
                 )
               : Effect.void;
           // Upstream starts a message sent to an idle thread at once, even past a held queue, and
           // leaves the held messages waiting. A delivery keeps its place instead: it resumes the
           // queue, so the held messages run first and it joins the back (#580). A retry of an
-          // accepted delivery never resumes again. Upstream refuses to resume a thread stopped by
-          // a usage limit, so that delivery waits unsent, as a held one, until the thread continues.
-          // So does one whose worktree setup failed, as upstream holds a message queued then
-          // (`worktreeMissingRun` in Orchestrator.ts): resuming would run it in the project checkout.
+          // accepted delivery never resumes again. A delivery to a thread stopped by a usage limit
+          // waits unsent until the thread continues, held queue or not: upstream would start it
+          // into the same limit, or leave it behind messages that wait for the continue (#718).
+          // Delivered then, it joins the back of the queue. One whose worktree setup failed waits
+          // when messages are held there (`idleQueueHold`); upstream holds any other itself.
           const heldQueueRun = target.runs.find(
             (run) => run.status === "queued" && run.queueHeld === true,
           );
-          const latestRun = latestExecutedRun(target.runs);
-          const worktreeSetupFailed =
-            (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
-            latestRun.workspacePreparation?.type === "worktree" &&
-            target.thread.worktreePath === null;
+          const idle = !alreadyAccepted && !target.runs.some(isActiveRun);
+          const hold = idle ? idleQueueHold(target) : undefined;
           const queueBehindHeld =
-            alreadyAccepted || heldQueueRun === undefined || target.runs.some(isActiveRun)
+            !idle || (heldQueueRun === undefined && hold?.type !== "usage_limit")
               ? Effect.void
-              : worktreeSetupFailed ||
-                  usageLimitBlockedRun(
-                    target.runs,
-                    target.turnItems,
-                    target.providerSessions
-                      .filter(
-                        (session) =>
-                          session.providerInstanceId === target.thread.providerInstanceId,
-                      )
-                      .toSorted(
-                        (left, right) =>
-                          DateTime.toEpochMillis(right.updatedAt) -
-                          DateTime.toEpochMillis(left.updatedAt),
-                      )[0]?.lastError ?? null,
-                  ) !== null
+              : hold !== undefined
                 ? Effect.fail(
                     new A2ADeliveryHeldError({
                       participantId: input.receiverId,
-                      runId: heldQueueRun.id,
+                      waitingOn: `run ${heldQueueRun?.id ?? hold.run.id}`,
                     }),
                   )
                 : orchestrator.dispatch({
@@ -733,9 +759,9 @@ export const live: Layer.Layer<
             yield* queueBehindHeld;
             return yield* heldRun((yield* threads.sendToThread(sendInput)).run);
           }
-          // A GPT 6 run's steer has the asked-for steer's command id, not the delivery's own:
-          // upstream refuses a steer to a run that Stop has reached and keeps that refusal for the
-          // command id, and the message then queues under the delivery's id.
+          // A peer's steer into a GPT 6 or Claude run has the asked-for steer's command id, not the
+          // delivery's own: upstream refuses a steer to a run that Stop has reached and keeps that
+          // refusal for the command id, and the message then queues under the delivery's id.
           const runSteerCommandId = askedDeliveryCommandId(input.messageId, "steer");
           // A retry after that steer was taken or refused finds the message without sending it again.
           if (

@@ -1,7 +1,10 @@
 import { J5_BRANDING } from "../../../scripts/lib/j5-branding.ts";
-import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 
 export const PROMPT_LINK_MAX_PROMPT_LENGTH = 8_000;
+
+// J5: J5 has no hosted app. Its shareable links point at j5.codes/new, a static page that hands
+// the link to J5's app or to the person's own server.
+export const J5_PROMPT_LINK_ORIGIN = "https://j5.codes";
 
 export interface PromptLinkRepository {
   readonly owner: string;
@@ -175,7 +178,7 @@ export function buildNewThreadLink(input: {
   readonly model?: string | null;
   readonly origin?: string;
 }): string {
-  const url = new URL("/new", input.origin ?? DEFAULT_HOSTED_APP_URL);
+  const url = new URL("/new", input.origin ?? J5_PROMPT_LINK_ORIGIN);
   url.searchParams.set("prompt", input.prompt);
   if (input.repository) {
     url.searchParams.set("repo", `${input.repository.owner}/${input.repository.name}`);
@@ -185,12 +188,14 @@ export function buildNewThreadLink(input: {
   return url.toString();
 }
 
-// J5: J5's apps open their own scheme, and J5 has no hosted app, so no https origin is J5's
-// unless a caller names one.
+// J5: J5's apps open their own scheme, and the https links they read are j5.codes's.
 const APP_SCHEME = /^j5code(?:-[a-z]+)?:$/;
 const THREAD_PATH = /^\/([^/]+)\/([^/]+)\/?$/;
 
-export function promptLinkAppPath(value: string, hostedAppUrl = ""): string | null {
+export function promptLinkAppPath(
+  value: string,
+  hostedAppUrl: string = J5_PROMPT_LINK_ORIGIN,
+): string | null {
   if (!URL.canParse(value)) return null;
   const url = new URL(value);
   if (APP_SCHEME.test(url.protocol)) {

@@ -18,7 +18,7 @@ import * as ServerConfig from "../config.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import { cliEnvironmentAuth as j5CliEnvironmentAuth } from "../j5/sharing/AccessGate.ts";
 import {
-  pairingLinkForPerson as j5PairingLinkForPerson,
+  pairingLinkFromCli as j5PairingLinkFromCli,
   pairingScopesFlag as j5PairingScopesFlag,
   personPairingFlags as j5PersonPairingFlags,
 } from "../j5/sharing/cliPairing.ts";
@@ -29,9 +29,9 @@ import {
   resolveCliAuthConfig,
 } from "./config.ts";
 
-const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E, R = never>(
+const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E, R>,
+  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -44,7 +44,7 @@ const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function
     return yield* run(environmentAuth);
   }).pipe(
     Effect.provide(
-      // J5: ending a session here also ends its renewal; links name their person (FORK.md case 79).
+      // J5: ending a session here also ends its renewal (FORK.md case 79).
       j5CliEnvironmentAuth(EnvironmentAuth.layerRuntime).pipe(
         Layer.provide(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
@@ -97,34 +97,27 @@ const pairingCreateCommand = Command.make("create", {
 }).pipe(
   Command.withDescription("Issue a new client pairing token."),
   Command.withHandler((flags) =>
-    runWithEnvironmentAuth(
-      flags,
-      (environmentAuth) =>
-        Effect.gen(function* () {
-          const { link: issued, said } = yield* j5PairingLinkForPerson({
-            flags,
-            scopes: flags.scopes,
-            // Upstream's desktop app runs this bare over SSH, knowing no one's name there.
-            withoutPerson: "ask",
-            mint: (scopes) =>
-              environmentAuth.createPairingLink({
-                scopes,
-                subject: "one-time-token",
-                ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
-                ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
-              }),
-          });
-          yield* flags.json ? Console.error(said) : Console.log(said);
-          const output = formatIssuedPairingCredential(issued, {
-            json: flags.json,
-            ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value } : {}),
-          });
-          yield* Console.log(output);
-        }),
-      {
-        quietLogs: flags.json,
-      },
-    ),
+    Effect.gen(function* () {
+      const logLevel = yield* GlobalFlag.LogLevel;
+      const config = yield* resolveCliAuthConfig(flags, logLevel);
+      // J5: the link names its person, and a running server makes it (FORK.md case 79). Upstream's
+      // desktop app runs this bare over SSH, knowing no one's name there.
+      const { link: issued, said } = yield* j5PairingLinkFromCli({
+        config,
+        minimumLogLevel: flags.json ? "Error" : config.logLevel,
+        flags,
+        scopes: flags.scopes,
+        ttl: flags.ttl,
+        label: flags.label,
+        withoutPerson: "ask",
+      });
+      yield* flags.json ? Console.error(said) : Console.log(said);
+      const output = formatIssuedPairingCredential(issued, {
+        json: flags.json,
+        ...(Option.isSome(flags.baseUrl) ? { baseUrl: flags.baseUrl.value } : {}),
+      });
+      yield* Console.log(output);
+    }),
   ),
 );
 

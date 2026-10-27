@@ -26,7 +26,7 @@ const layer = gateEnvironmentAuth(
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerEnvironment.layerIdentity),
-    Layer.provide(
+    Layer.provideMerge(
       Layer.effect(
         ServerConfig.ServerConfig,
         Effect.gen(function* () {

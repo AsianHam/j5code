@@ -1,4 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
+import { CompletionSoundSettings } from "../../j5/notifications/CompletionSoundSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
@@ -1154,6 +1155,7 @@ export function GeneralSettingsPanel() {
 
       <SettingsSection id="behavior" title="Behavior">
         <NotificationSettings />
+        <CompletionSoundSettings />
         <SettingsRow
           {...searchableSetting("in-app-notifications")}
           description="Show a toast when another thread finishes, fails, or needs input or approval while this app has focus."

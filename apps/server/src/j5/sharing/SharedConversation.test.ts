@@ -68,18 +68,34 @@ const message = (threadId: ThreadId, text: string, extra: Record<string, unknown
   } as unknown as OrchestrationV2Command & { readonly type: "message.dispatch" };
 };
 
+/** Upstream taking a command; an edit leaves the queued run's message holding its text. */
+const upstreamTakes = Effect.fn("test.upstreamTakes")(function* (command: OrchestrationV2Command) {
+  if (command.type !== "queued-run.edit") return command;
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    UPDATE orchestration_v2_projection_messages
+    SET payload_json = json_set(payload_json, '$.text', ${command.text})
+    WHERE message_id = (
+      SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
+      WHERE run_id = ${command.runId}
+    )
+  `;
+  return command as OrchestrationV2Command;
+});
+
 /**
  * A person's command as upstream would be handed it. A message is then taken in the way
- * upstream records it, with a run in the state given; `null` records no run.
+ * upstream records it, with a run in the state given; `null` records no run. An edit is taken
+ * as upstream takes one of a queued run.
  */
 const send = Effect.fn("test.send")(function* (
   personId: ParticipantId,
   command: OrchestrationV2Command,
   run: "completed" | "queued" | null = "completed",
 ) {
-  const admitted = yield* (yield* SharedConversation).admit(personId, command);
+  const admitted = yield* (yield* SharedConversation).dispatch(personId, command, upstreamTakes);
   if (admitted.type === "message.dispatch") {
-    yield* taken(admitted.threadId, admitted.messageId, run);
+    yield* taken(admitted.threadId, admitted.messageId, run, admitted.text);
   }
   return admitted;
 });
@@ -95,6 +111,7 @@ const taken = Effect.fn("test.taken")(function* (
   threadId: ThreadId,
   messageId: string,
   status: string | null,
+  text = "",
 ) {
   const sql = yield* SqlClient.SqlClient;
   const runId = status === null ? null : `run:${messageId}`;
@@ -116,7 +133,7 @@ const taken = Effect.fn("test.taken")(function* (
       message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json
     ) VALUES (
       ${messageId}, ${threadId}, ${runId}, 'user', 0, ${AT}, ${AT},
-      ${JSON.stringify({ createdBy: "user", creationSource: "web" })}
+      ${JSON.stringify({ text, createdBy: "user", creationSource: "web" })}
     )
   `;
   return runId === null ? null : RunId.make(runId);
@@ -156,7 +173,10 @@ it.effect("a thread only one person can write to is untouched and records nothin
     // A Viewer does not make a thread shared: they cannot write to it.
     yield* personWith("Sam", onThread(alone, "viewer"));
     const command = message(alone, "Run the tests.");
-    assert.strictEqual(yield* (yield* SharedConversation).admit(owner, command), command);
+    assert.strictEqual(
+      yield* (yield* SharedConversation).dispatch(owner, command, Effect.succeed),
+      command,
+    );
     assert.deepStrictEqual(yield* authors(alone), { shared: false, authors: [], answers: [] });
   }).pipe(Effect.provide(conversationLayer)),
 );
@@ -294,6 +314,179 @@ it.effect("a thread stays shared after its second writer is gone, even unwritten
   }).pipe(Effect.provide(conversationLayer)),
 );
 
+it.effect("a fork names who wrote the messages it shows, and none after its fork point", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const owner = yield* jackson;
+    const source = yield* thread("thread:fork-source");
+    const priya = yield* personWith("Priya", onThread(source));
+    const first = message(source, "Keep the migration step.");
+    const second = message(source, "Drop it.");
+    const later = message(source, "After the fork.");
+    yield* say(owner, first);
+    yield* say(priya, second);
+    yield* say(owner, later);
+    const forkFrom = (id: string, from: ThreadId, runId: string) =>
+      Effect.gen(function* () {
+        const forked = yield* thread(id, PROJECT, { parent: from, relationship: "fork" });
+        yield* sql`
+          UPDATE orchestration_v2_projection_threads
+          SET payload_json = json_set(payload_json, '$.forkedFrom',
+            json_object('type', 'run', 'threadId', ${from}, 'runId', ${runId}))
+          WHERE thread_id = ${forked}
+        `;
+        return forked;
+      });
+    const fork = yield* forkFrom("thread:fork", source, `run:${second.messageId}`);
+    // The fork's own message, from a thread only one person writes to, names no one.
+    yield* taken(fork, "message:fork-own", "completed");
+    const forkOfFork = yield* forkFrom("thread:fork-of-fork", fork, "run:message:fork-own");
+
+    const sourceRead = yield* authors(source, priya);
+    for (const threadId of [fork, forkOfFork]) {
+      const read = yield* authors(threadId, priya);
+      assert.isFalse(read.shared);
+      assert.deepStrictEqual(read.authors, sourceRead.authors.slice(0, 2));
+    }
+    assert.deepStrictEqual(
+      sourceRead.authors.map((entry) => entry.messageId),
+      [first.messageId, second.messageId, later.messageId],
+    );
+  }).pipe(Effect.provide(conversationLayer)),
+);
+
+it.effect("a fork tells its reader only what they could know of who wrote before it", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const owner = yield* jackson;
+    const source = yield* thread("thread:fork-hidden-source");
+    const priya = yield* personWith("Priya", onThread(source));
+    const command = message(source, "/goal ship the migration");
+    const words = message(source, "Drop it.");
+    yield* say(priya, command);
+    const stored = yield* say(priya, words);
+    const fork = yield* thread("thread:fork-hidden", PROJECT, {
+      parent: source,
+      relationship: "fork",
+    });
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.forkedFrom',
+        json_object('type', 'run', 'threadId', ${source}, 'runId', ${`run:${words.messageId}`}))
+      WHERE thread_id = ${fork}
+    `;
+    // Sam reads only the fork, so Priya, who holds only its source, is not someone Sam may know.
+    const sam = yield* personWith("Sam", onThread(fork, "viewer"));
+
+    const read = yield* authors(fork, sam);
+    // The slash command carries no line, so nothing of it is told; the message carries the note
+    // and Priya's line, so those lines alone are told, to be taken off.
+    assert.deepStrictEqual(read.authors, [
+      {
+        messageId: words.messageId,
+        name: null,
+        level: "collaborator",
+        editedBy: null,
+        you: false,
+        note: null,
+        storedPrefix: stored.slice(0, -"Drop it.".length),
+      },
+    ]);
+    assert.isTrue(stored.endsWith("[Message from Priya (collaborator)]\n\nDrop it."));
+    // The owner may know Priya, so is told her name, and still nothing of the command.
+    const ownerRead = yield* authors(fork, owner);
+    assert.deepStrictEqual(
+      ownerRead.authors.map((entry) => [entry.messageId, entry.name]),
+      [[words.messageId, "Priya"]],
+    );
+  }).pipe(Effect.provide(conversationLayer)),
+);
+
+it.effect(
+  "a fork tells an inherited record only where the stored text it shows begins with it",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const source = yield* thread("thread:fork-editor-source");
+      const priya = yield* personWith("Priya", onThread(source));
+      const alice = yield* personWith("Alice", onThread(source));
+      const edit = (messageId: string, text: string) =>
+        send(alice, {
+          type: "queued-run.edit",
+          commandId: CommandId.make(`command:edit:${messageId}`),
+          threadId: source,
+          runId: RunId.make(`run:${messageId}`),
+          text,
+        } as OrchestrationV2Command).pipe(
+          Effect.map((admitted) => (admitted as { readonly text: string }).text),
+        );
+      // Edited into another command, which carries no line.
+      const command = message(source, "/goal ship the migration");
+      yield* say(priya, command, "queued");
+      yield* edit(command.messageId, "/goal ship it");
+      // Its stored text no longer begins with the prefix Priya's record names.
+      const rewritten = message(source, "Keep the migration step.");
+      yield* say(priya, rewritten, "queued");
+      yield* sql`
+      UPDATE orchestration_v2_projection_messages
+      SET payload_json = json_set(payload_json, '$.text', 'Drop the migration step.')
+      WHERE message_id = ${rewritten.messageId}
+    `;
+      // Edited while still queued, so the stored text names Alice.
+      const accepted = message(source, "Ship Friday.");
+      yield* say(priya, accepted, "queued");
+      const stored = yield* edit(accepted.messageId, "Ship Monday.");
+      const fork = yield* thread("thread:fork-editor", PROJECT, {
+        parent: source,
+        relationship: "fork",
+      });
+      yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.forkedFrom',
+        json_object('type', 'run', 'threadId', ${source}, 'runId', ${`run:${accepted.messageId}`}))
+      WHERE thread_id = ${fork}
+    `;
+      // Sam knows Priya through a thread they both hold, but not Alice, who holds only the source.
+      const together = yield* thread("thread:fork-editor-together");
+      yield* (yield* Access).setLevel({
+        personId: priya,
+        scope: { kind: "thread", threadId: together },
+        level: "collaborator",
+      });
+      const sam = yield* personWith("Sam", [...onThread(fork, "viewer"), ...onThread(together)]);
+      const people = yield* PersonAccess;
+      assert.isTrue(
+        yield* people.participantVisible(sam, { participantId: priya, threadId: null }),
+      );
+      assert.isFalse(
+        yield* people.participantVisible(sam, { participantId: alice, threadId: null }),
+      );
+
+      // Only the accepted edit's record restates what Sam already reads in its stored text.
+      const read = yield* authors(fork, sam);
+      assert.deepStrictEqual(
+        read.authors.map((entry) => [
+          entry.messageId,
+          entry.name,
+          entry.editedBy,
+          entry.storedPrefix,
+        ]),
+        [[accepted.messageId, "Priya", "Alice", stored.slice(0, -"Ship Monday.".length)]],
+      );
+      assert.include(stored, "Alice");
+      // Read for the server itself, with no reader, every record is told as it is in the source.
+      const serverRead = yield* authors(fork);
+      assert.deepStrictEqual(
+        serverRead.authors.map((entry) => [entry.messageId, entry.editedBy]),
+        [
+          [command.messageId, "Alice"],
+          [rewritten.messageId, null],
+          [accepted.messageId, "Alice"],
+        ],
+      );
+    }).pipe(Effect.provide(conversationLayer)),
+);
+
 it.effect("a thread started in a project already shared is shared from its first message", () =>
   Effect.gen(function* () {
     const owner = yield* jackson;
@@ -367,7 +560,7 @@ it.effect("only the platform sends a context record of its own kind (AC8)", () =
     const forged = message(threadId, "Hi.", {
       context: { version: 1, records: [{ kind: "j5-shared-note", version: 1 }] },
     });
-    const outcome = yield* (yield* SharedConversation).admit(owner, forged).pipe(
+    const outcome = yield* (yield* SharedConversation).dispatch(owner, forged, Effect.succeed).pipe(
       Effect.flip,
       Effect.map((error) => error.message),
     );
@@ -484,7 +677,7 @@ it.effect("a message id is its sender's own: someone else's is refused, and thei
     // The owner sends with her message's id, or with one from before the thread was shared.
     for (const messageId of [hers.messageId, "message:before-sharing"]) {
       const refusal = yield* conversation
-        .admit(owner, message(threadId, "Do not ship it.", { messageId }))
+        .dispatch(owner, message(threadId, "Do not ship it.", { messageId }), Effect.succeed)
         .pipe(Effect.flip);
       assert.strictEqual(refusal.message, "This message was already sent.");
     }
@@ -493,7 +686,7 @@ it.effect("a message id is its sender's own: someone else's is refused, and thei
     `;
     assert.deepStrictEqual(recorded, [{ person_id: priya, message_id: hers.messageId }]);
     // Her own retry of the same send goes on.
-    const retried = yield* conversation.admit(priya, hers);
+    const retried = yield* conversation.dispatch(priya, hers, Effect.succeed);
     assert.strictEqual(retried.type, "message.dispatch");
   }).pipe(Effect.provide(conversationLayer)),
 );
@@ -599,12 +792,16 @@ it.effect(
         threadId: "thread:empty-launch" as ThreadId,
         projectId: PROJECT,
       } as unknown as OrchestrationV2ThreadLaunchInput);
-      yield* conversation.admit(owner, {
-        type: "thread.create",
-        commandId: CommandId.make("command:create"),
-        threadId: "thread:created" as ThreadId,
-        projectId: PROJECT,
-      } as unknown as OrchestrationV2Command);
+      yield* conversation.dispatch(
+        owner,
+        {
+          type: "thread.create",
+          commandId: CommandId.make("command:create"),
+          threadId: "thread:created" as ThreadId,
+          projectId: PROJECT,
+        } as unknown as OrchestrationV2Command,
+        Effect.succeed,
+      );
       const recorded = yield* sql<{ readonly thread_id: string }>`
       SELECT thread_id FROM j5_a2a_shared_thread
       WHERE thread_id IN ('thread:empty-launch', 'thread:created')
@@ -675,7 +872,7 @@ it.effect("a note steered into a running turn has not told the agent, so the nex
     // The first shared message is steered into that turn: upstream records it against the
     // running run, which has started, while the provider may refuse the steer every time.
     const steered = message(threadId, "Stop and check the tests.");
-    const admitted = yield* (yield* SharedConversation).admit(owner, steered);
+    const admitted = yield* (yield* SharedConversation).dispatch(owner, steered, Effect.succeed);
     assert.isTrue(hasNote((admitted as { readonly text: string }).text));
     yield* sql`
       INSERT INTO orchestration_v2_projection_messages (

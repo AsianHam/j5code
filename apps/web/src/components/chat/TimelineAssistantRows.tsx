@@ -23,6 +23,7 @@ import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
 import { APP_BASE_NAME } from "../../branding";
+import { useCanForkThread } from "../../j5/sharing/access";
 
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -90,8 +91,13 @@ function AssistantForkButton({
     projectedItem,
     capabilities: support.providerSession?.capabilities,
   });
+  // J5 (FORK.md case 90): a fork starts a thread in the project, which needs the person's level.
+  const canStartFork = useCanForkThread(
+    ctx.activeThreadEnvironmentId,
+    projectedItem.sourceThreadId,
+  );
 
-  if (!canFork || projectedItem.item.runId === null) return null;
+  if (!canFork || !canStartFork || projectedItem.item.runId === null) return null;
   const runId = projectedItem.item.runId;
 
   return (

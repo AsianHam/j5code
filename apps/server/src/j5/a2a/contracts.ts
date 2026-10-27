@@ -145,6 +145,7 @@ export const CommEventKind = Schema.Literals([
   "message.delivered",
   "message.delivery_failed",
   "message.cancelled",
+  "message.edited",
   "exchange.closed",
   "exchange.dropped",
   "silence.notice",
@@ -162,6 +163,7 @@ const NonMembershipEventKind = Schema.Literals([
   "message.delivered",
   "message.delivery_failed",
   "message.cancelled",
+  "message.edited",
   "exchange.closed",
   "exchange.dropped",
   "silence.notice",
@@ -320,6 +322,19 @@ export const MessageSentPayload = Schema.Struct({
 });
 export type MessageSentPayload = typeof MessageSentPayload.Type;
 
+/**
+ * A queued message's new text, recorded when anyone edits it in the receiver's queue. The event's
+ * sender is who edited it, or null when J5 could not tell. `text` is the body inside the envelope
+ * the message was delivered with, as `message.sent` records it, or the whole queued text once the
+ * envelope no longer matches. `sourceSequence` is the orchestration event that carried the edit.
+ */
+export const MessageEditedPayload = Schema.Struct({
+  messageId: LedgerMessageId,
+  text: Schema.String.check(Schema.isNonEmpty()),
+  sourceSequence: NonNegativeInt,
+});
+export type MessageEditedPayload = typeof MessageEditedPayload.Type;
+
 export const MessageDeliveredPayload = Schema.Struct({
   messageId: LedgerMessageId,
   attempt: PositiveInt,
@@ -333,6 +348,8 @@ export const MessageDeliveryFailedPayload = Schema.Struct({
   error: Schema.String.check(Schema.isNonEmpty()),
   nextAttemptAt: Schema.NullOr(Schema.String),
   alarmed: Schema.Boolean,
+  /** The receiver held it unsent: a recheck, which never counts toward the alarm. */
+  held: Schema.optional(Schema.Boolean),
 });
 export type MessageDeliveryFailedPayload = typeof MessageDeliveryFailedPayload.Type;
 
@@ -436,7 +453,7 @@ export const SendMessageResult = Schema.Struct({
   exchangeState: Schema.Literals(["none", "open", "closing", "closed"]),
   joinedExistingExchange: Schema.Boolean,
   durableAtSeq: PositiveInt,
-  /** Present when the receiver is busy and the message will wait behind its running turn. */
+  /** Present when the message will wait: behind the receiver's running turn, or on its held queue or usage limit. */
   deliveryNotice: Schema.optional(Schema.String),
   /** The name of the peer server the receiver lives on; absent for a receiver on this server. */
   receiverServer: Schema.optionalKey(Schema.String),

@@ -6,6 +6,17 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { PlacementCommandId } from "./placementContracts.ts";
 import { dispatchCommand as dispatchIntakeCommand } from "../../orchestration-v2/ThreadMessageIntake.ts";
 import { J5AdaptedThreadToolkit, J5AdaptedThreadHandlersLive } from "./mcp/threadTools.ts";
+import { handlersFor } from "./mcp/upstreamCatalog.ts";
+import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
+import * as ThreadHandlers from "../../mcp/toolkits/thread/handlers.ts";
+import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
+import { Toolkit } from "effect/ai";
+import { claimPersonQueuedEdit } from "./queuedEdits.ts";
+import {
+  A2ASilenceDetector,
+  manualLayer as silenceDetectorManualLayer,
+  removedNoticeMessage,
+} from "./SilenceDetector.ts";
 import { ParticipantPlacementService } from "./PlacementService.ts";
 import { J5ThreadRegistrationLayer } from "./runtimeLayer.ts";
 import { ChatAttachmentId, EnvironmentId } from "@t3tools/contracts";
@@ -78,11 +89,13 @@ import {
 import { ProjectEnrichmentService } from "../../project/ProjectEnrichmentService.ts";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import { WorkspacePaths } from "../../workspace/WorkspacePaths.ts";
+import { CLAUDE_PROVIDER } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import {
   latestSteerableRun,
   ThreadManagementService,
   type ThreadManagementSendMode,
+  isActiveRun,
 } from "../../orchestration-v2/ThreadManagementService.ts";
 import {
   ThreadLifecycleService,
@@ -97,7 +110,7 @@ import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import {
   A2ADeliveryHeldError,
   A2ADeliveryTransport,
-  gpt6PeerSteeringRun,
+  peerSteeringRun,
   deliveryMessageId,
   formatAgentDeliveryEnvelope,
   live as deliveryTransportLive,
@@ -117,6 +130,7 @@ import {
 import { deliveryCommandId } from "./DeliveryTransport.ts";
 import { EffectOutboxV2 } from "../../orchestration-v2/EffectOutbox.ts";
 import { ProviderRuntimeRecoveryService } from "../../orchestration-v2/ProviderRuntimeRecoveryService.ts";
+import { limitRecoveryCommand } from "../../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadSettlement from "../../orchestration-v2/ThreadSettlementService.ts";
@@ -137,7 +151,7 @@ import {
   formatPeerEnvelope,
 } from "./EnvelopeFormatter.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
-import { readReceiverBacklog } from "./receiverBacklog.ts";
+import { readReceiverBacklog, withDeliveryNotice } from "./receiverBacklog.ts";
 import { noneLayer as peerDirectoryNoneLayer } from "./PeerDirectory.ts";
 import { A2ALifecycleService, manualLayer as lifecycleServiceLayer } from "./LifecycleService.ts";
 import {
@@ -152,6 +166,7 @@ import {
 } from "./SendService.ts";
 import {
   CommCommandId,
+  CorrelationId,
   LedgerProjectId,
   ExchangeId,
   outsideAgentParticipantId,
@@ -689,7 +704,7 @@ it.effect.each([
       });
       // Starting/preparing is not a live provider turn: never use auto/restart.
       const starting = yield* threads.getThreadProjection(target.threadId);
-      assert.isUndefined(gpt6PeerSteeringRun(starting, "peer"));
+      assert.isUndefined(peerSteeringRun(starting, "peer"));
       const running = yield* sink.stream({ threadId: target.threadId }).pipe(
         Stream.filter(
           (stored) =>
@@ -702,9 +717,9 @@ it.effect.each([
       yield* worker.runOnce;
       yield* Fiber.join(running);
       const projection = yield* threads.getThreadProjection(target.threadId);
-      assert.equal(gpt6PeerSteeringRun(projection, "peer")?.id, active.run.id);
+      assert.equal(peerSteeringRun(projection, "peer")?.id, active.run.id);
       for (const channel of ["silence_notice", "lifecycle_notice"] as const) {
-        assert.isUndefined(gpt6PeerSteeringRun(projection, channel));
+        assert.isUndefined(peerSteeringRun(projection, channel));
       }
       for (const otherModel of [
         "gpt-5.6-sol",
@@ -714,7 +729,7 @@ it.effect.each([
         "claude-fable-5-1",
       ]) {
         assert.isUndefined(
-          gpt6PeerSteeringRun(
+          peerSteeringRun(
             {
               ...projection,
               runs: projection.runs.map((run) => ({
@@ -727,7 +742,7 @@ it.effect.each([
         );
       }
       assert.isUndefined(
-        gpt6PeerSteeringRun(
+        peerSteeringRun(
           {
             ...projection,
             providerThreads: projection.providerThreads.map((thread) => ({
@@ -738,15 +753,15 @@ it.effect.each([
           "peer",
         ),
       );
-      assert.isUndefined(gpt6PeerSteeringRun({ ...projection, providerSessions: [] }, "peer"));
+      assert.isUndefined(peerSteeringRun({ ...projection, providerSessions: [] }, "peer"));
       assert.isUndefined(
-        gpt6PeerSteeringRun(
+        peerSteeringRun(
           { ...projection, thread: { ...projection.thread, archivedAt: yield* DateTime.now } },
           "peer",
         ),
       );
       assert.isUndefined(
-        gpt6PeerSteeringRun(
+        peerSteeringRun(
           {
             ...projection,
             providerSessions: projection.providerSessions.map((session) => ({
@@ -758,7 +773,7 @@ it.effect.each([
         ),
       );
       assert.isUndefined(
-        gpt6PeerSteeringRun(
+        peerSteeringRun(
           {
             ...projection,
             providerSessions: projection.providerSessions.map((session) => ({
@@ -772,7 +787,28 @@ it.effect.each([
           "peer",
         ),
       );
-      assert.isUndefined(gpt6PeerSteeringRun({ ...projection, providerTurns: [] }, "peer"));
+      const asClaude = (supportsActiveSteering: boolean) => ({
+        ...projection,
+        providerThreads: projection.providerThreads.map((thread) => ({
+          ...thread,
+          driver: CLAUDE_PROVIDER,
+        })),
+        providerSessions: projection.providerSessions.map((session) => ({
+          ...session,
+          driver: CLAUDE_PROVIDER,
+          capabilities: {
+            ...session.capabilities,
+            turns: {
+              ...session.capabilities.turns,
+              supportsActiveSteering,
+              activeSteeringInterruptsTools: true,
+            },
+          },
+        })),
+      });
+      assert.equal(peerSteeringRun(asClaude(true), "peer")?.id, active.run.id);
+      assert.isUndefined(peerSteeringRun(asClaude(false), "peer"));
+      assert.isUndefined(peerSteeringRun({ ...projection, providerTurns: [] }, "peer"));
       const turn = (yield* Ref.get(harness.activeTurns)).get(target.threadId)!;
       const startedAt = yield* DateTime.now;
       yield* publishCommandExecution(turn, {
@@ -1090,7 +1126,7 @@ it.effect("queues a message for a GPT 6 run that is stopping instead of failing 
         threadId: target.threadId,
       });
       const stopping = yield* threads.getThreadProjection(target.threadId);
-      assert.equal(gpt6PeerSteeringRun(stopping, "peer")?.id, running.id);
+      assert.equal(peerSteeringRun(stopping, "peer")?.id, running.id);
 
       // The refused steer falls back to the queue, and a retry finds the queued message.
       const ownRuns = threads
@@ -1169,11 +1205,19 @@ it.effect("measures the backlog a send waits behind on a busy receiver", () =>
       // Committed sends the worker has not handed over yet are waiting too.
       yield* send.send(sendInput(caller, "second"));
       const third = yield* send.send(sendInput(caller, "third"));
-      assert.deepStrictEqual(yield* backlogFor(third), { waiting: 2, fromCaller: 2 });
+      assert.deepStrictEqual(yield* backlogFor(third), {
+        type: "behind_turn",
+        waiting: 2,
+        fromCaller: 2,
+      });
       // Queued runs and pending deliveries add up; another sender's count is not the caller's.
       yield* worker.drain;
       yield* send.send(sendInput(other, "other"));
-      assert.deepStrictEqual(yield* backlogFor(third), { waiting: 3, fromCaller: 2 });
+      assert.deepStrictEqual(yield* backlogFor(third), {
+        type: "behind_turn",
+        waiting: 3,
+        fromCaller: 2,
+      });
 
       // Only agents on this server are measured.
       assert.isUndefined(
@@ -1230,25 +1274,7 @@ it.effect("counts a message queued before an Astra turn became steerable", () =>
           callerThreadId: ThreadId.make("thread:j5-a2a-delivery-backlog-astra-queued-caller"),
           sentMessageId: target.messageId,
         }),
-        { waiting: 1, fromCaller: 0 },
-      );
-    }).pipe(Effect.provide(makeTestLayer(harness)));
-  }),
-);
-
-it.effect("reports no backlog while the receiver's queue is held", () =>
-  Effect.gen(function* () {
-    const harness = yield* makeHarness;
-    yield* Effect.gen(function* () {
-      const target = yield* seedTarget("backlog-held");
-      yield* holdTargetQueue(target);
-      // A held queue waits for someone to resume the thread, not for the turn to end.
-      assert.isUndefined(
-        yield* readReceiverBacklog({
-          receiverId: target.receiverId,
-          callerThreadId: ThreadId.make("thread:j5-a2a-delivery-backlog-held-caller"),
-          sentMessageId: target.messageId,
-        }),
+        { type: "behind_turn", waiting: 1, fromCaller: 0 },
       );
     }).pipe(Effect.provide(makeTestLayer(harness)));
   }),
@@ -3513,6 +3539,311 @@ it.effect("resumes an idle receiver's held queue so a delivery runs after the he
   }),
 );
 
+/** Leaves a target idle after its turn stopped on a usage limit, with one unheld message queued if asked. */
+const idleOnUsageLimit = Effect.fn("A2AIntegration.idleOnUsageLimit")(function* (
+  harness: DeliveryHarness,
+  target: { readonly projectId: ProjectId; readonly threadId: ThreadId },
+  queued: boolean,
+) {
+  const threads = yield* ThreadManagementService;
+  yield* startBusyTurn(target);
+  const earlier = queued
+    ? yield* threads.sendToThread({
+        projectId: target.projectId,
+        threadId: target.threadId,
+        commandId: CommandId.make(`command:limited:earlier:${target.threadId}`),
+        messageId: MessageId.make(`message:limited:earlier:${target.threadId}`),
+        text: "Earlier work",
+        attachments: [],
+        mode: "queue",
+        createdBy: "user",
+        creationSource: "web",
+      })
+    : undefined;
+  const resetAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
+  yield* finishTestTurn(harness, target.threadId, {
+    class: "usage_limit",
+    message: "Usage limit reached.",
+    code: null,
+    retryable: null,
+    resetAt,
+  });
+  return { earlierRunId: earlier?.run.id, resetAt };
+});
+
+it.effect(
+  "holds a delivery to a usage-limited agent with nothing queued, and tells its sender",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const target = yield* seedTarget("limited-empty");
+        const threads = yield* ThreadManagementService;
+        const transport = yield* A2ADeliveryTransport;
+        yield* idleOnUsageLimit(harness, target, false);
+
+        const error = yield* transport.deliverAgent(target.delivery).pipe(Effect.flip);
+
+        assert.instanceOf(error, A2ADeliveryHeldError);
+        const after = yield* threads.getThreadProjection(target.threadId);
+        assert.isFalse(
+          after.messages.some((row) => row.id === deliveryMessageId(target.messageId)),
+        );
+        assert.isFalse(after.runs.some((run) => run.status === "queued" || isActiveRun(run)));
+        assert.equal(
+          yield* sendNoticeTo("limited-empty", target),
+          `${target.receiverId} hit its provider's usage limit and is paused until a person continues it. Your message is saved and will run then, in the order it was sent. Don't send it again.`,
+        );
+      }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
+    }),
+);
+
+it.effect.each(["upstream", "a person"] as const)(
+  "holds a delivery behind messages queued before a usage limit and runs it after them once %s continues the agent",
+  (continuedBy) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const target = yield* seedTarget(`limited-queued-${continuedBy.replace(" ", "-")}`);
+        const threads = yield* ThreadManagementService;
+        const orchestrator = yield* OrchestratorV2;
+        const transport = yield* A2ADeliveryTransport;
+        const { earlierRunId, resetAt } = yield* idleOnUsageLimit(harness, target, true);
+        const limited = yield* threads.getThreadProjection(target.threadId);
+        const earlier = limited.runs.find((run) => run.id === earlierRunId);
+        assert.equal(earlier?.status, "queued");
+        assert.isNotTrue(earlier?.queueHeld);
+
+        assert.instanceOf(
+          yield* transport.deliverAgent(target.delivery).pipe(Effect.flip),
+          A2ADeliveryHeldError,
+        );
+        assert.isFalse(
+          (yield* threads.getThreadProjection(target.threadId)).messages.some(
+            (row) => row.id === deliveryMessageId(target.messageId),
+          ),
+        );
+
+        if (continuedBy === "upstream") {
+          // What the usage-limit sweep does: arm the recovery, then continue past the reset.
+          const shell = () =>
+            orchestrator
+              .getShellSnapshot()
+              .pipe(
+                Effect.map((snapshot) =>
+                  snapshot.threads.find((thread) => thread.id === target.threadId)!,
+                ),
+              );
+          yield* threads.dispatch(
+            limitRecoveryCommand(
+              yield* shell(),
+              true,
+              DateTime.toEpochMillis(yield* DateTime.now),
+            )!,
+          );
+          yield* TestClock.adjust("2 minutes");
+          yield* threads.dispatch(
+            limitRecoveryCommand(yield* shell(), true, Date.parse(resetAt) + 1)!,
+          );
+        } else {
+          yield* threads.sendToThread({
+            projectId: target.projectId,
+            threadId: target.threadId,
+            commandId: CommandId.make("command:limited-queued:person-continue"),
+            messageId: MessageId.make("message:limited-queued:person-continue"),
+            text: "Carry on.",
+            attachments: [],
+            mode: "auto",
+            createdBy: "user",
+            creationSource: "web",
+          });
+        }
+        yield* startPendingTestTurn(target.threadId);
+
+        yield* transport.deliverAgent(target.delivery);
+
+        const continued = yield* threads.getThreadProjection(target.threadId);
+        const delivered = continued.runs.find(
+          (run) => run.userMessageId === deliveryMessageId(target.messageId),
+        );
+        assert.equal(delivered?.status, "queued");
+        assert.isAbove(
+          delivered!.queuePosition!,
+          continued.runs.find((run) => run.id === earlierRunId)!.queuePosition!,
+        );
+        yield* finishTestTurn(harness, target.threadId);
+        yield* (yield* OrchestrationEffectWorkerV2).drain();
+        const after = yield* threads.getThreadProjection(target.threadId);
+        assert.notEqual(after.runs.find((run) => run.id === earlierRunId)?.status, "queued");
+        assert.equal(
+          after.runs.find((run) => run.userMessageId === deliveryMessageId(target.messageId))
+            ?.status,
+          "queued",
+        );
+      }).pipe(Effect.provide(makeTestLayer(harness)));
+    }),
+);
+
+/** The delivery seam with the silence detector, which wakes held deliveries when a run starts. */
+const makeWakeTestLayer = (harness: DeliveryHarness) =>
+  silenceDetectorManualLayer.pipe(
+    Layer.provideMerge(crewInstanceLayer),
+    Layer.provideMerge(makeLifecycleTestLayer(harness)),
+    Layer.provideMerge(serverConfigLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+/** A person continues a usage-limited target; returns the stored event of the run it started. */
+const continueByPerson = Effect.fn("A2AIntegration.continueByPerson")(function* (target: {
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId;
+}) {
+  const started = yield* (yield* EventSinkV2).stream({ threadId: target.threadId }).pipe(
+    Stream.filter(
+      (stored) =>
+        (stored.event.type === "run.created" || stored.event.type === "run.updated") &&
+        stored.event.payload.status === "starting",
+    ),
+    Stream.runHead,
+    Effect.forkChild({ startImmediately: true }),
+  );
+  yield* (yield* ThreadManagementService).sendToThread({
+    projectId: target.projectId,
+    threadId: target.threadId,
+    commandId: CommandId.make(`command:continue:${target.threadId}`),
+    messageId: MessageId.make(`message:continue:${target.threadId}`),
+    text: "Carry on.",
+    attachments: [],
+    mode: "auto",
+    createdBy: "user",
+    creationSource: "web",
+  });
+  return Option.getOrThrow(yield* Fiber.join(started));
+});
+
+const queuePositionOf = Effect.fn("A2AIntegration.queuePositionOf")(function* (
+  threadId: ThreadId,
+  messageId: LedgerMessageId,
+) {
+  const run = (yield* (yield* ThreadManagementService).getThreadProjection(threadId)).runs.find(
+    (candidate) => candidate.userMessageId === deliveryMessageId(messageId),
+  );
+  return run?.status === "queued" ? run.queuePosition : undefined;
+});
+
+/** A target stopped on a usage limit and a caller in its project that sends it updates. */
+const limitedTargetWithCaller = Effect.fn("A2AIntegration.limitedTargetWithCaller")(function* (
+  harness: DeliveryHarness,
+  suffix: string,
+) {
+  const send = yield* A2ASendService;
+  const target = yield* seedTarget(suffix);
+  const caller = yield* seedTarget(
+    `${suffix}-caller`,
+    modelSelection.model,
+    undefined,
+    target.ledgerProjectId,
+  );
+  yield* idleOnUsageLimit(harness, target, false);
+  const sendUpdate = (name: string) =>
+    send.send({
+      commandId: CommCommandId.make(`command:j5-a2a-delivery-${suffix}-${name}`),
+      senderThreadId: caller.threadId,
+      to: target.receiverId,
+      message: `Update ${name}`,
+      acceptedAt: "2026-09-24T00:00:00.000Z",
+    });
+  return { target, sendUpdate };
+});
+
+it.effect("hands held messages over in send order, together, as soon as the agent continues", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const worker = yield* A2ADeliveryWorker;
+      const { target, sendUpdate } = yield* limitedTargetWithCaller(harness, "wake-order");
+
+      // A is held and rechecked until its next recheck is eight minutes out.
+      const a = yield* sendUpdate("a");
+      yield* worker.drain;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        yield* TestClock.adjust(heldQueueRecheckMs(attempt));
+        yield* worker.drain;
+      }
+      // B, sent later, is held with its first recheck a minute out: before A's.
+      const b = yield* sendUpdate("b");
+      yield* worker.drain;
+      assert.isUndefined(yield* queuePositionOf(target.threadId, a.messageId));
+      assert.isUndefined(yield* queuePositionOf(target.threadId, b.messageId));
+
+      const started = yield* continueByPerson(target);
+      yield* (yield* A2ASilenceDetector).handleStoredEvent(started);
+      // No time passes: the wake hands both over now, A first.
+      yield* worker.drain;
+      const positionA = yield* queuePositionOf(target.threadId, a.messageId);
+      const positionB = yield* queuePositionOf(target.threadId, b.messageId);
+      assert.isDefined(positionA);
+      assert.isDefined(positionB);
+      assert.isBelow(positionA!, positionB!);
+    }).pipe(Effect.provide(makeWakeTestLayer(harness)));
+  }),
+);
+
+it.effect("keeps a message sent just after the agent continues behind the ones held for it", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const worker = yield* A2ADeliveryWorker;
+      const { target, sendUpdate } = yield* limitedTargetWithCaller(harness, "wake-after-lift");
+      const a = yield* sendUpdate("a");
+      yield* worker.drain;
+
+      const started = yield* continueByPerson(target);
+      // Sent between the lift and the wake: it waits behind A instead of overtaking it.
+      const c = yield* sendUpdate("c");
+      yield* worker.drain;
+      assert.isUndefined(yield* queuePositionOf(target.threadId, a.messageId));
+      assert.isUndefined(yield* queuePositionOf(target.threadId, c.messageId));
+
+      yield* (yield* A2ASilenceDetector).handleStoredEvent(started);
+      yield* worker.drain;
+      const positionA = yield* queuePositionOf(target.threadId, a.messageId);
+      const positionC = yield* queuePositionOf(target.threadId, c.messageId);
+      assert.isDefined(positionA);
+      assert.isDefined(positionC);
+      assert.isBelow(positionA!, positionC!);
+    }).pipe(Effect.provide(makeWakeTestLayer(harness)));
+  }),
+);
+
+it.effect(
+  "starts a delivery at once on an idle agent whose last turn failed for another reason",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      yield* Effect.gen(function* () {
+        const target = yield* seedTarget("failed-other");
+        const threads = yield* ThreadManagementService;
+        const transport = yield* A2ADeliveryTransport;
+        yield* startBusyTurn(target);
+        yield* finishTestTurn(harness, target.threadId, {
+          class: "provider_error",
+          message: "The provider failed.",
+          code: null,
+          retryable: null,
+        });
+
+        yield* transport.deliverAgent(target.delivery);
+
+        const delivered = (yield* threads.getThreadProjection(target.threadId)).runs.find(
+          (run) => run.userMessageId === deliveryMessageId(target.messageId),
+        );
+        assert.isDefined(delivered);
+        assert.isTrue(isActiveRun(delivered!));
+      }).pipe(Effect.provide(makeTestLayer(harness)));
+    }),
+);
+
 it.effect("keeps a delivery unsent while a usage limit blocks the receiver's held queue", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
@@ -3537,6 +3868,48 @@ it.effect("keeps a delivery unsent while a usage limit blocks the receiver's hel
   }),
 );
 
+/** Leaves a target idle with one held message after a run that failed to set up its worktree. */
+const idleAfterFailedWorktreeSetup = Effect.fn("A2AIntegration.idleAfterFailedWorktreeSetup")(
+  function* (
+    harness: DeliveryHarness,
+    target: { readonly projectId: ProjectId; readonly threadId: ThreadId },
+  ) {
+    const earlierRunId = yield* idleWithHeldQueue(harness, target, {
+      class: "provider_error",
+      message: "Worktree setup failed.",
+      code: null,
+      retryable: null,
+    });
+    // The failed run had been preparing a worktree that never got bound to the thread.
+    yield* (yield* OrchestratorV2).dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make(`command:held-worktree:unbind:${target.threadId}`),
+      threadId: target.threadId,
+      worktreePath: null,
+    });
+    const failed = (yield* (yield* ThreadManagementService).getThreadProjection(
+      target.threadId,
+    )).runs.find((run) => run.status === "failed")!;
+    yield* (yield* EventSinkV2).write({
+      events: [
+        {
+          id: EventId.make(`event:held-worktree:preparation:${target.threadId}`),
+          type: "run.updated",
+          threadId: target.threadId,
+          runId: failed.id,
+          providerInstanceId: failed.providerInstanceId,
+          occurredAt: yield* DateTime.now,
+          payload: {
+            ...failed,
+            workspacePreparation: { type: "worktree", baseRef: "main", startFromOrigin: false },
+          },
+        },
+      ],
+    });
+    return earlierRunId;
+  },
+);
+
 it.effect("keeps a delivery unsent while a failed worktree setup holds the receiver's queue", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness;
@@ -3544,38 +3917,7 @@ it.effect("keeps a delivery unsent while a failed worktree setup holds the recei
       const target = yield* seedTarget("held-worktree", "gpt-5.4");
       const threads = yield* ThreadManagementService;
       const transport = yield* A2ADeliveryTransport;
-      const earlierRunId = yield* idleWithHeldQueue(harness, target, {
-        class: "provider_error",
-        message: "Worktree setup failed.",
-        code: null,
-        retryable: null,
-      });
-      // The failed run had been preparing a worktree that never got bound to the thread.
-      yield* (yield* OrchestratorV2).dispatch({
-        type: "thread.metadata.update",
-        commandId: CommandId.make("command:held-worktree:unbind"),
-        threadId: target.threadId,
-        worktreePath: null,
-      });
-      const failed = (yield* threads.getThreadProjection(target.threadId)).runs.find(
-        (run) => run.status === "failed",
-      )!;
-      yield* (yield* EventSinkV2).write({
-        events: [
-          {
-            id: EventId.make("event:held-worktree:preparation"),
-            type: "run.updated",
-            threadId: target.threadId,
-            runId: failed.id,
-            providerInstanceId: failed.providerInstanceId,
-            occurredAt: yield* DateTime.now,
-            payload: {
-              ...failed,
-              workspacePreparation: { type: "worktree", baseRef: "main", startFromOrigin: false },
-            },
-          },
-        ],
-      });
+      const earlierRunId = yield* idleAfterFailedWorktreeSetup(harness, target);
 
       const error = yield* transport.deliverAgent(target.delivery).pipe(Effect.flip);
 
@@ -3585,6 +3927,120 @@ it.effect("keeps a delivery unsent while a failed worktree setup holds the recei
       assert.equal(after.runs.find((run) => run.id === earlierRunId)?.status, "queued");
       assert.isFalse(after.messages.some((row) => row.id === deliveryMessageId(target.messageId)));
     }).pipe(Effect.provide(makeTestLayer(harness)));
+  }),
+);
+
+/** Sends to the target from a seeded caller and returns the send result's notice. */
+const sendNoticeTo = Effect.fn("A2AIntegration.sendNoticeTo")(function* (
+  suffix: string,
+  target: { readonly ledgerProjectId: LedgerProjectId; readonly receiverId: ParticipantId },
+) {
+  const caller = yield* seedTarget(
+    `${suffix}-caller`,
+    modelSelection.model,
+    undefined,
+    target.ledgerProjectId,
+  );
+  const sent = yield* (yield* A2ASendService).send({
+    commandId: CommCommandId.make(`command:j5-a2a-delivery-${suffix}-notice`),
+    senderThreadId: caller.threadId,
+    to: target.receiverId,
+    message: "An update",
+    acceptedAt: "2026-09-24T00:00:00.000Z",
+  });
+  return (yield* withDeliveryNotice(sent, {
+    receiverId: target.receiverId,
+    callerThreadId: caller.threadId,
+  })).deliveryNotice;
+});
+
+it.effect("tells the sender a busy receiver's held queue keeps its message waiting", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("notice-held-busy");
+      yield* holdTargetQueue(target);
+      assert.equal(
+        yield* sendNoticeTo("notice-held-busy", target),
+        `${target.receiverId}'s queue is on hold, so your message waits until a person resumes it. It will run then, in the order it was sent. Don't send it again.`,
+      );
+    }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
+  }),
+);
+
+it.effect("tells the sender a failed worktree setup keeps its message waiting", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("notice-held-worktree");
+      yield* idleAfterFailedWorktreeSetup(harness, target);
+      assert.equal(
+        yield* sendNoticeTo("notice-held-worktree", target),
+        `${target.receiverId}'s queue is on hold, so your message waits until a person resumes it. It will run then, in the order it was sent. Don't send it again.`,
+      );
+    }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
+  }),
+);
+
+it.effect("tells the sender a usage limit pauses the receiver until a person continues it", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("notice-limit-paused");
+      yield* idleWithHeldQueue(harness, target, {
+        class: "usage_limit",
+        message: "Usage limit reached.",
+        code: null,
+        retryable: null,
+        resetAt: "2099-01-01T00:00:00.000Z",
+      });
+      assert.equal(
+        yield* sendNoticeTo("notice-limit-paused", target),
+        `${target.receiverId} hit its provider's usage limit and is paused until a person continues it. Your message is saved and will run then, in the order it was sent. Don't send it again.`,
+      );
+    }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
+  }),
+);
+
+it.effect("tells the sender when upstream continues a usage-limited receiver", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("notice-limit-auto");
+      const resetAt = "2099-01-01T00:00:00.000Z";
+      yield* idleWithHeldQueue(harness, target, {
+        class: "usage_limit",
+        message: "Usage limit reached.",
+        code: null,
+        retryable: null,
+        resetAt,
+      });
+      const limited = (yield* (yield* ThreadManagementService).getThreadProjection(
+        target.threadId,
+      )).runs.find((run) => run.status === "failed")!;
+      // What the thread's "Resume at reset" does.
+      yield* (yield* OrchestratorV2).dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:notice-limit-auto:arm"),
+        threadId: target.threadId,
+        limitRecovery: { runId: limited.id, resetAt, autoResume: true },
+      });
+      assert.equal(
+        yield* sendNoticeTo("notice-limit-auto", target),
+        `${target.receiverId} hit its provider's usage limit and continues automatically at ${resetAt}. Your message is saved and will run then, in the order it was sent. Don't send it again.`,
+      );
+    }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
+  }),
+);
+
+it.effect("adds no notice for an idle receiver whose held queue the delivery resumes", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness;
+    yield* Effect.gen(function* () {
+      const target = yield* seedTarget("notice-held-idle");
+      yield* idleWithHeldQueue(harness, target);
+      assert.isUndefined(yield* sendNoticeTo("notice-held-idle", target));
+    }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
   }),
 );
 
@@ -3880,4 +4336,395 @@ it.effect("registers an archived older thread as archived, in one step or not at
       assert.strictEqual(yield* lifecycle.registerExistingThreads, 0);
     }).pipe(Effect.provide(makeLifecycleTestLayer(harness)));
   }),
+);
+
+/** Upstream's queue cancel and promote, run on upstream's handlers as `/mcp` registers them. */
+const QueueRemovalToolkit = Toolkit.make(
+  ThreadToolkit.tools.t3_queue_cancel,
+  ThreadToolkit.tools.t3_queue_promote_to_steer,
+);
+const QueueRemovalHandlersLive = McpToolAccess.HandlersLayer.layer(
+  handlersFor(QueueRemovalToolkit, ThreadHandlers.layer),
+);
+
+it.effect(
+  "an agent edits only its own queued message, inside its envelope, and the ledger follows every edit",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+      const base = silenceDetectorManualLayer.pipe(
+        Layer.provideMerge(crewInstanceLayer),
+        Layer.provideMerge(makeMessageLifecycleLayer(harness)),
+        Layer.provideMerge(serverConfigLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      yield* Effect.gen(function* () {
+        const registrar = yield* A2AHomeRegistrar;
+        const send = yield* A2ASendService;
+        const worker = yield* A2ADeliveryWorker;
+        const threads = yield* ThreadManagementService;
+        const orchestrator = yield* OrchestratorV2;
+        const detector = yield* A2ASilenceDetector;
+        const sql = yield* SqlClient.SqlClient;
+        const editor = yield* seedTarget("edit-sender", modelSelection.model, registrar);
+        const seed = (suffix: string) =>
+          seedTarget(
+            suffix,
+            modelSelection.model,
+            registrar,
+            editor.ledgerProjectId,
+            editor.projectId,
+          );
+        const other = yield* seed("edit-other");
+        const receiver = yield* seed("edit-receiver");
+        yield* startBusyTurn(editor);
+        yield* startBusyTurn(receiver);
+
+        const sendFrom = (from: typeof editor, name: string) =>
+          send.send({
+            commandId: CommCommandId.make(`command:edit:${name}`),
+            senderThreadId: from.threadId,
+            to: receiver.receiverId,
+            message: `Original ${name}`,
+            acceptedAt: "2026-10-24T00:00:00.000Z",
+          });
+        const own = yield* sendFrom(editor, "own");
+        const others = yield* sendFrom(other, "others");
+        const promoted = yield* sendFrom(other, "promoted");
+        yield* worker.drain;
+        yield* threads.sendToThread({
+          commandId: CommandId.make("command:edit:person"),
+          projectId: receiver.projectId,
+          threadId: receiver.threadId,
+          messageId: MessageId.make("message:edit:person"),
+          text: "A person's queued words",
+          attachments: [],
+          mode: "queue",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queued = (messageId: MessageId) =>
+          threads.getThreadProjection(receiver.threadId).pipe(
+            Effect.map((projection) => {
+              const message = projection.messages.find((entry) => entry.id === messageId)!;
+              const run = projection.runs.find((entry) => entry.id === message.runId)!;
+              return { message, run };
+            }),
+          );
+        const ownQueued = yield* queued(deliveryMessageId(own.messageId));
+        assert.equal(ownQueued.run.status, "queued");
+
+        const scope = {
+          environmentId: EnvironmentId.make("environment:edit-test"),
+          requestNamespace: "edit-test",
+          thread: {
+            threadId: editor.threadId,
+            providerSessionId: "edit-test",
+            providerInstanceId: modelSelection.instanceId,
+          },
+          client: undefined,
+          capabilities: new Set(["orchestration"] as const),
+          issuedAt: 1,
+        };
+        const edit = (queuedRunId: (typeof ownQueued)["run"]["id"], text: string) =>
+          Effect.gen(function* () {
+            const toolkit = yield* J5AdaptedThreadToolkit;
+            return yield* toolkit
+              .handle("t3_queue_edit", { threadId: receiver.threadId, queuedRunId, text })
+              .pipe(
+                Stream.unwrap,
+                Stream.run(Sink.last()),
+                Effect.flatMap(Effect.fromOption),
+                Effect.provideService(McpInvocationContext, scope),
+              );
+          }).pipe(Effect.provide(J5AdaptedThreadHandlersLive));
+        const removals = yield* Effect.provide(QueueRemovalToolkit, QueueRemovalHandlersLive);
+        const asEditor = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
+          stream.pipe(
+            Stream.run(Sink.last()),
+            Effect.flatMap(Effect.fromOption),
+            Effect.provideService(McpInvocationContext, scope),
+          );
+        /** Upstream's latest record of the message, as the event stream carries it. */
+        const latestUpdate = (messageId: MessageId, afterSequence: number) =>
+          orchestrator
+            .streamStoredEventsFrom({
+              threadId: receiver.threadId,
+              afterSequence,
+              eventType: "message.updated",
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "message.updated" && stored.event.payload.id === messageId,
+              ),
+              Stream.take(1),
+              Stream.runHead,
+              Effect.flatMap(Effect.fromOption),
+            );
+        const ledgerRow = (messageId: LedgerMessageId) =>
+          sql<{
+            readonly message_text: string;
+            readonly edited_by: string | null;
+          }>`SELECT message_text, edited_by FROM j5_a2a_delivery WHERE message_id = ${messageId}`.pipe(
+            Effect.map((rows) => rows[0]),
+          );
+
+        const sink = yield* EventSinkV2;
+        // The sender edits its own message: the envelope stays, only the body changes.
+        const beforeOwnEdit = yield* sink.latestSequence();
+        const edited = yield* edit(ownQueued.run.id, "Rewritten own");
+        assert.isFalse(edited.isFailure);
+        const ownAfter = yield* queued(deliveryMessageId(own.messageId));
+        assert.equal(
+          ownAfter.message.text,
+          ownQueued.message.text.replace("Original own", "Rewritten own"),
+        );
+        assert.match(ownAfter.message.text, /^\[Cross-agent message from /);
+        const ownUpdate = yield* latestUpdate(deliveryMessageId(own.messageId), beforeOwnEdit);
+        yield* detector.handleStoredEvent(ownUpdate);
+        yield* detector.handleStoredEvent(ownUpdate);
+        assert.deepEqual(yield* ledgerRow(own.messageId), {
+          message_text: "Rewritten own",
+          edited_by: editor.receiverId,
+        });
+        const editEvents = yield* sql<{ readonly sender: string | null }>`
+          SELECT sender FROM j5_a2a_comm_event
+          WHERE kind = 'message.edited'
+            AND json_extract(payload, '$.messageId') = ${own.messageId}
+        `;
+        assert.deepEqual(editEvents, [{ sender: editor.receiverId }]);
+
+        // An agent that hands back the whole envelope it read gets one envelope, not two.
+        const reread = (yield* queued(deliveryMessageId(own.messageId))).message.text;
+        const beforeAgain = yield* sink.latestSequence();
+        assert.isFalse(
+          (yield* edit(ownQueued.run.id, reread.replace("Rewritten own", "Rewritten again")))
+            .isFailure,
+        );
+        assert.equal(
+          (yield* queued(deliveryMessageId(own.messageId))).message.text,
+          ownQueued.message.text.replace("Original own", "Rewritten again"),
+        );
+        const againUpdate = yield* latestUpdate(deliveryMessageId(own.messageId), beforeAgain);
+        // A restart replays both edits from the detector's last checkpoint: the first must not be
+        // applied over the second.
+        for (const stored of [againUpdate, ownUpdate, againUpdate]) {
+          yield* detector.handleStoredEvent(stored);
+        }
+        assert.deepEqual(yield* ledgerRow(own.messageId), {
+          message_text: "Rewritten again",
+          edited_by: editor.receiverId,
+        });
+
+        // Another agent's message and a person's are refused, with what the agent can do instead.
+        const othersQueued = yield* queued(deliveryMessageId(others.messageId));
+        const refusedOthers = yield* edit(othersQueued.run.id, "Hijacked");
+        assert.isTrue(refusedOthers.isFailure);
+        const othersFailure = yield* decodeToolFailure(refusedOthers.result);
+        assert.equal(othersFailure.code, "capability_denied");
+        assert.include(othersFailure.message, other.receiverId);
+        assert.include(othersFailure.message, "t3_queue_cancel");
+        const personQueued = yield* queued(MessageId.make("message:edit:person"));
+        const refusedPerson = yield* edit(personQueued.run.id, "Hijacked");
+        assert.isTrue(refusedPerson.isFailure);
+        assert.include(
+          (yield* decodeToolFailure(refusedPerson.result)).message,
+          "A person wrote this queued message",
+        );
+        assert.equal(
+          (yield* queued(deliveryMessageId(others.messageId))).message.text,
+          othersQueued.message.text,
+        );
+
+        // A person edits a delivery from the UI: the whole text, through the command intake.
+        const person = ParticipantId.make("human:edit-person");
+        const personEdit = {
+          type: "queued-run.edit" as const,
+          commandId: CommandId.make("command:edit:by-person"),
+          threadId: receiver.threadId,
+          runId: othersQueued.run.id,
+          text: othersQueued.message.text.replace("Original others", "Tidied by a person"),
+        };
+        yield* claimPersonQueuedEdit(personEdit, person);
+        const beforePersonEdit = yield* sink.latestSequence();
+        yield* dispatchIntakeCommand(personEdit);
+        yield* detector.handleStoredEvent(
+          yield* latestUpdate(deliveryMessageId(others.messageId), beforePersonEdit),
+        );
+        assert.deepEqual(yield* ledgerRow(others.messageId), {
+          message_text: "Tidied by a person",
+          edited_by: person,
+        });
+
+        // A person who rewrites the header leaves an envelope J5 no longer recognises: the ledger
+        // keeps their whole text, and the sender can no longer edit inside it.
+        const beforeRewrite = yield* sink.latestSequence();
+        const rewritten = (yield* queued(deliveryMessageId(own.messageId))).message.text.replace(
+          "[Cross-agent message from ",
+          "[Forwarded from ",
+        );
+        const rewrite = {
+          type: "queued-run.edit" as const,
+          commandId: CommandId.make("command:edit:rewrite"),
+          threadId: receiver.threadId,
+          runId: ownQueued.run.id,
+          text: rewritten,
+        };
+        yield* claimPersonQueuedEdit(rewrite, person);
+        yield* dispatchIntakeCommand(rewrite);
+        const rewriteUpdates = yield* orchestrator
+          .streamStoredEventsFrom({
+            threadId: receiver.threadId,
+            afterSequence: beforeRewrite,
+            eventType: "message.updated",
+          })
+          .pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "message.updated" &&
+                stored.event.payload.id === deliveryMessageId(own.messageId) &&
+                stored.event.payload.text === rewritten,
+            ),
+            Stream.take(1),
+            Stream.runHead,
+            Effect.flatMap(Effect.fromOption),
+          );
+        yield* detector.handleStoredEvent(rewriteUpdates);
+        assert.deepEqual(yield* ledgerRow(own.messageId), {
+          message_text: rewritten,
+          edited_by: person,
+        });
+        const refusedRewrite = yield* edit(ownQueued.run.id, "Inside a rewritten envelope");
+        assert.isTrue(refusedRewrite.isFailure);
+        assert.include(
+          (yield* decodeToolFailure(refusedRewrite.result)).message,
+          "no longer has the J5 envelope",
+        );
+
+        // Cancel and promote are upstream's, for any message, and the sender hears as before.
+        const removedNotices = () =>
+          sql<{ readonly receiver_id: string; readonly message_text: string }>`
+            SELECT receiver_id, message_text FROM j5_a2a_delivery
+            WHERE envelope_channel = 'silence_notice'
+          `;
+        const terminal = (runId: (typeof ownQueued)["run"]["id"]) =>
+          orchestrator
+            .streamStoredEventsFrom({ threadId: receiver.threadId, eventType: "run.updated" })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "run.updated" &&
+                  stored.event.payload.id === runId &&
+                  stored.event.payload.completedAt !== null,
+              ),
+              Stream.take(1),
+              Stream.runHead,
+              Effect.flatMap(Effect.fromOption),
+            );
+        const promotedQueued = yield* queued(deliveryMessageId(promoted.messageId));
+        const receiverRun = (yield* threads.getThreadProjection(receiver.threadId)).runs.find(
+          (run) => run.status === "running",
+        )!;
+        assert.isFalse(
+          (yield* asEditor(
+            Stream.unwrap(
+              removals.handle("t3_queue_promote_to_steer", {
+                threadId: receiver.threadId,
+                queuedRunId: promotedQueued.run.id,
+                targetRunId: receiverRun.id,
+              }),
+            ),
+          )).isFailure,
+        );
+        yield* (yield* OrchestrationEffectWorkerV2).drain();
+        yield* detector.handleStoredEvent(yield* terminal(promotedQueued.run.id));
+        assert.lengthOf(yield* removedNotices(), 0);
+
+        // Only an edit is recorded: not a message joining the queue (one from a peer server
+        // included, whose envelope J5 cannot render again), not a promotion, and not a rename of
+        // the sender's project since delivery.
+        const fromPeer = LedgerMessageId.make("message:edit:from-peer");
+        yield* (yield* A2ALedger).append({
+          commandId: CommCommandId.make("command:edit:from-peer"),
+          projectId: editor.ledgerProjectId,
+          acceptedAt: "2026-10-24T00:00:00.000Z",
+          event: {
+            kind: "message.received",
+            sender: ParticipantId.make("agent:edit-peer-sender"),
+            receiver: receiver.receiverId,
+            exchangeId: null,
+            correlationId: CorrelationId.make("correlation:edit:from-peer"),
+            payload: {
+              originProjectId: LedgerProjectId.make("project:edit-peer-origin"),
+              originEnvironmentId: "environment:edit-peer",
+              message: {
+                messageId: fromPeer,
+                text: "From a peer server",
+                originProjectId: LedgerProjectId.make("project:edit-peer-origin"),
+                receiverProjectId: editor.ledgerProjectId,
+                exchangeRole: "none",
+                envelopeChannel: "peer",
+              },
+            },
+            createdAt: "2026-10-24T00:00:00.000Z",
+          },
+        });
+        yield* worker.drain;
+        assert.equal(
+          (yield* queued(deliveryMessageId(fromPeer))).run.status,
+          "queued",
+          "the peer's message waits in the receiver's queue",
+        );
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id, title, workspace_root, scripts_json, created_at, updated_at
+          ) VALUES (
+            ${editor.ledgerProjectId}, 'Renamed since delivery', '/tmp', '[]',
+            '2026-10-24T00:00:00.000Z', '2026-10-24T00:00:00.000Z'
+          )
+        `;
+        const editsSoFar = () =>
+          sql<{ readonly message_id: string; readonly text: string }>`
+            SELECT json_extract(payload, '$.messageId') AS message_id,
+              json_extract(payload, '$.text') AS text
+            FROM j5_a2a_comm_event WHERE kind = 'message.edited' ORDER BY seq
+          `;
+        const recorded = yield* editsSoFar();
+        const heads = yield* sql<{ readonly head: number }>`
+          SELECT MAX(sequence) AS head FROM orchestration_events
+          WHERE stream_id = ${receiver.threadId}
+        `;
+        const everyUpdate = yield* sink.stream({ threadId: receiver.threadId }).pipe(
+          Stream.takeUntil((stored) => stored.sequence >= heads[0]!.head),
+          Stream.filter((stored) => stored.event.type === "message.updated"),
+          Stream.runCollect,
+        );
+        for (const stored of everyUpdate) yield* detector.handleStoredEvent(stored);
+        assert.deepEqual(yield* editsSoFar(), recorded);
+        assert.equal((yield* ledgerRow(fromPeer))?.message_text, "From a peer server");
+        assert.isNull((yield* ledgerRow(promoted.messageId))?.edited_by);
+
+        assert.isFalse(
+          (yield* asEditor(
+            Stream.unwrap(
+              removals.handle("t3_queue_cancel", {
+                threadId: receiver.threadId,
+                queuedRunId: othersQueued.run.id,
+              }),
+            ),
+          )).isFailure,
+        );
+        yield* detector.handleStoredEvent(yield* terminal(othersQueued.run.id));
+        const notices = yield* removedNotices();
+        assert.lengthOf(notices, 1);
+        // Every claim went with the edit it named.
+        assert.deepEqual(yield* sql`SELECT command_id FROM j5_a2a_queued_edit_claim`, []);
+        assert.equal(notices[0]?.receiver_id, other.receiverId);
+        assert.include(
+          notices[0]?.message_text,
+          removedNoticeMessage(receiver.receiverId, others.messageId, "Tidied by a person", person),
+        );
+      }).pipe(Effect.provide(base));
+    }),
 );

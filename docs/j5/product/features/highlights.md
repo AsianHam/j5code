@@ -11,7 +11,7 @@ Nothing in a client says what changed after it updates. Release notes reach the 
 
 ## Definition
 
-A highlight is a short entry about one substantial feature: a title, a line or two, an optional "Learn more" page on the marketing site, an optional illustration, and the clients it shows on (web, desktop, mobile). It is committed with the feature's own pull request, and whether a feature deserves one is decided in that pull request's review. Release notes are unchanged.
+A highlight is a short entry about one substantial feature, or, for an upstream advance, one roundup of smaller upstream changes worth knowing: a title, a line or two, an optional "Learn more" page on the marketing site, an optional illustration, and the clients it shows on (web, desktop, mobile). It is committed with the feature's own pull request, or with the advance, and whether a feature deserves one is decided in that pull request's review. Release notes are unchanged.
 
 A client keeps its own record of the highlights it has seen. A browser keeps one per address, and the desktop app one per install. A highlight is new to a client until it is dismissed there, so updating several devices shows it on each.
 
@@ -33,3 +33,4 @@ Mobile shows no highlights yet. Entries already say which clients they are for, 
 ## History
 
 - 2026-10-17 — defined, designed and built; launched with Peering ([#624](https://github.com/Jacksondr5/j5code/issues/624)).
+- 2026-10-24 — an upstream advance proposes its own highlights, and may add one roundup entry for smaller upstream changes (Jackson).

@@ -88,7 +88,7 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
 - Desktop OS integration: `electron-launcher.mjs`, `ElectronProtocol.ts`,
   `DesktopLinuxUrlHandler.ts`, and the server renderer-origin allowlist, `DESKTOP_RENDERER_ORIGINS`
   in `apps/server/src/httpCors.ts`.
-- Linux capture: `apps/desktop/src/snapShot/{KdeSnapShot,HyprlandSnapShot,GnomeCaptureSetup,linuxCaptureSession}.ts` and `apps/desktop/gnome-extension/`. These newly adopted integrations still use upstream helper directories, desktop/extension identities and bus names. They can collide with an installed T3 Code; OS integration isolation is incomplete until [#138](https://github.com/Jacksondr5/j5code/issues/138) is resolved.
+- Linux capture: `apps/desktop/src/snapShot/{KdeSnapShot,HyprlandSnapShot,GnomeCaptureSetup,linuxCaptureSession}.ts` and `apps/desktop/gnome-extension/`. The GNOME extension accepts capture requests only from J5's own bus names (`j5code.SnapShot`, `j5code-dev.SnapShot`, from the Linux app id). The rest still use upstream helper directories, desktop/extension identities and bus names, so they can collide with an installed T3 Code. J5 ships no Linux desktop build, so they are not isolated.
 - Desktop packaging: `apps/desktop/package.json`, `scripts/build-desktop-artifact.ts` (including
   the generated package's `homepage`, `https://j5.codes`, and the macOS usage strings such as
   `NSLocalNetworkUsageDescription`), and both DMG background SVGs.
@@ -243,7 +243,7 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
 - The SSH tunnel's "Remote T3 server" message in `packages/ssh/src/tunnel.ts`, which belongs to the
   remote launch path that still uses `~/.t3/ssh-launch` (#339).
 - `t3.json`, its schema URL, the `refs/t3code/*` hidden refs, upstream's `README.md`,
-  `packaging/aur`, the Linux capture helper identities (#138), the iOS widget's `T3Mark` image
+  `packaging/aur`, the Linux capture helper identities, the iOS widget's `T3Mark` image
   asset, and developer scripts under `scripts/` and `apps/server/scripts/`.
 
 ## Cloud and update posture

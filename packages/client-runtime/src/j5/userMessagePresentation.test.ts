@@ -530,6 +530,13 @@ describe("participant ids for the identity read", () => {
       "agent:delivery-sender",
     ]);
     expect(participantIdsForJ5UserMessage(personReply(humanReplyRaw))).toEqual(["human:viewer"]);
+    expect(
+      participantIdsForJ5UserMessage(
+        personReply(
+          envelope("[Message from Priya (human:viewer)]", "Call Acme first.", closedInstruction),
+        ),
+      ),
+    ).toEqual([]);
     expect(participantIdsForJ5UserMessage(systemDelivery(silenceRaw))).toEqual([]);
     expect(participantIdsForJ5UserMessage({ role: "user", text: "Hi." })).toEqual([]);
   });

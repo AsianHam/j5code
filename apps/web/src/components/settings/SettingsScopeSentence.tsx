@@ -48,6 +48,8 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/snap-shot",
   "/settings/connections",
   "/settings/people",
+  // J5 (case 72): the licenses are the same for every server, and non-Owners see this page.
+  "/settings/open-source-licenses",
 ]);
 
 interface SettingsScopeMenuProps {

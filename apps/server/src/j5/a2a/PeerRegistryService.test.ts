@@ -346,6 +346,123 @@ it.effect("keeps a known peer's origin unless the caller says to move it", () =>
   }),
 );
 
+it.effect(
+  "changes a peer's address with the credential it holds, once the new one is the same peer",
+  () =>
+    Effect.gen(function* () {
+      const movedOrigin = "https://home-moved.example:9444";
+      const strangerOrigin = "https://stranger.example:3773";
+      const impostorOrigin = "https://impostor.example:3773";
+      const seen: Array<SeenRequest> = [];
+      yield* Effect.gen(function* () {
+        yield* runJ5A2AMigrations();
+        const registry = yield* PeerRegistryService;
+        const sql = yield* SqlClient.SqlClient;
+        const changes = yield* Stream.toPull(yield* registry.subscribeChanges);
+        yield* registry.add({
+          origin: homeOrigin,
+          credential: "home-issued-token",
+          linkMode: "push",
+          replaceOrigin: false,
+          acceptedAt: timestamp,
+        });
+        yield* changes;
+        yield* registry.recordLastError(home, "could not reach Home: ECONNREFUSED");
+        const move = (origin: string) =>
+          registry.changeOrigin({
+            environmentId: home,
+            origin,
+            changedAt: "2026-09-17T00:00:00.000Z",
+          });
+
+        // Nothing answers there, a different server refuses the credential, or one answers as
+        // another environment: each is refused and the record is untouched.
+        const unreachable = yield* Effect.flip(move("https://gone.example"));
+        assert.equal(unreachable._tag, "PeerUnreachableError");
+        const refused = yield* Effect.flip(move(strangerOrigin));
+        assert.equal(refused._tag, "PeerOriginMismatchError");
+        assert.include(refused.message, "refused the credential");
+        const impostor = yield* Effect.flip(move(impostorOrigin));
+        assert.equal(impostor._tag, "PeerOriginMismatchError");
+        assert.include(impostor.message, "environment-impostor");
+        assert.equal((yield* registry.get(home))?.origin, homeOrigin);
+
+        seen.length = 0;
+        const moved = yield* move(movedOrigin);
+        assert.equal(moved.origin, movedOrigin);
+        assert.equal(moved.linkMode, "push");
+        assert.equal(moved.createdAt, timestamp, "the same record, not a new peering");
+        assert.isNull(moved.lastError, "the stale address's error is cleared");
+        assert.deepStrictEqual(
+          seen.map((request) => request.authorization),
+          ["Bearer home-issued-token"],
+          "the new address is proven with the credential already held",
+        );
+        assert.deepStrictEqual(
+          yield* sql<{ readonly credential: string }>`
+          SELECT credential FROM j5_a2a_peer WHERE environment_id = ${home}
+        `,
+          [{ credential: "home-issued-token" }],
+        );
+        yield* changes;
+
+        const unknown = yield* Effect.flip(
+          registry.changeOrigin({
+            environmentId: "environment-x",
+            origin: movedOrigin,
+            changedAt: timestamp,
+          }),
+        );
+        assert.equal(unknown._tag, "PeerNotFoundError");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          makeTestLayer({
+            replies: {
+              [homeOrigin]: homeHello(`peer:${work}`),
+              [movedOrigin]: homeHello(`peer:${work}`),
+              [strangerOrigin]: { status: 401 },
+              [impostorOrigin]: {
+                status: 200,
+                body: {
+                  environmentId: "environment-impostor",
+                  subject: `peer:${work}`,
+                  credentialExpiresAt: homeExpiry,
+                  server: { version: "0.0.0-test" },
+                },
+              },
+            },
+            seen,
+            liveSubjects: [`peer:${home}`],
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect("has no address to change for a peer that polls this server", () =>
+  Effect.gen(function* () {
+    yield* runJ5A2AMigrations();
+    const registry = yield* PeerRegistryService;
+    yield* registry.grantStore({
+      environmentId: home,
+      sessionId: "auth-session:0",
+      issuedAt: timestamp,
+    });
+    assert.isTrue(
+      yield* registry.adoptStorePeer({
+        environmentId: home,
+        sessionId: "auth-session:0",
+        at: timestamp,
+      }),
+    );
+    const refused = yield* Effect.flip(
+      registry.changeOrigin({ environmentId: home, origin: homeOrigin, changedAt: timestamp }),
+    );
+    assert.equal(refused._tag, "PeerWithoutOriginError");
+  }).pipe(Effect.provide(makeTestLayer({ replies: {} }))),
+);
+
 it.effect("keeps the recorded credential when a different server claims the same peer", () =>
   Effect.gen(function* () {
     const impostorOrigin = "https://copy-of-home.example:3773";

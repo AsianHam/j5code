@@ -1,6 +1,7 @@
 import { AuthA2APeerScope, AuthAccessReadScope, AuthAccessWriteScope } from "@t3tools/contracts";
 import {
   AddPeerRequest,
+  ChangePeerOriginRequest,
   IssuePeerCredentialRequest,
   J5_PEER_API_PATHS,
   PEER_PROTOCOL_VERSION,
@@ -9,6 +10,7 @@ import {
   RemovePeerRequest,
   environmentIdFromPeerSubject,
   type AddPeerResponse,
+  type ChangePeerOriginResponse,
   type IssuePeerCredentialResponse,
   type PeerDeliveryResponse,
   type PeerHelloResponse,
@@ -66,6 +68,7 @@ import {
 const decodeIssueRequest = Schema.decodeUnknownEffect(IssuePeerCredentialRequest);
 const decodeAddRequest = Schema.decodeUnknownEffect(AddPeerRequest);
 const decodeRemoveRequest = Schema.decodeUnknownEffect(RemovePeerRequest);
+const decodeChangeOriginRequest = Schema.decodeUnknownEffect(ChangePeerOriginRequest);
 const decodeDeliveryRequest = Schema.decodeUnknownEffect(PeerDeliveryRequest);
 const decodePollRequest = Schema.decodeUnknownEffect(PeerPollRequest);
 
@@ -289,6 +292,28 @@ export const peerHttpRouteLayer = Layer.unwrap(
       }).pipe(Effect.catchTags(respondableTags)),
     );
 
+    const changeOriginRoute = HttpRouter.add(
+      "POST",
+      J5_PEER_API_PATHS.origin,
+      Effect.gen(function* () {
+        yield* annotateEnvironmentRequest("j5.a2a.peer.changeOrigin");
+        const session = yield* authenticate;
+        yield* requireScope(session, AuthAccessWriteScope);
+        const body = yield* readJsonBody;
+        if (Result.isFailure(body)) return requestFailure("The request body must be JSON.");
+        const decoded = yield* Effect.result(decodeChangeOriginRequest(body.success));
+        if (Result.isFailure(decoded)) {
+          return requestFailure(
+            "environmentId and origin (an http(s) origin with no path) are required.",
+          );
+        }
+        const changed = yield* Effect.result(admin.changeOrigin(decoded.success));
+        if (Result.isFailure(changed))
+          return yield* adminFailure("address change", changed.failure);
+        return HttpServerResponse.jsonUnsafe(changed.success satisfies ChangePeerOriginResponse);
+      }).pipe(Effect.catchTags(respondableTags)),
+    );
+
     const deliverRoute = HttpRouter.add(
       "POST",
       J5_PEER_API_PATHS.deliver,
@@ -421,6 +446,7 @@ export const peerHttpRouteLayer = Layer.unwrap(
       addRoute,
       listRoute,
       removeRoute,
+      changeOriginRoute,
       deliverRoute,
     );
   }),

@@ -564,9 +564,10 @@ export function resolveJ5UserMessagePresentation(
 /** The participants a message names, for the timeline's one identity read. */
 export function participantIdsForJ5UserMessage(message: J5UserMessageInput): ReadonlyArray<string> {
   const j5 = presentJ5UserMessage(message);
-  if (j5?.group === "participant" || j5?.group === "other-person") {
-    return j5.senderId === null ? [] : [j5.senderId];
-  }
+  if (j5?.group === "participant") return j5.senderId === null ? [] : [j5.senderId];
+  // A person's reply names them with the name they had when they sent it (People and access
+  // AC47); one that carries only their id is named by the identity read.
+  if (j5?.group === "other-person") return j5.senderName === null ? [j5.senderId] : [];
   if (j5?.group === "notice" && (j5.kind === "crew-gate" || j5.kind === "crew-seats")) {
     return participantIdsForCrewNotice({
       role: message.role,

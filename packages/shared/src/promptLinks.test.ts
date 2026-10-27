@@ -98,7 +98,8 @@ describe("link round trips", () => {
       provider: "claudeAgent",
       model: "opus",
     });
-    const path = promptLinkAppPath(link, new URL(link).origin);
+    expect(new URL(link).origin).toBe("https://j5.codes");
+    const path = promptLinkAppPath(link);
     expect(path).toBe(new URL(link).pathname + new URL(link).search);
     const parsed = parseNewThreadLink(new URL(link).search);
     expect(parsed.ok && parsed.value.kind === "new" && parsed.value.prompt.text).toBe(
@@ -116,7 +117,13 @@ describe("link round trips", () => {
     expect(promptLinkAppPath(`${hosted}/settings/general`, hosted)).toBeNull();
     expect(promptLinkAppPath("https://evil.test/new?prompt=hi")).toBeNull();
     expect(promptLinkAppPath("j5code://app/index.html")).toBeNull();
-    // J5 has no hosted app: T3 Code's scheme and hosted links stay T3 Code's.
+    // J5's https links are j5.codes's; its other pages stay pages.
+    expect(promptLinkAppPath("https://j5.codes/env-1/thread-1?prompt=go")).toBe(
+      "/env-1/thread-1?prompt=go",
+    );
+    expect(promptLinkAppPath("https://j5.codes/whats-new/0-1-3")).toBeNull();
+    expect(promptLinkAppPath("https://j5.codes/download")).toBeNull();
+    // T3 Code's scheme and hosted links stay T3 Code's.
     expect(promptLinkAppPath("t3code://new?prompt=hi")).toBeNull();
     expect(promptLinkAppPath("https://app.t3.codes/new?prompt=hi")).toBeNull();
   });

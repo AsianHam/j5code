@@ -10,6 +10,15 @@ export const config: VercelConfig = {
   // `curl … | sh` needs the installer served as a plain shell script. Caches may
   // keep it for up to five minutes, so a changed installer reaches everyone
   // within five minutes of a deploy.
+  // A thread prompt link, j5.codes/<environment>/<thread>?prompt=…, shows the /new page, which
+  // reads the thread from the address. Vercel serves the site's own pages before any rewrite.
+  rewrites: [
+    {
+      source: "/:environment/:thread",
+      has: [{ type: "query", key: "prompt" }],
+      destination: "/new/index.html",
+    },
+  ],
   headers: [
     {
       source: "/install.sh",

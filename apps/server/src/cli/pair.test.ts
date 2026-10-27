@@ -163,10 +163,16 @@ describe("j5 pair", () => {
           const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-ipv6-test-"));
           yield* persistServerRuntimeState({
             path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
-            state: yield* makePersistedServerRuntimeState({
-              config: { host: "::1", devUrl: undefined },
-              port: Number(new URL(origin).port),
-            }),
+            state: {
+              ...(yield* makePersistedServerRuntimeState({
+                config: { host: "::1", devUrl: undefined },
+                port: Number(new URL(origin).port),
+              })),
+              // J5: `j5 pair` takes the home's lock first (FORK.md case 79). Without an owner id
+              // the record reads as a pre-lock server this test's fake `ps` can't prove gone, so
+              // the CLI would ask it over J5's own route.
+              ownerId: "pair-test-owner",
+            },
           });
           const output = yield* captureStdout(
             // J5: a link names its person (register D36).

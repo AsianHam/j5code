@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   answersWithoutPrefix,
   readAnswersFor,
+  recallableMessages,
   sharedMessageView,
   typedText,
 } from "./sharedTimeline.logic";
@@ -113,5 +114,38 @@ describe("an answer to the agent's question", () => {
     expect(answersWithoutPrefix({ chosen: ["Option B"] }, prefix)).toEqual({
       chosen: ["Option B"],
     });
+  });
+});
+
+describe("up-arrow recall in a shared conversation", () => {
+  const stamped = {
+    id: "message-1",
+    role: "user",
+    text: "[Message from Priya (collaborator)]\n\nShip it.",
+  };
+  const reply = { id: "message-2", role: "assistant", text: "Shipped." };
+  const recall = (overrides: Partial<Parameters<typeof sharedMessageView>[0]>) =>
+    recallableMessages([stamped, reply], () => view(overrides)).map((message) => message.text);
+
+  it("offers nothing of a message whose author has not been read yet", () => {
+    expect(recall({})).toEqual(["Shipped."]);
+  });
+
+  it("offers what this client's person typed while the author is still being read", () => {
+    expect(recall({ typedHere: "Ship it." })).toEqual(["Ship it.", "Shipped."]);
+  });
+
+  it("offers the typed words once the author is read", () => {
+    expect(recall({ author: author(), answeredFor: true })).toEqual(["Ship it.", "Shipped."]);
+  });
+
+  it("offers a message as stored once a read answers that no one is recorded for it", () => {
+    expect(recall({ answeredFor: true })).toEqual([stamped.text, "Shipped."]);
+  });
+
+  it("offers nothing of a person's message the timeline has not drawn", () => {
+    expect(
+      recallableMessages([stamped, reply], () => undefined).map((message) => message.text),
+    ).toEqual(["Shipped."]);
   });
 });

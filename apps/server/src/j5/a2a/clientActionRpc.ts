@@ -8,6 +8,7 @@ import {
   J5_CLIENT_ACTION_WS_METHODS,
   type AddPeerRequest,
   type AnswerHumanExchangeRequest,
+  type ChangePeerOriginRequest,
   type CrewArchiveRequest,
   type CrewProposalPreviewRequest,
   type CrewProposalResolveRequest,
@@ -47,6 +48,7 @@ export const CLIENT_ACTION_RPC_SCOPES = {
   [METHODS.issuePeerCredential]: AuthAccessWriteScope,
   [METHODS.addPeer]: AuthAccessWriteScope,
   [METHODS.removePeer]: AuthAccessWriteScope,
+  [METHODS.changePeerOrigin]: AuthAccessWriteScope,
   [METHODS.listPeerAddresses]: AuthAccessWriteScope,
   [METHODS.probePeer]: AuthAccessWriteScope,
 } as const;
@@ -185,6 +187,8 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
       peers.add(input).pipe(Effect.catch(peerFailure("add"))),
     [METHODS.removePeer]: (input: RemovePeerRequest) =>
       peers.remove(input).pipe(Effect.catch(peerFailure("remove"))),
+    [METHODS.changePeerOrigin]: (input: ChangePeerOriginRequest) =>
+      peers.changeOrigin(input).pipe(Effect.catch(peerFailure("address change"))),
     [METHODS.listPeerAddresses]: () => peers.addresses,
     [METHODS.probePeer]: (input: PeerProbeRequest) => peers.probe(input),
   };
