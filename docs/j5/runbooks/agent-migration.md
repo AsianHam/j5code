@@ -117,7 +117,7 @@ the installed Claude CLI supports the model each thread will run.
    send one trivial message (e.g. "reply READY"). Let it complete.
 3. **Read the carrier's session uuid** from the DB:
    `SELECT json_extract(payload_json,'$.nativeThreadRef.nativeId') FROM
-orchestration_v2_projection_provider_threads WHERE …` — and confirm `nativeConversationHeadRef`
+   orchestration_v2_projection_provider_threads WHERE …` — and confirm `nativeConversationHeadRef`
    is null (a non-null head ref would force `--resume-session-at` at a message uuid the transplant
    lacks).
 4. **Stop the server** — or, on a live server you must not restart (the real dogfood env), use the **model-switch variant**: run the carrier's turn 1 on a cheaper model (Sonnet 5), swap, then dispatch the orientation turn on the target model (Fable 5). The adapter keeps a Claude query alive between turns and only re-spawns the CLI with `--resume` when the model selection changes — so the switch closes the old query and resumes against the swapped file. Proven on all five Stage-1 agents with no restart and nothing killed.
