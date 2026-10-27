@@ -23,6 +23,7 @@ import {
   type CrewPlaybookRef,
   type CrewProposal,
   type CrewProposalSeat,
+  type CreateCrewProposalInput,
 } from "./AgentCrewProposalService.ts";
 import {
   CREW_SEAT_CAP,
@@ -42,6 +43,8 @@ import { crewSeatShapeProblem } from "./crewLimits.ts";
 import { CREW_PROPOSAL_SESSION } from "./crewSeatIds.ts";
 import { A2ALedger } from "./LedgerService.ts";
 import { lifecycleCommandId, lifecycleId } from "./spawnIds.ts";
+import { requestDigest, requestReplayConflict } from "./RequestReplayService.ts";
+import { worktreePathKey } from "./spawnWorkspace.ts";
 import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
 
 /** Hard cap on seats per Crew, initial roster and additions together. */
@@ -232,6 +235,32 @@ const memberSteps = (instance: AgentCrewInstance | null) =>
     seatName: member.seatName,
     playbookStepIds: member.playbookStepIds ?? [],
   }));
+
+type ProposalRequest = Omit<CreateCrewProposalInput, "playbook"> & {
+  readonly playbook?: Pick<CrewPlaybookRef, "name"> | null | undefined;
+};
+
+// Proposal rows preserve original intent across upgrades; human edits go to approvedSeats.
+const proposalRequest = (proposal: ProposalRequest) => ({
+  projectId: proposal.projectId,
+  captainParticipantId: proposal.captainParticipantId,
+  captainThreadId: proposal.captainThreadId,
+  kind: proposal.kind,
+  crewInstanceId: proposal.kind === "addition" ? proposal.crewInstanceId : null,
+  brief: proposal.brief,
+  displayName: proposal.displayName,
+  playbook: proposal.playbook?.name ?? null,
+  seats: proposal.requestedSeats.map(({ personaSwaps: _swaps, workspace, ...seat }) => ({
+    ...seat,
+    steps: seat.steps ?? [],
+    workspace:
+      workspace?.type === "worktree"
+        ? { ...workspace, startFromOrigin: workspace.startFromOrigin ?? false }
+        : workspace?.type === "existing_worktree"
+          ? { ...workspace, worktreePath: worktreePathKey(workspace.worktreePath) }
+          : workspace,
+  })),
+});
 
 export const layer = Layer.effect(
   CrewProposalService,
@@ -587,53 +616,80 @@ export const layer = Layer.effect(
       });
     });
 
+    const replayProposal = Effect.fn("j5.a2a.crewProposal.replay")(function* (
+      original: CrewProposal,
+      request: ProposalRequest,
+    ) {
+      if (requestDigest(proposalRequest(original)) !== requestDigest(proposalRequest(request)))
+        return yield* new CrewProposalRequestError(
+          requestReplayConflict(
+            `proposal ${original.id}${original.crewInstanceId === null ? "" : ` and crew ${original.crewInstanceId}`}`,
+          ),
+        );
+      const instance =
+        original.crewInstanceId === null
+          ? null
+          : yield* crews
+              .read(original.crewInstanceId)
+              .pipe(Effect.mapError(operationError("reading the crew")));
+      return { proposal: original, instance };
+    });
+
     const propose: CrewProposalServiceShape["propose"] = (input) =>
       Effect.gen(function* () {
-        let playbook: { ref: CrewPlaybookRef; definition: PlaybookReadResponse } | null = null;
-        if (input.playbook !== undefined) {
-          const { definitionPath } = yield* playbooks
-            .definitionPathFor(input.playbook.workspaceRoot, input.playbook.name)
-            .pipe(Effect.mapError(playbookRefusal(input.playbook.name, "propose")));
-          const definition = yield* readPlaybook(
-            { name: input.playbook.name, definitionPath },
-            "propose",
-          );
-          playbook = { ref: { name: definition.name, definitionPath }, definition };
-        }
+        const id = lifecycleId({
+          kind: "crew",
+          operation: "proposal",
+          providerSessionId: PROPOSAL_SESSION,
+          requestKey: input.requestKey,
+        });
+        const original = yield* proposals
+          .read(id)
+          .pipe(Effect.mapError(operationError("reading the proposal")));
+        const request = {
+          id,
+          projectId: input.captain.projectId,
+          captainParticipantId: input.captain.participantId,
+          captainThreadId: input.captain.thread.id,
+          crewInstanceId: null,
+          kind: "roster",
+          brief: input.brief,
+          displayName: input.displayName,
+          requestedSeats: input.seats,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+          playbook:
+            input.playbook === undefined
+              ? null
+              : { name: input.playbook.name.replace(/\.yaml$/, "") },
+        } satisfies ProposalRequest;
+        // The optional playbook summary describes fresh validation; replay never reads a changed definition.
+        if (original !== null) return yield* replayProposal(original, request);
+        const playbookRef =
+          input.playbook === undefined
+            ? null
+            : yield* playbooks
+                .definitionPathFor(input.playbook.workspaceRoot, input.playbook.name)
+                .pipe(
+                  Effect.map(({ stem, definitionPath }) => ({ name: stem, definitionPath })),
+                  Effect.mapError(playbookRefusal(input.playbook.name, "propose")),
+                );
+        const definition =
+          playbookRef === null ? null : yield* readPlaybook(playbookRef, "propose");
         const plan = yield* validateSeats(
           input.seats,
           null,
           false,
-          playbook === null ? null : { definition: playbook.definition, existingMembers: [] },
+          definition === null ? null : { definition, existingMembers: [] },
         );
         const proposal = yield* proposals
           .create({
-            id: lifecycleId({
-              kind: "crew",
-              operation: "proposal",
-              providerSessionId: PROPOSAL_SESSION,
-              requestKey: input.requestKey,
-            }),
-            projectId: input.captain.projectId,
-            captainParticipantId: input.captain.participantId,
-            captainThreadId: input.captain.thread.id,
-            crewInstanceId: null,
-            kind: "roster",
-            brief: input.brief,
-            displayName: input.displayName,
+            ...request,
+            playbook: playbookRef,
             requestedSeats: withPersonaSwaps(input.seats, plan.swapsBySeat),
-            createdAt: DateTime.formatIso(yield* DateTime.now),
-            playbook: playbook?.ref ?? null,
           })
           .pipe(Effect.mapError(operationError("recording the proposal")));
-        if (proposal.status !== "open") {
-          const instance =
-            proposal.crewInstanceId === null
-              ? null
-              : yield* crews.read(proposal.crewInstanceId).pipe(Effect.orDie);
-          return { proposal, instance, playbook: playbookOutcome(plan) };
-        }
-        return { proposal, instance: null, playbook: playbookOutcome(plan) };
+        // Concurrent first attempts can both miss the read; the stored row decides which won.
+        return { ...(yield* replayProposal(proposal, request)), playbook: playbookOutcome(plan) };
       });
 
     const requestMember: CrewProposalServiceShape["requestMember"] = (input) =>
@@ -672,15 +728,24 @@ export const layer = Layer.effect(
           providerSessionId: PROPOSAL_SESSION,
           requestKey: input.requestKey,
         });
-        // A replayed request finds its proposal before anything is checked or counted: once its
-        // seat has launched, the name clash and the cap would both refuse the retry otherwise.
+        const request = {
+          id: proposalId,
+          projectId: input.captain.projectId,
+          captainParticipantId: input.captain.participantId,
+          captainThreadId: input.captain.thread.id,
+          crewInstanceId: instance.id,
+          kind: "addition",
+          brief: input.brief ?? instance.brief,
+          displayName: instance.displayName,
+          requestedSeats: [input.seat],
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+          playbook: instance.playbook ?? null,
+        } satisfies CreateCrewProposalInput;
+        // Replays precede mutable catalog, playbook, seat-name and capacity validation.
         const replayed = yield* proposals
           .read(proposalId)
           .pipe(Effect.mapError(operationError("reading the proposal")));
-        if (replayed !== null) {
-          const current = yield* crews.read(instance.id).pipe(Effect.orDie);
-          return { proposal: replayed, instance: current };
-        }
+        if (replayed !== null) return yield* replayProposal(replayed, request);
         const definition = yield* readFollowed(instance.playbook, [input.seat], "crew");
         const plan = yield* validateSeats(
           [input.seat],
@@ -690,19 +755,7 @@ export const layer = Layer.effect(
         );
         const admitted = yield* proposals
           .admit(
-            {
-              id: proposalId,
-              projectId: input.captain.projectId,
-              captainParticipantId: input.captain.participantId,
-              captainThreadId: input.captain.thread.id,
-              crewInstanceId: instance.id,
-              kind: "addition",
-              brief: input.brief ?? instance.brief,
-              displayName: instance.displayName,
-              requestedSeats: withPersonaSwaps([input.seat], plan.swapsBySeat),
-              createdAt: DateTime.formatIso(yield* DateTime.now),
-              playbook: instance.playbook ?? null,
-            },
+            { ...request, requestedSeats: withPersonaSwaps([input.seat], plan.swapsBySeat) },
             { maxSeats: CREW_SEAT_CAP },
           )
           .pipe(Effect.mapError(operationError("recording the proposal")));
@@ -713,15 +766,10 @@ export const layer = Layer.effect(
             admitted.adding,
             "request",
           );
-        if (admitted.proposal.status !== "open") {
-          const current = yield* crews.read(instance.id).pipe(Effect.orDie);
-          return {
-            proposal: admitted.proposal,
-            instance: current,
-            playbook: playbookOutcome(plan),
-          };
-        }
-        return { proposal: admitted.proposal, instance, playbook: playbookOutcome(plan) };
+        return {
+          ...(yield* replayProposal(admitted.proposal, request)),
+          playbook: playbookOutcome(plan),
+        };
       });
 
     /**

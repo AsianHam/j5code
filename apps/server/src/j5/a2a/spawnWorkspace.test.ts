@@ -1,8 +1,10 @@
+import * as SpawnAgentService from "./SpawnAgentService.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type AuthMcpClientAccess,
   ChatAttachmentId,
+  CommandId,
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
@@ -12,6 +14,9 @@ import {
   type OrchestrationV2ThreadProjection,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import { layerMemory } from "../../persistence/Sqlite.ts";
+import * as RequestReplayService from "./RequestReplayService.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -24,12 +29,15 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
+import { SqlError, UnknownError } from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { McpInvocationContext, type McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
 import { OrchestratorMcpService } from "../../mcp/OrchestratorMcpService.ts";
 import type { ThreadLaunchInput } from "../../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
+import { OrchestratorDispatchError } from "../../orchestration-v2/Orchestrator.ts";
 import { createPendingAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ManagedProjectFolders } from "../../project/ManagedProjectFolders.ts";
@@ -163,6 +171,7 @@ const callerThread = (threadId: ThreadId, runtimeMode: RuntimeMode = "full-acces
 
 const spawnHarness = (input: {
   readonly checkout: FakeCheckout;
+  readonly replay?: Layer.Layer<RequestReplayService.RequestReplayService>;
   /** Git as an agent's shell leaves it, served through upstream-style cached refs. */
   readonly liveCheckout?: Ref.Ref<FakeCheckout>;
   /** The durable command log; pass one from an earlier harness to model a restart. */
@@ -171,6 +180,7 @@ const spawnHarness = (input: {
   readonly beforeCreate?: Effect.Effect<void>;
   /** The caller's own permission mode; full access unless a test narrows it. */
   readonly callerRuntimeMode?: RuntimeMode;
+  readonly liveCaller?: Ref.Ref<OrchestrationV2ThreadProjection>;
   /** The agent an earlier attempt of the same request already created, in this mode. */
   readonly existingChildRuntimeMode?: RuntimeMode;
   /** Runs inside each read of the target project, so a test can hold a call before its start. */
@@ -184,6 +194,8 @@ const spawnHarness = (input: {
       input.commands ?? (yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]));
     const launches = yield* Ref.make<ReadonlyArray<ThreadLaunchInput>>([]);
     const failFacts = yield* Ref.make(false);
+    const failCreate = yield* Ref.make(false);
+    const failBrief = yield* Ref.make(false);
     const factProjects = yield* Ref.make<ReadonlyArray<LedgerProjectId>>([]);
     const folderClaims = yield* Ref.make(0);
     const recorded = yield* Ref.make<ReadonlyArray<RecordSpawnFactsInput>>([]);
@@ -241,7 +253,21 @@ const spawnHarness = (input: {
       }),
       Layer.mock(ThreadManagementService)({
         getThreadProjection: (threadId) =>
-          Effect.succeed(callerThread(threadId, input.callerRuntimeMode)),
+          input.liveCaller !== undefined && threadId === invocation.thread.threadId
+            ? Ref.get(input.liveCaller)
+            : Ref.get(commands).pipe(
+                Effect.map((all) => {
+                  const create = all.find(
+                    (command) => command.type === "thread.create" && command.threadId === threadId,
+                  );
+                  return create?.type === "thread.create"
+                    ? {
+                        ...callerThread(threadId),
+                        thread: { ...callerThread(threadId).thread, ...create, id: threadId },
+                      }
+                    : callerThread(threadId, input.callerRuntimeMode);
+                }),
+              ),
         // The caller is mid-run, as upstream's tool access check requires; the child does not
         // exist yet.
         getThreadShell: (threadId) =>
@@ -262,6 +288,22 @@ const spawnHarness = (input: {
                     deletedAt: null,
                   } as never),
           ).pipe(
+            Effect.flatMap((shell) =>
+              input.liveCaller !== undefined && threadId === invocation.thread.threadId
+                ? Ref.get(input.liveCaller).pipe(
+                    Effect.map(
+                      (projection) =>
+                        ({
+                          ...projection.thread,
+                          providerInstanceId: invocation.thread.providerInstanceId,
+                          archivedAt: null,
+                          deletedAt: null,
+                          activeRunId: "run:caller",
+                        }) as never,
+                    ),
+                  )
+                : Effect.succeed(shell),
+            ),
             // A thread this harness has created exists from then on, as a real one does.
             Effect.flatMap((shell) =>
               shell !== null
@@ -275,6 +317,10 @@ const spawnHarness = (input: {
                       return create?.type === "thread.create"
                         ? ({
                             ...callerThread(threadId, create.runtimeMode).thread,
+                            modelSelection: create.modelSelection,
+                            interactionMode: create.interactionMode,
+                            branch: create.branch,
+                            worktreePath: create.worktreePath,
                             archivedAt: null,
                             deletedAt: null,
                           } as never)
@@ -285,6 +331,14 @@ const spawnHarness = (input: {
           ),
         dispatch: (command) =>
           Effect.gen(function* () {
+            if (
+              (command.type === "thread.create" && (yield* Ref.get(failCreate))) ||
+              (command.type === "message.dispatch" && (yield* Ref.get(failBrief)))
+            )
+              return yield* new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+              });
             if (command.type === "thread.create" && input.beforeCreate) yield* input.beforeCreate;
             yield* Ref.update(commands, (items) => [...items, command]);
             yield* Ref.update(log, (items) => [...items, command.type]);
@@ -380,16 +434,17 @@ const spawnHarness = (input: {
       Layer.provideMerge(
         fakeSpawnWorkspaceLayer({
           checkout: input.checkout,
+          ...(input.replay === undefined ? {} : { replay: input.replay }),
           ...(input.liveCheckout === undefined ? {} : { liveCheckout: input.liveCheckout }),
           launches,
           launch: () => Ref.update(log, (items) => [...items, "launch"]),
-          // An accepted create leaves its receipt, as the orchestrator's does.
-          accepted: Ref.get(commands).pipe(
-            Effect.map((all) =>
-              all.flatMap((command) =>
-                command.type === "thread.create" ? [command.commandId] : [],
-              ),
-            ),
+          // An accepted command leaves its receipt, as the orchestrator's does, and a launch its
+          // initial message's, as ThreadLaunch's does.
+          accepted: Effect.all([Ref.get(commands), Ref.get(launches)]).pipe(
+            Effect.map(([all, launched]) => [
+              ...all.map((command) => command.commandId),
+              ...launched.map((launch) => CommandId.make(`${launch.commandId}:initial-message`)),
+            ]),
           ),
         }),
       ),
@@ -407,13 +462,23 @@ const spawnHarness = (input: {
             Effect.provideService(McpInvocationContext, input.scope ?? invocation),
           );
       });
+    const serviceCall = (args: J5SpawnAgentInput) =>
+      Effect.gen(function* () {
+        const service = yield* SpawnAgentService.SpawnAgentService;
+        return yield* service
+          .spawn(args, input.scope ?? invocation)
+          .pipe(Effect.provideService(McpInvocationContext, input.scope ?? invocation));
+      });
     return {
       layer,
       call,
+      serviceCall,
       log,
       commands,
       launches,
       failFacts,
+      failCreate,
+      failBrief,
       factProjects,
       folderClaims,
       recorded,
@@ -431,6 +496,32 @@ const spawnArgs = {
 
 const message = (response: { readonly result: unknown }) =>
   (response.result as { readonly message: string }).message;
+
+it.effect("accepts and replays a direct domain-service spawn", () =>
+  Effect.gen(function* () {
+    const { layer, serviceCall, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+    });
+    yield* Effect.gen(function* () {
+      const args = {
+        ...spawnArgs,
+        workspace: { type: "shared" as const },
+        client_request_id: "domain-service",
+      };
+      const original = yield* serviceCall(args);
+      assert.deepStrictEqual(yield* serviceCall(args), original);
+      const beforeRefusal = yield* Ref.get(commands);
+      const refused = yield* serviceCall({ ...args, brief: "Different work" }).pipe(Effect.flip);
+      assert.include(refused.message, "different request");
+      assert.deepStrictEqual(yield* Ref.get(commands), beforeRefusal);
+      const briefIds = beforeRefusal.flatMap((command) =>
+        command.type === "message.dispatch" ? [command.commandId] : [],
+      );
+      assert.isAbove(briefIds.length, 0);
+      assert.lengthOf([...new Set(briefIds)], 1, "retries keep the same dispatch identity");
+    }).pipe(Effect.provide(layer));
+  }),
+);
 
 it.effect("spawns into another project's main checkout, as a root of that project", () =>
   Effect.gen(function* () {
@@ -890,6 +981,237 @@ it.effect("claims the brief's attachments into the new agent's thread", () =>
   }),
 );
 
+/** A finished pending upload of three bytes, as the attachment tool leaves one. */
+const writePendingUpload = Effect.gen(function* () {
+  const config = yield* ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const attachment = {
+    type: "image" as const,
+    id: ChatAttachmentId.make(createPendingAttachmentId()!),
+    name: "screen.png",
+    mimeType: "image/png",
+    sizeBytes: 3,
+  };
+  const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!;
+  yield* fs.writeFile(path, new Uint8Array([1, 2, 3]));
+  const stored = fs.readDirectory(config.attachmentsDir).pipe(Effect.map((names) => names.length));
+  return { attachment, path, stored };
+});
+
+it.effect.each(["shared", "worktree"] as const)(
+  "replays an accepted %s spawn without claiming its files again, even after the upload is swept",
+  (type) =>
+    Effect.gen(function* () {
+      const { layer, call, commands, launches } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+      });
+      yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const upload = yield* writePendingUpload;
+        const args = {
+          ...spawnArgs,
+          workspace:
+            type === "shared"
+              ? { type: "shared" as const }
+              : { type: "worktree" as const, base_ref: "j5/main" },
+          attachments: [upload.attachment],
+          client_request_id: `accepted-attached-${type}`,
+        };
+        const original = yield* call(args);
+        assert.isFalse(original.isFailure);
+        const briefs = Effect.all([Ref.get(commands), Ref.get(launches)]).pipe(
+          Effect.map(([all, launched]) => [
+            ...all.flatMap((command) =>
+              command.type === "message.dispatch" ? [command.attachments] : [],
+            ),
+            ...launched.map((launch) => launch.initialMessage?.attachments ?? []),
+          ]),
+        );
+        assert.lengthOf((yield* briefs)[0] ?? [], 1, "the first brief carries the claimed copy");
+        const stored = yield* upload.stored;
+
+        const immediate = yield* call(args);
+        assert.deepStrictEqual(immediate.result, original.result);
+        assert.equal(yield* upload.stored, stored, "a replay makes no second copy");
+
+        yield* fs.remove(upload.path);
+        const swept = yield* call(args);
+        assert.isFalse(swept.isFailure, message(swept));
+        assert.deepStrictEqual(swept.result, original.result);
+        assert.equal(yield* upload.stored, stored - 1, "only the swept upload is gone");
+
+        const changed = yield* call({ ...args, brief: "Different work" });
+        assert.isTrue(changed.isFailure);
+        assert.include(message(changed), "different request");
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("claims again on a retry after the brief failed, since only its receipt proves it", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands, failBrief } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+    });
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const upload = yield* writePendingUpload;
+      const args = {
+        ...spawnArgs,
+        workspace: { type: "shared" as const },
+        attachments: [upload.attachment],
+        client_request_id: "partial-attached",
+      };
+      yield* Ref.set(failBrief, true);
+      const failed = yield* call(args);
+      assert.isTrue(failed.isFailure);
+      assert.include(message(failed), "brief did not start");
+      yield* Ref.set(failBrief, false);
+
+      const retried = yield* call(args);
+      assert.isFalse(retried.isFailure, message(retried));
+      const brief = (yield* Ref.get(commands)).find(
+        (command) => command.type === "message.dispatch",
+      );
+      const claimed = brief?.type === "message.dispatch" ? brief.attachments[0] : undefined;
+      assert.notEqual(claimed?.id, upload.attachment.id, "the brief carries a claimed copy");
+      assert.deepEqual(
+        yield* fs.readFile(
+          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment: claimed! })!,
+        ),
+        new Uint8Array([1, 2, 3]),
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect(
+  "refuses invalid attachments before binding, so the same key takes a corrected list",
+  () =>
+    Effect.gen(function* () {
+      const { layer, call, commands } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+      });
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const attachment = {
+          type: "image" as const,
+          id: ChatAttachmentId.make(createPendingAttachmentId()!),
+          name: "screen.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+        };
+        yield* fs.writeFile(
+          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
+          new Uint8Array([1, 2, 3]),
+        );
+        const args = {
+          ...spawnArgs,
+          workspace: { type: "shared" as const },
+          client_request_id: "duplicate-attachments",
+        };
+        const duplicated = yield* call({ ...args, attachments: [attachment, attachment] });
+        assert.isTrue(duplicated.isFailure);
+        assert.include(message(duplicated), "Duplicate attachment ids");
+        assert.lengthOf(yield* Ref.get(commands), 0, "nothing is created");
+
+        const corrected = yield* call({ ...args, attachments: [attachment] });
+        assert.isFalse(corrected.isFailure);
+        const brief = (yield* Ref.get(commands)).find(
+          (command) => command.type === "message.dispatch",
+        );
+        assert.lengthOf(brief?.type === "message.dispatch" ? brief.attachments : [], 1);
+
+        const changed = yield* call(args);
+        assert.isTrue(changed.isFailure);
+        assert.include(message(changed), "different request");
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect.each(["size", "type"] as const)(
+  "refuses incorrect upload %s before binding and accepts a corrected same-key retry",
+  (mismatch) =>
+    Effect.gen(function* () {
+      const { layer, call, commands } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+      });
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const attachment = {
+          type: "image" as const,
+          id: ChatAttachmentId.make(createPendingAttachmentId()!),
+          name: "screen.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+        };
+        yield* fs.writeFile(
+          resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!,
+          new Uint8Array([1, 2, 3]),
+        );
+        const args = {
+          ...spawnArgs,
+          workspace: { type: "shared" as const },
+          client_request_id: `incorrect-upload-${mismatch}`,
+        };
+        const incorrect =
+          mismatch === "size"
+            ? { ...attachment, sizeBytes: 2 }
+            : { ...attachment, mimeType: "image/jpeg" };
+        const refused = yield* call({ ...args, attachments: [incorrect] });
+        assert.isTrue(refused.isFailure);
+        assert.notInclude(message(refused), attachment.name);
+        assert.include(
+          message(refused),
+          mismatch === "size" ? "stored size does not match" : "type does not match",
+        );
+        assert.lengthOf(yield* Ref.get(commands), 0, "nothing is created");
+
+        const corrected = yield* call({ ...args, attachments: [attachment] });
+        assert.isFalse(corrected.isFailure);
+        const brief = (yield* Ref.get(commands)).find(
+          (command) => command.type === "message.dispatch",
+        );
+        assert.lengthOf(brief?.type === "message.dispatch" ? brief.attachments : [], 1);
+        const changed = yield* call({ ...args, attachments: [incorrect] });
+        assert.isTrue(changed.isFailure);
+        assert.include(message(changed), "different request");
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("tells a caller to retry the same key when the replay store cannot be read", () =>
+  Effect.gen(function* () {
+    const unreadable = Effect.fail(
+      new SqlError({ reason: new UnknownError({ cause: new Error("disk I/O error") }) }),
+    );
+    const replay = Layer.succeed(
+      RequestReplayService.RequestReplayService,
+      RequestReplayService.RequestReplayService.of({
+        check: () => unreadable,
+        bind: () => unreadable,
+      }),
+    );
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      replay,
+    });
+    yield* Effect.gen(function* () {
+      const failed = yield* call({
+        ...spawnArgs,
+        workspace: { type: "shared" },
+        client_request_id: "storage-down",
+      });
+      assert.isTrue(failed.isFailure);
+      assert.include(message(failed), "Retry j5_spawn_agent with the same client_request_id");
+      assert.notInclude(message(failed), "Inspect the original target");
+      assert.lengthOf(yield* Ref.get(commands), 0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("spawns into a new worktree from base_ref, keeping home, placement, and result", () =>
   Effect.gen(function* () {
     const { layer, call, log, commands, launches } = yield* spawnHarness({
@@ -960,9 +1282,34 @@ it.effect("an explicit shared workspace keeps the caller's checkout and starts t
   }),
 );
 
+it.effect("records no replay binding for a spawn without client_request_id", () =>
+  Effect.gen(function* () {
+    const unused = Effect.die(new Error("a keyless spawn has no retry key to bind"));
+    const replay = Layer.succeed(
+      RequestReplayService.RequestReplayService,
+      RequestReplayService.RequestReplayService.of({ check: () => unused, bind: () => unused }),
+    );
+    const { layer, call } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      replay,
+    });
+    const spawned = yield* call({ ...spawnArgs, workspace: { type: "shared" } }).pipe(
+      Effect.provide(layer),
+    );
+    assert.isFalse(spawned.isFailure);
+  }),
+);
+
 it.effect("binds a client_request_id to its first workspace type, across a restart", () =>
   Effect.gen(function* () {
-    const first = yield* spawnHarness({ checkout: { isRepo: true, refName: "j5/main" } });
+    const replayContext = yield* Layer.build(
+      RequestReplayService.layer.pipe(Layer.provide(layerMemory)),
+    );
+    const replay = Layer.succeed(
+      RequestReplayService.RequestReplayService,
+      Context.get(replayContext, RequestReplayService.RequestReplayService),
+    );
+    const first = yield* spawnHarness({ checkout: { isRepo: true, refName: "j5/main" }, replay });
     yield* Effect.gen(function* () {
       // The worktree create is accepted, then the spawn stops before its home is recorded.
       yield* Ref.set(first.failFacts, true);
@@ -972,6 +1319,7 @@ it.effect("binds a client_request_id to its first workspace type, across a resta
         client_request_id: "bound",
       });
       assert.isTrue(halfDone.isFailure);
+      assert.include(message(halfDone), "visible orphan");
       assert.lengthOf(yield* Ref.get(first.commands), 1);
     }).pipe(Effect.provide(first.layer));
 
@@ -979,6 +1327,7 @@ it.effect("binds a client_request_id to its first workspace type, across a resta
     const restarted = yield* spawnHarness({
       checkout: { isRepo: true, refName: "j5/main" },
       commands: first.commands,
+      replay,
     });
     yield* Effect.gen(function* () {
       const switched = yield* restarted.call({
@@ -989,14 +1338,21 @@ it.effect("binds a client_request_id to its first workspace type, across a resta
       assert.isTrue(switched.isFailure);
       assert.include(
         (switched.result as { readonly message: string }).message,
-        'already bound to workspace {"type":"worktree"}',
+        "already bound to a different request",
       );
       assert.lengthOf(yield* Ref.get(restarted.commands), 1);
 
-      // Options are not bound: nothing was provisioned yet, so the retry's base takes effect.
-      const resumed = yield* restarted.call({
+      // A changed base is a different request, even before workspace preparation.
+      const changed = yield* restarted.call({
         ...spawnArgs,
         workspace: { type: "worktree", base_ref: "release" },
+        client_request_id: "bound",
+      });
+      assert.isTrue(changed.isFailure);
+      assert.include(message(changed), "different request");
+      const resumed = yield* restarted.call({
+        ...spawnArgs,
+        workspace: { type: "worktree", base_ref: "j5/main" },
         client_request_id: "bound",
       });
       assert.isFalse(resumed.isFailure);
@@ -1006,13 +1362,22 @@ it.effect("binds a client_request_id to its first workspace type, across a resta
       assert.lengthOf(launches, 1);
       assert.equal(
         launches[0]?.workspaceStrategy.type === "worktree" && launches[0].workspaceStrategy.baseRef,
-        "release",
+        "j5/main",
       );
     }).pipe(Effect.provide(restarted.layer));
   }),
 );
 
-it.effect("a second start on one key while the first is in flight is refused, not queued", () =>
+it.effect.each([
+  {
+    mismatched: false,
+    name: "concurrent identical requests retain the in-flight guard and create only one agent",
+  },
+  {
+    mismatched: true,
+    name: "concurrent different requests on one key refuse the loser and create only the winner",
+  },
+])("$name", ({ mismatched }) =>
   Effect.gen(function* () {
     const createsEntered = yield* Ref.make(0);
     const createEntered = yield* Deferred.make<void>();
@@ -1039,7 +1404,11 @@ it.effect("a second start on one key while the first is in flight is refused, no
       // The first start is in flight, stopped inside its create.
       yield* Deferred.await(createEntered);
       const loser = yield* harness
-        .call({ ...spawnArgs, workspace: { type: "shared" }, client_request_id: "raced" })
+        .call({
+          ...spawnArgs,
+          workspace: mismatched ? { type: "shared" } : { type: "worktree", base_ref: "j5/main" },
+          client_request_id: "raced",
+        })
         .pipe(Effect.forkChild);
       // The second start returns while the first still holds its create; without the guard it
       // would reach a create of its own instead, which ends this race the other way.
@@ -1053,7 +1422,7 @@ it.effect("a second start on one key while the first is in flight is refused, no
         assert.isTrue(second.result.isFailure);
         assert.include(
           (second.result.result as { readonly message: string }).message,
-          "already in progress",
+          mismatched ? "different request" : "already in progress",
         );
       }
 
@@ -1182,7 +1551,7 @@ it.effect("spawns into an existing worktree on its branch, with no preparation",
       assert.isTrue(switched.isFailure);
       assert.include(
         (switched.result as { readonly message: string }).message,
-        'already bound to workspace {"type":"existing_worktree"}',
+        "already bound to a different request",
       );
       const elsewhere = yield* call({
         ...spawnArgs,
@@ -1234,5 +1603,331 @@ it.effect("reads git fresh for each spawn that binds a worktree", () =>
       );
       assert.deepStrictEqual(branches, ["fix/login", "fix/signup"]);
     }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect(
+  "retries failures before creation, after creation and after registration without changing the request",
+  () =>
+    Effect.gen(function* () {
+      for (const phase of ["failCreate", "failFacts", "failBrief"] as const) {
+        const harness = yield* spawnHarness({ checkout: { isRepo: false, refName: null } });
+        yield* Effect.gen(function* () {
+          const args = {
+            ...spawnArgs,
+            workspace: { type: "shared" as const },
+            client_request_id: phase,
+          };
+          yield* Ref.set(harness[phase], true);
+          const failed = yield* harness.call(args);
+          assert.isTrue(failed.isFailure);
+          assert.include(
+            message(failed),
+            phase === "failCreate"
+              ? "could not be created"
+              : phase === "failFacts"
+                ? "visible orphan"
+                : "brief did not start",
+          );
+          const before = yield* Ref.get(harness.commands);
+          assert.lengthOf(before, phase === "failCreate" ? 0 : 1);
+          for (const change of [
+            { brief: "changed" },
+            { title: "changed" },
+            { persona: "other" },
+            { model: "changed" },
+            { reasoning: "medium" },
+            { runtime_mode: "approval-required" as const },
+            { interaction_mode: "plan" as const },
+            { project_id: LedgerProjectId.make("other") },
+            { workspace: { type: "root" as const } },
+          ]) {
+            const mismatch = yield* harness.call({ ...args, ...change });
+            assert.isTrue(mismatch.isFailure);
+            assert.include(message(mismatch), "different request");
+            assert.include(message(mismatch), "agent:j5:a2a:");
+            assert.include(message(mismatch), "fresh client_request_id");
+          }
+          assert.deepStrictEqual(yield* Ref.get(harness.commands), before);
+          yield* Ref.set(harness[phase], false);
+          assert.isFalse((yield* harness.call(args)).isFailure);
+          const commands = yield* Ref.get(harness.commands);
+          assert.equal(
+            new Set(
+              commands
+                .filter((command) => command.type === "thread.create")
+                .map((command) => command.threadId),
+            ).size,
+            1,
+          );
+          assert.equal(
+            new Set(
+              commands
+                .filter((command) => command.type === "message.dispatch")
+                .map((command) => command.messageId),
+            ).size,
+            1,
+          );
+        }).pipe(Effect.provide(harness.layer));
+      }
+    }),
+);
+
+it.effect(
+  "normalizes workspace defaults and resumes the child's persisted modes and checkout",
+  () =>
+    Effect.gen(function* () {
+      const liveCaller = yield* Ref.make(
+        callerThread(invocation.thread.threadId, "approval-required"),
+      );
+      const harness = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+        liveCaller,
+      });
+      yield* Effect.gen(function* () {
+        const args = {
+          ...spawnArgs,
+          workspace: { type: "worktree" as const, base_ref: "j5/main" },
+          client_request_id: "same-defaults",
+        };
+        yield* Ref.set(harness.failFacts, true);
+        const failed = yield* harness.call(args);
+        assert.isTrue(failed.isFailure);
+        assert.include(message(failed), "visible orphan");
+        assert.lengthOf(yield* Ref.get(harness.commands), 1);
+        yield* Ref.set(harness.failFacts, false);
+        yield* Ref.set(liveCaller, {
+          ...callerThread(invocation.thread.threadId),
+          thread: {
+            ...callerThread(invocation.thread.threadId).thread,
+            branch: "new-branch",
+            worktreePath: "/new-checkout",
+          },
+        });
+        assert.isFalse(
+          (yield* harness.call({
+            ...args,
+            workspace: { ...args.workspace, start_from_origin: false },
+          })).isFailure,
+        );
+        const launch = (yield* Ref.get(harness.launches))[0];
+        assert.equal(launch?.runtimeMode, "approval-required");
+        const creates = (yield* Ref.get(harness.commands)).filter(
+          (command) => command.type === "thread.create",
+        );
+        assert.equal(creates[0]?.worktreePath, creates[1]?.worktreePath);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it("optional spawn fields reject null rather than treating it as an omitted choice", () => {
+  for (const key of [
+    "persona",
+    "title",
+    "runtime_mode",
+    "interaction_mode",
+    "project_id",
+    "scratch",
+    "attachments",
+  ])
+    assert.isTrue(Exit.isFailure(decodeSpawnInput({ ...spawnArgs, [key]: null })));
+});
+
+it.effect(
+  "a delayed retry re-reads persisted child modes under the start guard and checks its authorization",
+  () =>
+    Effect.gen(function* () {
+      for (const childMode of ["approval-required", "full-access"] as const) {
+        const originalMode = childMode === "full-access" ? "approval-required" : "full-access";
+        const liveCaller = yield* Ref.make(callerThread(invocation.thread.threadId, originalMode));
+        const reads = yield* Ref.make(0);
+        const held = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const harness = yield* spawnHarness({
+          checkout: { isRepo: true, refName: "j5/main" },
+          liveCaller,
+          beforeProjectRead: Ref.getAndUpdate(reads, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 0
+                ? Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release)))
+                : Effect.void,
+            ),
+          ),
+        });
+        yield* Effect.gen(function* () {
+          const args = {
+            ...spawnArgs,
+            scratch: true,
+            workspace: { type: "root" as const },
+            client_request_id: childMode,
+          };
+          const delayed = yield* harness
+            .call(args)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.raceFirst(
+            Deferred.await(held),
+            Fiber.join(delayed).pipe(
+              Effect.flatMap((result) =>
+                Effect.die(
+                  new Error(`Delayed call returned before reaching the gate: ${message(result)}`),
+                ),
+              ),
+            ),
+          );
+          yield* Ref.set(liveCaller, callerThread(invocation.thread.threadId, childMode));
+          yield* Ref.set(harness.failBrief, true);
+          const failed = yield* harness.call(args);
+          assert.isTrue(failed.isFailure);
+          assert.include(message(failed), "brief did not start");
+          assert.lengthOf(yield* Ref.get(harness.commands), 1);
+          yield* Ref.set(harness.failBrief, false);
+          yield* Ref.set(liveCaller, callerThread(invocation.thread.threadId, originalMode));
+          yield* Deferred.succeed(release, undefined);
+          const result = yield* Fiber.join(delayed);
+          assert.equal(result.isFailure, childMode === "full-access");
+          if (result.isFailure) assert.include(message(result), "broader than yours is now");
+          const creates = (yield* Ref.get(harness.commands)).filter(
+            (command) => command.type === "thread.create",
+          );
+          assert.deepStrictEqual(
+            creates.map((command) => command.runtimeMode),
+            childMode === "full-access" ? [childMode] : [childMode, childMode],
+          );
+          assert.deepStrictEqual(
+            creates.map((command) => command.worktreePath),
+            childMode === "full-access" ? [scratchFolder] : [scratchFolder, scratchFolder],
+          );
+          assert.equal(yield* Ref.get(harness.folderClaims), 1);
+        }).pipe(Effect.provide(harness.layer));
+      }
+    }),
+);
+
+it.effect("an outside agent's narrowed approved level still caps an identical replay", () =>
+  Effect.gen(function* () {
+    let access: AuthMcpClientAccess = "full-access";
+    const scope = {
+      ...outsideScope(access),
+      client: {
+        sessionId: "session-1",
+        label: "Outside",
+        get access() {
+          return access;
+        },
+      },
+    };
+    const harness = yield* spawnHarness({ checkout: { isRepo: false, refName: null }, scope });
+    yield* Effect.gen(function* () {
+      const args = {
+        ...spawnArgs,
+        project_id: LedgerProjectId.make(otherProjectId),
+        workspace: { type: "root" as const },
+        client_request_id: "outside-narrowed",
+      };
+      yield* Ref.set(harness.failBrief, true);
+      const failed = yield* harness.call(args);
+      assert.isTrue(failed.isFailure);
+      assert.include(message(failed), "brief did not start");
+      assert.lengthOf(yield* Ref.get(harness.commands), 1);
+      yield* Ref.set(harness.failBrief, false);
+      access = "approval-required";
+      const replay = yield* harness.call(args);
+      assert.isTrue(replay.isFailure);
+      assert.include(message(replay), "broader than yours is now");
+      assert.lengthOf(
+        (yield* Ref.get(harness.commands)).filter((command) => command.type === "message.dispatch"),
+        0,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect.each(["shared", "worktree"] as const)(
+  "refuses a cross-type pre-upgrade %s retry without binding or changing the thread",
+  (type) =>
+    Effect.gen(function* () {
+      const replayContext = yield* Layer.build(
+        RequestReplayService.layer.pipe(Layer.provideMerge(layerMemory)),
+      );
+      const replay = Layer.succeed(
+        RequestReplayService.RequestReplayService,
+        Context.get(replayContext, RequestReplayService.RequestReplayService),
+      );
+      const sql = Context.get(replayContext, SqlClient.SqlClient);
+      const harness = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+        replay,
+      });
+      yield* Effect.gen(function* () {
+        const args = {
+          ...spawnArgs,
+          title: "Original title",
+          workspace:
+            type === "shared"
+              ? { type: "shared" as const }
+              : { type: "worktree" as const, base_ref: "j5/main" },
+          client_request_id: `pre-upgrade-cross-${type}`,
+        };
+        const original = yield* harness.call(args);
+        assert.isFalse(original.isFailure, message(original));
+        // This thread predates request binding, so only its create receipt survives the upgrade.
+        yield* sql`DELETE FROM j5_a2a_request_replay`;
+        const beforeCommands = yield* Ref.get(harness.commands);
+        const beforeLaunches = yield* Ref.get(harness.launches);
+        const threads = yield* ThreadManagementService;
+        const id = (original.result as { readonly thread_id: ThreadId }).thread_id;
+        const beforeThread = yield* threads.getThreadProjection(id);
+        const refused = yield* harness.call({
+          ...args,
+          title: "Must not overwrite",
+          workspace:
+            type === "shared"
+              ? { type: "worktree" as const, base_ref: "j5/main" }
+              : { type: "shared" as const },
+        });
+        assert.isTrue(refused.isFailure);
+        assert.include(message(refused), "already bound to workspace");
+        assert.deepStrictEqual(yield* Ref.get(harness.commands), beforeCommands);
+        assert.deepStrictEqual(yield* Ref.get(harness.launches), beforeLaunches);
+        assert.deepStrictEqual(yield* threads.getThreadProjection(id), beforeThread);
+        assert.lengthOf(yield* sql`SELECT id FROM j5_a2a_request_replay`, 0);
+
+        const corrected = yield* harness.call(args);
+        assert.isFalse(corrected.isFailure, message(corrected));
+        assert.deepStrictEqual(corrected.result, original.result);
+        assert.lengthOf(yield* sql`SELECT id FROM j5_a2a_request_replay`, 1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect("binds the first retry of a pre-upgrade spawn and holds its key to it", () =>
+  Effect.gen(function* () {
+    // The agent exists from before replay binding, so its key has no stored request.
+    const harness = yield* spawnHarness({
+      checkout: { isRepo: false, refName: null },
+      existingChildRuntimeMode: "full-access",
+    });
+    yield* Effect.gen(function* () {
+      const args = {
+        ...spawnArgs,
+        workspace: { type: "shared" as const },
+        client_request_id: "pre-upgrade",
+      };
+      const first = yield* harness.call(args);
+      assert.isFalse(first.isFailure, message(first));
+      const finished = yield* Ref.get(harness.commands);
+      assert.deepStrictEqual(
+        finished.map((command) => command.type),
+        ["thread.create", "message.dispatch"],
+        "the retry finishes the agent as before",
+      );
+
+      const changed = yield* harness.call({ ...args, brief: "Different work" });
+      assert.isTrue(changed.isFailure);
+      assert.include(message(changed), "different request");
+      assert.deepStrictEqual(yield* Ref.get(harness.commands), finished);
+      const again = yield* harness.call(args);
+      assert.deepStrictEqual(again.result, first.result);
+    }).pipe(Effect.provide(harness.layer));
   }),
 );

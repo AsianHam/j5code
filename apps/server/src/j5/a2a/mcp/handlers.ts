@@ -1,46 +1,39 @@
-import {
-  type ChatAttachment,
-  isAgentPersonaReasoningOptionId,
-  type ModelSelection,
-  ProjectId,
-} from "@t3tools/contracts";
+import * as Layer from "effect/Layer";
+import * as SpawnAgentService from "../SpawnAgentService.ts";
+import { stateError, preflightSpawnCaller, resolveCallerMembership } from "../AgentCaller.ts";
+import { type ChatAttachment, ProjectId } from "@t3tools/contracts";
 import { playbookHandlers } from "../../playbooks/mcp.ts";
 import { playbookWorkspaceRoot } from "../../playbooks/workspace.ts";
 import * as Crypto from "effect/Crypto";
-import * as Data from "effect/Data";
+
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 
 import {
   McpInvocationContext,
-  type McpInvocationScope,
   type McpThreadInvocationScope,
   requireThreadScope,
 } from "../../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../../mcp/McpToolAccess.ts";
-import { resolveAttachmentReferences } from "../../../mcp/toolkits/attachment/handlers.ts";
+
 import {
   assertTargetWithinLimits,
   type CallerLimits,
   loadCaller,
 } from "../../../mcp/threadAccess.ts";
-import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
-import { claimPendingAttachments } from "../../../orchestration-v2/AttachmentClaims.ts";
-import { exceededDispatchModeLimit } from "../../../orchestration-v2/DispatchModeLimit.ts";
+
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import {
   ThreadManagementService,
   latestActiveRun,
 } from "../../../orchestration-v2/ThreadManagementService.ts";
-import { ManagedProjectFolders } from "../../../project/ManagedProjectFolders.ts";
+
 import { ProjectService } from "../../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { makeAgentPersonaLibrary } from "../../agents/agentPersonaLibrary.ts";
 import { buildAgentPersonaCatalog } from "../../agents/agentPersonaRouting.ts";
-import { translateAgentPersonaProviderPolicy } from "../../agents/agentPersonaProviderPolicy.ts";
-import { prepareAgentPersonaPeerSpawn } from "../../agents/agentPersonaSpawn.ts";
+
 import { AgentCrewInstanceService } from "../AgentCrewInstanceService.ts";
 import type { ArchiveAgentConsequenceFacts } from "../ArchiveAgentService.ts";
 import {
@@ -67,41 +60,20 @@ import { A2ASendService } from "../SendService.ts";
 import { stopThread } from "../stopThread.ts";
 import { sendClaimingAttachments } from "./attachments.ts";
 import {
-  assertPersonaWithinApprovedLevel,
   outsideAgentCaller,
-  outsideSpawnHasNoCheckout,
-  outsideSpawnNeedsProject,
   sendAsOutsideAgent,
   spawnAndBrief,
   actsAsThreadCaller,
 } from "./outsideAgent.ts";
-import { SpawnCompositionService } from "../SpawnCompositionService.ts";
-import {
-  SpawnWorkspaceService,
-  namedBaseRefs,
-  namedWorktreePaths,
-  resolveSpawnWorkspace,
-  spawnCreateCommandId,
-  spawnThreadCheckout,
-} from "../spawnWorkspace.ts";
-import { ThreadRegistration } from "../ThreadRegistration.ts";
-import {
-  crewSeatRequestKey,
-  lifecycleCommandId,
-  spawnFirstTurnText,
-  spawnHomeCommandId,
-  spawnMessageId,
-  spawnPlacementCommandId,
-  spawnThreadId,
-  spawnTitle,
-  stablePart,
-} from "../spawnIds.ts";
+
+import { spawnWorkspaceFromInput } from "../spawnWorkspace.ts";
+
+import { crewSeatRequestKey, lifecycleCommandId, stablePart } from "../spawnIds.ts";
 import {
   CommCommandId,
   LedgerProjectId,
   type ParticipantDirectoryRow,
   type ParticipantId,
-  outsideAgentParticipantId,
 } from "../contracts.ts";
 import type { ParticipantProvenanceView } from "../placementContracts.ts";
 import {
@@ -110,17 +82,7 @@ import {
   type J5ArchiveCrewFailure,
   type J5McpFailure,
   type J5ProposeCrewInput,
-  spawnWorkspaceFromInput,
 } from "./tools.ts";
-
-class J5AgentToolStateError extends Data.TaggedError("J5AgentToolStateError")<{
-  readonly state: string;
-  readonly nextCommand: string;
-}> {
-  override get message(): string {
-    return `${this.state} ${this.nextCommand}`;
-  }
-}
 
 const failure = (error: unknown): J5McpFailure => ({
   code:
@@ -211,13 +173,6 @@ export const commandIdForRequest = (input: {
   );
 };
 
-type AgentDirectoryRow = ParticipantDirectoryRow & {
-  readonly participant: Extract<ParticipantDirectoryRow["participant"], { readonly kind: "agent" }>;
-};
-
-const stateError = (state: string, nextCommand: string) =>
-  new J5AgentToolStateError({ state, nextCommand });
-
 /**
  * The calling thread's scope, for a handler that has already ruled out an outside agent or is
  * declared `actsAsCaller`. Tools an outside agent is refused use `actsAsThreadCaller`, which names
@@ -226,232 +181,6 @@ const stateError = (state: string, nextCommand: string) =>
 const callerScope = McpInvocationContext.pipe(
   Effect.flatMap((scope) => requireThreadScope(scope, "This tool")),
 );
-
-const resolveCallerMembership = Effect.fn("j5.a2a.mcp.resolveCallerMembership")(function* (
-  scope: McpThreadInvocationScope,
-) {
-  const directory = yield* (yield* A2ASendService)
-    .listParticipants(scope.thread.threadId)
-    .pipe(
-      Effect.mapError((error) =>
-        stateError(
-          `Caller thread ${scope.thread.threadId} has no usable membership in its project: ${error instanceof Error ? error.message : String(error)}.`,
-          "Call j5_list_participants to inspect current membership before retrying.",
-        ),
-      ),
-    );
-  const memberships = directory.filter(
-    (row): row is AgentDirectoryRow =>
-      row.participant.kind === "agent" && row.participant.threadId === scope.thread.threadId,
-  );
-  if (memberships.length === 0) {
-    return yield* stateError(
-      `Caller membership is missing for thread ${scope.thread.threadId}.`,
-      "Call j5_list_participants to inspect current membership before retrying.",
-    );
-  }
-  if (memberships.length !== 1) {
-    return yield* stateError(
-      `Caller membership for thread ${scope.thread.threadId} is ambiguous across projects ${memberships.map((row) => row.projectId).join(", ")}.`,
-      "Call j5_list_participants to inspect current membership before retrying.",
-    );
-  }
-  return memberships[0]!;
-});
-
-const preflightSpawnCaller = Effect.fn("j5.a2a.mcp.preflightSpawnCaller")(function* (
-  scope: McpThreadInvocationScope,
-) {
-  const ledger = yield* A2ALedger;
-  // A thread from before every thread registered at creation registers here, on its first call.
-  const home = yield* (yield* ThreadRegistration)
-    .ensureRegistered(scope.thread.threadId)
-    .pipe(
-      Effect.mapError((error) =>
-        stateError(
-          `Caller thread ${scope.thread.threadId} could not be registered in its project: ${error instanceof Error ? error.message : String(error)}.`,
-          "Retry j5_spawn_agent; if it keeps failing, tell the human.",
-        ),
-      ),
-    );
-  if (home === null) {
-    return yield* stateError(
-      `Caller thread ${scope.thread.threadId} is a Subagent and is not an agent-to-agent participant.`,
-      "Return your result to the agent that started you; it can spawn agents.",
-    );
-  }
-  const project = yield* ledger
-    .readProjectLedger(home.projectId)
-    .pipe(
-      Effect.mapError((error) =>
-        stateError(
-          `Caller thread ${scope.thread.threadId} is registered in project ${home.projectId}, but that project's ledger is unavailable: ${error instanceof Error ? error.message : String(error)}.`,
-          "Tell the human before retrying j5_spawn_agent.",
-        ),
-      ),
-    );
-  const membership = yield* resolveCallerMembership(scope);
-  if (membership.projectId !== home.projectId || membership.participantId !== home.participantId) {
-    return yield* stateError(
-      `Caller thread ${scope.thread.threadId} is registered as ${home.projectId}/${home.participantId}, but its current membership is ${membership.projectId}/${membership.participantId}.`,
-      "Call j5_list_participants to inspect current membership, then ask the human to repair the mismatch before retrying j5_spawn_agent.",
-    );
-  }
-  return { ...membership, project };
-});
-
-const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
-  scope: McpInvocationScope,
-  input: { readonly provider: string; readonly model: string; readonly reasoning: string },
-) {
-  const capabilities = yield* (yield* OrchestratorMcpService)
-    .capabilities(scope)
-    .pipe(
-      Effect.mapError((error) =>
-        stateError(
-          `Provider capabilities are unavailable for j5_spawn_agent: ${error.message}.`,
-          "Call orchestrator_capabilities, choose an available provider, model, and reasoning option, then retry j5_spawn_agent.",
-        ),
-      ),
-    );
-  const provider = capabilities.providers.find(
-    (candidate) => candidate.providerInstanceId === input.provider,
-  );
-  if (provider === undefined) {
-    return yield* stateError(
-      `Provider ${input.provider} is not present in current orchestrator capabilities.`,
-      "Call orchestrator_capabilities and retry j5_spawn_agent with a listed provider.",
-    );
-  }
-  if (provider.constraints.length > 0) {
-    return yield* stateError(
-      `Provider ${input.provider} is currently unavailable: ${provider.constraints.join(" ")}`,
-      "Call orchestrator_capabilities and retry j5_spawn_agent with an unconstrained provider.",
-    );
-  }
-  const model = provider.models.find((candidate) => candidate.id === input.model);
-  if (model === undefined) {
-    return yield* stateError(
-      `Model ${input.model} is not listed for provider ${input.provider}.`,
-      "Call orchestrator_capabilities and retry j5_spawn_agent with a model listed for that provider.",
-    );
-  }
-  const reasoningDescriptor = model.options?.find(
-    (descriptor) => descriptor.type === "select" && isAgentPersonaReasoningOptionId(descriptor.id),
-  );
-  if (reasoningDescriptor === undefined || reasoningDescriptor.type !== "select") {
-    return yield* stateError(
-      `Model ${input.model} on provider ${input.provider} exposes no reasoning options; j5_spawn_agent requires explicit reasoning selection.`,
-      "Call orchestrator_capabilities and choose a model that exposes reasoning options before retrying j5_spawn_agent.",
-    );
-  }
-  if (!reasoningDescriptor.options.some((option) => option.id === input.reasoning)) {
-    return yield* stateError(
-      `Reasoning ${input.reasoning} is not listed for model ${input.model} on provider ${input.provider}.`,
-      `Call orchestrator_capabilities and retry j5_spawn_agent with one of: ${reasoningDescriptor.options.map((option) => option.id).join(", ")}.`,
-    );
-  }
-  return {
-    instanceId: provider.providerInstanceId,
-    model: model.id,
-    options: [{ id: reasoningDescriptor.id, value: input.reasoning }],
-  } satisfies ModelSelection;
-});
-
-/**
- * A Role-ful spawn keeps the explicit provider/model/reasoning pick; the saved agent's declared
- * routes constrain it and its authority policy becomes the child's runtime mode. A child's
- * permissions come from its own saved agent's policy or from the human's approval, never from
- * the parent: J5 carries no parent-child permission ceiling (Jackson, 2026-09-16), because any
- * such guard is one message to a trusting peer away from bypass and every child-creation door
- * would have to enforce it identically.
- */
-const prepareSpawnPersona = Effect.fn("j5.a2a.mcp.prepareSpawnPersona")(function* (
-  input: {
-    readonly persona: string;
-    readonly provider: string;
-    readonly model: string;
-    readonly reasoning: string;
-  },
-  modelSelection: ModelSelection,
-) {
-  const library = yield* makeAgentPersonaLibrary;
-  const providers = yield* (yield* ProviderRegistry).getProviders;
-  const assignment = yield* prepareAgentPersonaPeerSpawn(
-    {
-      personaId: input.persona,
-      provider: providers.find((candidate) => candidate.instanceId === modelSelection.instanceId),
-      instanceId: modelSelection.instanceId,
-      model: input.model,
-      reasoning: input.reasoning,
-    },
-    library,
-  ).pipe(
-    Effect.mapError((error) =>
-      stateError(
-        `Persona ${input.persona} cannot be spawned as requested: ${error.message}`,
-        "Call orchestrator_capabilities, then retry j5_spawn_agent with a provider, model, and reasoning from that persona's declared routes, or omit persona for a plain Peer Agent.",
-      ),
-    ),
-  );
-  const policy = translateAgentPersonaProviderPolicy(
-    assignment.authorityPolicy,
-    assignment.resolvedDriver,
-  );
-  return {
-    assignment,
-    modelSelection: assignment.resolvedModelSelection,
-    runtimeMode: policy.runtimeMode,
-  };
-});
-
-/**
- * The calling thread as a spawner: its home, its project and its checkout. An outside agent has
- * none of these, so `j5_spawn_agent` reads this for a thread caller only.
- */
-const preflightThreadSpawner = Effect.fn("j5.a2a.mcp.preflightThreadSpawner")(function* (
-  scope: McpThreadInvocationScope,
-) {
-  const caller = yield* preflightSpawnCaller(scope);
-  // Only a Captain grows a Crew, and only through the human gate (Bryant, 2026-09-14): a seat
-  // that wants more hands escalates to its Captain; its own helpers are subagents.
-  const membership = yield* (yield* AgentCrewInstanceService)
-    .findMembership(caller.participantId)
-    .pipe(
-      Effect.mapError((error) =>
-        stateError(
-          `Crew membership for ${caller.participantId} cannot be read: ${error.message}.`,
-          "Retry j5_spawn_agent once crew records are readable.",
-        ),
-      ),
-    );
-  if (membership !== null) {
-    return yield* stateError(
-      `Caller ${caller.participantId} is seat ${membership.seatName} of crew ${membership.crewInstanceId}; crew members cannot spawn Peer Agents.`,
-      "Ask your Captain for the seat with j5_send_message, or run the work yourself as a subagent with delegate_task.",
-    );
-  }
-  const parent = yield* (yield* ThreadManagementService)
-    .getThreadProjection(scope.thread.threadId)
-    .pipe(
-      Effect.mapError((error) =>
-        stateError(
-          `Caller thread ${scope.thread.threadId} cannot be read for j5_spawn_agent: ${error.message}.`,
-          "Read the caller thread state and retry j5_spawn_agent after it is available.",
-        ),
-      ),
-    );
-  return {
-    participantId: caller.participantId,
-    // Retry keys are the provider session's, as they were before outside agents could spawn.
-    requestNamespace: scope.thread.providerSessionId,
-    home: {
-      ledgerProject: { id: caller.projectId, title: caller.project.name },
-      thread: parent.thread,
-    },
-    outside: undefined,
-  };
-});
 
 /** Crew requests come from a Peer Agent with a home that is not itself a crew member (R20). */
 const preflightCrewCaptain = Effect.fn("j5.a2a.mcp.preflightCrewCaptain")(function* (
@@ -982,365 +711,12 @@ const handlers = {
     }).pipe(Effect.mapError(failure)),
   ),
   // Declared `writes`, as send and stop are, so an outside agent is admitted and a read-only
-  // client is refused. The handler holds the chosen modes to the caller's limits itself: a
+  // client is refused. The spawn service holds the chosen modes to the caller's limits: a
   // thread's own modes, or the level an outside agent's sign-in was approved at.
   j5_spawn_agent: McpToolAccess.writes((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
-      const crypto = yield* Crypto.Crypto;
-      // An outside agent has no thread, home, project or checkout: it is recorded as the spawner
-      // and the new agent sits at the top level of the project it names.
-      const outside = yield* outsideAgentCaller;
-      const spawner =
-        outside === undefined
-          ? yield* preflightThreadSpawner(yield* callerScope)
-          : {
-              participantId: outsideAgentParticipantId(outside.client.sessionId),
-              // A new sign-in is a new session, so it is a new set of retry keys.
-              requestNamespace: scope.requestNamespace,
-              home: undefined,
-              outside,
-            };
-      const { home } = spawner;
-      const selected = yield* selectSpawnModel(scope, input);
-      const threadManagement = yield* ThreadManagementService;
-      const personaId = input.persona;
-      const persona =
-        personaId === undefined
-          ? undefined
-          : yield* prepareSpawnPersona({ ...input, persona: personaId }, selected);
-      const modelSelection = persona?.modelSelection ?? selected;
-      // A persona's policy sets its permissions. Without one the agent gets the caller's modes,
-      // or the ones the caller chose, which upstream's rule keeps within the caller's own.
-      if (persona !== undefined && input.runtime_mode !== undefined) {
-        return yield* stateError(
-          `Persona ${personaId} sets its own permission mode, so runtime_mode cannot be chosen for it.`,
-          "Retry j5_spawn_agent without runtime_mode, or without persona.",
-        );
-      }
-      const { limits } = yield* loadCaller();
-      // An outside agent's persona is held to its approved level, which a thread caller's is not.
-      if (persona !== undefined && personaId !== undefined && outside !== undefined) {
-        yield* assertPersonaWithinApprovedLevel(outside, personaId, persona.runtimeMode);
-      }
-      // With no mode chosen the agent gets the caller's: its thread's, or its approved level.
-      const runtimeMode =
-        input.runtime_mode ??
-        persona?.runtimeMode ??
-        home?.thread.runtimeMode ??
-        limits.runtimeMode;
-      const interactionMode =
-        input.interaction_mode ?? home?.thread.interactionMode ?? limits.interactionMode;
-      {
-        // Each mode is held to the caller's own only where the caller chose it, so choosing an
-        // interaction mode does not put a persona's permission mode under the ceiling.
-        const exceeded = exceededDispatchModeLimit(limits, {
-          runtimeMode: input.runtime_mode ?? limits.runtimeMode,
-          interactionMode: input.interaction_mode ?? limits.interactionMode,
-        });
-        if (exceeded !== undefined) {
-          return yield* stateError(
-            `The ${exceeded === "runtime" ? `permission mode ${runtimeMode}` : `interaction mode ${interactionMode}`} is broader than your own.`,
-            "Retry j5_spawn_agent with a mode no broader than yours, or omit it to give the agent your own.",
-          );
-        }
-      }
-      const requestKey =
-        input.client_request_id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
-      const stableInput = {
-        providerSessionId: spawner.requestNamespace,
-        requestKey,
-      };
-      const threadId = spawnThreadId(stableInput);
-      const existing = yield* threadManagement
-        .getThreadShell(threadId)
-        .pipe(Effect.orElseSucceed(() => null));
-      const firstAttempt = existing === null;
-      // A retry finishes the agent its first attempt created, in the modes it was created with.
-      // A caller's modes can be narrowed within one provider session, so those are checked
-      // against what the caller may touch now. A persona's agent runs under its own policy,
-      // except for an outside agent, whose approved level caps every agent it starts.
-      if (existing !== null && (persona === undefined || outside !== undefined)) {
-        const exceeded = exceededDispatchModeLimit(limits, existing);
-        if (exceeded !== undefined) {
-          return yield* stateError(
-            `client_request_id ${requestKey} already created an agent whose ${exceeded === "runtime" ? "permission" : "interaction"} mode is broader than yours is now.`,
-            "Ask the user to start that agent, or spawn a new one with a fresh client_request_id.",
-          );
-        }
-      }
-
-      // The project the agent joins: the caller's, another one, or upstream's "No project".
-      if (input.scratch === true && input.project_id !== undefined) {
-        return yield* stateError(
-          "scratch spawns an agent without a project, so it cannot be combined with project_id.",
-          "Retry j5_spawn_agent with one of them.",
-        );
-      }
-      const target =
-        input.scratch === true
-          ? yield* (yield* ManagedProjectFolders).ensureScratchProject.pipe(
-              Effect.map(({ projectId }) => projectId),
-              Effect.mapError((error) =>
-                stateError(
-                  `An agent without a project cannot be spawned here: ${error.message}`,
-                  "Retry j5_spawn_agent with a project_id, or without scratch for your own project.",
-                ),
-              ),
-            )
-          : input.project_id !== undefined
-            ? ProjectId.make(input.project_id)
-            : home === undefined
-              ? yield* outsideSpawnNeedsProject
-              : home.thread.projectId;
-      // The spawner's own project and checkout, when the agent joins that project.
-      const own = home !== undefined && target === home.thread.projectId ? home : undefined;
-      const elsewhere = own === undefined;
-      const targetProject =
-        own !== undefined
-          ? own.ledgerProject
-          : yield* (yield* ProjectService).getById(target).pipe(
-              Effect.mapError((error) =>
-                stateError(
-                  `Project ${target} cannot be read now: ${error.message}.`,
-                  "Retry j5_spawn_agent.",
-                ),
-              ),
-              Effect.flatMap(
-                Option.match({
-                  onNone: () =>
-                    Effect.fail(
-                      stateError(
-                        `This server has no project ${target}.`,
-                        "Call t3_project_list and retry j5_spawn_agent with one of its project ids.",
-                      ),
-                    ),
-                  onSome: (project) =>
-                    Effect.succeed({ id: LedgerProjectId.make(project.id), title: project.title }),
-                }),
-              ),
-            );
-      if (input.scratch === true && input.workspace.type !== "root") {
-        return yield* stateError(
-          "An agent without a project works in a folder of its own, not in a checkout or a worktree.",
-          'Retry j5_spawn_agent with workspace {"type":"root"}.',
-        );
-      }
-      if (home === undefined && input.workspace.type === "shared") {
-        return yield* outsideSpawnHasNoCheckout;
-      }
-      if (elsewhere && input.workspace.type === "shared") {
-        return yield* stateError(
-          `Your own checkout belongs to your project, and this agent joins project ${target}.`,
-          'Retry j5_spawn_agent with workspace {"type":"root"} for that project\'s main checkout, or a worktree of it.',
-        );
-      }
-      const spawnWorkspace = yield* SpawnWorkspaceService;
-      // The project's main checkout binds nothing, so it travels as the shared type with no
-      // checkout to share: one create command, and nothing asked of git.
-      const choice =
-        input.workspace.type === "root"
-          ? ({ type: "shared" } as const)
-          : spawnWorkspaceFromInput(input.workspace);
-      // A replay must not refuse the branch its own first attempt created, so a named branch is
-      // checked for only before the thread exists.
-      const checkBranches =
-        choice.type === "worktree" && choice.branch !== undefined && firstAttempt;
-      // Sharing a checkout asks nothing of git.
-      const checkout =
-        choice.type === "shared"
-          ? null
-          : yield* spawnWorkspace.inspect({
-              projectId: target,
-              worktreePath: own?.thread.worktreePath ?? null,
-              checkBranches,
-              baseRefs: namedBaseRefs([choice]),
-              existingWorktreePaths: namedWorktreePaths([choice]),
-            });
-      const workspace = yield* Effect.fromResult(
-        checkout === null
-          ? Result.succeed({ type: "shared" } as const)
-          : resolveSpawnWorkspace(checkout, choice),
-      ).pipe(
-        Effect.mapError((error) =>
-          stateError(`Peer Agent was not created: ${error.detail}`, error.nextStep),
-        ),
-      );
-      return yield* spawnWorkspace
-        .withSpawnStart(
-          { stableInput, threadId, workspace },
-          Effect.gen(function* () {
-            // What a shared-type thread binds: the caller's checkout, or the project's main one.
-            // As upstream's launch does, a main-checkout thread asks for a folder of its own, and
-            // gets one only in the "No project" project. It is claimed here, inside the start
-            // that only one call at a time may run, and only before the thread exists; a replay
-            // replays its create. The thread is looked for again now that this call holds the
-            // start: an earlier attempt may have created it since the read above.
-            const created =
-              input.workspace.type === "root" &&
-              (yield* threadManagement
-                .getThreadShell(threadId)
-                .pipe(Effect.orElseSucceed(() => null))) !== null;
-            const sharedCheckout =
-              input.workspace.type !== "root" && home !== undefined
-                ? home.thread
-                : {
-                    branch: null,
-                    worktreePath: created
-                      ? null
-                      : Option.getOrNull(
-                          yield* (yield* ManagedProjectFolders)
-                            .folderForThread({ projectId: target, threadId, text: input.brief })
-                            .pipe(
-                              Effect.mapError((error) =>
-                                stateError(
-                                  `A folder for the agent could not be made: ${error.message}`,
-                                  "Retry j5_spawn_agent with the same client_request_id.",
-                                ),
-                              ),
-                            ),
-                        ),
-                  };
-            yield* threadManagement
-              .dispatch({
-                type: "thread.create",
-                createdBy: "agent",
-                creationSource: "mcp",
-                commandId: spawnCreateCommandId(stableInput, workspace.type),
-                threadId,
-                projectId: target,
-                title: spawnTitle(input.title),
-                modelSelection,
-                runtimeMode,
-                interactionMode,
-                ...(persona === undefined ? {} : { agentPersonaAssignment: persona.assignment }),
-                ...spawnThreadCheckout(workspace, sharedCheckout),
-              })
-              .pipe(
-                Effect.mapError((error) =>
-                  stateError(
-                    `Peer Agent thread ${threadId} could not be created: ${error.message}.`,
-                    error._tag === "OrchestratorCommandPreviouslyRejectedError"
-                      ? "Inspect the rejection, correct the request, and retry j5_spawn_agent with a fresh client_request_id; the rejected key is permanently bound."
-                      : "Inspect the caller thread and provider state, then retry j5_spawn_agent with the same client_request_id.",
-                  ),
-                ),
-              );
-            const child = yield* threadManagement
-              .getThreadProjection(threadId)
-              .pipe(
-                Effect.mapError((error) =>
-                  stateError(
-                    `Created Peer Agent thread ${threadId} is not readable: ${error.message}.`,
-                    "Retry j5_spawn_agent with the same client_request_id so registration can continue safely.",
-                  ),
-                ),
-              );
-            const facts = yield* (yield* SpawnCompositionService)
-              .recordFacts({
-                homeCommandId: spawnHomeCommandId(stableInput),
-                placementCommandId: spawnPlacementCommandId(stableInput),
-                projectId: targetProject.id,
-                threadId,
-                provenance: {
-                  kind: "spawned-by",
-                  spawnedByParticipantId: spawner.participantId,
-                  source: "j5_spawn",
-                },
-                ...(outside === undefined ? {} : { outsideSpawnerName: outside.client.label }),
-                createdAt: DateTime.formatIso(child.thread.createdAt),
-              })
-              .pipe(
-                Effect.mapError((error) =>
-                  stateError(
-                    `Peer Agent thread ${threadId} exists as a visible orphan without committed home/placement facts or a started brief: ${error.message}.`,
-                    "Retry j5_spawn_agent with the same client_request_id only after repairing transient state; otherwise ask the human operator to retire or repair the orphan after A9 lifecycle support lands.",
-                  ),
-                ),
-              );
-            // In the spawner's own project the agent sits under it; in another it is a root, as
-            // is every agent an outside agent starts.
-            if (
-              facts.placement.provenance.kind !== "spawned-by" ||
-              facts.placement.provenance.source !== "j5_spawn" ||
-              (facts.placement.placementParentId === null) !== elsewhere
-            ) {
-              return yield* stateError(
-                `Peer Agent ${facts.home.participantId} committed placement facts that do not satisfy the J5 spawn contract.`,
-                "Call j5_list_participants to inspect committed placement truth and ask the human operator to repair the inconsistent record.",
-              );
-            }
-            // The brief's files are claimed into the new thread, which now exists.
-            const attachments =
-              input.attachments === undefined
-                ? []
-                : (yield* resolveAttachmentReferences(input.attachments, []).pipe(
-                    Effect.flatMap((references) =>
-                      claimPendingAttachments({ threadId, attachments: references }),
-                    ),
-                    Effect.mapError((error) =>
-                      stateError(
-                        `Peer Agent ${facts.home.participantId} is registered and addressable, but its brief's attachments could not be claimed: ${error.message}`,
-                        "Retry j5_spawn_agent with the same client_request_id and attachments that are pending uploads.",
-                      ),
-                    ),
-                  )).attachments;
-            yield* spawnWorkspace
-              .startBrief({
-                workspace,
-                stableInput,
-                ledgerProjectId: facts.home.projectId,
-                projectId: target,
-                threadId,
-                title: spawnTitle(input.title),
-                messageId: spawnMessageId(stableInput),
-                text: spawnFirstTurnText({
-                  brief: input.brief,
-                  participantId: facts.home.participantId,
-                  projectId: facts.home.projectId,
-                  projectTitle: targetProject.title,
-                  spawnedByParticipantId: spawner.participantId,
-                  ...(outside === undefined
-                    ? { spawnerThreadId: scope.thread?.threadId }
-                    : { outsideAgentName: outside.client.label }),
-                }),
-                modelSelection,
-                runtimeMode,
-                interactionMode,
-                attachments,
-              })
-              .pipe(
-                Effect.mapError((error) =>
-                  stateError(
-                    `Peer Agent ${facts.home.participantId} is registered and addressable, but its brief did not start: ${error.message}.`,
-                    "Retry j5_spawn_agent with the same client_request_id to start the same brief safely.",
-                  ),
-                ),
-              );
-            return {
-              participant_id: facts.home.participantId,
-              thread_id: threadId,
-              project_id: facts.home.projectId,
-              project_title: targetProject.title,
-              placement: {
-                placement_parent_id: facts.placement.placementParentId,
-                provenance: {
-                  kind: "spawned-by" as const,
-                  spawned_by_participant_id: facts.placement.provenance.spawnedByParticipantId,
-                  source: facts.placement.provenance.source,
-                },
-              },
-            };
-          }),
-        )
-        .pipe(
-          Effect.catchTags({
-            SpawnWorkspaceError: (error) =>
-              Effect.fail(
-                stateError(`Peer Agent was not created: ${error.detail}`, error.nextStep),
-              ),
-          }),
-        );
+      return yield* (yield* SpawnAgentService.SpawnAgentService).spawn(input, scope);
     }).pipe(Effect.mapError(failure)),
   ),
   j5_propose_crew: actsAsThreadCaller(
@@ -1641,4 +1017,6 @@ const handlers = {
 export const layer = McpToolAccess.toLayer(J5Toolkit, handlers);
 
 /** The same handlers as a plain layer, for tests that call a tool without registering it. */
-export const J5ToolkitHandlersLive = McpToolAccess.HandlersLayer.layer(layer);
+export const J5ToolkitHandlersLive = McpToolAccess.HandlersLayer.layer(layer).pipe(
+  Layer.provideMerge(SpawnAgentService.layer),
+);
