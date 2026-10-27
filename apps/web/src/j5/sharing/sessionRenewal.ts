@@ -13,10 +13,11 @@ import { resolvePrimaryEnvironmentHttpUrl } from "../../environments/primary/tar
 export type PrimarySessionRenewal = "renewed" | "live" | "refused" | "unknown";
 
 /** Asks the primary server to renew this browser's session (People and access AC17). */
-export async function renewPrimarySession(): Promise<PrimarySessionRenewal> {
+export async function renewPrimarySession(signal?: AbortSignal): Promise<PrimarySessionRenewal> {
   try {
     const response = await fetch(resolvePrimaryEnvironmentHttpUrl(J5_SESSION_RENEW_PATH), {
       method: "POST",
+      ...(signal === undefined ? {} : { signal }),
       credentials: "include",
     });
     if (response.status === 401) return "refused";
