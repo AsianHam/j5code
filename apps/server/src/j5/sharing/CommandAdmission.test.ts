@@ -21,10 +21,12 @@ const admitted = Effect.fn("test.admitted")(function* (
   sent: OrchestrationV2Command,
 ) {
   const admission = yield* makeCommandAdmission(() => Effect.void, session as never);
-  return yield* admission.admit(sent).pipe(
-    Effect.as("admitted"),
-    Effect.catch((error) => Effect.succeed(`refused: ${error.message}`)),
-  );
+  return yield* admission
+    .dispatchCommand(sent, () => Effect.void)
+    .pipe(
+      Effect.as("admitted"),
+      Effect.catch((error) => Effect.succeed(`refused: ${error.message}`)),
+    );
 });
 
 const deviceOf = Effect.fn("test.deviceOf")(function* (

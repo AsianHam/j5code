@@ -68,16 +68,32 @@ const message = (threadId: ThreadId, text: string, extra: Record<string, unknown
   } as unknown as OrchestrationV2Command & { readonly type: "message.dispatch" };
 };
 
+/** Upstream taking a command; an edit leaves the queued run's message holding its text. */
+const upstreamTakes = Effect.fn("test.upstreamTakes")(function* (command: OrchestrationV2Command) {
+  if (command.type !== "queued-run.edit") return command;
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    UPDATE orchestration_v2_projection_messages
+    SET payload_json = json_set(payload_json, '$.text', ${command.text})
+    WHERE message_id = (
+      SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
+      WHERE run_id = ${command.runId}
+    )
+  `;
+  return command as OrchestrationV2Command;
+});
+
 /**
  * A person's command as upstream would be handed it. A message is then taken in the way
- * upstream records it, with a run in the state given; `null` records no run.
+ * upstream records it, with a run in the state given; `null` records no run. An edit is taken
+ * as upstream takes one of a queued run.
  */
 const send = Effect.fn("test.send")(function* (
   personId: ParticipantId,
   command: OrchestrationV2Command,
   run: "completed" | "queued" | null = "completed",
 ) {
-  const admitted = yield* (yield* SharedConversation).admit(personId, command);
+  const admitted = yield* (yield* SharedConversation).dispatch(personId, command, upstreamTakes);
   if (admitted.type === "message.dispatch") {
     yield* taken(admitted.threadId, admitted.messageId, run, admitted.text);
   }
@@ -157,7 +173,10 @@ it.effect("a thread only one person can write to is untouched and records nothin
     // A Viewer does not make a thread shared: they cannot write to it.
     yield* personWith("Sam", onThread(alone, "viewer"));
     const command = message(alone, "Run the tests.");
-    assert.strictEqual(yield* (yield* SharedConversation).admit(owner, command), command);
+    assert.strictEqual(
+      yield* (yield* SharedConversation).dispatch(owner, command, Effect.succeed),
+      command,
+    );
     assert.deepStrictEqual(yield* authors(alone), { shared: false, authors: [], answers: [] });
   }).pipe(Effect.provide(conversationLayer)),
 );
@@ -405,19 +424,18 @@ it.effect(
       const command = message(source, "/goal ship the migration");
       yield* say(priya, command, "queued");
       yield* edit(command.messageId, "/goal ship it");
-      // Edited after its run started, so upstream refuses the edit and the stored text is Priya's.
-      const refused = message(source, "Keep the migration step.");
-      yield* say(priya, refused, "queued");
-      yield* edit(refused.messageId, "Drop the migration step.");
+      // Its stored text no longer begins with the prefix Priya's record names.
+      const rewritten = message(source, "Keep the migration step.");
+      yield* say(priya, rewritten, "queued");
+      yield* sql`
+      UPDATE orchestration_v2_projection_messages
+      SET payload_json = json_set(payload_json, '$.text', 'Drop the migration step.')
+      WHERE message_id = ${rewritten.messageId}
+    `;
       // Edited while still queued, so the stored text names Alice.
       const accepted = message(source, "Ship Friday.");
       yield* say(priya, accepted, "queued");
       const stored = yield* edit(accepted.messageId, "Ship Monday.");
-      yield* sql`
-      UPDATE orchestration_v2_projection_messages
-      SET payload_json = json_set(payload_json, '$.text', ${stored})
-      WHERE message_id = ${accepted.messageId}
-    `;
       const fork = yield* thread("thread:fork-editor", PROJECT, {
         parent: source,
         relationship: "fork",
@@ -462,7 +480,7 @@ it.effect(
         serverRead.authors.map((entry) => [entry.messageId, entry.editedBy]),
         [
           [command.messageId, "Alice"],
-          [refused.messageId, "Alice"],
+          [rewritten.messageId, null],
           [accepted.messageId, "Alice"],
         ],
       );
@@ -542,7 +560,7 @@ it.effect("only the platform sends a context record of its own kind (AC8)", () =
     const forged = message(threadId, "Hi.", {
       context: { version: 1, records: [{ kind: "j5-shared-note", version: 1 }] },
     });
-    const outcome = yield* (yield* SharedConversation).admit(owner, forged).pipe(
+    const outcome = yield* (yield* SharedConversation).dispatch(owner, forged, Effect.succeed).pipe(
       Effect.flip,
       Effect.map((error) => error.message),
     );
@@ -659,7 +677,7 @@ it.effect("a message id is its sender's own: someone else's is refused, and thei
     // The owner sends with her message's id, or with one from before the thread was shared.
     for (const messageId of [hers.messageId, "message:before-sharing"]) {
       const refusal = yield* conversation
-        .admit(owner, message(threadId, "Do not ship it.", { messageId }))
+        .dispatch(owner, message(threadId, "Do not ship it.", { messageId }), Effect.succeed)
         .pipe(Effect.flip);
       assert.strictEqual(refusal.message, "This message was already sent.");
     }
@@ -668,7 +686,7 @@ it.effect("a message id is its sender's own: someone else's is refused, and thei
     `;
     assert.deepStrictEqual(recorded, [{ person_id: priya, message_id: hers.messageId }]);
     // Her own retry of the same send goes on.
-    const retried = yield* conversation.admit(priya, hers);
+    const retried = yield* conversation.dispatch(priya, hers, Effect.succeed);
     assert.strictEqual(retried.type, "message.dispatch");
   }).pipe(Effect.provide(conversationLayer)),
 );
@@ -774,12 +792,16 @@ it.effect(
         threadId: "thread:empty-launch" as ThreadId,
         projectId: PROJECT,
       } as unknown as OrchestrationV2ThreadLaunchInput);
-      yield* conversation.admit(owner, {
-        type: "thread.create",
-        commandId: CommandId.make("command:create"),
-        threadId: "thread:created" as ThreadId,
-        projectId: PROJECT,
-      } as unknown as OrchestrationV2Command);
+      yield* conversation.dispatch(
+        owner,
+        {
+          type: "thread.create",
+          commandId: CommandId.make("command:create"),
+          threadId: "thread:created" as ThreadId,
+          projectId: PROJECT,
+        } as unknown as OrchestrationV2Command,
+        Effect.succeed,
+      );
       const recorded = yield* sql<{ readonly thread_id: string }>`
       SELECT thread_id FROM j5_a2a_shared_thread
       WHERE thread_id IN ('thread:empty-launch', 'thread:created')
@@ -850,7 +872,7 @@ it.effect("a note steered into a running turn has not told the agent, so the nex
     // The first shared message is steered into that turn: upstream records it against the
     // running run, which has started, while the provider may refuse the steer every time.
     const steered = message(threadId, "Stop and check the tests.");
-    const admitted = yield* (yield* SharedConversation).admit(owner, steered);
+    const admitted = yield* (yield* SharedConversation).dispatch(owner, steered, Effect.succeed);
     assert.isTrue(hasNote((admitted as { readonly text: string }).text));
     yield* sql`
       INSERT INTO orchestration_v2_projection_messages (

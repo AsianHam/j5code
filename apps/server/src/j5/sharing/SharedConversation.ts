@@ -126,23 +126,35 @@ export const PROMPT_SETTLED_EVENT =
 
 const QUEUED = "queued" satisfies OrchestrationV2Run["status"];
 
+/** A command as it goes on to upstream, and what is written once upstream takes it. */
+interface Admitted {
+  readonly command: OrchestrationV2Command;
+  readonly accepted: Effect.Effect<void, SqlError.SqlError>;
+}
+
+const admitted = (command: OrchestrationV2Command): Admitted => ({
+  command,
+  accepted: Effect.void,
+});
+
 export interface SharedConversationShape {
   /**
-   * A client's command as it goes on to upstream, after `CommandAdmission` has checked that its
-   * sender may send it. `personId` is the person on the connection; `null` for a service session,
-   * whose commands are not a person's. A message for a shared conversation gains its author's line
-   * and any note due; an edit of one keeps its author's; an answer to a question carries who gave
-   * it. Who is answering a prompt is written down. A command carrying a context record of the
-   * platform's own kind is refused (AC8).
+   * A client's command taken in and handed to upstream's `dispatch`, after `CommandAdmission` has
+   * checked that its sender may send it. `personId` is the person on the connection; `null` for a
+   * service session, whose commands are not a person's. A message for a shared conversation gains
+   * its author's line and any note due; an edit of one keeps its author's; an answer to a question
+   * carries who gave it. Who is answering a prompt is written down. A command carrying a context
+   * record of the platform's own kind is refused (AC8).
    */
-  readonly admit: (
+  readonly dispatch: <A, E, R>(
     personId: ParticipantId | null,
     command: OrchestrationV2Command,
-  ) => Effect.Effect<OrchestrationV2Command, EnvironmentAuthorizationError>;
+    dispatch: (command: OrchestrationV2Command) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | EnvironmentAuthorizationError, R>;
   /**
    * A client's request to start a thread, as it goes on to upstream. A new thread's first message
    * does not come as a command: upstream's launch sends it itself, so it is taken in here as
-   * `admit` takes in a message. A thread born under a scope that is already shared is a shared
+   * `dispatch` takes in a message. A thread born under a scope that is already shared is a shared
    * conversation from its first message.
    */
   readonly admitLaunch: (
@@ -315,7 +327,10 @@ const make = Effect.gen(function* () {
    * typed and carries nothing; edited out of one, it is stamped as a new message would be. A
    * message no person is recorded for is stamped too, so an edit never reaches the agent with no
    * line: under the first owner when they typed it before the thread was shared, else as the
-   * editor's own words.
+   * editor's own words. The record is written only once upstream takes the edit, and only while the
+   * stored text is still the text this edit wrote: upstream refuses an edit whose run has started,
+   * replays a retried command's receipt without writing again, and may take another edit between
+   * this one's commit and its record. In each case the message keeps the record its text carries.
    */
   const stampEdit = Effect.fn("j5.sharing.sharedConversation.stampEdit")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.edit" }>,
@@ -323,7 +338,7 @@ const make = Effect.gen(function* () {
   ) {
     const messageId = yield* queuedMessageId(command.threadId, command.runId);
     // Not a queued run of this thread: upstream refuses the edit.
-    if (messageId === null) return command;
+    if (messageId === null) return admitted(command);
     const recorded = yield* messageAuthor(command.threadId, messageId);
     const original =
       recorded !== null
@@ -359,23 +374,26 @@ const make = Effect.gen(function* () {
       recorded !== null && (yield* isScheduledRun(messageId)) ? scheduledLine : authorLine;
     const prefix = beginsWithSlash(typed) ? "" : prefixOf(carried.note, line(author, editedBy));
     const createdAt = DateTime.formatIso(yield* DateTime.now);
-    yield* sql`
+    const text = `${prefix}${typed}`;
+    // Checked in the same statement as the write, so no edit can land between the check and it.
+    const record = sql`
       INSERT INTO j5_a2a_message_author (
         thread_id, message_id, person_id, display_name, level, edited_by, note, told_json,
         stored_prefix, created_at
-      ) VALUES (
-        ${command.threadId}, ${messageId}, ${author.personId}, ${author.displayName},
+      )
+      SELECT ${command.threadId}, ${messageId}, ${author.personId}, ${author.displayName},
         ${author.level}, ${editedBy === null ? null : editorName(editedBy)}, ${carried.note},
         ${carried.told}, ${prefix}, ${createdAt}
-      )
+      FROM orchestration_v2_projection_messages
+      WHERE message_id = ${messageId} AND thread_id = ${command.threadId}
+        AND json_extract(payload_json, '$.text') = ${text}
       ON CONFLICT (thread_id, message_id) DO UPDATE SET
         stored_prefix = excluded.stored_prefix,
         note = excluded.note,
         told_json = excluded.told_json,
         edited_by = excluded.edited_by
-    `;
-    yield* touch(command.threadId);
-    return { ...command, text: `${prefix}${typed}` };
+    `.pipe(Effect.andThen(touch(command.threadId)), Effect.asVoid);
+    return { command: { ...command, text }, accepted: record };
   });
 
   /**
@@ -433,12 +451,12 @@ const make = Effect.gen(function* () {
       case "thread.create": {
         // A thread started under a scope already shared is shared from its start (AC6).
         yield* shared.isShared(command.threadId, command.projectId);
-        return command;
+        return admitted(command);
       }
       case "message.dispatch": {
-        if (!(yield* shared.isShared(command.threadId))) return command;
+        if (!(yield* shared.isShared(command.threadId))) return admitted(command);
         const author = yield* authorOn(personId, command.threadId);
-        if (author === null) return command;
+        if (author === null) return admitted(command);
         const text = yield* stampMessage(
           command.threadId,
           command.messageId,
@@ -446,24 +464,24 @@ const make = Effect.gen(function* () {
           author,
           null,
         );
-        return { ...command, text };
+        return admitted({ ...command, text });
       }
       case "queued-run.edit": {
-        if (!(yield* shared.isShared(command.threadId))) return command;
+        if (!(yield* shared.isShared(command.threadId))) return admitted(command);
         const editor = yield* authorOn(personId, command.threadId);
-        return editor === null ? command : yield* stampEdit(command, editor);
+        return editor === null ? admitted(command) : yield* stampEdit(command, editor);
       }
       case "runtime-request.respond": {
         // An answer in words says whose it is, as a message does; an approval carries no words.
-        if (command.answers === undefined) return command;
-        if (!(yield* shared.isShared(command.threadId))) return command;
+        if (command.answers === undefined) return admitted(command);
+        if (!(yield* shared.isShared(command.threadId))) return admitted(command);
         const author = yield* authorOn(personId, command.threadId);
-        return author === null
-          ? command
-          : { ...command, answers: answersFrom(command.answers, author) };
+        return admitted(
+          author === null ? command : { ...command, answers: answersFrom(command.answers, author) },
+        );
       }
       default:
-        return command;
+        return admitted(command);
     }
   });
 
@@ -475,7 +493,11 @@ const make = Effect.gen(function* () {
           cause,
         }).pipe(Effect.andThen(Effect.fail(notAdmitted)));
 
-  const admit: SharedConversationShape["admit"] = (personId, command) =>
+  // Upstream has already taken the edit, so a failure to record it is logged and does not undo it.
+  const notRecorded = (cause: unknown) =>
+    Effect.logError("J5 shared conversation could not record a queued message's edit", { cause });
+
+  const dispatch: SharedConversationShape["dispatch"] = (personId, command, dispatchUpstream) =>
     Effect.gen(function* () {
       if (
         (command.type === "message.dispatch" || command.type === "queued-run.edit") &&
@@ -483,18 +505,20 @@ const make = Effect.gen(function* () {
       ) {
         return yield* refused("A message cannot carry a record of the platform's own.");
       }
-      if (personId === null) return command;
-      const admitted = yield* stampCommand(personId, command).pipe(Effect.catch(failClosed));
+      if (personId === null) return yield* dispatchUpstream(command);
+      const stamp = yield* stampCommand(personId, command).pipe(Effect.catch(failClosed));
+      const stamped = stamp.command;
       if (
-        admitted.type === "runtime-request.respond" ||
-        admitted.type === "thread.user-input.dismiss"
+        stamped.type === "runtime-request.respond" ||
+        stamped.type === "thread.user-input.dismiss"
       ) {
         // An answer in words had its mark put on it above; a decision or a dismissal has none.
-        const marked =
-          admitted.type === "runtime-request.respond" && admitted.answers !== undefined;
-        yield* recordAnswer(personId, admitted, marked);
+        const marked = stamped.type === "runtime-request.respond" && stamped.answers !== undefined;
+        yield* recordAnswer(personId, stamped, marked);
       }
-      return admitted;
+      const result = yield* dispatchUpstream(stamped);
+      yield* stamp.accepted.pipe(Effect.catch(notRecorded));
+      return result;
     });
 
   const admitLaunch: SharedConversationShape["admitLaunch"] = (personId, input) =>
@@ -547,8 +571,7 @@ const make = Effect.gen(function* () {
     // (#612). Only the messages a fork shows are read, so nothing after its fork point is named.
     // A fork's reader need not reach the thread it was forked from, so for a reader an inherited
     // record is read only where the stored text the fork shows begins with its prefix: then it
-    // restates what they already receive. A command carries no prefix, and a record an edit wrote that
-    // upstream then refused names an editor the stored text does not.
+    // restates what they already receive. A command carries no prefix.
     const authors = yield* sql<
       AuthorRow & { readonly created_at: string; readonly inherited: 0 | 1 }
     >`
@@ -756,7 +779,7 @@ const make = Effect.gen(function* () {
   );
 
   return SharedConversation.of({
-    admit,
+    dispatch,
     admitLaunch,
     threadAuthors,
     authorsChanges: (threadId) =>

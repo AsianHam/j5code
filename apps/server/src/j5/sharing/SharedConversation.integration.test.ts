@@ -66,9 +66,10 @@ const send = Effect.fn("test.send")(function* (
   command: OrchestrationV2Command,
 ) {
   const conversation = yield* SharedConversation.SharedConversation;
-  const admitted = yield* conversation.admit(personId, command);
-  yield* (yield* ThreadManagementService).dispatch(admitted);
-  return admitted;
+  const threads = yield* ThreadManagementService;
+  return yield* conversation.dispatch(personId, command, (admitted) =>
+    threads.dispatch(admitted).pipe(Effect.as(admitted)),
+  );
 });
 
 const runs = (on: ThreadId) =>
@@ -272,3 +273,186 @@ it.effect(
     }).pipe(Effect.provide(layerFor(harness)));
   },
 );
+
+it.effect("an edit upstream refuses leaves its message's record as it was", () => {
+  const harness = makeHarness();
+  const on = ThreadId.make("thread:shared-refused-edit");
+  return Effect.gen(function* () {
+    const people = yield* PersonAccess.PersonAccess;
+    const conversation = yield* SharedConversation.SharedConversation;
+    const threads = yield* ThreadManagementService;
+    yield* threads.dispatch({
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make("command:refused-edit:create"),
+      threadId: on,
+      projectId,
+      title: "Shared",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+    });
+    const owner = (yield* people.firstOwner).personId;
+    yield* people.setName({ personId: owner, displayName: "Jackson" });
+    const priya = yield* people.createPerson({ displayName: "Priya" });
+    yield* people.setLevel({
+      personId: priya.personId,
+      scope: { kind: "thread", threadId: on },
+      level: "collaborator",
+    });
+    // The first run stays active with no provider, so both of hers queue behind it.
+    yield* send(owner, message("Let us review the plan.", on));
+    const refusedMessage = message("Keep the migration step.", on);
+    const acceptedMessage = message("Ship Friday.", on);
+    yield* send(priya.personId, refusedMessage);
+    yield* send(priya.personId, acceptedMessage);
+    const recordOf = (messageId: string) =>
+      conversation
+        .threadAuthors(owner, on)
+        .pipe(
+          Effect.map((authors) => authors.authors.find((entry) => entry.messageId === messageId)!),
+        );
+    const runOf = (messageId: string) =>
+      threads
+        .getThreadProjection(on)
+        .pipe(
+          Effect.map(
+            (projection) => projection.runs.find((run) => run.userMessageId === messageId)!.id,
+          ),
+        );
+    const before = yield* recordOf(refusedMessage.messageId);
+    const beforeText = yield* storedText(on, refusedMessage.messageId);
+
+    // Its run leaves the queue before the owner's edit lands, so upstream refuses the edit.
+    yield* threads.dispatch({
+      type: "queued-run.cancel",
+      commandId: CommandId.make("command:refused-edit:cancel"),
+      threadId: on,
+      runId: yield* runOf(refusedMessage.messageId),
+    });
+    const refusal = yield* send(owner, {
+      type: "queued-run.edit",
+      commandId: CommandId.make("command:refused-edit:edit"),
+      threadId: on,
+      runId: yield* runOf(refusedMessage.messageId),
+      text: "Drop the migration step.",
+    }).pipe(Effect.flip);
+    assert.strictEqual(refusal._tag, "OrchestratorCommandRejectedError");
+    assert.strictEqual(yield* storedText(on, refusedMessage.messageId), beforeText);
+    const after = yield* recordOf(refusedMessage.messageId);
+    assert.isNull(after.editedBy);
+    assert.strictEqual(after.storedPrefix, before.storedPrefix);
+    assert.deepStrictEqual(after, before);
+
+    // An edit upstream takes is recorded.
+    yield* send(owner, {
+      type: "queued-run.edit",
+      commandId: CommandId.make("command:accepted-edit:edit"),
+      threadId: on,
+      runId: yield* runOf(acceptedMessage.messageId),
+      text: "Ship Monday.",
+    });
+    const accepted = yield* recordOf(acceptedMessage.messageId);
+    assert.strictEqual(accepted.editedBy, "Jackson");
+    assert.strictEqual(
+      yield* storedText(on, acceptedMessage.messageId),
+      `${accepted.storedPrefix}Ship Monday.`,
+    );
+  }).pipe(Effect.provide(layerFor(harness)));
+});
+
+it.effect("an edit's record is written only while the stored text is the edit's own", () => {
+  const harness = makeHarness();
+  const on = ThreadId.make("thread:shared-edit-race");
+  return Effect.gen(function* () {
+    const people = yield* PersonAccess.PersonAccess;
+    const conversation = yield* SharedConversation.SharedConversation;
+    const threads = yield* ThreadManagementService;
+    yield* threads.dispatch({
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make("command:edit-race:create"),
+      threadId: on,
+      projectId,
+      title: "Shared",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+    });
+    const owner = (yield* people.firstOwner).personId;
+    yield* people.setName({ personId: owner, displayName: "Jackson" });
+    const scope = { kind: "thread" as const, threadId: on };
+    const priya = (yield* people.createPerson({ displayName: "Priya" })).personId;
+    const sam = (yield* people.createPerson({ displayName: "Sam" })).personId;
+    yield* people.setLevel({ personId: priya, scope, level: "collaborator" });
+    yield* people.setLevel({ personId: sam, scope, level: "collaborator" });
+    yield* send(owner, message("Let us review the plan.", on));
+    const replayed = message("Ship Friday.", on);
+    const raced = message("Keep the migration step.", on);
+    yield* send(priya, replayed);
+    yield* send(priya, raced);
+    const runOf = (messageId: string) =>
+      threads
+        .getThreadProjection(on)
+        .pipe(
+          Effect.map(
+            (projection) => projection.runs.find((run) => run.userMessageId === messageId)!.id,
+          ),
+        );
+    const edit = (commandId: string, messageId: string, text: string) =>
+      runOf(messageId).pipe(
+        Effect.map(
+          (runId) =>
+            ({
+              type: "queued-run.edit",
+              commandId: CommandId.make(commandId),
+              threadId: on,
+              runId,
+              text,
+            }) as const satisfies OrchestrationV2Command,
+        ),
+      );
+    const recordOf = (messageId: string) =>
+      conversation
+        .threadAuthors(owner, on)
+        .pipe(
+          Effect.map((authors) => authors.authors.find((entry) => entry.messageId === messageId)!),
+        );
+
+    // Jackson edits, Sam edits after him, and Jackson's client retries his command: upstream
+    // replays its receipt and leaves Sam's text, so the record stays Sam's.
+    const jacksons = yield* edit("command:edit-race:jackson", replayed.messageId, "Ship Monday.");
+    yield* send(owner, jacksons);
+    yield* send(sam, yield* edit("command:edit-race:sam", replayed.messageId, "Ship Tuesday."));
+    const samsRecord = yield* recordOf(replayed.messageId);
+    assert.strictEqual(samsRecord.editedBy, "Sam");
+    yield* send(owner, jacksons);
+    assert.deepStrictEqual(yield* recordOf(replayed.messageId), samsRecord);
+    assert.strictEqual(
+      yield* storedText(on, replayed.messageId),
+      `${samsRecord.storedPrefix}Ship Tuesday.`,
+    );
+
+    // Sam's edit is taken and recorded after Jackson's commits and before Jackson's is recorded:
+    // the record stays Sam's, which the stored text carries.
+    const samsEdit = yield* edit("command:edit-race:sam-2", raced.messageId, "Drop it.");
+    yield* conversation.dispatch(
+      owner,
+      yield* edit("command:edit-race:jackson-2", raced.messageId, "Keep it."),
+      (admitted) =>
+        threads.dispatch(admitted).pipe(Effect.andThen(send(sam, samsEdit)), Effect.as(admitted)),
+    );
+    const raceRecord = yield* recordOf(raced.messageId);
+    assert.strictEqual(raceRecord.editedBy, "Sam");
+    assert.strictEqual(
+      yield* storedText(on, raced.messageId),
+      `${raceRecord.storedPrefix}Drop it.`,
+    );
+  }).pipe(Effect.provide(layerFor(harness)));
+});

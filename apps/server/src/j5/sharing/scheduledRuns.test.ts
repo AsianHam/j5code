@@ -331,13 +331,17 @@ it.effect("someone else's edit of a queued run keeps it scheduled and says who e
         ${JSON.stringify({ createdBy: "user", creationSource: "web", scheduledTaskId: TASK })}
       )
     `;
-    const edited = yield* (yield* SharedConversation).admit(owner, {
-      type: "queued-run.edit",
-      commandId: CommandId.make("command:edit"),
-      threadId,
-      runId: RunId.make(`run:${messageId}`),
-      text: "Check CI only.",
-    } as unknown as OrchestrationV2Command);
+    const edited = yield* (yield* SharedConversation).dispatch(
+      owner,
+      {
+        type: "queued-run.edit",
+        commandId: CommandId.make("command:edit"),
+        threadId,
+        runId: RunId.make(`run:${messageId}`),
+        text: "Check CI only.",
+      } as unknown as OrchestrationV2Command,
+      Effect.succeed,
+    );
     assert.strictEqual(
       afterNote((edited as { readonly text: string }).text),
       "[Scheduled by Priya (collaborator), edited by Jackson (owner)]\n\nCheck CI only.",
