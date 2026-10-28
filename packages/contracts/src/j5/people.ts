@@ -170,8 +170,8 @@ export type DeviceRequest = typeof DeviceRequest.Type;
 
 /**
  * A link to make. A `device` link pairs one more device for someone already on the server. An
- * `invite` brings someone in: for one person, named or not, at any level the scope allows; for
- * many, at Viewer only.
+ * `invite` brings someone in: for one named person at any level the scope allows, so the links in
+ * force say who each is for; for many, at Viewer only.
  */
 export const CreateLinkRequest = Schema.Union([
   Schema.Struct({
@@ -183,9 +183,17 @@ export const CreateLinkRequest = Schema.Union([
     kind: Schema.Literal("invite"),
     scope: PersonScope,
     level: PersonLevel,
-    use: Schema.Literals(["one", "many"]),
-    /** The name to offer whoever opens a link for one person; they may change it. */
-    name: Schema.NullOr(SharingPersonName),
+    use: Schema.Literal("one"),
+    /** The name to offer whoever opens it; they may change it. */
+    name: SharingPersonName,
+    lifetime: Schema.optionalKey(SharingLinkLifetime),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("invite"),
+    scope: PersonScope,
+    level: PersonLevel,
+    use: Schema.Literal("many"),
+    name: Schema.Null,
     lifetime: Schema.optionalKey(SharingLinkLifetime),
   }),
 ]);

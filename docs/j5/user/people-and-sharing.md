@@ -20,9 +20,10 @@ server from **Settings → People → Share…**. The Share dialog lists who alr
 Change or remove a level there; a level held through a wider scope is changed at that scope.
 
 To bring someone in, make a link. **Add a person** makes a link for one person and one device, at
-any level. Typing the name of someone already on the server gives them the level directly, with no
-link; if they already reach the thing at that level, the link pairs one more device as them. **Anyone with the link** makes a link many people can open, as Viewers. A link lasts an hour,
-a day, seven days or thirty days. Copy a link again, or revoke it, from the dialog or from People
+any level, under the name you type for them. Typing the name of someone already on the server
+gives them the level directly, with no link; if they already reach the thing at that level, the
+link pairs one more device as them. **Anyone with the link** makes a link many people can open, as
+Viewers. A link lasts an hour, a day, seven days or thirty days. Copy a link again, or revoke it, from the dialog or from People
 until it expires or is used. Revoking it stops new people joining and removes no one.
 
 The link opens on the server itself, by an address the server is already reachable at. Whoever

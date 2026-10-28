@@ -533,7 +533,7 @@ function AddForm({
         onShared();
         return;
       }
-      if (mode === "person" && typed !== "" && !isPersonName(typed)) {
+      if (mode === "person" && !isPersonName(typed)) {
         setError(NAME_NOT_USABLE);
         return;
       }
@@ -549,7 +549,7 @@ function AddForm({
                   scope,
                   level,
                   use: "one",
-                  name: typed === "" ? null : typed,
+                  name: typed,
                   lifetime,
                 },
       });
@@ -596,6 +596,7 @@ function AddForm({
                 placeholder="Their name on this server"
                 disabled={busy}
                 maxLength={80}
+                required
               />
               {matches.length > 0 ? (
                 <AutocompletePopup>
@@ -659,7 +660,12 @@ function AddForm({
       )}
       {error === null ? null : <p className="text-xs text-destructive">{error}</p>}
       <div className="flex justify-end">
-        <Button size="sm" disabled={busy} onClick={() => void submit()}>
+        <Button
+          size="sm"
+          // A link for one person names who it is for, so the links in force say so.
+          disabled={busy || (mode === "person" && typed === "")}
+          onClick={() => void submit()}
+        >
           {raises ? (busy ? "Sharing…" : "Share") : busy ? "Making link…" : "Make link"}
         </Button>
       </div>

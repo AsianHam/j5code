@@ -109,7 +109,7 @@ it.layer(peopleLayer)("Links", (it) => {
             scope,
             level: "owner",
             use: "one",
-            name: null,
+            name: "Sky",
           }),
         ),
         "OwnerOutsideServerError",
@@ -168,7 +168,7 @@ it.layer(peopleLayer)("Links", (it) => {
         scope: { kind: "server" },
         level: "viewer",
         use: "one",
-        name: null,
+        name: "Racer",
       });
       const results = yield* Effect.all(
         [
@@ -202,7 +202,7 @@ it.layer(peopleLayer)("Links", (it) => {
           scope: { kind: "server" },
           level: "viewer",
           use: "one",
-          name: null,
+          name: "Avery",
         });
 
         // AC32: paired as someone else.
