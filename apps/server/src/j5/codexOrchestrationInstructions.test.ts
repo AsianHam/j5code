@@ -7,7 +7,10 @@ import { buildCodexAdditionalContext } from "../provider/CodexDeveloperInstructi
 // sections too or Codex silently runs on upstream's instructions.
 describe("Codex orchestration instructions", () => {
   it("sends J5's orchestration sections, in order", () => {
-    const context = buildCodexAdditionalContext({ model: "gpt-5.3-codex", reasoningEffort: "high" });
+    const context = buildCodexAdditionalContext({
+      model: "gpt-5.3-codex",
+      reasoningEffort: "high",
+    });
     const orchestration = Object.entries(context)
       .filter(([key]) => key.startsWith("t3_code_orchestration"))
       .map(([, entry]) => entry.value);

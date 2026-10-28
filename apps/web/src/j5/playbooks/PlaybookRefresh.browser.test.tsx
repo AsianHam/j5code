@@ -81,7 +81,8 @@ vi.mock(import("../../hooks/useNowMinute"), async (importOriginal) => ({
 vi.mock(import("./PlaybookStepStrip"), async (importOriginal) => ({
   ...(await importOriginal()),
   PlaybookStepStrip: () => null,
-}));import { act, fakeTimers, render } from "../../../test/render";
+}));
+import { act, fakeTimers, render } from "../../../test/render";
 import { PlaybookComposerControl } from "./PlaybookComposerControl";
 import { PlaybookRunsSection } from "./PlaybookRunsSection";
 

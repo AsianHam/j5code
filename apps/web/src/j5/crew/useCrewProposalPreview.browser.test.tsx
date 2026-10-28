@@ -186,7 +186,9 @@ describe("crew runtime preview lifecycle", () => {
     setup();
     previewCrewProposal.mockResolvedValueOnce(response);
     await using screen = await render(surface(), { router: false });
-    await screen.rerender(surface([{ ...seats[0]!, instructions: "Changed instructions" }], environmentId, true));
+    await screen.rerender(
+      surface([{ ...seats[0]!, instructions: "Changed instructions" }], environmentId, true),
+    );
     expect(result.runtimeSeats).toBeNull();
     expect(result.data).toBeNull();
     await screen.rerender(surface(seats, EnvironmentId.make("another-environment"), true));

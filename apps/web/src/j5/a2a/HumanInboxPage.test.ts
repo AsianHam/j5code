@@ -2,10 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { scopedInboxItemKey } from "@t3tools/contracts/j5";
 import { assert, it, vi } from "@effect/vitest";
 
-import {
-  captureHumanInboxAnswer,
-  submitHumanInboxAnswer,
-} from "./HumanInboxPage";
+import { captureHumanInboxAnswer, submitHumanInboxAnswer } from "./HumanInboxPage";
 import type { ScopedHumanInboxItem as HumanInboxItem } from "./humanInboxClient";
 
 it("captures typed answer text before the state updater runs", () => {

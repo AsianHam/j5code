@@ -2,11 +2,7 @@
 // success toast names the `j5` version. Moved here when upstream replaced
 // `components/ServerUpdateAction.test.tsx` with its browser test.
 import { RegistryContext } from "@effect/atom-react";
-import {
-  AuthSessionState,
-  type EnvironmentId,
-  type ServerInstallation,
-} from "@t3tools/contracts";
+import { AuthSessionState, type EnvironmentId, type ServerInstallation } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 

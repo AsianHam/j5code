@@ -435,7 +435,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
-
   it.effect("uses ~/.j5code for a bare server without touching ~/.t3", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -498,7 +497,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }
     }),
   );
-
 
   it.effect("ignores an ambient T3CODE_HOME so an installed T3 Code never leaks in", () =>
     Effect.gen(function* () {
@@ -565,7 +563,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }
     }),
   );
-
 
   it.effect("applies flag then env precedence over bootstrap envelope values", () =>
     Effect.gen(function* () {
