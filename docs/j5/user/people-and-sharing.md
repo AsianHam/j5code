@@ -57,6 +57,10 @@ Whoever opens it is asked who they are before they can use anything.
 links in force. Use the picker to choose among your servers. Revoke a device paired with the wrong
 link, then pair it again with the right one.
 
+To give someone who reaches a thread or a project more of the server, open the **…** menu on their
+row and make them their highest level on another project or the whole server. What they held
+before stays; remove it from their row if you no longer need it.
+
 On a server you do not own, People shows only you. Rename yourself there, or with **Change your
 name** in the command palette, and leave a project or the server you hold. Leave a thread from its
 menu.
