@@ -2,6 +2,18 @@ import { type MessageAuthor, typedText } from "@t3tools/contracts/j5";
 
 export { typedText };
 
+// Keyed by the message object the timeline holds, so nothing is kept for a thread off screen.
+const notes = new WeakSet<object>();
+
+/** Marks the notice J5 puts in the timeline before a message that carried a note. */
+export function markSharedNote<Message extends object>(message: Message): Message {
+  notes.add(message);
+  return message;
+}
+
+/** Whether the timeline's message is the notice J5 put before a message that carried a note. */
+export const isSharedNote = (message: object) => notes.has(message);
+
 /**
  * How one person's message in a thread is shown:
  * - `authored`: the server records who sent it. It is shown as typed, with the note it carried
