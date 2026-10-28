@@ -25,6 +25,13 @@ export interface Highlight {
 /** Newest first. Add an entry at the top. */
 export const HIGHLIGHTS: ReadonlyArray<Highlight> = [
   {
+    id: "2026-10-new-design",
+    title: "A new look",
+    description:
+      "J5 Code has a refreshed design: a true black dark mode, dimmer read threads and simpler composer controls. Prefer the old one? Turn off New design in Settings, Appearance.",
+    clients: ["web", "desktop"],
+  },
+  {
     id: "2026-10-timeline-fold",
     title: "Your messages stay in view",
     description:
