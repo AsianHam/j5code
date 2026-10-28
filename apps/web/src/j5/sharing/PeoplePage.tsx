@@ -15,10 +15,11 @@ import {
   EllipsisIcon,
   LogOutIcon,
   PenLineIcon,
+  SearchIcon,
   UserPlusIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ConnectionStatusDot } from "../../components/ConnectionStatusDot";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -26,6 +27,7 @@ import { ITEM_ROW_CLASSNAME } from "../../components/settings/itemRows";
 import { SettingsPageContainer, SettingsSection } from "../../components/settings/settingsLayout";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import {
   Select,
@@ -50,6 +52,7 @@ import {
   deviceCeiling,
   deviceLabel,
   devicesLabel,
+  filterPeople,
   levelLabel,
   levelsAt,
   linkInForce,
@@ -211,10 +214,13 @@ function OwnedServerPeople({
   const canManage = useAtomValue(sharingManage.setLevel.permissionAtom(environmentId));
   const people = useEnvironmentQuery(peopleQuery(environmentId));
   const links = useEnvironmentQuery(linksQuery(environmentId));
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   // oxlint-disable-next-line t3code/react-effect-budget -- people join, leave and pair devices without this client, so each opening reads again.
   useEffect(() => refreshSharing(environmentId), [environmentId]);
   const nowMs = Date.parse(useNowMinute());
   const everyone = (people.data?.people ?? []).toSorted(byStanding);
+  const shown = filterPeople(everyone, query);
   const inForce = (links.data?.links ?? []).filter((link) => linkInForce(link, nowMs));
 
   return (
@@ -225,7 +231,8 @@ function OwnedServerPeople({
           <span className="flex items-center gap-2">
             {picker}
             {people.data === null ? null : (
-              <span className="text-xs whitespace-nowrap text-muted-foreground">
+              <span role="status" className="text-xs whitespace-nowrap text-muted-foreground">
+                {query.trim() ? `${shown.length} of ` : ""}
                 {everyone.length} {everyone.length === 1 ? "person" : "people"}
               </span>
             )}
@@ -242,10 +249,49 @@ function OwnedServerPeople({
           </Button>
         }
       >
+        <div className="flex items-center gap-2 px-3 py-3 sm:px-4">
+          <InputGroup>
+            <InputGroupAddon>
+              <SearchIcon aria-hidden className="size-3.5" />
+            </InputGroupAddon>
+            <InputGroupInput
+              ref={searchRef}
+              type="search"
+              size="sm"
+              placeholder="Search people"
+              aria-label="Search people"
+              disabled={people.data === null}
+              value={query}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                if (query.length > 0) setQuery("");
+                else event.currentTarget.blur();
+              }}
+            />
+          </InputGroup>
+          {query.length > 0 ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => {
+                setQuery("");
+                searchRef.current?.focus();
+              }}
+            >
+              Clear
+            </Button>
+          ) : null}
+        </div>
         {people.data === null ? (
           <p className={ROW_NOTE_CLASSNAME}>{people.error ?? "Reading who is on this server…"}</p>
+        ) : shown.length === 0 ? (
+          <p className={ROW_NOTE_CLASSNAME}>
+            {query.trim() ? "No people match your search." : "No people on this server."}
+          </p>
         ) : (
-          everyone.map((person) => (
+          shown.map((person) => (
             <PersonRow
               key={person.personId}
               environmentId={environmentId}

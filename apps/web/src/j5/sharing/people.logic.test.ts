@@ -8,6 +8,7 @@ import {
   accessRowsFromScope,
   accessRowView,
   deviceCeiling,
+  filterPeople,
   peopleServerState,
   placeLinks,
   rosterProjectIds,
@@ -146,6 +147,67 @@ describe("a typed name that is already someone's", () => {
   it("matches without case and surrounding or repeated whitespace", () => {
     expect(personNamed(people, "  priya k. ")?.personId).toBe("p1");
     expect(personNamed(people, "Priya")).toBeNull();
+  });
+});
+
+describe("searching the People list", () => {
+  const people: ReadonlyArray<PeopleEntry> = [
+    {
+      personId: "owner-1",
+      name: "Jackson",
+      firstOwner: true,
+      you: true,
+      levels: [],
+      devices: [],
+      unusedLinks: [],
+    },
+    {
+      personId: "person-Priya",
+      name: "Priya  K.",
+      firstOwner: false,
+      you: false,
+      levels: [],
+      devices: [],
+      unusedLinks: [],
+    },
+    {
+      personId: "unnamed-3",
+      name: null,
+      firstOwner: false,
+      you: false,
+      levels: [],
+      devices: [],
+      unusedLinks: [],
+    },
+    {
+      personId: "other-4",
+      name: "Priya S.",
+      firstOwner: false,
+      you: false,
+      levels: [],
+      devices: [],
+      unusedLinks: [],
+    },
+  ];
+
+  it("shows everyone in the original order when cleared or only whitespace", () => {
+    expect(filterPeople(people, "")).toBe(people);
+    expect(filterPeople(people, "  \t ")).toBe(people);
+  });
+
+  it("finds partial names without case or surrounding and repeated whitespace", () => {
+    expect(filterPeople(people, "  PRIYA   k.  ")).toEqual([people[1]]);
+    expect(filterPeople(people, "priya")).toEqual([people[1], people[3]]);
+  });
+
+  it("finds a person by identifier or the displayed unnamed label", () => {
+    expect(filterPeople(people, "PERSON-priya")).toEqual([people[1]]);
+    expect(filterPeople(people, "without a name")).toEqual([people[2]]);
+  });
+
+  it("returns no rows for an unmatched or literal punctuation query", () => {
+    expect(filterPeople(people, "missing")).toEqual([]);
+    expect(filterPeople(people, ".*")).toEqual([]);
   });
 });
 
