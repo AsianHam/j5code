@@ -866,6 +866,7 @@ explicitly marked.
 | `packages/shared/src/paletteSearch.test.ts`                                 | N       | B                                                  |
 | `apps/mobile/src/features/settings/environment-maintenance.test.ts`         | N       | 40                                                 |
 | `apps/server/src/provider/testing/ProviderInstanceRegistryLive.fixture.mjs` | N       | 43                                                 |
+| `packages/provider-cursor/src/server/status.test.ts`                        | N       | B                                                  |
 | `apps/server/src/provider/CodexDeveloperInstructions.test.ts`               | N       | 8                                                  |
 | `apps/web/test/appScenarios.renders.tsx`                                    | N       | 80                                                 |
 | `apps/web/test/renderScenarios.renders.tsx`                                 | N       | 80                                                 |
