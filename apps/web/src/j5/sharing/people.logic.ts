@@ -188,6 +188,19 @@ export function peopleMatching(
 // Names are compared without case and surrounding or repeated whitespace (AC44).
 const nameKey = (name: string) => name.trim().replace(/\s+/gu, " ").toLowerCase();
 
+export function filterPeople(
+  people: ReadonlyArray<PeopleEntry>,
+  query: string,
+): ReadonlyArray<PeopleEntry> {
+  const key = nameKey(query);
+  if (key === "") return people;
+  return people.filter(
+    (person) =>
+      nameKey(person.name ?? "Someone without a name yet").includes(key) ||
+      person.personId.toLowerCase().includes(key),
+  );
+}
+
 /** One part of a person's summary: a level and where it is held. */
 export type SummaryPart =
   | { readonly kind: "server"; readonly level: PersonLevel }
