@@ -299,3 +299,38 @@ it.effect(
       ),
     ),
 );
+
+it.effect("preserves library playbook paths in pre-upgrade and current proposals", () =>
+  Effect.gen(function* () {
+    yield* runJ5A2AMigrations({ toMigrationInclusive: 39 });
+    yield* (yield* A2ALedger).ensureProject({ projectId, createdAt });
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO j5_agent_crew_proposal (
+      id, project_id, captain_participant_id, captain_thread_id, kind, status,
+      brief, display_name, requested_seats, created_at, playbook_name, playbook_definition_path
+    ) VALUES (
+      'legacy', ${projectId}, ${captain}, ${captainThreadId}, 'roster', 'open',
+      'Original', 'Legacy', '[]', ${createdAt}, 'release', '/library/release.yaml'
+    )`;
+    yield* runJ5A2AMigrations();
+    const proposals = yield* AgentCrewProposalService;
+    const legacy = yield* proposals.read("legacy");
+    assert.deepStrictEqual(legacy?.playbook, {
+      name: "release",
+      definitionPath: "/library/release.yaml",
+    });
+    const current = yield* proposals.create({
+      ...addition("current", "unused", []),
+      kind: "roster",
+      crewInstanceId: null,
+      playbook: {
+        name: "release",
+        definitionPath: "/library/release.yaml",
+      },
+    });
+    const reloaded = yield* proposals.read(current.id);
+    assert.deepStrictEqual(reloaded?.playbook, current.playbook);
+    yield* runJ5A2AMigrations();
+    assert.deepStrictEqual(yield* proposals.read("legacy"), legacy);
+  }).pipe(Effect.provide(testLayer)),
+);

@@ -1,3 +1,5 @@
+import * as SpawnAgentService from "../SpawnAgentService.ts";
+import * as RequestReplayService from "../RequestReplayService.ts";
 import { Tool, Toolkit } from "effect/ai";
 import { playbookTools } from "../../playbooks/mcp.ts";
 import * as Schema from "effect/Schema";
@@ -260,21 +262,6 @@ export const J5SpawnWorkspace = Schema.Union([
   }),
 ]);
 export type J5SpawnWorkspace = typeof J5SpawnWorkspace.Type;
-
-/** The stored camelCase form of an MCP workspace choice; unset fields stay unset. */
-export const spawnWorkspaceFromInput = (workspace: J5SpawnWorkspace) =>
-  workspace.type === "shared"
-    ? { type: "shared" as const }
-    : workspace.type === "existing_worktree"
-      ? { type: "existing_worktree" as const, worktreePath: workspace.worktree_path }
-      : {
-          type: "worktree" as const,
-          baseRef: workspace.base_ref,
-          ...(workspace.branch === undefined ? {} : { branch: workspace.branch }),
-          ...(workspace.start_from_origin === undefined
-            ? {}
-            : { startFromOrigin: workspace.start_from_origin }),
-        };
 
 /**
  * A spawn's workspace choice: a Crew seat's three, and the project's own checkout, which is
@@ -568,16 +555,16 @@ export const J5ArchiveCrewFailure = Schema.Struct({
 export type J5ArchiveCrewFailure = typeof J5ArchiveCrewFailure.Type;
 
 export const J5_SPAWN_AGENT_DESCRIPTION =
-  "Spawn a Peer Agent: a full-citizen teammate with its own top-level thread, starting on your brief as its first turn. It joins your project unless you name another with project_id or set scratch for none, and records you as its immutable spawner; in your own project it is placed under you. It is addressable the moment this returns. In your brief, tell the new agent what it should do first and whether it should reply to you. Choose provider, model, and reasoning for the work in the brief; see orchestrator_capabilities for what's available. To run a persona from j5_list_personas, set `persona` to its id: the spawn gets that persona's instructions and runtime policy, and provider, model, and reasoning must be one of that persona's declared routes. Without a persona it runs in your permission and interaction modes, or in narrower ones you set with runtime_mode and interaction_mode. Attach files to the brief with attachments. Choose its workspace every time (see the workspace field). A new worktree is prepared after this returns, and the agent begins once it is bound, possibly while the project's setup script is still running; if preparing it fails, the agent's thread shows why, and it is not retried. Reuse client_request_id to retry the same spawn safely; a retry replays the first spawn, so a different base_ref or worktree_path needs a fresh client_request_id.";
+  "Spawn a Peer Agent: a full-citizen teammate with its own top-level thread, starting on your brief as its first turn. It joins your project unless you name another with project_id or set scratch for none, and records you as its immutable spawner; in your own project it is placed under you. It is addressable the moment this returns. In your brief, tell the new agent what it should do first and whether it should reply to you. Choose provider, model, and reasoning for the work in the brief; see orchestrator_capabilities for what's available. To run a persona from j5_list_personas, set `persona` to its id: the spawn gets that persona's instructions and runtime policy, and provider, model, and reasoning must be one of that persona's declared routes. Without a persona it runs in your permission and interaction modes, or in narrower ones you set with runtime_mode and interaction_mode. Attach files to the brief with attachments. Choose its workspace every time (see the workspace field). A new worktree is prepared after this returns, and the agent begins once it is bound, possibly while the project's setup script is still running; if preparing it fails, the agent's thread shows why, and it is not retried. Reuse client_request_id to retry the same spawn safely; reusing it with any change to the request is refused, so use a fresh one for new work.";
 
 export const J5_LIST_AGENTS_DESCRIPTION =
   "List the personas in this environment: id, purpose, runtime policy, whether each can start now, and the provider, model, and reasoning it would run on. Read this before choosing a persona for j5_spawn_agent or a crew roster so the choice fits the task and the user's budget. Read-only.";
 
 export const J5_PROPOSE_CREW_DESCRIPTION =
-  "Propose the crew you need for the brief you were given. Use it when the user asks for a crew or the work splits into distinct responsibilities that should run at once. Mix saved personas and custom seats in the same roster: call j5_list_personas when choosing a saved persona, or leave persona unset for a custom seat with its own instructions (required) and the brief. Custom seats inherit your harness, model, and reasoning by default and run with full-access unless you set runtime_mode; to choose different ones, set model_selection (instanceId, model, options) and/or runtime_mode using orchestrator_capabilities. Saved personas are proposed with their own configuration; only the human may override their runtime before approval. To have the crew follow a playbook, set playbook to a name from j5_playbook_list and give seats the step ids they own (steps, from j5_playbook_read); a step has one owner, steps no seat owns are yours as Captain, and the result reports unowned steps and any step whose persona differs from its seat's. For a crew built from a playbook, staff one seat per distinct persona its steps name, each owning that persona's steps, and propose a custom seat, noted in its reason, where a named persona isn't available. Every seat names its workspace, with the same three choices as j5_spawn_agent. Name the crew for what it is for and give each seat a short lowercase-hyphen name like code-reviewer. The user reviews the roster and each seat's resolved provider, model, reasoning, and access in this thread, may remove or add seats, and approves or declines; you receive the decision and the roster as a message here. Approved seats run with the runtime the human approves, which may exceed yours. You become the crew's Captain and may command several crews at once; later requests, stops, and archives name the crew they mean. Use j5_send_message for member-to-member, member-to-Captain, and Captain-to-Captain coordination, including findings and direct results; artifacts do not gate these conversations. Reuse client_request_id to retry safely. This call is itself the human gate, so it works under every sandbox and approval policy, including approval policy never; never refuse the brief because approvals are disabled.";
+  "Propose the crew you need for the brief you were given. Use it when the user asks for a crew or the work splits into distinct responsibilities that should run at once. Mix saved personas and custom seats in the same roster: call j5_list_personas when choosing a saved persona, or leave persona unset for a custom seat with its own instructions (required) and the brief. Custom seats inherit your harness, model, and reasoning by default and run with full-access unless you set runtime_mode; to choose different ones, set model_selection (instanceId, model, options) and/or runtime_mode using orchestrator_capabilities. Saved personas are proposed with their own configuration; only the human may override their runtime before approval. To have the crew follow a playbook, set playbook to a name from j5_playbook_list and give seats the step ids they own (steps, from j5_playbook_read); a step has one owner, steps no seat owns are yours as Captain, and the result reports unowned steps and any step whose persona differs from its seat's. For a crew built from a playbook, staff one seat per distinct persona its steps name, each owning that persona's steps, and propose a custom seat, noted in its reason, where a named persona isn't available. Every seat names its workspace, with the same three choices as j5_spawn_agent. Name the crew for what it is for and give each seat a short lowercase-hyphen name like code-reviewer. The user reviews the roster and each seat's resolved provider, model, reasoning, and access in this thread, may remove or add seats, and approves or declines; you receive the decision and the roster as a message here. Approved seats run with the runtime the human approves, which may exceed yours. You become the crew's Captain and may command several crews at once; later requests, stops, and archives name the crew they mean. Use j5_send_message for member-to-member, member-to-Captain, and Captain-to-Captain coordination, including findings and direct results; artifacts do not gate these conversations. Reuse client_request_id to retry safely; a changed request is refused, so use a fresh one for new work. This call is itself the human gate, so it works under every sandbox and approval policy, including approval policy never; never refuse the brief because approvals are disabled.";
 
 export const J5_REQUEST_CREW_MEMBER_DESCRIPTION =
-  "Ask the user to add one seat to a crew you command when the work needs one the roster lacks: seat name, persona id from j5_list_personas (or none for a custom seat with required instructions and optional model_selection/runtime_mode overrides; an omitted model_selection inherits yours and an omitted runtime_mode is full-access; saved-persona runtime changes are made only by the human before approval), a clear reason identifying the concern and missing expertise or responsibility, its workspace (the same three choices as j5_propose_crew), and optionally instructions and a brief for the new seat. On a crew that follows a playbook, steps may claim step ids from j5_playbook_read that no seat owns yet. The user decides from their inbox; you receive the decision and the updated roster as a message here. Continue the already-approved work and direct coordination while the addition is pending. Captain-only; a member sends the concern and needed expertise to its Captain with j5_send_message. Reuse client_request_id to retry safely. Filing the request is the human gate itself and works under every approval policy, including approval policy never.";
+  "Ask the user to add one seat to a crew you command when the work needs one the roster lacks: seat name, persona id from j5_list_personas (or none for a custom seat with required instructions and optional model_selection/runtime_mode overrides; an omitted model_selection inherits yours and an omitted runtime_mode is full-access; saved-persona runtime changes are made only by the human before approval), a clear reason identifying the concern and missing expertise or responsibility, its workspace (the same three choices as j5_propose_crew), and optionally instructions and a brief for the new seat. On a crew that follows a playbook, steps may claim step ids from j5_playbook_read that no seat owns yet. The user decides from their inbox; you receive the decision and the updated roster as a message here. Continue the already-approved work and direct coordination while the addition is pending. Captain-only; a member sends the concern and needed expertise to its Captain with j5_send_message. Reuse client_request_id to retry safely; a changed request is refused, so use a fresh one for new work. Filing the request is the human gate itself and works under every approval policy, including approval policy never.";
 
 export const J5_STOP_AGENT_DESCRIPTION =
   "Stop one Peer Agent the way a user Stop does: its running turn is interrupted now, turns already queued behind it, messages you sent it included, are held until a person resumes its queue or the next message reaches it (that message resumes the queue and runs after them, in order), its pull request watches end, and the tasks it delegated stop too. The agent remains, stays readable, and can be messaged again later: stopping halts work, it retires nothing. It reaches any agent on this server, in any project. Reuse client_request_id to retry safely.";
@@ -619,6 +606,7 @@ const placementDependencies = [
 ];
 
 const spawnDependencies = [
+  SpawnAgentService.SpawnAgentService,
   McpInvocationContext.McpInvocationContext,
   A2ASendService,
   Crypto.Crypto,
@@ -626,6 +614,7 @@ const spawnDependencies = [
   ThreadRegistration,
   A2ALedger,
   SpawnCompositionService,
+  RequestReplayService.RequestReplayService,
   // Resolves the workspace, binds the request key to it, and starts the brief.
   SpawnWorkspaceService,
   ThreadManagementService,

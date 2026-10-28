@@ -1,4 +1,6 @@
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as SpawnAgentService from "../SpawnAgentService.ts";
+import * as RequestReplayService from "../RequestReplayService.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
@@ -103,6 +105,8 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(PlaybookCrewRelay)({}),
   Layer.mock(PlaybookStore)({}),
   Layer.mock(SpawnCompositionService)({}),
+  Layer.mock(RequestReplayService.RequestReplayService)({}),
+  SpawnAgentService.layer,
   Layer.mock(SpawnWorkspaceService)({}),
   Layer.mock(ThreadRegistration)({}),
 );

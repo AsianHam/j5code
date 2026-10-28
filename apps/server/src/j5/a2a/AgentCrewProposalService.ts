@@ -48,7 +48,7 @@ export const CrewProposalSeat = Schema.Struct({
 });
 export type CrewProposalSeat = typeof CrewProposalSeat.Type;
 
-/** The playbook a Crew follows. The definition path is its identity; the name is for display. */
+/** The resolved playbook a Crew follows. */
 export interface CrewPlaybookRef {
   readonly name: string;
   readonly definitionPath: string;
@@ -200,7 +200,10 @@ const fromRow = (row: Row): CrewProposal => ({
   playbook:
     row.playbook_name === null || row.playbook_definition_path === null
       ? null
-      : { name: row.playbook_name, definitionPath: row.playbook_definition_path },
+      : {
+          name: row.playbook_name,
+          definitionPath: row.playbook_definition_path,
+        },
 });
 
 export const layer: Layer.Layer<AgentCrewProposalService, never, SqlClient.SqlClient> =

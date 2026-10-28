@@ -33,6 +33,44 @@ const enableAndAssertForeignKeys = Effect.gen(function* () {
   assert.deepStrictEqual(rows, [{ foreign_keys: 1 }]);
 });
 
+it.effect("upgrades the current main schema with replay storage", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations();
+    yield* runJ5A2AMigrations({ toMigrationInclusive: 46 });
+    const before = yield* sql<{ readonly name: string }>`
+      PRAGMA table_info(j5_agent_crew_proposal)
+    `;
+    assert.notInclude(
+      before.map((column) => column.name),
+      "playbook_request_workspace_root",
+    );
+
+    yield* runJ5A2AMigrations();
+    yield* sql`
+      INSERT INTO j5_a2a_request_replay (id, target, request_digest)
+      VALUES ('upgrade-key', 'Peer Agent upgrade', 'digest')
+    `;
+    const rows = yield* sql<{ readonly created_at: string }>`
+      SELECT created_at FROM j5_a2a_request_replay WHERE id = 'upgrade-key'
+    `;
+    assert.isString(rows[0]?.created_at);
+    const after = yield* sql<{ readonly name: string }>`
+      PRAGMA table_info(j5_agent_crew_proposal)
+    `;
+    assert.notInclude(
+      after.map((column) => column.name),
+      "playbook_request_workspace_root",
+    );
+    yield* runJ5A2AMigrations();
+    const applied = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+      SELECT migration_id, name FROM j5_a2a_migrations
+      WHERE migration_id >= 47 ORDER BY migration_id
+    `;
+    assert.deepStrictEqual(applied, [{ migration_id: 47, name: "RequestReplay" }]);
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
+
 it.effect("tracks J5 A2A migrations independently from upstream migrations", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -100,6 +138,7 @@ it.effect("tracks J5 A2A migrations independently from upstream migrations", () 
       { migration_id: 44, name: "QueuedMessageEdits" },
       { migration_id: 45, name: "McpClientApprovers" },
       { migration_id: 46, name: "LocalDeliveryOrder" },
+      { migration_id: 47, name: "RequestReplay" },
     ]);
     assert.deepStrictEqual(
       migrationEntries.map(([id, name]) => [id, name]),
@@ -150,6 +189,7 @@ it.effect("tracks J5 A2A migrations independently from upstream migrations", () 
         [44, "QueuedMessageEdits"],
         [45, "McpClientApprovers"],
         [46, "LocalDeliveryOrder"],
+        [47, "RequestReplay"],
       ],
     );
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
@@ -1398,7 +1438,7 @@ it.effect("recreates earlier-shaped crews tables when 14 runs over them", () =>
       applied.map((row) => row.migration_id),
       [
         13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-        36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+        36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
       ],
     );
     const memberColumns = yield* sql<{ readonly name: string }>`

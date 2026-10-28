@@ -591,14 +591,13 @@ export const layer = Layer.effect(
         const seatName = member.seat.name;
         // Seats go through the same start guard as j5_spawn_agent (see `withSpawnStart`), so every
         // door that creates a spawn thread keeps its invariant. A Crew's launches are already
-        // serialized and its approval binds each seat's workspace type, so neither refusal is
-        // expected here; the brief takes the guard again once every seat exists.
+        // serialized, so its in-flight refusal is not expected here; the brief takes the guard
+        // again once every seat exists.
         const started = yield* Effect.result(
           spawnWorkspace.withSpawnStart(
             {
               stableInput: member.stableInput,
               threadId: member.threadId,
-              workspace: member.workspace,
             },
             startSeat(captain, member),
           ),
@@ -671,7 +670,6 @@ export const layer = Layer.effect(
             {
               stableInput: member.stableInput,
               threadId: member.threadId,
-              workspace: member.workspace,
             },
             spawnWorkspace.startBrief({
               workspace: member.workspace,

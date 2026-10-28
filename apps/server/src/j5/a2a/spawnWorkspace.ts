@@ -1,12 +1,13 @@
-import type {
-  ChatAttachment,
+import type { J5SpawnWorkspace } from "./mcp/tools.ts";
+import {
+  type ChatAttachment,
   CommandId,
-  MessageId,
-  ModelSelection,
-  ProjectId,
-  ProviderInteractionMode,
-  RuntimeMode,
-  ThreadId,
+  type MessageId,
+  type ModelSelection,
+  type ProjectId,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -20,6 +21,7 @@ import type { CrewWorkspaceOptions } from "@t3tools/contracts/j5";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import {
   CommandReceiptStoreV2,
+  type CommandReceiptStoreV2Error,
   layerFromApplicationReceipts as commandReceiptStoreLayer,
 } from "../../orchestration-v2/CommandReceiptStore.ts";
 import {
@@ -49,7 +51,7 @@ export const GitRefName = Schema.String.check(
 );
 
 /** A worktree path with its trailing separators dropped, so `/repo/wt/` matches git's `/repo/wt`. */
-const worktreePathKey = (path: string) => path.replace(/[\\/]+$/, "");
+export const worktreePathKey = (path: string) => path.replace(/[\\/]+$/, "");
 
 /** An absolute path a caller names for an existing worktree. */
 export const WorktreePath = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096));
@@ -137,6 +139,7 @@ const NO_WORKSPACE_OPTIONS: CrewWorkspaceOptions = {
 export class SpawnWorkspaceError extends Data.TaggedError("SpawnWorkspaceError")<{
   readonly detail: string;
   readonly nextStep: string;
+  readonly cause?: unknown;
 }> {
   override get message(): string {
     return this.detail;
@@ -226,8 +229,8 @@ export const resolveSpawnWorkspace = (
 };
 
 /**
- * A request key is bound to the workspace type it was first accepted with: the create command id
- * encodes the type. Shared keeps the original id, so spawns already in flight still replay.
+ * The create command id encodes the workspace type. Shared keeps the original id, so spawns
+ * already in flight still replay.
  */
 export const spawnCreateCommandId = (
   stableInput: SpawnStableInput,
@@ -239,7 +242,18 @@ export const spawnCreateCommandId = (
       ? lifecycleCommandId({ ...stableInput, operation: "spawn-create-existing" })
       : lifecycleCommandId({ ...stableInput, operation: "spawn-create-worktree" });
 
-const WORKSPACE_TYPES = ["shared", "worktree", "existing_worktree"] as const;
+const spawnLaunchCommandId = (stableInput: SpawnStableInput) =>
+  lifecycleCommandId({ ...stableInput, operation: "spawn-launch" });
+
+/** The brief's message command: dispatched directly, or by ThreadLaunch as its initial message. */
+const spawnBriefCommandId = (
+  stableInput: SpawnStableInput,
+  workspace: ResolvedSpawnWorkspace["type"],
+): CommandId =>
+  workspace === "worktree"
+    ? // ThreadLaunchService derives its initial message's command id this way.
+      CommandId.make(`${spawnLaunchCommandId(stableInput)}:initial-message`)
+    : lifecycleCommandId({ ...stableInput, operation: "spawn-brief" });
 
 /**
  * The new thread's binding at creation: the caller's checkout, the existing worktree and its
@@ -296,17 +310,21 @@ export interface SpawnWorkspaceServiceShape {
     readonly projectId: ProjectId;
     readonly worktreePath: string | null;
   }) => Effect.Effect<CrewWorkspaceOptions>;
+  /** Check the accepted create receipt before first binding a pre-upgrade thread's retry. */
+  readonly assertExistingWorkspace: (input: {
+    readonly stableInput: SpawnStableInput;
+    readonly workspace: ResolvedSpawnWorkspace["type"];
+  }) => Effect.Effect<void, SpawnWorkspaceError>;
   /**
    * Runs one spawn's start (create, facts, brief), refusing it while another start for the thread
-   * is in flight or when the request key was accepted with the other workspace type. Every door
-   * dispatching `thread.create` for a spawn thread must use this: the projection upserts, so a
-   * second create would overwrite the first. The durable receipt outlives this guard.
+   * is in flight. Every door dispatching `thread.create` for a spawn thread must use this: the
+   * projection upserts, so a second create would overwrite the first. A key keeps its workspace
+   * type through its request binding, and a Crew seat's approval records it before any seat starts.
    */
   readonly withSpawnStart: <A, E, R>(
     input: {
       readonly stableInput: SpawnStableInput;
       readonly threadId: ThreadId;
-      readonly workspace: ResolvedSpawnWorkspace;
     },
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | SpawnWorkspaceError, R>;
@@ -322,6 +340,14 @@ export interface SpawnWorkspaceServiceShape {
     void,
     OrchestratorV2Error | ThreadLaunchError | ThreadManagementProviderInstanceDisabledError
   >;
+  /**
+   * Whether the brief's message has an accepted receipt, so its files already belong to the
+   * thread. A thread alone proves nothing: a partial failure can leave one without its brief.
+   */
+  readonly briefAccepted: (input: {
+    readonly stableInput: SpawnStableInput;
+    readonly workspace: ResolvedSpawnWorkspace["type"];
+  }) => Effect.Effect<boolean, CommandReceiptStoreV2Error>;
 }
 
 export class SpawnWorkspaceService extends Context.Service<
@@ -447,11 +473,40 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => NO_WORKSPACE_OPTIONS),
   );
 
-  const withSpawnStart: SpawnWorkspaceServiceShape["withSpawnStart"] = (input, effect) =>
+  const assertExistingWorkspace: SpawnWorkspaceServiceShape["assertExistingWorkspace"] = Effect.fn(
+    "j5.spawnWorkspace.assertExistingWorkspace",
+  )(function* (input) {
+    for (const other of ["shared", "worktree", "existing_worktree"] as const) {
+      if (other === input.workspace) continue;
+      const receipt = yield* receipts
+        .getByCommandId(spawnCreateCommandId(input.stableInput, other))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new SpawnWorkspaceError({
+                detail: "The spawn's earlier workspace choice could not be read.",
+                nextStep: "Retry with the same client_request_id.",
+                cause,
+              }),
+          ),
+        );
+      if (Option.isSome(receipt) && receipt.value.status === "accepted") {
+        return yield* new SpawnWorkspaceError({
+          detail: `client_request_id ${input.stableInput.requestKey} is already bound to workspace {"type":"${other}"}.`,
+          nextStep: "Retry with that workspace, or use a fresh client_request_id.",
+        });
+      }
+    }
+  });
+
+  const withSpawnStart: SpawnWorkspaceServiceShape["withSpawnStart"] = <A, E, R>(
+    input: Parameters<SpawnWorkspaceServiceShape["withSpawnStart"]>[0],
+    effect: Effect.Effect<A, E, R>,
+  ) =>
     // The check, the add, and the releasing finalizer run with no interruptible gap, so an
     // interrupt can't leak an entry and block every later start of this thread.
     Effect.uninterruptibleMask((restore) =>
-      Effect.suspend(() => {
+      Effect.suspend((): Effect.Effect<A, E | SpawnWorkspaceError, R> => {
         if (startsInFlight.has(input.threadId))
           return Effect.fail(
             new SpawnWorkspaceError({
@@ -460,30 +515,9 @@ const make = Effect.gen(function* () {
             }),
           );
         startsInFlight.add(input.threadId);
-        return restore(
-          Effect.gen(function* () {
-            for (const other of WORKSPACE_TYPES) {
-              if (other === input.workspace.type) continue;
-              const bound = yield* receipts
-                .getByCommandId(spawnCreateCommandId(input.stableInput, other))
-                .pipe(
-                  Effect.mapError(
-                    (error) =>
-                      new SpawnWorkspaceError({
-                        detail: `The spawn's earlier workspace choice could not be read: ${error.message}`,
-                        nextStep: "Retry with the same client_request_id.",
-                      }),
-                  ),
-                );
-              if (Option.isSome(bound))
-                return yield* new SpawnWorkspaceError({
-                  detail: `client_request_id ${input.stableInput.requestKey} is already bound to workspace {"type":"${other}"}.`,
-                  nextStep: `Retry with that workspace, or use a fresh client_request_id.`,
-                });
-            }
-            return yield* effect;
-          }),
-        ).pipe(Effect.ensuring(Effect.sync(() => startsInFlight.delete(input.threadId))));
+        return restore(effect).pipe(
+          Effect.ensuring(Effect.sync(() => startsInFlight.delete(input.threadId))),
+        );
       }),
     );
 
@@ -494,7 +528,7 @@ const make = Effect.gen(function* () {
             type: "message.dispatch",
             createdBy: "agent",
             creationSource: "mcp",
-            commandId: lifecycleCommandId({ ...input.stableInput, operation: "spawn-brief" }),
+            commandId: spawnBriefCommandId(input.stableInput, input.workspace.type),
             threadId: input.threadId,
             messageId: input.messageId,
             text: input.text,
@@ -505,7 +539,7 @@ const make = Effect.gen(function* () {
           .pipe(Effect.asVoid)
       : launcher
           .launch({
-            commandId: lifecycleCommandId({ ...input.stableInput, operation: "spawn-launch" }),
+            commandId: spawnLaunchCommandId(input.stableInput),
             threadId: input.threadId,
             reuseExistingThread: true,
             projectId: input.projectId,
@@ -529,11 +563,22 @@ const make = Effect.gen(function* () {
           })
           .pipe(Effect.asVoid);
 
+  const briefAccepted: SpawnWorkspaceServiceShape["briefAccepted"] = Effect.fn(
+    "j5.spawnWorkspace.briefAccepted",
+  )(function* (input) {
+    const receipt = yield* receipts.getByCommandId(
+      spawnBriefCommandId(input.stableInput, input.workspace),
+    );
+    return Option.isSome(receipt) && receipt.value.status === "accepted";
+  });
+
   return SpawnWorkspaceService.of({
     inspect,
     workspaceOptions,
     withSpawnStart,
+    assertExistingWorkspace,
     startBrief,
+    briefAccepted,
   });
 });
 
@@ -542,3 +587,18 @@ export const layerFromReceiptStore = Layer.effect(SpawnWorkspaceService, make);
 
 /** The receipt store is a stateless reader over the shared receipt table, built here for J5. */
 export const layer = layerFromReceiptStore.pipe(Layer.provide(commandReceiptStoreLayer));
+
+/** The stored camelCase form of an MCP workspace choice; unset fields stay unset. */
+export const spawnWorkspaceFromInput = (workspace: J5SpawnWorkspace) =>
+  workspace.type === "shared"
+    ? { type: "shared" as const }
+    : workspace.type === "existing_worktree"
+      ? { type: "existing_worktree" as const, worktreePath: workspace.worktree_path }
+      : {
+          type: "worktree" as const,
+          baseRef: workspace.base_ref,
+          ...(workspace.branch === undefined ? {} : { branch: workspace.branch }),
+          ...(workspace.start_from_origin === undefined
+            ? {}
+            : { startFromOrigin: workspace.start_from_origin }),
+        };
