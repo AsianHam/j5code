@@ -12,7 +12,6 @@ import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { resolveThreadStatusPill } from "../../components/Sidebar.logic";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../../components/WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../../components/WorkspacePageHeader";
 import { Badge } from "../../components/ui/badge";
@@ -34,12 +33,7 @@ import { useLogicalProjects } from "../logicalProjects";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { ArchiveWarningCrewSeats, type ArchiveWarningCrew } from "../a2a/ArchiveWarningContent";
 import { archiveCrew } from "../crew/crewArchiveClient";
-import {
-  classifyCrewSeat,
-  crewHasRunningSeat,
-  formatCrewStateSummary,
-  summarizeCrewState,
-} from "../crew/crewState";
+import { crewHasRunningSeat, summarizeCrewState } from "../crew/crewState";
 import { stopCrew } from "../crew/crewStopClient";
 import {
   countFleetProjects,
@@ -63,8 +57,19 @@ import {
   type ScopedFleetLedgerProject,
 } from "./fleetClient";
 
+import { fleetSeatStatesAtom, fleetProblemSummaryAtom } from "./fleetState";
+import { fleetAgentKey, fleetProblemNotices } from "./fleetPresentation";
+import {
+  FleetFactCells,
+  FleetFactDetails,
+  FleetSourceReadout,
+  FleetFactHint,
+  FleetCrewSummary,
+} from "./FleetFacts";
+
 /** Header and rows share one template so the Project, Status, asks, and activity columns line up. */
-const FLEET_GRID_CLASS = "grid grid-cols-[minmax(0,1fr)_11rem_8rem_5rem_7rem] items-center gap-3";
+const FLEET_GRID_CLASS =
+  "grid grid-cols-[minmax(12rem,1fr)_10rem_11rem_9rem_12rem] items-center gap-3";
 
 type ThreadLookup = ReadonlyMap<string, EnvironmentThreadShell>;
 
@@ -105,18 +110,21 @@ export function FleetPage() {
   const navigate = useNavigate();
   const threads = useThreadShells();
   const sources = useAtomValue(fleetDetailSourcesAtom);
+  const seatStates = useAtomValue(fleetSeatStatesAtom);
+  const problemSummary = useAtomValue(fleetProblemSummaryAtom);
   useFleetDetailRefresh();
   const [refreshing, setRefreshing] = useState(false);
   const projects = useMemo(() => mergeFleetSources(sources), [sources]);
   const showEnvironment = spansMultipleEnvironments(projects);
   const loading = !sources.isReady || sources.sources.some((source) => source.status === "loading");
   const notices = [
-    ...new Set(
-      sources.sources.flatMap((source) => {
+    ...new Set([
+      ...fleetProblemNotices(problemSummary),
+      ...sources.sources.flatMap((source) => {
         const notice = j5SourceNotice(source);
         return notice === null ? [] : [notice];
       }),
-    ),
+    ]),
   ];
 
   const refresh = useCallback(async () => {
@@ -146,15 +154,17 @@ export function FleetPage() {
     [logicalProjectOf],
   );
   const sections = useMemo(() => {
-    const partitioned = partitionFleet(projects, (environmentId, threadId) =>
-      threadsByKey.get(scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)))),
+    const partitioned = partitionFleet(
+      projects,
+      (environmentId, agent) =>
+        seatStates.get(fleetAgentKey(environmentId, agent.participantId)) ?? "unknown",
     );
     return {
       ...partitioned,
       active: orderFleetRowsByProject(partitioned.active, projectOf),
       settled: orderFleetRowsByProject(partitioned.settled, projectOf),
     };
-  }, [projectOf, projects, threadsByKey]);
+  }, [projectOf, projects, seatStates]);
   const projectCount = useMemo(
     () => countFleetProjects([...sections.active, ...sections.settled], projectOf),
     [projectOf, sections],
@@ -208,7 +218,7 @@ export function FleetPage() {
           </WorkspaceBreadcrumb>
         </WorkspacePageHeader>
         <ScrollArea className="min-h-0 flex-1">
-          <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-8 sm:py-10">
+          <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-8 sm:py-10">
             <div className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-5">
               <div>
                 <h1 className="text-balance text-2xl font-semibold tracking-tight">Fleet</h1>
@@ -229,6 +239,7 @@ export function FleetPage() {
                 Refresh
               </Button>
             </div>
+            <FleetSourceReadout />
             {notices.length > 0 ? (
               <ul className="mt-4 space-y-1 text-sm text-muted-foreground" aria-live="polite">
                 {notices.map((notice) => (
@@ -302,29 +313,31 @@ function FleetTable(
 ) {
   const { rows, ...shared } = props;
   return (
-    <div className="overflow-hidden rounded-lg border border-border">
-      <div
-        className={cn(
-          FLEET_GRID_CLASS,
-          "border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground",
-        )}
-      >
-        <span>Agent</span>
-        <span>Project</span>
-        <span>Status</span>
-        <span className="text-right">Open asks</span>
-        <span className="text-right">Last activity</span>
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <div className="min-w-[60rem]">
+        <div
+          className={cn(
+            FLEET_GRID_CLASS,
+            "border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground",
+          )}
+        >
+          <span>Agent</span>
+          <span>Project</span>
+          <span>Status</span>
+          <span className="text-right">Open asks</span>
+          <span className="text-right">Last activity</span>
+        </div>
+        <ul className="divide-y divide-border/60">
+          {rows.map(({ project: ledgerProject, node }) => (
+            <FleetNodeRows
+              key={`${projectKey(ledgerProject)}:${node.row.agent.participantId}`}
+              project={ledgerProject}
+              node={node}
+              {...shared}
+            />
+          ))}
+        </ul>
       </div>
-      <ul className="divide-y divide-border/60">
-        {rows.map(({ project: ledgerProject, node }) => (
-          <FleetNodeRows
-            key={`${projectKey(ledgerProject)}:${node.row.agent.participantId}`}
-            project={ledgerProject}
-            node={node}
-            {...shared}
-          />
-        ))}
-      </ul>
     </div>
   );
 }
@@ -347,7 +360,7 @@ function FleetNodeRows(
       members.map(({ agent }) => threadFor(props.threadsByKey, environmentId, agent)),
     );
   // The person's Stop crew: interrupts every running seat, retires nothing. The seats' status
-  // pills tell the truth afterwards; a refused or failed call says so, since a button that does
+  // facts reflect the result; a refused or failed call says so, since a button that does
   // nothing visible is a lying spinner.
   const [busy, setBusy] = useState<string | null>(null);
   const stop = async (crew: { crewInstanceId: string; crewName: string }) => {
@@ -449,12 +462,14 @@ function FleetNodeRows(
               {(() => {
                 const seats = crew.members.map((member) => member.row);
                 const state = crewState(seats);
-                const summary = formatCrewStateSummary(state);
                 return (
                   <>
                     <span className="text-muted-foreground/70">
                       {crew.members.length} {crew.members.length === 1 ? "seat" : "seats"}
-                      {summary === null ? "" : ` · ${summary}`}
+                      <FleetCrewSummary
+                        environmentId={environmentId}
+                        agents={seats.map((seat) => seat.agent)}
+                      />
                     </span>
                     {crew.playbookRun === null ? null : (
                       <span className="truncate text-foreground/80">
@@ -669,7 +684,7 @@ function ProjectLabel(
   );
 }
 
-function FleetRowItem(
+export function FleetRowItem(
   props: FleetRowsProps & {
     readonly project: ScopedFleetLedgerProject;
     readonly row: FleetRow;
@@ -681,10 +696,7 @@ function FleetRowItem(
   const { agent } = props.row;
   const { environmentId } = props.project;
   const thread = threadFor(props.threadsByKey, environmentId, agent);
-  const status = thread === undefined ? null : resolveThreadStatusPill({ thread });
   const title = thread?.title ?? agent.displayName ?? agent.participantId;
-  const lastActivity =
-    thread === undefined ? "?" : formatElapsedDurationLabel(thread.updatedAt) || "just now";
   return (
     <li>
       <button
@@ -715,7 +727,16 @@ function FleetRowItem(
               <TooltipPopup>{originLabel(agent)}</TooltipPopup>
             </Tooltip>
           ) : agent.origin === "human" ? null : (
-            <span className="shrink-0 text-xs text-muted-foreground">{originLabel(agent)}</span>
+            <FleetFactHint
+              className="shrink-0 text-xs text-muted-foreground"
+              reason={
+                agent.origin === "unknown"
+                  ? "This environment has no recorded provenance for this agent."
+                  : undefined
+              }
+            >
+              {originLabel(agent)}
+            </FleetFactHint>
           )}
           {props.badge ? (
             <Badge variant="outline" size="sm" className="shrink-0">
@@ -728,34 +749,9 @@ function FleetRowItem(
         </span>
         {/* A placement tree lives in one project, so only its root names it. */}
         {props.row.depth === 0 ? <ProjectLabel {...props} agent={agent} /> : <span />}
-        <span className="flex items-center gap-1.5 text-xs">
-          {status === null ? (
-            <span className="text-muted-foreground">
-              {thread === undefined
-                ? "?"
-                : classifyCrewSeat(thread) === "settled"
-                  ? "Settled"
-                  : "Idle"}
-            </span>
-          ) : (
-            <>
-              <span aria-hidden className={cn("size-1.5 rounded-full", status.dotClass)} />
-              <span className={status.colorClass}>{status.label}</span>
-            </>
-          )}
-        </span>
-        <span
-          className={cn(
-            "text-right text-xs tabular-nums",
-            agent.openAsks > 0 ? "font-medium text-foreground" : "text-muted-foreground",
-          )}
-        >
-          {agent.openAsks}
-        </span>
-        <span className="text-right text-xs text-muted-foreground tabular-nums">
-          {lastActivity}
-        </span>
+        <FleetFactCells environmentId={environmentId} agent={agent} />
       </button>
+      <FleetFactDetails environmentId={environmentId} agent={agent} title={title} />
     </li>
   );
 }

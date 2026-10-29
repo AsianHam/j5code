@@ -1,5 +1,6 @@
 "use client";
 
+import { useFleetPaletteItems } from "../j5/fleet/fleetPalette";
 import { useHighlightsPaletteItems } from "../j5/highlights/highlightsPalette";
 import { useSharingPaletteItems } from "../j5/sharing/sharingPalette";
 import { useCanAddProject, useCanStartIn } from "../j5/sharing/access";
@@ -1684,6 +1685,7 @@ function OpenCommandPaletteDialog(props: {
     projectRef: contextualProjectRef,
   });
   const highlightsPaletteItems = useHighlightsPaletteItems();
+  const fleetPaletteItems = useFleetPaletteItems();
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
   if (projects.length > 0 && projectThreadItems.length > 0) {
     const activeProjectTitle =
@@ -2161,7 +2163,7 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
-  actionItems.push(...sharingPaletteItems, ...highlightsPaletteItems);
+  actionItems.push(...sharingPaletteItems, ...highlightsPaletteItems, ...fleetPaletteItems);
 
   const contextualProjectGroup =
     (contextualProjectRef

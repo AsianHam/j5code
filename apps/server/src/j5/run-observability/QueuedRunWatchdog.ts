@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import { FLEET_DISPATCH_THRESHOLD_MS } from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -21,7 +22,7 @@ import {
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { forkParked } from "../../serverActivation.ts";
 
-export const QUEUED_RUN_WATCHDOG_DELAY_MS = 5 * 60 * 1000;
+export const QUEUED_RUN_WATCHDOG_DELAY_MS = FLEET_DISPATCH_THRESHOLD_MS;
 export const QUEUED_RUN_WATCHDOG_POLL_MS = 60 * 1000;
 export const QUEUED_RUN_WATCHDOG_MAX_CANDIDATES = 100;
 

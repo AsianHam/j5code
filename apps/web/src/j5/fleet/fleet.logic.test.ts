@@ -2,10 +2,14 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { EnvironmentId } from "@t3tools/contracts";
 
-import { formatCrewStateSummary, summarizeCrewState, type CrewSeatThread } from "../crew/crewState";
+import {
+  classifyCrewSeat,
+  formatCrewStateSummary,
+  summarizeCrewState,
+  type CrewSeatThread,
+} from "../crew/crewState";
 import {
   buildFleetTree,
-  countFleetAlerts,
   countFleetProjects,
   createFleetRowRefresher,
   fleetInvolvedThreadRefs,
@@ -83,14 +87,13 @@ describe("fleet tree", () => {
     ]);
   });
 
-  it("never loops on a cyclic placement and counts alerts from owed asks only", () => {
+  it("never loops on a cyclic placement", () => {
     const cyclic: FleetLedgerProject = {
       ...project,
       agents: [agent("a", { placementParentId: "b" }), agent("b", { placementParentId: "a" })],
     };
     const roots = buildFleetTree(cyclic);
     expect(roots.map((node) => node.row.agent.participantId).length).toBeGreaterThan(0);
-    expect(countFleetAlerts([project])).toBe(1);
     expect(originLabel({ origin: "unknown" })).toBe("?");
   });
 });
@@ -305,8 +308,10 @@ describe("fleet sections", () => {
   const running = shell({ runtime: { status: "running" } });
   // Test agents' thread ids are `thread:<participantId>`, so shells are keyed by participant.
   const lookupFrom =
-    (shells: Record<string, CrewSeatThread | undefined>) => (_: EnvironmentId, threadId: string) =>
-      shells[threadId.replace(/^thread:/, "")];
+    (shells: Record<string, CrewSeatThread | undefined>) => (_: EnvironmentId, agent: FleetAgent) =>
+      classifyCrewSeat(
+        agent.threadId === null ? undefined : shells[agent.threadId.replace(/^thread:/, "")],
+      );
   const project = (id: string, agents: ReadonlyArray<FleetAgent>) => ({
     id: `project-${id}`,
     title: id,
@@ -457,8 +462,10 @@ describe("roster seats without thread facts", () => {
         { ...solo, environmentId },
         { ...solo, environmentId: other },
       ],
-      (env, threadId) =>
-        env === environmentId && threadId === "thread:x" ? settledShell : undefined,
+      (env, row) =>
+        classifyCrewSeat(
+          env === environmentId && row.threadId === "thread:x" ? settledShell : undefined,
+        ),
     );
     expect(sections.settled.map((row) => row.project.environmentId)).toEqual([environmentId]);
     expect(sections.active.map((row) => row.project.environmentId)).toEqual([other]);
@@ -514,5 +521,28 @@ describe("fleet rows by project", () => {
   it("counts logical projects, and an unresolved root by its own project id", () => {
     expect(countFleetProjects(rows, projectOf)).toBe(3);
     expect(countFleetProjects([], projectOf)).toBe(0);
+  });
+});
+
+describe("Fleet measured section states", () => {
+  it("keeps whole placement trees Active when any live measurement is unknown or waiting", () => {
+    const environmentId = EnvironmentId.make("facts");
+    const project = {
+      id: "p",
+      title: "P",
+      crews: [],
+      environmentId,
+      agents: [agent("parent"), agent("child", { placementParentId: "parent" })],
+    };
+    const section = (child: "settled" | "running" | "unknown") =>
+      partitionFleet([project], (_, row) => (row.participantId === "parent" ? "settled" : child));
+    expect(section("settled").settledAgentCount).toBe(2);
+    for (const child of ["running", "unknown"] as const) {
+      expect(section(child).settledAgentCount).toBe(0);
+      expect(section(child).active.map((entry) => entry.node.row.agent.participantId)).toEqual([
+        "parent",
+      ]);
+      expect(section(child).active[0]?.node.children[0]?.row.agent.participantId).toBe("child");
+    }
   });
 });

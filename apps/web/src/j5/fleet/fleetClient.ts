@@ -17,6 +17,7 @@ import {
   refreshJ5Sources,
 } from "../state";
 import { createVisibleRefreshHook } from "../useVisibleRefresh";
+import { fleetFactsAtom } from "./fleetState";
 import { createFleetRowRefresher, fleetInvolvedThreadRefs } from "./fleet.logic";
 
 export type { FleetAgent, FleetCrew, FleetResponse } from "@t3tools/contracts/j5";
@@ -42,7 +43,10 @@ export const mergeFleetSources = (
 
 /** The page's read, retired Crews and rosters included. */
 export const refreshFleet = () =>
-  refreshJ5Sources(fleetDetailSourcesAtom, fleetDetailQueryAtom, { force: true });
+  Promise.all([
+    refreshJ5Sources(fleetDetailSourcesAtom, fleetDetailQueryAtom, { force: true }),
+    refreshJ5Sources(fleetSourcesAtom, fleetQueryAtom, { force: true }),
+  ]);
 
 const refreshFleetRows = createFleetRowRefresher({
   memberships: refreshCrewMembershipRows,
@@ -102,6 +106,7 @@ const useFleetFocusRefresh = createVisibleRefreshHook(() => {
 export function useFleetRefresh() {
   useFleetFocusRefresh();
   useEffect(followFleetRows, []);
+  useEffect(() => appAtomRegistry.mount(fleetFactsAtom), []);
 }
 
 /** The Fleet page's own refresh on focus while it is open; retired Crews ride only here. */

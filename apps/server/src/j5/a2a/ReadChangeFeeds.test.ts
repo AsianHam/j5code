@@ -54,10 +54,36 @@ it("maps each ledger event to the reads it puts out of date", () => {
     "message.delivery_failed",
   ] as const) {
     // An outcome does not say whether its message waited for a peer, so each moves the peer list.
-    assert.deepStrictEqual(changed(kind, person), ["inbox", "peers"], kind);
-    assert.deepStrictEqual(changed(kind, agent), ["peers"], kind);
+    assert.deepStrictEqual(
+      changed(kind, person),
+      kind === "message.cancelled" ? ["inbox", "fleet", "peers"] : ["inbox", "peers"],
+      kind,
+    );
+    assert.deepStrictEqual(
+      changed(kind, agent),
+      kind === "message.cancelled" ? ["fleet", "peers"] : ["peers"],
+      kind,
+    );
     // An event that names no receiver is counted rather than missed.
-    assert.deepStrictEqual(changed(kind, null), ["inbox", "peers"], kind);
+    assert.deepStrictEqual(
+      changed(kind, null),
+      kind === "message.cancelled" ? ["inbox", "fleet", "peers"] : ["inbox", "peers"],
+      kind,
+    );
+  }
+  for (const receiver of [person, agent, null]) {
+    assert.deepStrictEqual(
+      readsChangedByLedgerEvent(
+        ledgerEvent("message.delivery_failed", receiver, { alarmed: true }),
+      ),
+      receiver === agent ? ["fleet", "peers"] : ["inbox", "fleet", "peers"],
+    );
+    assert.deepStrictEqual(
+      readsChangedByLedgerEvent(
+        ledgerEvent("message.delivery_failed", receiver, { alarmed: false }),
+      ),
+      receiver === agent ? ["peers"] : ["inbox", "peers"],
+    );
   }
   for (const kind of ["message.sent", "message.received", "silence.notice"] as const)
     assert.deepStrictEqual(changed(kind, person), [], kind);
