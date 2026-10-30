@@ -484,6 +484,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
+    id: "notification-volume",
+    title: "Notification volume",
+    to: "/settings/general",
+    searchTerms: ["sound audio loud quiet mute loudness alert completion input approval"],
+  },
+  {
     id: "completion-sound",
     title: "Completion sound",
     to: "/settings/general",

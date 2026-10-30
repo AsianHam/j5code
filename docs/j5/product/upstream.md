@@ -476,6 +476,18 @@ Recorded in `FORK.md` cases 69 to 73, 78 and 80.
 
 **Decided:** proposed by Abraham, 2026-10-21; accepted by Jackson, 2026-10-24. Recorded in FORK.md case 87.
 
+#### D41. Device-local notification volume
+
+**Upstream:** web and desktop play notification audio at its bundled level, without an app volume control.
+
+**J5:** Settings › General offers a 0–100% volume slider for completion, input and approval sounds, including custom MP3s and previews. The default is 100%; 0% mutes audio. The level is saved per browser profile or desktop installation for this app address. Active sounds follow changes to the level.
+
+**Why:** Abraham requested a volume control because macOS lacks native per-app volume controls and configuring a third-party mixer for a coding app is unnecessary work. Following upstream or leaving volume unsupported would require changing system volume instead.
+
+**Consequences:** one audio-routing hook plus settings mount and search entries are carried in FORK.md case 93. Check these against upstream audio changes on each advance. No server settings or contract changes; mobile push sounds retain operating-system volume controls. The setting does not sync between devices and clearing local site data restores 100%.
+
+**Decided:** Abraham, 2026-10-30, approved implementation and a PR in the notification-volume conversation.
+
 ### Awaiting a decision
 
 These already diverge on `j5/main`, but no human ruling is on record. Each landed as an implementer's call inside a merged PR. The person rules on each one; an approved entry moves up into its section, and a rejected one becomes a fix.

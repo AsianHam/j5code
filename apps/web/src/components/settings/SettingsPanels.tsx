@@ -1,3 +1,4 @@
+import { NotificationVolumeSettings } from "../../j5/notifications/NotificationVolumeSettings";
 import { CompletionSoundSettings } from "../../j5/notifications/CompletionSoundSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
@@ -760,6 +761,7 @@ export function GeneralSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="notifications" title="Notifications">
         <NotificationSettings />
+        <NotificationVolumeSettings />
         <CompletionSoundSettings />
         <SettingsRow
           {...searchableSetting("in-app-notifications")}

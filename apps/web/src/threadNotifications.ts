@@ -1,6 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
+import { connectNotificationSound } from "./j5/notifications/notificationVolume";
 import { completionSoundManager } from "./j5/notifications/completionSound";
 
 import completionUrl from "./assets/notification-completion.mp3";
@@ -116,7 +117,7 @@ export async function playNotificationSound(
     if (context.currentTime < (playingUntil.get(url) ?? 0)) return;
     const source = context.createBufferSource();
     source.buffer = decoded;
-    source.connect(context.destination);
+    connectNotificationSound(source, context);
     source.start();
     playingUntil.set(url, context.currentTime + decoded.duration);
   } catch {

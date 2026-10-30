@@ -11,3 +11,12 @@ describe("completion sound settings search", () => {
     },
   );
 });
+
+it.each(["notification volume", "loudness", "mute"])(
+  "finds notification volume for %s",
+  (query) => {
+    expect(searchSettings(query)).toContainEqual(
+      expect.objectContaining({ id: "notification-volume", to: "/settings/general" }),
+    );
+  },
+);

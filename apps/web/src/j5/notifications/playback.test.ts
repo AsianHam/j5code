@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const custom = vi.hoisted(() => ({ getBuffer: vi.fn() }));
 vi.mock("./completionSound", () => ({ completionSoundManager: custom }));
 
-const audio = { time: 0, buffers: [] as unknown[] };
+const audio = {
+  time: 0,
+  buffers: [] as unknown[],
+  gains: [] as { value: number; setTargetAtTime: ReturnType<typeof vi.fn> }[],
+  sources: [] as EventTarget[],
+};
 class FakeAudioContext {
   state = "running";
   destination = {};
@@ -14,19 +19,41 @@ class FakeAudioContext {
   async decodeAudioData() {
     return { duration: 1, bundled: true };
   }
+  createGain() {
+    const gain = { value: 1, setTargetAtTime: vi.fn() };
+    audio.gains.push(gain);
+    return { gain, connect: vi.fn(), disconnect: vi.fn() };
+  }
   createBufferSource() {
-    return {
+    const source = Object.assign(new EventTarget(), {
       buffer: null,
       connect() {},
+      disconnect() {},
       start() {
         audio.buffers.push(this.buffer);
       },
-    };
+    });
+    audio.sources.push(source);
+    return source;
   }
 }
 
 beforeEach(() => {
   vi.resetModules();
+  const values = new Map<string, string>();
+  vi.stubGlobal(
+    "window",
+    Object.assign(new EventTarget(), {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          values.set(key, value);
+        },
+      },
+    }),
+  );
+  audio.gains = [];
+  audio.sources = [];
   audio.time = 0;
   audio.buffers = [];
   custom.getBuffer.mockReset().mockResolvedValue(null);
@@ -128,5 +155,42 @@ describe("completion playback integration", () => {
     audio.time = 3;
     await helper.playNotificationSound("completion", () => true);
     expect(audio.buffers).toHaveLength(2);
+  });
+});
+
+describe("notification volume playback", () => {
+  it("applies the saved level to bundled, custom and input sounds", async () => {
+    const volume = await import("./notificationVolume");
+    volume.setNotificationVolume(0.25);
+    const helper = await unlocked();
+    await helper.playNotificationSound("completion", () => true);
+    await helper.playNotificationSound("input", () => true);
+    audio.time = 2;
+    custom.getBuffer.mockResolvedValue({ duration: 3 });
+    await helper.playNotificationSound("completion", () => true);
+    expect(audio.gains.map((gain) => gain.value)).toEqual([0.25, 0.25, 0.25]);
+  });
+  it("mutes playback at zero and restores full volume", async () => {
+    const volume = await import("./notificationVolume");
+    const helper = await unlocked();
+    volume.setNotificationVolume(0);
+    await helper.playNotificationSound("completion", () => true);
+    expect(audio.gains[0]?.value).toBe(0);
+    volume.setNotificationVolume(1);
+    expect(audio.gains[0]?.setTargetAtTime).toHaveBeenLastCalledWith(1, 0, 0.01);
+    audio.time = 2;
+    await helper.playNotificationSound("input", () => true);
+    expect(audio.gains[1]?.value).toBe(1);
+  });
+  it("updates active playback and unsubscribes when the sound ends", async () => {
+    const volume = await import("./notificationVolume");
+    const helper = await unlocked();
+    await helper.playNotificationSound("completion", () => true);
+    volume.setNotificationVolume(0.4);
+    const update = audio.gains[0]?.setTargetAtTime;
+    expect(update).toHaveBeenLastCalledWith(0.4, 0, 0.01);
+    audio.sources[0]?.dispatchEvent(new Event("ended"));
+    volume.setNotificationVolume(0.8);
+    expect(update).toHaveBeenCalledTimes(1);
   });
 });

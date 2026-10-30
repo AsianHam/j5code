@@ -496,6 +496,8 @@ migrations after upstream migrations.
 
     The server, the contracts and mobile's owner screens are upstream's: `guestSharingEnabled` defaults off, and the server refuses a guest link without T3 Connect. J5's allow-lists for a narrowed connection (case 69's `ACCESS_RPC_RULES`, case 78's `NARROWED_COMMAND_SCOPES`) don't list `guestShare.create`, `thread.guest-share.close` or `thread.guest-message.dismiss`, so they refuse them to anyone whose scope is narrower than the server. Proof: `apps/web/src/j5/sharing/guestLinks.test.ts` (the atom stays false where the server would allow guest links) and `guestLinksSettings.test.ts` (search and the palette don't offer the row). Exit: [#725](https://github.com/Jacksondr5/j5code/issues/725), whether J5 runs its own T3 Connect; if it does, set the constant to true and retire this case and D40. On a pin advance: if upstream gates a new guest-link door on something other than `canShareWithGuestAtom`, close it too; if upstream moves the guest-links row out of the Beta section, or adds other rows to that section, hide only the row.
 
+93. Device-local notification volume (register D41, Abraham's approval, 2026-10-30). `apps/web/src/threadNotifications.ts` imports J5-owned `connectNotificationSound` and routes each source through its gain node instead of directly to the destination. `components/settings/SettingsPanels.tsx` mounts `NotificationVolumeSettings` beside completion sound controls; `components/settings/settingsSearch.ts` registers its search entry. Storage, gain routing, live updates and the slider live under `apps/web/src/j5/notifications/`. Existing notification modes, gesture unlock, custom sound selection and burst slots remain authoritative. On an advance, keep the gain hook on both completion and input sources and preserve the settings hooks. Web and Electron share the control; mobile and server contracts are untouched.
+
 ## Pin and upstream advance runbook
 
 Current pin: `d2c440312e5f39d59827ed466838a623516454d6`, upstream's stable release tag `v0.1.3` on `main` (frozen 2026-10-27). The previous pin was `70d60e03a7a35c6fa131825bbfa05ec893e69912`, upstream's nightly tag `v0.1.1-nightly.20261017.3238`.
@@ -756,9 +758,9 @@ explicitly marked.
 | `apps/server/src/serverSettings.ts`                                         | N       | 42                                                 |
 | `apps/server/src/serviceLauncher.test.ts`                                   | N       | 50, 85                                             |
 | `apps/web/src/components/settings/settingsSearch.test.ts`                   | N       | 43                                                 |
-| `apps/web/src/threadNotifications.ts`                                       | N       | 87                                                 |
-| `apps/web/src/components/settings/SettingsPanels.tsx`                       | N       | 87                                                 |
-| `apps/web/src/components/settings/settingsSearch.ts`                        | N       | 42–44, 72, 77, 87, 92                              |
+| `apps/web/src/threadNotifications.ts`                                       | N       | 87, 93                                             |
+| `apps/web/src/components/settings/SettingsPanels.tsx`                       | N       | 87, 93                                             |
+| `apps/web/src/components/settings/settingsSearch.ts`                        | N       | 42–44, 72, 77, 87, 92, 93                          |
 | `apps/web/src/components/settings/SettingsSidebarNav.tsx`                   | N       | 42, 72, 73                                         |
 | `docs/README.md`                                                            | N       | 42, 45, 48                                         |
 | `packages/client-runtime/src/state/runtime.test.ts`                         | N       | 42                                                 |
