@@ -1,0 +1,164 @@
+name: J5 Windows Build
+
+# Builds the Windows x64 CLI archive and the unsigned Windows x64 desktop
+# installer at one version. Called by J5 Release, which first builds the
+# win32-x64 resource monitor and the linux-x64 CLI archive in the same run: the
+# installer embeds that Linux archive as the runtime for its WSL backend, as
+# upstream's release-desktop.yml does.
+#
+# Unsigned until J5 has an Azure Artifact Signing (formerly Trusted Signing)
+# account; upstream's release-desktop.yml shows the secrets and steps that turn
+# signing on.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build
+        type: string
+        required: true
+      version:
+        description: Version to stamp into the package manifests before building
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows x64 CLI archive and installer
+    runs-on: windows-2025
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      # A global vp, as upstream's release-desktop.yml sets up. build-cli-archive.ts
+      # runs `vp install` in its staging directory, and through pnpm's vp shim
+      # that failed on Windows with "The system cannot find the path specified".
+      # No cache: upstream measured restoring one on Windows as slower than a
+      # plain install.
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - run: vp install
+
+      - name: Stamp the release version
+        run: node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
+
+      # The desktop build reuses it in place of a cargo build, and the CLI
+      # archive takes it from its own directory.
+      - uses: actions/download-artifact@v8
+        with:
+          name: j5-resource-monitor-win32-x64
+          path: native/resource-monitor/target/x86_64-pc-windows-msvc/release
+
+      - name: Stage resource monitor for the CLI archive
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/cli-resource-monitor/win32-x64"
+          cp native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe "$RUNNER_TEMP/cli-resource-monitor/win32-x64/"
+
+      # Server, web client and Electron main, as upstream's "Build JS bundle".
+      - name: Build server, web client and desktop main
+        run: vp run build:desktop
+
+      # The build above stamps the development icons into dist/client, which
+      # the archive serves. The desktop build below applies its own channel's
+      # icons afterwards.
+      - name: Apply production web brand assets to the bundled client
+        run: node scripts/apply-web-brand-assets.ts production apps/server/dist/client
+
+      # vp's node runs the Node this names, downloading it first. Keep in step
+      # with the Node in J5 Release's CLI archive job.
+      - name: Build CLI single-executable
+        env:
+          VP_NODE_VERSION: 26.8.2
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Build CLI archive
+        run: >-
+          node scripts/build-cli-archive.ts
+          --platform win
+          --arch x64
+          --version "$RELEASE_VERSION"
+          --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor"
+          --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        run: node scripts/smoke-cli-archive.ts --archive "release-cli/t3-$RELEASE_VERSION-win32-x64.zip" --expect-version "$RELEASE_VERSION"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: j5-cli-win32-x64
+          path: release-cli/t3-*-win32-x64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: j5-cli-linux-x64
+          path: wsl-runtime
+
+      - name: Build installer
+        env:
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: Jacksondr5/j5code
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true"
+        run: >-
+          node scripts/build-desktop-artifact.ts
+          --platform win
+          --target nsis
+          --arch x64
+          --skip-build
+          --wsl-runtime "wsl-runtime/t3-$RELEASE_VERSION-linux-x64.tar.gz"
+          --output-dir release-j5
+          --verbose
+
+      # A preview carries no update feed. Each other channel carries its own and
+      # no other, as J5 Release checks for macOS.
+      - name: Check the installer and its update feed
+        run: |
+          set -euo pipefail
+          test -f "release-j5/J5-Code-$RELEASE_VERSION-x64.exe"
+          if [[ "$RELEASE_VERSION" =~ -preview\. ]]; then
+            feed=
+          elif [[ "$RELEASE_VERSION" =~ -nightly\. ]]; then
+            feed=nightly.yml
+          else
+            feed=latest.yml
+          fi
+          for candidate in latest.yml nightly.yml; do
+            if [[ "$candidate" == "$feed" ]]; then
+              grep -Fx "version: $RELEASE_VERSION" "release-j5/$candidate"
+            else
+              test ! -e "release-j5/$candidate"
+            fi
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: j5-code-windows-x64
+          path: |
+            release-j5/J5-Code-*-x64.exe
+            release-j5/J5-Code-*-x64.exe.blockmap
+            release-j5/latest.yml
+            release-j5/nightly.yml
+          if-no-files-found: error
+          retention-days: 30
+
+      # These gitlinks belong to vendored manifests, not this repository.
+      # Remove them only from the disposable index before checkout's cleanup.
+      # Git and awk, as in j5-resource-monitors.yml, on this Windows runner.
+      - name: Exclude vendored gitlinks from checkout cleanup
+        if: always()
+        run: |
+          git ls-files --stage .repos | awk '$1 == "160000" { print $4 }' | git update-index --force-remove --stdin

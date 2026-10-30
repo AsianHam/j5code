@@ -3,8 +3,8 @@
 #
 #   irm https://github.com/Jacksondr5/j5code/releases/latest/download/install.ps1 | iex
 #
-# J5 does not publish Windows archives yet (only darwin-arm64 and linux-x64);
-# this script is kept pointed at J5 so it never installs upstream T3 Code.
+# J5 publishes Windows archives for x64 only; this script points at J5 so it
+# never installs upstream T3 Code.
 #
 # Environment:
 #   T3CODE_CHANNEL           release train to follow: stable, nightly, or preview
@@ -175,7 +175,7 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
     } catch {
       $status = $_.Exception.Response.StatusCode.value__
       if ($status -eq 404) {
-        Fail "j5 $version has no release archive for win32-$arch; J5 publishes CLI archives for macOS (Apple silicon) and Linux x64 only"
+        Fail "j5 $version has no release archive for win32-$arch; J5 publishes CLI archives for macOS (Apple silicon), Linux x64 and Windows x64 only"
       }
       throw
     }
