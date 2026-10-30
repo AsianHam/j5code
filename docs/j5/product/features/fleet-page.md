@@ -75,7 +75,7 @@ The Fleet page is **not** the inbox: it never demands a reply. It is **not** a p
 
 ### The four facts
 
-15. Status shows the runtime's own fact: Working, Waiting, Approval, Input or Failed; "Waiting to start · Nm" takes precedence while a run has been requested and not dispatched; "Idle since ⟨time⟩" appears only when nothing is active and no background work remains.
+15. Status shows the runtime's own fact: Working, Waiting, Approval, Input or Failed; "Waiting to start · Nm" takes precedence while a run has been requested and not dispatched and no other run is in progress; a follow-up queued behind an active run keeps that active run's status; "Idle since ⟨time⟩" appears only when nothing is active and no background work holds completion; a non-holding command such as a dev server does not prevent Idle.
 16. Read and snooze bookkeeping (upstream's Woke and Done) is not a status and does not appear.
 17. Silence notices are not shown on the page; the age of an open ask is the visible fact.
 18. Open asks show two counts, "Owes N" for open asks the agent must answer and "Awaiting N" for open asks it is waiting on, with a hover list of counterparty, intent and age; a follow-up joined to an open Exchange counts once.
@@ -84,8 +84,8 @@ The Fleet page is **not** the inbox: it never demands a reply. It is **not** a p
 
 ### Problems and the badge
 
-21. A row's measured problems are a failed latest run, a delivery alarm, and a run that has waited past the dispatch threshold; the row lists every one it has.
-22. A delivery alarm is shown on the sender's row as "Delivery failed · to ⟨receiver⟩ · ⟨time⟩ · ⟨reason⟩" and stays while the fact is true; it is never inferred repaired ([agent-to-agent communication](../a2a/index.md)).
+21. A row's measured problems are a failed latest run, a delivery alarm, and a requested run that has waited past the dispatch threshold with no other run in progress; the row lists every one it has.
+22. A delivery alarm is shown on the sender's row as "Delivery failed · to ⟨receiver⟩ · ⟨time⟩ · ⟨reason⟩" and stays while the fact is true, including a receiving server's alarm on a remote sender when both environments are connected to this client; it is never inferred repaired ([agent-to-agent communication](../a2a/index.md)).
 23. The badge counts agents that have at least one measured problem across every project the page reads; an agent counts once however many problems it has, unknowns never count, and the badge never counts open asks to the person or silence notices.
 24. A delivery alarm counts toward the badge only while the Exchange it belongs to is open; an alarm on a plain message is shown on the row and never counted; a failed delivery of a platform-authored notice is neither shown nor counted.
 
@@ -146,3 +146,5 @@ The Fleet page is **not** the inbox: it never demands a reply. It is **not** a p
 - 2026-09-25 — a retired Crew comes back with its Captain when it retired because the Captain was archived, so AC28 no longer says it can never be reactivated; the roster snapshot shows why each seat joined, since the roster records no approver (Bryant; [#312](https://github.com/Jacksondr5/j5code/issues/312)).
 - 2026-10-07 — Squadrons retired: the page reads every project and groups roots by upstream's logical project, the sidebar is upstream's project sidebar, and every thread but a provider Subagent is a participant, so AC1 (the Squadron scope) and AC13 (the footer for threads without a home) are retired. Placement and provenance moved here from the retired Squadron definition: its AC10, AC12 and AC13 are AC34 and AC35 (Jackson, 2026-10-05; [#412](https://github.com/Jacksondr5/j5code/issues/412)).
 - 2026-10-12 — an outside agent can be a spawner: the agent it starts is placed at its project's root and its provenance names the outside agent by its label; AC12 and AC34 (Jackson, 2026-10-11; [#498](https://github.com/Jacksondr5/j5code/issues/498)).
+- 2026-10-21 — clarified AC15 and AC21: queued follow-ups preserve the active run's status, only completion-holding background work prevents Idle, and dispatch is overdue only when no other run is in progress ([#360](https://github.com/Jacksondr5/j5code/issues/360); [#662](https://github.com/Jacksondr5/j5code/pull/662)).
+- 2026-10-24 — receiving servers expose later peer delivery alarms through their own Fleet read, and the client attaches them to the remote sender only while both environments are readable; unavailable receivers of open asks leave badge coverage incomplete, with no alarm returned over A2A (Jackson, 2026-10-24; [#662](https://github.com/Jacksondr5/j5code/pull/662)).

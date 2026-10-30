@@ -212,11 +212,13 @@ the time to repeat step 2.
 - the signed and notarized Apple Silicon DMG and ZIP, with their blockmaps and the update feed for
   the channel: `latest-mac.yml` for a stable release, `nightly-mac.yml` for a nightly, and none
   for a preview, which no install updates to;
-- self-contained CLI archives `t3-<version>-darwin-arm64.tar.gz` (Developer ID signed and notarized)
-  and `t3-<version>-linux-x64.tar.gz`, built and smoke-tested in the release run from the same
-  commit. The executable embeds a newer Node than the one tests run on, so the run also runs the
-  database startup tests on that Node;
-- `install.sh` and `SHA256SUMS` over the archives and the installer.
+- the unsigned Windows x64 installer `J5-Code-<version>-x64.exe`, its blockmap, and its update feed:
+  `latest.yml` for a stable release, `nightly.yml` for a nightly, none for a preview;
+- self-contained CLI archives `t3-<version>-darwin-arm64.tar.gz` (Developer ID signed and notarized),
+  `t3-<version>-linux-x64.tar.gz` and `t3-<version>-win32-x64.zip` (unsigned), built and
+  smoke-tested in the release run from the same commit. The executable embeds a newer Node than the
+  one tests run on, so the run also runs the database startup tests on that Node, on Linux and macOS;
+- `install.sh`, `install.ps1`, and `SHA256SUMS` over the archives and both installers.
 
 Run by hand with a build's run ID, its resolve job reads the version from the build commit's four
 manifests, which must agree. Called by `J5 Nightly`, it is given the commit and the version, stamps
@@ -243,6 +245,14 @@ the branch it was started on at the version that branch commits; `J5 Nightly` ca
 commit and a version to stamp. The workflow uses the Apple signing secrets and
 `APPLE_TEAM_ID` repository variable; it converts the P12 export to a Keychain-compatible format.
 Clerk passkey provisioning is only required when Clerk/passkey configuration is supplied.
+
+`J5 Windows Build` runs only when `J5 Release` calls it, at the commit and version of the release,
+after the release run has built the win32-x64 resource monitor and the linux-x64 CLI archive. On a
+GitHub-hosted Windows runner it builds and smoke-tests the win32-x64 CLI archive, then packages the
+NSIS installer with that Linux archive embedded as the runtime for the app's WSL backend. Neither is
+code-signed, so Windows SmartScreen warns before the installer runs. Signing needs an Azure Artifact
+Signing account; upstream's `release-desktop.yml` shows the secrets and the `--signed` flag that
+turn it on.
 
 - `J5 CI` runs formatting, lint, typecheck, and unit-test gates on every PR, and on
   pushes to `j5/main`, `j5/release-<version>`, and `j5/preview-<x.y.z>-<n>`.

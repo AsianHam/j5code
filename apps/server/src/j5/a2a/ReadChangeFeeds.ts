@@ -46,12 +46,22 @@ export const readsChangedByLedgerEvent = (
       return ["inbox", "fleet"];
     case "exchange.opened":
       return ["fleet"];
+    // Fleet changes only when an alarm appears or is cancelled; an alarm is never retried.
     // The peer list counts the messages waiting for each peer. An outcome does not say whether
     // its message was for a peer, so each one counts while this server has a peer; the daemon
     // below drops `peers` while it has none.
-    case "message.delivered":
     case "message.cancelled":
+      return reachesPerson(event) ? ["inbox", "fleet", "peers"] : ["fleet", "peers"];
     case "message.delivery_failed":
+      if (
+        typeof event.payload === "object" &&
+        event.payload !== null &&
+        "alarmed" in event.payload &&
+        event.payload.alarmed === true
+      )
+        return reachesPerson(event) ? ["inbox", "fleet", "peers"] : ["fleet", "peers"];
+      return reachesPerson(event) ? ["inbox", "peers"] : ["peers"];
+    case "message.delivered":
       return reachesPerson(event) ? ["inbox", "peers"] : ["peers"];
     case "message.sent":
       return sentToPeer(event) ? ["peers"] : [];

@@ -35,6 +35,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { readFleetLedgerFacts } from "./fleetFacts.ts";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -543,6 +544,10 @@ const vmAsksLaptop = Effect.fn("test.j5.a2a.peer.pollRoundTrip.vmAsks")(function
   // The next poll acknowledges it.
   yield* pair.poll;
   assert.equal((yield* deliveryStatus(pair.vmServer.sql, asked.messageId))?.status, "delivered");
+  const receivedOrigins = yield* pair.laptopServer.sql<{ origin_environment_id: string }>`
+    SELECT origin_environment_id FROM j5_a2a_delivery WHERE exchange_id = ${asked.exchangeId}
+  `;
+  assert.equal(receivedOrigins[0]?.origin_environment_id, vmDescriptor.environmentId);
   return ExchangeId.make(asked.exchangeId!);
 });
 
@@ -1019,3 +1024,34 @@ const runEnded = (thread: ThreadId, status: "completed" | "failed"): Orchestrati
     },
   } as OrchestrationV2StoredEvent;
 };
+
+it.effect("exposes a polled receiver alarm under the origin's client environment identity", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const pair = yield* pollPair();
+      const exchangeId = yield* vmAsksLaptop(pair, "command:poll-alarm-read");
+      const accepted = yield* pair.vmServer
+        .sql`SELECT * FROM j5_a2a_delivery WHERE exchange_id = ${exchangeId}`;
+      yield* pair.laptopServer
+        .sql`UPDATE j5_a2a_delivery SET status = 'alarmed', last_error = 'thread unavailable'
+      WHERE exchange_id = ${exchangeId}`;
+      const facts = yield* readFleetLedgerFacts(
+        pair.laptopServer.sql,
+        laptop.projectId,
+        [laptop.agent.id],
+        () => null,
+      );
+      assert.equal(facts.remoteDeliveryAlarms.length, 1);
+      assert.equal(facts.remoteDeliveryAlarms[0]?.originEnvironmentId, vmDescriptor.environmentId);
+      assert.equal(facts.remoteDeliveryAlarms[0]?.senderId, vm.agent.id);
+      assert.equal(facts.remoteDeliveryAlarms[0]?.problem.exchangeId, exchangeId);
+      assert.isTrue(facts.remoteDeliveryAlarms[0]?.problem.exchangeOpen);
+      assert.equal(facts.problems.size, 0);
+      assert.deepStrictEqual(yield* pair.poll, { kind: "polled", received: 0, more: false });
+      assert.deepStrictEqual(
+        yield* pair.vmServer.sql`SELECT * FROM j5_a2a_delivery WHERE exchange_id = ${exchangeId}`,
+        accepted,
+      );
+    }),
+  ),
+);

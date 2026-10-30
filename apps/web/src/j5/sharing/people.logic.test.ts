@@ -16,6 +16,7 @@ import {
   personNamed,
   raisesToWriting,
   summaryParts,
+  widenTargets,
   widerLabel,
 } from "./people.logic";
 
@@ -346,6 +347,56 @@ describe("the projects whose people a non-Owner is shown", () => {
     expect(
       rosterProjectIds([{ scope: { kind: "thread", threadId: THREAD }, level: "viewer" }], listed),
     ).toEqual([]);
+  });
+});
+
+describe("where an Owner can widen a person from their row", () => {
+  const listed = ["project:a", "project:b", "project:c"];
+  const onProject = (projectId: string, level: "viewer" | "collaborator") => ({
+    scope: { kind: "project" as const, projectId: ProjectId.make(projectId) },
+    level,
+  });
+
+  it("is the server and every project, at the level of a thread they hold", () => {
+    expect(
+      widenTargets([{ scope: { kind: "thread", threadId: THREAD }, level: "viewer" }], listed),
+    ).toEqual({ level: "viewer", projectIds: listed });
+  });
+
+  it("is at their highest level, leaving out projects they already reach at it", () => {
+    expect(
+      widenTargets(
+        [
+          onProject("project:a", "viewer"),
+          onProject("project:b", "collaborator"),
+          { scope: { kind: "thread", threadId: THREAD }, level: "collaborator" },
+        ],
+        listed,
+      ),
+    ).toEqual({ level: "collaborator", projectIds: ["project:a", "project:c"] });
+  });
+
+  it("still offers projects and the server above a lower server level", () => {
+    expect(
+      widenTargets(
+        [{ scope: { kind: "server" }, level: "viewer" }, onProject("project:a", "collaborator")],
+        listed,
+      ),
+    ).toEqual({ level: "collaborator", projectIds: ["project:b", "project:c"] });
+  });
+
+  it("is nothing for someone who holds nothing, or the server at their highest level", () => {
+    expect(widenTargets([], listed)).toBeNull();
+    expect(widenTargets([{ scope: { kind: "server" }, level: "owner" }], listed)).toBeNull();
+    expect(
+      widenTargets(
+        [
+          { scope: { kind: "server" }, level: "viewer" },
+          { scope: { kind: "thread", threadId: THREAD }, level: "viewer" },
+        ],
+        listed,
+      ),
+    ).toBeNull();
   });
 });
 

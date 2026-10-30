@@ -13,6 +13,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { readFleetLedgerFacts } from "./fleetFacts.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -112,6 +114,7 @@ const makeServer = (
   peer: Ref.Ref<PeerInboundServiceShape | null>,
   delivered: Ref.Ref<Array<AgentDeliveryInput>>,
   crossed: Ref.Ref<Array<PeerDeliveryInput>>,
+  failLocal = false,
 ) => {
   const database = NodeSqliteClient.layer({ filename: ":memory:" });
   const ledger = ledgerLayer.pipe(Layer.provide(database));
@@ -145,7 +148,15 @@ const makeServer = (
     A2ADeliveryTransport,
     A2ADeliveryTransport.of({
       cancelAgent: () => Effect.succeed("cancelled" as const),
-      deliverAgent: (input) => Ref.update(delivered, (rows) => [...rows, input]),
+      deliverAgent: (input) =>
+        failLocal
+          ? Effect.fail(
+              new A2ADeliveryTransportError({
+                operation: "deliver to agent",
+                cause: "thread unavailable",
+              }),
+            )
+          : Ref.update(delivered, (rows) => [...rows, input]),
       deliverHuman: () => Effect.void,
       deliverPeer: (input) =>
         Effect.gen(function* () {
@@ -286,6 +297,7 @@ const seed = Effect.fn("test.j5.a2a.peer.roundtrip.seed")(function* (self: Serve
 /** Both servers up and introduced, with Work's agent holding an open ask to Home's agent that has crossed. */
 const pairWithOpenAsk = Effect.fn("test.j5.a2a.peer.roundtrip.pairWithOpenAsk")(function* (
   commandId: string,
+  failReceiver = false,
 ) {
   const workDoor = yield* Ref.make<PeerInboundServiceShape | null>(null);
   const homeDoor = yield* Ref.make<PeerInboundServiceShape | null>(null);
@@ -296,7 +308,7 @@ const pairWithOpenAsk = Effect.fn("test.j5.a2a.peer.roundtrip.pairWithOpenAsk")(
     makeServer(work, home, "Home", homeDoor, workDelivered, crossed),
   );
   const homeContext = yield* Layer.build(
-    makeServer(home, work, "Work", workDoor, homeDelivered, crossed),
+    makeServer(home, work, "Work", workDoor, homeDelivered, crossed, failReceiver),
   );
   const workServer = yield* seed(work, home).pipe(Effect.provide(workContext));
   const homeServer = yield* seed(home, work).pipe(Effect.provide(homeContext));
@@ -312,8 +324,11 @@ const pairWithOpenAsk = Effect.fn("test.j5.a2a.peer.roundtrip.pairWithOpenAsk")(
     acceptedAt: timestamp,
   });
   assert.equal((yield* workServer.worker.runOnce)?.state, "delivered");
-  assert.equal((yield* homeServer.worker.runOnce)?.state, "delivered");
-  assert.equal((yield* Ref.get(homeDelivered)).length, 1, "the ask reached Home's agent");
+  assert.equal(
+    (yield* homeServer.worker.runOnce)?.state,
+    failReceiver ? "retry_scheduled" : "delivered",
+  );
+  assert.equal((yield* Ref.get(homeDelivered)).length, failReceiver ? 0 : 1);
   return {
     workServer,
     homeServer,
@@ -691,4 +706,42 @@ it.effect(
         ]);
       }),
     ),
+);
+
+it.effect("reads a pushed receiver alarm without sending any message back to the origin", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const pair = yield* pairWithOpenAsk("command:read-remote-alarm", true);
+      const original = yield* pair.workServer.sql`SELECT * FROM j5_a2a_delivery`;
+      yield* TestClock.adjust("250 millis");
+      assert.equal((yield* pair.homeServer.worker.runOnce)?.state, "retry_scheduled");
+      yield* TestClock.adjust("500 millis");
+      assert.equal((yield* pair.homeServer.worker.runOnce)?.state, "alarmed");
+      assert.isNull(yield* pair.homeServer.worker.runOnce);
+      const facts = yield* readFleetLedgerFacts(
+        pair.homeServer.sql,
+        home.projectId,
+        [home.agent.id],
+        () => null,
+      );
+      const remote = facts.remoteDeliveryAlarms[0]!;
+      assert.equal(remote.originEnvironmentId, work.environmentId);
+      assert.equal(remote.senderId, work.agent.id);
+      assert.equal(remote.problem.exchangeId, pair.exchangeId);
+      assert.isTrue(remote.problem.exchangeOpen);
+      assert.equal(facts.problems.size, 0);
+      assert.equal((yield* Ref.get(pair.crossed)).length, 1, "only the authored ask crossed");
+      assert.deepStrictEqual(yield* pair.workServer.sql`SELECT * FROM j5_a2a_delivery`, original);
+      assert.equal((yield* Ref.get(pair.workDelivered)).length, 0);
+      assert.equal(
+        (yield* exchangeStatus(pair.workServer.sql, pair.exchangeId))[0]?.status,
+        "open",
+      );
+      assert.equal(
+        (yield* pair.homeServer
+          .sql`SELECT 1 FROM j5_a2a_delivery WHERE envelope_channel = 'lifecycle_notice'`).length,
+        0,
+      );
+    }),
+  ),
 );

@@ -366,3 +366,26 @@ export function peopleServerState(input: {
   if (input.listed > 0) return "ready";
   return input.catalogReady && !input.hasOwnServer ? "none" : "starting";
 }
+
+/**
+ * Where an Owner can widen a person at their highest level: the server, then each listed project
+ * not yet reached at it, in server order. `null` when they hold nothing, already hold the server at
+ * that level, or are an Owner (server scope only). Narrower levels stay for the Owner to remove.
+ */
+export function widenTargets(
+  levels: ReadonlyArray<HeldPersonLevel>,
+  listedProjectIds: ReadonlyArray<string>,
+): { readonly level: PersonLevel; readonly projectIds: ReadonlyArray<string> } | null {
+  const level = levels
+    .map((held) => held.level)
+    .toSorted((left, right) => RANK[left] - RANK[right])[0];
+  if (level === undefined) return null;
+  const reachedAt = (scope: (held: HeldPersonLevel) => boolean) =>
+    levels.some((held) => scope(held) && levelReaches(held.level, level));
+  if (reachedAt((held) => held.scope.kind === "server")) return null;
+  const projectIds = listedProjectIds.filter(
+    (projectId) =>
+      !reachedAt((held) => held.scope.kind === "project" && held.scope.projectId === projectId),
+  );
+  return { level, projectIds };
+}

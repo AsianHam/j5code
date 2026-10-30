@@ -8,6 +8,7 @@ import type {
   PeopleLink,
   PersonDevice,
   PersonLevel,
+  PersonScope,
 } from "@t3tools/contracts/j5";
 import {
   ChevronDownIcon,
@@ -28,7 +29,16 @@ import { SettingsPageContainer, SettingsSection } from "../../components/setting
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../../components/ui/menu";
 import {
   Select,
   SelectItem,
@@ -53,6 +63,7 @@ import {
   deviceLabel,
   devicesLabel,
   filterPeople,
+  historyNote,
   levelLabel,
   levelsAt,
   linkInForce,
@@ -61,9 +72,11 @@ import {
   peopleServerState,
   removePersonWarning,
   rosterProjectIds,
+  sameScope,
   type SummaryPart,
   summaryParts,
   threadsLabel,
+  widenTargets,
 } from "./people.logic";
 import { IconAction } from "./IconAction";
 import { AccessRowLine, LinkLine, WritingWarning } from "./ShareDialog";
@@ -434,7 +447,8 @@ function SummaryItem({
 /**
  * One person on a server the asker owns. Expanded, each level they hold with its control and
  * remove, and their devices with Revoke. The first owner has no level control or removal, and
- * keeps rename and devices (AC51).
+ * keeps rename and devices (AC51). The menu widens them to a project or the whole server at their
+ * highest level, as the Share dialog would for someone already on the server (AC35).
  */
 function PersonRow({
   environmentId,
@@ -450,7 +464,38 @@ function PersonRow({
   const [expanded, setExpanded] = useState(false);
   const change = changeRunner(environmentId);
   const removePerson = useAtomCommand(sharingManage.removePerson, { reportFailure: false });
+  const setLevel = useAtomCommand(sharingManage.setLevel, { reportFailure: false });
   const name = person.name ?? "Someone without a name yet";
+  const projects = useProjects().filter(
+    (project) => project.environmentId === environmentId && project.isScratch !== true,
+  );
+  const widen = widenTargets(
+    person.levels,
+    projects.map((project) => project.id),
+  );
+  const widenProjects =
+    widen === null ? [] : projects.filter((project) => widen.projectIds.includes(project.id));
+
+  const widenTo = async (level: PersonLevel, scope: PersonScope, title: string) => {
+    const held = person.levels.find((entry) => sameScope(entry.scope, scope))?.level ?? null;
+    const confirmed = await requestConfirmDialog(
+      `Make ${person.name ?? "this person"} ${levelLabel(level)} on ${title}?`,
+      undefined,
+      {
+        content: (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm text-muted-foreground">{historyNote(scope)}</p>
+            {raisesToWriting(held, level) ? <WritingWarning name={person.name} /> : null}
+          </div>
+        ),
+        confirmLabel: `Make ${levelLabel(level)}`,
+      },
+    );
+    if (confirmed !== true) return;
+    await change("Could not change the level", () =>
+      setLevel({ environmentId, input: { personId: person.personId, scope, level } }),
+    );
+  };
 
   const remove = async () => {
     const confirmed = await requestConfirmDialog(
@@ -522,6 +567,39 @@ function PersonRow({
             >
               Rename…
             </MenuItem>
+            {widen === null ? null : (
+              <>
+                <MenuSeparator />
+                <MenuSub>
+                  <MenuSubTrigger disabled={!canManage || widenProjects.length === 0}>
+                    Make {levelLabel(widen.level)} on project
+                  </MenuSubTrigger>
+                  <MenuSubPopup>
+                    {widenProjects.map((project) => (
+                      <MenuItem
+                        key={project.id}
+                        onClick={() =>
+                          void widenTo(
+                            widen.level,
+                            { kind: "project", projectId: project.id },
+                            project.title,
+                          )
+                        }
+                      >
+                        <ProjectFavicon project={project} />
+                        {project.title}
+                      </MenuItem>
+                    ))}
+                  </MenuSubPopup>
+                </MenuSub>
+                <MenuItem
+                  disabled={!canManage}
+                  onClick={() => void widenTo(widen.level, { kind: "server" }, "the whole server")}
+                >
+                  Make {levelLabel(widen.level)} on whole server…
+                </MenuItem>
+              </>
+            )}
             {person.firstOwner ? null : (
               <>
                 <MenuSeparator />

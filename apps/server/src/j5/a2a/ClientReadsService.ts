@@ -24,6 +24,7 @@ import { A2AArchiveFacts } from "./ArchiveFactsService.ts";
 import { makeCrewMembershipsRead } from "./crewMembershipsRead.ts";
 import { projectCrewProposal } from "./crewProposalProjection.ts";
 import { CrewRuntimeRequestService } from "./CrewRuntimeRequestService.ts";
+import { clientReadBatches } from "./clientReadBatches.ts";
 import { makeFleetRead } from "./fleetRead.ts";
 import { type A2AHumanInboxError, A2AHumanInbox } from "./HumanInboxService.ts";
 import { A2ALedger } from "./LedgerService.ts";
@@ -94,19 +95,8 @@ interface QueryPlanRow {
   readonly detail: string;
 }
 
-/** Leaves headroom under SQLite's bind-parameter ceiling for viewport-sized reads. */
-export const CLIENT_READ_PARTICIPANT_BATCH_SIZE = 900;
-
 const uniqueInFirstOccurrenceOrder = <Value>(values: ReadonlyArray<Value>) =>
   Array.from(new Set(values));
-
-const batchesOf = <Value>(values: ReadonlyArray<Value>) => {
-  const batches: Array<ReadonlyArray<Value>> = [];
-  for (let index = 0; index < values.length; index += CLIENT_READ_PARTICIPANT_BATCH_SIZE) {
-    batches.push(values.slice(index, index + CLIENT_READ_PARTICIPANT_BATCH_SIZE));
-  }
-  return batches;
-};
 
 const unknownIdentity = (): DisplayIdentity => ({ kind: "unknown" });
 
@@ -302,7 +292,7 @@ export const layer: Layer.Layer<
       const uniqueParticipantIds = uniqueInFirstOccurrenceOrder(input.participantIds);
       if (uniqueParticipantIds.length === 0) return { entries: [] };
       const rows: Array<IdentityRow> = [];
-      for (const participantIdBatch of batchesOf(uniqueParticipantIds)) {
+      for (const participantIdBatch of clientReadBatches(uniqueParticipantIds)) {
         rows.push(...(yield* participantIdentityRows(sql, participantIdBatch)));
         // Machine senders have no thread; their display name is their registered name.
         rows.push(

@@ -1,3 +1,4 @@
+import { useFleetPaletteItems } from "../j5/fleet/fleetPalette";
 import { HIGHLIGHTS_PALETTE_ITEMS } from "../j5/highlights/highlightsPalette";
 import { useSharingPaletteItems } from "../j5/sharing/sharingPalette";
 import { useCommandPaletteSourcePicker } from "../j5/skills/commandPaletteSourcePicker";
@@ -1202,6 +1203,7 @@ function OpenCommandPaletteDialog(props: {
     activeThread,
     projectRef: contextualProjectRef,
   });
+  const fleetPaletteItems = useFleetPaletteItems();
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
   if (projects.length > 0 && projectThreadItems.length > 0) {
     const activeProjectTitle =
@@ -1565,7 +1567,7 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
-  actionItems.push(...sharingPaletteItems, ...HIGHLIGHTS_PALETTE_ITEMS);
+  actionItems.push(...sharingPaletteItems, ...HIGHLIGHTS_PALETTE_ITEMS, ...fleetPaletteItems);
 
   const contextualProjectGroup =
     (contextualProjectRef

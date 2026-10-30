@@ -378,16 +378,26 @@ export const ACCESS_RPC_RULES: Partial<Record<WsRpcMethod, AccessRpcRule>> = {
 };
 
 /**
- * `open`: the route decides for itself. `thread`: allowed when the person reaches the thread.
- * `projectInBody`: allowed when the person reaches the project the request's JSON body names.
+ * `open`: the route decides for itself. `thread`: allowed when the person holds the level given
+ * on the thread. `projectInBody`: allowed when the person reaches the project the request's JSON
+ * body names.
  */
 export type AccessHttpRule =
   | { readonly kind: "open" }
-  | { readonly kind: "thread"; readonly threadId: ThreadId }
+  | { readonly kind: "thread"; readonly threadId: ThreadId; readonly level: PersonLevel }
   | { readonly kind: "projectInBody" }
   | { readonly kind: "refuse" };
 
 const THREAD_LOAD = /^\/api\/orchestration\/threads\/([^/]+)(?:\/(?:bounded|history))?$/;
+const PREVIEW_STREAM_PATHS = new Set(
+  ["ws", "download", "upload"].map((route) => `/api/preview-stream/${route}`),
+);
+
+const isThreadId = Schema.is(ThreadId);
+
+// An id that is not a thread's, such as a blank one, is refused here rather than thrown from the gate.
+const onThreadRoute = (threadId: string | null | undefined, level: PersonLevel): AccessHttpRule =>
+  isThreadId(threadId) ? { kind: "thread", threadId, level } : { kind: "refuse" };
 
 const decodeSegment = (segment: string) => {
   try {
@@ -399,31 +409,39 @@ const decodeSegment = (segment: string) => {
 
 /**
  * HTTP routes that keep a narrowed connection's permissions; `/ws` requests go through
- * `ACCESS_RPC_RULES`. The sidebar snapshot route is refused so the sidebar has one filtered path,
- * the socket feed `GuestView` filters. Routes that read no permission are unaffected.
+ * `ACCESS_RPC_RULES`, and a preview tab's picture comes on its own socket, which that table never
+ * sees. The sidebar snapshot route is refused so the sidebar has one filtered path, the socket feed
+ * `GuestView` filters. Routes that read no permission are unaffected.
  */
-export const accessHttpRule = (method: string, pathname: string): AccessHttpRule => {
+export const accessHttpRule = (method: string, target: string): AccessHttpRule => {
+  const { pathname, searchParams } = new URL(target, "http://environment.invalid");
   // Reading one artifact of a project (AC22): a POST that changes nothing.
   if (method === "POST" && pathname === ARTIFACT_READ_PATH) return { kind: "projectInBody" };
+  // A preview tab's picture, its downloads and its file uploads, for a thread the person drives
+  // (AC14). Tabs are keyed by thread, so the query's thread is the tab's. A Viewer does not watch
+  // them for now (AC21).
+  if (
+    PREVIEW_STREAM_PATHS.has(pathname) &&
+    method === (pathname.endsWith("/upload") ? "POST" : "GET")
+  ) {
+    return onThreadRoute(searchParams.get("threadId"), "collaborator");
+  }
   if (method !== "GET") return { kind: "refuse" };
   if (pathname === "/ws") return { kind: "open" };
   const threadLoad = THREAD_LOAD.exec(pathname);
-  const threadId = threadLoad?.[1] === undefined ? undefined : decodeSegment(threadLoad[1]);
-  return threadId === undefined || threadId.length === 0
-    ? { kind: "refuse" }
-    : { kind: "thread", threadId: ThreadId.make(threadId) };
+  return onThreadRoute(
+    threadLoad?.[1] === undefined ? undefined : decodeSegment(threadLoad[1]),
+    "viewer",
+  );
 };
 
 const isServerAuthInternalError = Schema.is(EnvironmentAuth.ServerAuthInternalError);
 
-const requestPathname = (request: HttpServerRequest.HttpServerRequest) =>
-  new URL(request.url, "http://environment.invalid").pathname;
-
 /**
  * Wraps upstream's `EnvironmentAuth`, which signs in every route and upgrade and ends every
  * session. A narrowed session keeps its permissions only on routes `accessHttpRule` allows, on
- * thread routes it reaches, and on artifact reads in projects it reaches; elsewhere it has none, so
- * the route's own check refuses it. If its reach cannot be read, it gets none.
+ * thread routes where it holds the route's level, and on artifact reads in projects it reaches;
+ * elsewhere it has none, so the route's own check refuses it. Unreadable reach means none.
  */
 export const layerGatedEnvironmentAuth = Layer.effect(
   EnvironmentAuth.EnvironmentAuth,
@@ -449,12 +467,13 @@ export const layerGatedEnvironmentAuth = Layer.effect(
         .sessionReach(session)
         .pipe(Effect.catch((cause) => refuseUnreadable(cause).pipe(Effect.as(null))));
       if (reach !== null && isWide(reach)) return session;
-      const rule = accessHttpRule(request.method, requestPathname(request));
+      const rule = accessHttpRule(request.method, request.url);
       if (rule.kind === "open") return session;
       if (reach === null || reach.kind !== "person" || rule.kind === "refuse") {
         return { ...session, scopes: [] };
       }
       const personId = reach.person.personId;
+      const needed = rule.kind === "thread" ? rule.level : "viewer";
       // The body is read once and kept, so the route reads the same bytes this check did.
       const held =
         rule.kind === "thread"
@@ -469,7 +488,7 @@ export const layerGatedEnvironmentAuth = Layer.effect(
               ),
             );
       const allowed = yield* held.pipe(
-        Effect.map((level) => levelReaches(level, "viewer")),
+        Effect.map((level) => levelReaches(level, needed)),
         Effect.catch(refuseUnreadable),
       );
       return allowed ? session : { ...session, scopes: [] };

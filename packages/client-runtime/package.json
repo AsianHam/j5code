@@ -411,6 +411,10 @@
       "types": "./src/j5/http.ts",
       "default": "./src/j5/http.ts"
     },
+    "./j5/fleetFacts": {
+      "types": "./src/j5/fleetFacts.ts",
+      "default": "./src/j5/fleetFacts.ts"
+    },
     "./j5/state": {
       "types": "./src/j5/state.ts",
       "default": "./src/j5/state.ts"

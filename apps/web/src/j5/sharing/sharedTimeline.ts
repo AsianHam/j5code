@@ -12,6 +12,8 @@ import {
 } from "./sharedConversation";
 import {
   answersWithoutPrefix,
+  isSharedNote,
+  markSharedNote,
   readAnswersFor,
   recallableMessages,
   type SharedMessageView,
@@ -37,11 +39,7 @@ interface MessageEntry {
   };
 }
 
-// Keyed by the message object the timeline holds, so nothing is kept for a thread off screen.
-const notes = new WeakSet<object>();
-
-/** Whether the timeline's message is the notice J5 put before a message that carried a note. */
-export const isSharedNote = (message: object) => notes.has(message);
+export { isSharedNote };
 
 // How the timeline last showed each person's message, by the message object it holds, which is
 // the one the composer is handed for recall.
@@ -230,8 +228,7 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
       const typed = { ...entry, message: { ...message, text: view.typed } };
       if (view.note === null) return [typed];
       // The note the message carried for the agent, as a notice of its own just before it.
-      const note = { ...message, id: `${message.id}:shared-note`, text: view.note };
-      notes.add(note);
+      const note = markSharedNote({ ...message, id: `${message.id}:shared-note`, text: view.note });
       return [{ ...entry, id: `${entry.id}:shared-note`, message: note }, typed];
     });
     return { entries: out, pendingKey: pending.join("|") };

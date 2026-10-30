@@ -537,12 +537,12 @@ const make = Effect.gen(function* () {
         if (request.level === "owner" && request.scope.kind !== "server") {
           return yield* new OwnerOutsideServerError({});
         }
-        if (request.use === "many" && (request.level !== "viewer" || request.name !== null)) {
+        if (request.use === "many" && request.level !== "viewer") {
           return yield* new LinkForManyIsViewerError({});
         }
         yield* requireScope(sql, request.scope);
         // Someone already here is given more access in place, not a link (AC35).
-        if (request.name !== null) {
+        if (request.use === "one") {
           const taken = yield* sql`
             SELECT 1 AS found FROM j5_a2a_human_person
             WHERE name_key = ${personNameKey(request.name)} AND removed_at IS NULL

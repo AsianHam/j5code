@@ -5,6 +5,7 @@ import { deriveTimelineMinimapItems } from "../../components/chat/timelineMinima
 import type { ChatMessage } from "../../types";
 import { isHumanAuthoredUserMessage } from "./minimapMessages";
 import { J5_A2A_DELIVERY_MESSAGE_PREFIX } from "./ThreadA2ARenderer";
+import { markSharedNote } from "../sharing/sharedTimeline.logic";
 
 describe("timeline minimap items", () => {
   const message = (overrides: Omit<Partial<ChatMessage>, "id"> & { id: string }): ChatMessage => ({
@@ -90,6 +91,25 @@ describe("timeline minimap items", () => {
         userText: "inbox reply",
         assistantText: "reply to inbox",
       },
+    ]);
+  });
+
+  it("leaves out a shared conversation's note and keeps the message it came with", () => {
+    const note = markSharedNote(
+      message({
+        id: "u1:shared-note",
+        createdBy: "user",
+        text: "<j5_shared_conversation>\nWho can write: Priya (collaborator).\n</j5_shared_conversation>",
+      }),
+    );
+    const rows = [
+      row(note),
+      row(message({ id: "u1", createdBy: "user", text: "the ask" })),
+      row(message({ id: "a1", role: "assistant", text: "the reply" })),
+    ];
+
+    expect(deriveTimelineMinimapItems(rows)).toEqual([
+      { id: "u1", rowIndex: 1, userText: "the ask", assistantText: "the reply" },
     ]);
   });
 });
