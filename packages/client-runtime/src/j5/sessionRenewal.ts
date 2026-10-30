@@ -13,13 +13,10 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { credentialConnectionId, routeHttpBaseUrl } from "../connection/routes.ts";
 
 /**
- * Renews the session of a server a client reaches with a saved bearer token, when J5 ended it for
- * a change of its person's level (People and access AC17). The connection is then refused for
- * authentication; this asks that server's renewal route with the old token, stores the new one
- * and connects again, once. A token the server will not renew is left as it is, and the person
- * pairs that server again by hand, as upstream has it.
- *
- * The browser's own server renews through its cookie instead, in the web client's sign-in gate.
+ * Renews a saved bearer token's session that J5 ended for a change of its person's level (People
+ * and access AC17): asks the renewal route with the old token, stores the new one and connects
+ * again, once. A token the server will not renew is left for the person to pair again. The
+ * browser's own server renews through its cookie instead, in the web client's sign-in gate.
  */
 
 const decodeRenewal = HttpClientResponse.schemaBodyJson(SessionRenewal);
@@ -68,34 +65,35 @@ export const renewSavedSession = Effect.fn("j5.sessionRenewal.renewSavedSession"
  * Follows one saved server's connection, renewing each time it is refused for authentication. It
  * ends when the server is removed, which frees its place among those followed.
  */
-const follow = (environmentId: Parameters<EnvironmentRegistry["Service"]["stateChanges"]>[0]) =>
-  Effect.gen(function* () {
-    const registry = yield* EnvironmentRegistry;
-    yield* registry.stateChanges(environmentId).pipe(
-      Stream.filter(
-        (state) =>
-          state.phase === "blocked" &&
-          state.lastFailure?._tag === "ConnectionBlockedError" &&
-          state.lastFailure.reason === "authentication",
-      ),
-      Stream.mapEffect(() =>
-        Effect.gen(function* () {
-          const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
-          if (entry === undefined) return;
-          if (yield* renewSavedSession(entry)) yield* registry.retryNow(environmentId);
-        }).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("J5 could not renew a saved server's session", {
-              environmentId,
-              cause,
-            }),
-          ),
+const follow = Effect.fn("j5.sessionRenewal.follow")(function* (
+  environmentId: Parameters<EnvironmentRegistry["Service"]["stateChanges"]>[0],
+) {
+  const registry = yield* EnvironmentRegistry;
+  yield* registry.stateChanges(environmentId).pipe(
+    Stream.filter(
+      (state) =>
+        state.phase === "blocked" &&
+        state.lastFailure?._tag === "ConnectionBlockedError" &&
+        state.lastFailure.reason === "authentication",
+    ),
+    Stream.mapEffect(() =>
+      Effect.gen(function* () {
+        const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+        if (entry === undefined) return;
+        if (yield* renewSavedSession(entry)) yield* registry.retryNow(environmentId);
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("J5 could not renew a saved server's session", {
+            environmentId,
+            cause,
+          }),
         ),
       ),
-      Stream.runDrain,
-      Effect.catch(() => Effect.void),
-    );
-  });
+    ),
+    Stream.runDrain,
+    Effect.ignore,
+  );
+});
 
 /**
  * For the web client's connection runtime: follows every saved server reached with a bearer token

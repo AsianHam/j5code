@@ -140,13 +140,10 @@ export function formatArchiveWarning(input: {
 }
 
 /**
- * The action menu owns archive mutation; this J5 delegate owns preflight and the one warning.
- * Two Crew rules ride on it. A seat is never archived one by one (Crews AC16): the seat's archive
- * is refused here with the way out, as `archive_agent` refuses it for agents. A Captain is never
- * archived alone (AC17): the dialog shows the live Crews it commands, and once the archive
- * commits the server's lifecycle cascade retires them as units, whichever door the archive came
- * through, so nothing here has to run after the confirmation. Upstream's Undo stays on every
- * door: the Captain's unarchive brings back the Crews that retired with it (#312).
+ * The action menu owns archive mutation; this owns preflight and the one warning. A seat's archive
+ * is refused with the way out (Crews AC16). A Captain's dialog shows the live Crews it commands
+ * (AC17); the server's lifecycle cascade retires them on commit, whichever door the archive came
+ * through, and the Captain's unarchive brings them back, so nothing here runs after confirmation.
  */
 export async function archiveWithPreflight<Result>(input: {
   readonly threadRef: ScopedThreadRef;

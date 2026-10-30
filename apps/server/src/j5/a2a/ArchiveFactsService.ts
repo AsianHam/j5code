@@ -38,19 +38,17 @@ export class A2AArchivePlacementFactsProvider extends Context.Service<
 >()("t3/j5/a2a/ArchiveFactsService/A2AArchivePlacementFactsProvider") {}
 
 /**
- * AR2's production placement reader. `listSubtree` includes the requested
- * participant, while the warning only names agents additionally affected by
- * archive, so the root is deliberately omitted here. It also walks archived
- * membership rows; those agents are already retired and are dropped, while
- * their live descendants stay.
+ * AR2's production placement reader. `listSubtree` includes the requested participant, but the
+ * warning names only the agents additionally affected, so the root is omitted. Archived membership
+ * rows are dropped, since those agents are already retired; their live descendants stay.
  */
 export const placementFactsLayer = Layer.effect(
   A2AArchivePlacementFactsProvider,
   Effect.gen(function* () {
     const placements = yield* ParticipantPlacementService;
     return A2AArchivePlacementFactsProvider.of({
-      readSubtree: (input) =>
-        placements.listSubtree(input).pipe(
+      readSubtree: Effect.fn("A2AArchivePlacementFactsProvider.readSubtree")(function (input) {
+        return placements.listSubtree(input).pipe(
           Effect.map((subtree) => {
             const descendantIds = subtree
               .filter(
@@ -71,7 +69,8 @@ export const placementFactsLayer = Layer.effect(
                 cause,
               }),
           ),
-        ),
+        );
+      }),
     });
   }),
 );
@@ -143,8 +142,10 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const placement = yield* A2AArchivePlacementFactsProvider;
 
-    const readForThread: A2AArchiveFactsShape["readForThread"] = (threadId) =>
-      Effect.gen(function* () {
+    const readForThread: A2AArchiveFactsShape["readForThread"] = Effect.fn(
+      "j5.a2a.archiveFacts.readForThread",
+    )(
+      function* (threadId) {
         const resolution = yield* resolveThreadHome(sql, threadId).pipe(
           Effect.catchTags({ A2AHomeNotFoundError: () => Effect.succeed(null) }),
         );
@@ -212,7 +213,9 @@ export const layer = Layer.effect(
           openExchanges,
           placementSubtree,
         } as const;
-      }).pipe(Effect.mapError(archiveFactsError("read pre-archive facts")));
+      },
+      Effect.mapError(archiveFactsError("read pre-archive facts")),
+    );
 
     return A2AArchiveFacts.of({ readForThread });
   }),

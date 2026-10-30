@@ -32,11 +32,9 @@ export interface CrewStateSummary {
 }
 
 /**
- * One seat's state from measured facts, in precedence order: a run in flight beats a failed last
- * run, which beats a pending approval, which beats settlement. A pending native question needs
- * attention even though its turn remains active. A seat whose last run failed is
- * said so rather than left as idle, the quiet default: a dead seat was invisible on the Fleet row
- * and the expander until it read as failed (Jackson's dogfood, 2026-09-17). Nothing here is
+ * Precedence: a run in flight beats a failed last run, which beats a pending approval, which beats
+ * settlement. A pending native question needs attention even though its turn remains active. A
+ * failed last run reads as failed, never as idle, so a dead seat stays visible. Nothing here is
  * inferred from silence.
  */
 export const classifyCrewSeat = (thread: CrewSeatThread | undefined): CrewSeatState => {

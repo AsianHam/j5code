@@ -41,10 +41,9 @@ export function AgentIdentityChip(props: {
 }
 
 /**
- * Persona chip plus handoff link for upstream's lineage rows and subagent cards
- * (#12835 replaced the Agents panel). Both are interactive, so callers mount this
- * beside the row's navigation button, never inside it. Runtime rows know only the
- * child thread; look up its shell for the pinned assignment.
+ * Persona chip plus handoff link for upstream's lineage rows and subagent cards. Both are
+ * interactive, so callers mount this beside the row's navigation button, never inside it. Runtime
+ * rows know only the child thread; look up its shell for the pinned assignment.
  */
 export function AgentRowIdentity(props: {
   readonly environmentId: EnvironmentId;

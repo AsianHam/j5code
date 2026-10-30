@@ -132,31 +132,32 @@ export const machineSenderHttpRouteLayer = Layer.unwrap(
     const roster = yield* RosterService;
 
     /** The token's subject must name a registered machine; anything else is refused with the next command. */
-    const machineForSession = (session: EnvironmentAuth.AuthenticatedSession) =>
-      Effect.gen(function* () {
-        const subject = ParticipantId.make(session.subject);
-        if (!isMachineParticipantId(subject)) {
-          return Result.fail(
-            jsonError(
-              403,
-              "machine_subject_required",
-              `This token is not bound to a machine participant (subject "${session.subject}"). Issue one with \`j5 a2a token issue --participant <name>\`.`,
-            ),
+    const machineForSession = Effect.fn("j5.a2a.machineSenderHttp.machineForSession")(function* (
+      session: EnvironmentAuth.AuthenticatedSession,
+    ) {
+      const subject = ParticipantId.make(session.subject);
+      if (!isMachineParticipantId(subject)) {
+        return Result.fail(
+          jsonError(
+            403,
+            "machine_subject_required",
+            `This token is not bound to a machine participant (subject "${session.subject}"). Issue one with \`j5 a2a token issue --participant <name>\`.`,
+          ),
+        );
+      }
+      const resolved = yield* Effect.result(machines.resolve(subject));
+      return Result.isSuccess(resolved)
+        ? Result.succeed(resolved.success)
+        : Result.fail(
+            tagOf(resolved.failure) === "MachineParticipantNotFoundError"
+              ? jsonError(
+                  403,
+                  "machine_sender_not_registered",
+                  messageOf(resolved.failure, "Machine participant is not registered."),
+                )
+              : jsonError(500, tagOf(resolved.failure), "Machine lookup failed."),
           );
-        }
-        const resolved = yield* Effect.result(machines.resolve(subject));
-        return Result.isSuccess(resolved)
-          ? Result.succeed(resolved.success)
-          : Result.fail(
-              tagOf(resolved.failure) === "MachineParticipantNotFoundError"
-                ? jsonError(
-                    403,
-                    "machine_sender_not_registered",
-                    messageOf(resolved.failure, "Machine participant is not registered."),
-                  )
-                : jsonError(500, tagOf(resolved.failure), "Machine lookup failed."),
-            );
-      });
+    });
 
     const registerRoute = HttpRouter.add(
       "POST",

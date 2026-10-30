@@ -1,7 +1,6 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { draftAgentAssignmentPreview } from "@t3tools/client-runtime/j5/agent-personas";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { clearDraftAgent, useDraftAgentPersonaId } from "./agentDraftState";
@@ -20,10 +19,8 @@ export function useDraftAgentAssignment(
       ? agentPersonaEnvironment.catalog({ environmentId, input: {} })
       : null,
   );
-  const assignment = useMemo(
-    () => (personaId === null ? null : draftAgentAssignmentPreview(personaId, catalog.data)),
-    [personaId, catalog.data],
-  );
-  const clear = useCallback(() => clearDraftAgent(draftKey), [draftKey]);
+  const assignment =
+    personaId === null ? null : draftAgentAssignmentPreview(personaId, catalog.data);
+  const clear = () => clearDraftAgent(draftKey);
   return { enabled, draftKey, personaId, assignment, clear };
 }

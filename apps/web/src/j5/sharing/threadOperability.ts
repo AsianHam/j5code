@@ -3,11 +3,9 @@ import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/co
 import { readEnvironmentScope } from "../../state/session";
 
 /**
- * `useCanOperateThread` for code that runs outside a render: upstream's thread action menu builds
- * its items when it is opened. It is kept apart from the hook so that it imports nothing of the
- * app's connection runtime or atom registry: `access.ts`, which owns those, hands it the read of
- * the person's level when it loads. Until then the answer is upstream's server-wide permission
- * and nothing more.
+ * `useCanOperateThread` outside a render, for upstream's thread menu. Kept apart from the hook so
+ * it imports nothing of the connection runtime or atom registry: `access.ts` hands it the level
+ * read when it loads, and until then the answer is upstream's server-wide permission alone.
  */
 let sharingAllowsOperate: (thread: ScopedThreadRef) => boolean = () => true;
 

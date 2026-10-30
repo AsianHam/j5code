@@ -4,7 +4,7 @@ import { createScopedThreadReadStore } from "@t3tools/client-runtime/j5/scopedTh
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { SpawnedChild, SpawnedChildrenEntry } from "@t3tools/contracts/j5";
 import * as Cause from "effect/Cause";
-import { useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { j5Environment } from "../state";
@@ -87,8 +87,5 @@ export function useSpawnedChildren(ref: ScopedThreadRef): ReadonlyArray<SpawnedC
 /** The scoped keys of the rows an agent spawned, for the sidebar's membership rule. */
 export function useAgentSpawnedThreadKeys(): ReadonlySet<string> {
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  return useMemo(
-    () => new Set([...snapshot].flatMap(([key, row]) => (row.spawnedByAgent ? [key] : []))),
-    [snapshot],
-  );
+  return new Set([...snapshot].flatMap(([key, row]) => (row.spawnedByAgent ? [key] : [])));
 }

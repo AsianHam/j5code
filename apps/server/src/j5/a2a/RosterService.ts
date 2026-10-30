@@ -83,9 +83,8 @@ export const layer: Layer.Layer<RosterService, never, SqlClient.SqlClient | Orch
       const sql = yield* SqlClient.SqlClient;
       const orchestrator = yield* OrchestratorV2;
 
-      const list: RosterServiceShape["list"] = () =>
-        Effect.gen(function* () {
-          const agents = yield* sql<AgentRow>`
+      const list: RosterServiceShape["list"] = Effect.fn("j5.a2a.roster.list")(function* () {
+        const agents = yield* sql<AgentRow>`
             SELECT
               membership.project_id,
               COALESCE(project.title, ledger.project_id) AS project_title,
@@ -97,7 +96,7 @@ export const layer: Layer.Layer<RosterService, never, SqlClient.SqlClient | Orch
             LEFT JOIN projection_projects AS project ON project.project_id = membership.project_id
             ORDER BY membership.project_id, membership.participant_id
           `;
-          const machines = yield* sql<MachineRow>`
+        const machines = yield* sql<MachineRow>`
             SELECT
               machine.project_id,
               COALESCE(project.title, ledger.project_id) AS project_title,
@@ -108,97 +107,98 @@ export const layer: Layer.Layer<RosterService, never, SqlClient.SqlClient | Orch
             LEFT JOIN projection_projects AS project ON project.project_id = machine.project_id
             ORDER BY machine.project_id, machine.participant_id
           `;
-          const people = yield* listRegisteredHumanPersonIds(sql);
-          const snapshot = yield* Effect.option(orchestrator.getShellSnapshot());
-          const shellByThreadId = new Map(
-            Option.match(snapshot, {
-              onNone: () => [],
-              onSome: ({ archivedThreads, threads }) =>
-                [...threads, ...archivedThreads].map((thread) => [thread.id, thread] as const),
-            }),
+        const people = yield* listRegisteredHumanPersonIds(sql);
+        const snapshot = yield* Effect.option(orchestrator.getShellSnapshot());
+        const shellByThreadId = new Map(
+          Option.match(snapshot, {
+            onNone: () => [],
+            onSome: ({ archivedThreads, threads }) =>
+              [...threads, ...archivedThreads].map((thread) => [thread.id, thread] as const),
+          }),
+        );
+        const membershipCounts = new Map<string, number>();
+        for (const row of agents) {
+          membershipCounts.set(
+            row.participant_id,
+            (membershipCounts.get(row.participant_id) ?? 0) + 1,
           );
-          const membershipCounts = new Map<string, number>();
-          for (const row of agents) {
-            membershipCounts.set(
-              row.participant_id,
-              (membershipCounts.get(row.participant_id) ?? 0) + 1,
-            );
-          }
-          return [
-            ...agents.map((row): A2ARosterEntry => {
-              const shell = shellByThreadId.get(ThreadId.make(row.thread_id));
-              return {
-                participantId: row.participant_id,
-                kind: "agent",
-                projectId: row.project_id,
-                projectTitle: row.project_title,
-                displayName: shell?.title ?? null,
-                threadId: ThreadId.make(row.thread_id),
-                archived: row.archived_at !== null,
-                canReceiveMessage:
-                  row.archived_at === null && membershipCounts.get(row.participant_id) === 1,
-                acceptsUrgency: false,
-                liveness: shell === undefined ? null : livenessForShellThread(shell),
-              };
-            }),
-            ...people.map((personId): A2ARosterEntry => ({
-              participantId: personId,
-              kind: "human",
-              projectId: null,
-              projectTitle: null,
-              displayName: null,
-              threadId: null,
-              archived: false,
-              canReceiveMessage: false,
-              acceptsUrgency: true,
-              liveness: null,
-            })),
-            ...machines.map((row): A2ARosterEntry => ({
+        }
+        return [
+          ...agents.map((row): A2ARosterEntry => {
+            const shell = shellByThreadId.get(ThreadId.make(row.thread_id));
+            return {
               participantId: row.participant_id,
-              kind: "machine",
+              kind: "agent",
               projectId: row.project_id,
               projectTitle: row.project_title,
-              displayName: row.name,
-              threadId: null,
-              archived: false,
-              canReceiveMessage: false,
+              displayName: shell?.title ?? null,
+              threadId: ThreadId.make(row.thread_id),
+              archived: row.archived_at !== null,
+              canReceiveMessage:
+                row.archived_at === null && membershipCounts.get(row.participant_id) === 1,
               acceptsUrgency: false,
-              liveness: null,
-            })),
-          ];
-        });
+              liveness: shell === undefined ? null : livenessForShellThread(shell),
+            };
+          }),
+          ...people.map((personId): A2ARosterEntry => ({
+            participantId: personId,
+            kind: "human",
+            projectId: null,
+            projectTitle: null,
+            displayName: null,
+            threadId: null,
+            archived: false,
+            canReceiveMessage: false,
+            acceptsUrgency: true,
+            liveness: null,
+          })),
+          ...machines.map((row): A2ARosterEntry => ({
+            participantId: row.participant_id,
+            kind: "machine",
+            projectId: row.project_id,
+            projectTitle: row.project_title,
+            displayName: row.name,
+            threadId: null,
+            archived: false,
+            canReceiveMessage: false,
+            acceptsUrgency: false,
+            liveness: null,
+          })),
+        ];
+      });
 
-      const resolveRecipient: RosterServiceShape["resolveRecipient"] = (to) =>
-        Effect.gen(function* () {
-          const target = to.trim();
-          if (PARTICIPANT_ID_PREFIXES.some((prefix) => target.startsWith(prefix))) {
-            return { kind: "resolved", participantId: ParticipantId.make(target) } as const;
-          }
-          const entries = yield* list();
-          const byThread = entries.find((entry) => entry.threadId === target);
-          if (byThread !== undefined) {
-            return {
-              kind: "resolved",
-              participantId: participantIdForThread(ThreadId.make(target)),
-            } as const;
-          }
-          const wanted = target.toLowerCase();
-          const byName = entries.filter(
-            (entry) =>
-              entry.kind === "agent" &&
-              !entry.archived &&
-              entry.displayName !== null &&
-              entry.displayName.trim().toLowerCase() === wanted,
-          );
-          if (byName.length === 1) {
-            return {
-              kind: "resolved",
-              participantId: ParticipantId.make(byName[0]!.participantId),
-            } as const;
-          }
-          if (byName.length > 1) return { kind: "ambiguous", candidates: byName } as const;
-          return { kind: "not_found" } as const;
-        });
+      const resolveRecipient: RosterServiceShape["resolveRecipient"] = Effect.fn(
+        "j5.a2a.roster.resolveRecipient",
+      )(function* (to) {
+        const target = to.trim();
+        if (PARTICIPANT_ID_PREFIXES.some((prefix) => target.startsWith(prefix))) {
+          return { kind: "resolved", participantId: ParticipantId.make(target) } as const;
+        }
+        const entries = yield* list();
+        const byThread = entries.find((entry) => entry.threadId === target);
+        if (byThread !== undefined) {
+          return {
+            kind: "resolved",
+            participantId: participantIdForThread(ThreadId.make(target)),
+          } as const;
+        }
+        const wanted = target.toLowerCase();
+        const byName = entries.filter(
+          (entry) =>
+            entry.kind === "agent" &&
+            !entry.archived &&
+            entry.displayName !== null &&
+            entry.displayName.trim().toLowerCase() === wanted,
+        );
+        if (byName.length === 1) {
+          return {
+            kind: "resolved",
+            participantId: ParticipantId.make(byName[0]!.participantId),
+          } as const;
+        }
+        if (byName.length > 1) return { kind: "ambiguous", candidates: byName } as const;
+        return { kind: "not_found" } as const;
+      });
 
       return RosterService.of({ list, resolveRecipient });
     }),

@@ -1,5 +1,4 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import { useClientSettings } from "../hooks/useSettings";
 import { selectProjectGroupingSettings } from "../logicalProject";
@@ -43,15 +42,13 @@ export function useLogicalProjects() {
   const settings = useClientSettings(selectProjectGroupingSettings);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
-  return useMemo(() => {
-    const labels = new Map(environments.map((entry) => [entry.environmentId, entry.label]));
-    return createLogicalProjectLookup(
-      buildSidebarProjectSnapshots({
-        projects,
-        settings,
-        primaryEnvironmentId,
-        resolveEnvironmentLabel: (id) => labels.get(id) ?? null,
-      }),
-    );
-  }, [environments, primaryEnvironmentId, projects, settings]);
+  const labels = new Map(environments.map((entry) => [entry.environmentId, entry.label]));
+  return createLogicalProjectLookup(
+    buildSidebarProjectSnapshots({
+      projects,
+      settings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: (id) => labels.get(id) ?? null,
+    }),
+  );
 }

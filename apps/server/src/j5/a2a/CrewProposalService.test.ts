@@ -413,12 +413,10 @@ const fixtureWithDatabase = Effect.fn("test.crewProposal.fixture")(function* (
                 (yield* Ref.get(archiveFailures)).has(command.threadId)) ||
               (command.type === "message.dispatch" && (yield* Ref.get(noticeFailure)))
             )
-              return yield* Effect.fail(
-                new OrchestratorDispatchError({
-                  commandId: command.commandId,
-                  commandType: command.type,
-                }),
-              );
+              return yield* new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+              });
             yield* Ref.update(notices, (items) => [...items, command]);
             return { events: [], effects: [] } as never;
           }),
@@ -459,6 +457,7 @@ it.effect("reports what the person decided about a roster, and what they changed
         record: (event, properties = {}) =>
           Effect.sync(() => void recorded.push({ event, ...properties })),
         flush: Effect.void,
+        recordOwners: () => Effect.void,
       }),
     );
     yield* Effect.gen(function* () {

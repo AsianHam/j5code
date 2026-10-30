@@ -54,12 +54,10 @@ const refreshFleetRows = createFleetRowRefresher({
 });
 
 /**
- * The live roster re-reads itself when the server says a Crew or the Fleet changed. Each read an
- * environment settles is handed on with the revisions it was made under, so the sidebar's Crew
- * chips and children re-read for the rows that roster names as involved (seats, their Captains,
- * spawners with placed children) and for the rows still showing a chip or children, and no
- * others. The per-thread reads stay bounded by Crew activity rather than by the length of the
- * thread list. A roster read that failed hands nothing on; the next change tries again.
+ * Each settled roster read is handed on with its revisions, so Crew chips and children re-read only
+ * for rows the roster names as involved and rows still showing a chip or children. That keeps
+ * per-thread reads bounded by Crew activity, not thread count. A failed read hands nothing on; the
+ * next change tries again.
  */
 const followFleetRows = () =>
   appAtomRegistry.subscribe(
@@ -105,7 +103,9 @@ const useFleetFocusRefresh = createVisibleRefreshHook(() => {
 /** The always-mounted rail badge keeps the live roster (no retired Crews, no rosters) current. */
 export function useFleetRefresh() {
   useFleetFocusRefresh();
+  // oxlint-disable-next-line t3code/react-effect-budget -- the always-mounted rail follows each roster read for as long as it is mounted.
   useEffect(followFleetRows, []);
+  // oxlint-disable-next-line t3code/react-effect-budget -- the rail keeps the shared Fleet facts Atom and its dispatch deadline alive while it is mounted.
   useEffect(() => appAtomRegistry.mount(fleetFactsAtom), []);
 }
 

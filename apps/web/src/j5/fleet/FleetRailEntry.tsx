@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { RadarIcon } from "lucide-react";
-import { useCallback } from "react";
 
 import { useSidebar } from "../../components/ui/sidebar";
 import { cn } from "../../lib/utils";
@@ -17,9 +16,9 @@ export function FleetRailEntry({ onBackdrop }: { readonly onBackdrop: boolean })
   const summary = useAtomValue(fleetProblemSummaryAtom);
   useFleetRefresh();
 
-  const closeMobileSidebar = useCallback(() => {
+  const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);
-  }, [isMobile, setOpenMobile]);
+  };
 
   const label = fleetBadgeLabel(summary);
   return (

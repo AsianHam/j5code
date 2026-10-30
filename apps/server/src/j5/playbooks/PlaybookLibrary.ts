@@ -66,13 +66,12 @@ export const makePlaybookLibrary = Effect.gen(function* () {
       : Effect.succeed(managed);
   const folders = Effect.gen(function* () {
     if (stateDir === null) return [];
-    const text = yield* fs
-      .readFileString(path.join(stateDir, "playbooks.json"))
-      .pipe(
-        Effect.catch((error) =>
-          error.reason._tag === "NotFound" ? Effect.succeed('{"folders":[]}') : Effect.fail(error),
-        ),
-      );
+    const text = yield* fs.readFileString(path.join(stateDir, "playbooks.json")).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed('{"folders":[]}'),
+      ),
+    );
     return (yield* decodeFolders(text)).folders;
   });
   const sources = Effect.fn("PlaybookLibrary.sources")(function* (
@@ -94,9 +93,7 @@ export const makePlaybookLibrary = Effect.gen(function* () {
     const seen = new Set<string>();
     const result = [];
     for (const entry of entries) {
-      const canonical = yield* fs
-        .realPath(entry.path)
-        .pipe(Effect.catch(() => Effect.succeed(entry.path)));
+      const canonical = yield* fs.realPath(entry.path).pipe(Effect.orElseSucceed(() => entry.path));
       if (seen.has(canonical)) continue;
       seen.add(canonical);
       const files = yield* Effect.result(fs.readDirectory(entry.path));
@@ -171,7 +168,7 @@ export const makePlaybookLibrary = Effect.gen(function* () {
     };
   }, Effect.mapError(storageError));
   const setFolders = Effect.fn("PlaybookLibrary.setFolders")(function* (
-    input: typeof PlaybookFoldersInput.Type,
+    input: PlaybookFoldersInput,
   ) {
     yield* requireManaged();
     const selected = [];

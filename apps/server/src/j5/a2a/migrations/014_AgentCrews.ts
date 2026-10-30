@@ -1,16 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// A Crew is composed at launch: a Captain proposes a roster from the agent library, a human
-// approves it, and the approved seats spawn as Peer Agents placed under
-// the Captain. The instance groups those members so they archive as one unit; every later seat
-// goes through the same proposal gate and bumps the instance version. A participant sits in at
-// most one Crew.
-//
-// An earlier cut of these tables ran on one development database under id 13, with an
-// approved_by column, a runbook_declared column, and an auto_approved status that were removed
-// before anything shipped; id 13 then went to machine participants. This migration begins by
-// dropping any earlier-shaped crews tables it finds, so that database lands on the same schema.
+// A Crew groups the seats a Captain proposed and a human approved, so they archive as one unit;
+// every later seat passes the same gate and bumps the instance version. A participant sits in at
+// most one Crew. An earlier cut of these tables existed on one development database, so this
+// first drops any earlier-shaped crews tables to land that database on the same schema.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

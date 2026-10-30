@@ -6,20 +6,10 @@ import * as Effect from "effect/Effect";
 import type { ClaudeAgentSdkQuerySession } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 
 /**
- * A steer from an agent or the server waits for a Claude turn's running tool calls instead of
- * cancelling them (FORK.md case 84, register D4). Upstream sends every steer with priority
- * "now", which cancels the turn's running tool calls and makes Claude report a refusal nobody
- * gave. Priority "next" is Claude Code's own mid-turn path: the CLI lets the running tool calls
- * finish and adds the message to the turn at the next tool result. A person's steer keeps
- * upstream's "now", so it still cuts in at once.
- *
- * A "next" steer offered after the turn's last tool call is still queued when the turn's result
- * arrives, and Claude runs it as another native turn. The adapter keeps the turn open for it by
- * following the steer's `command_lifecycle` frames. A CLI that sends none never holds a turn
- * open: the steer's native turn then reaches the thread through upstream's wake-turn path.
- *
- * Kept as a leaf module so the Claude adapter carries only its hook calls. A turn's steers are
- * forgotten when the turn ends.
+ * An agent's or the server's steer to a Claude turn uses priority "next" (FORK.md case 89, register
+ * D4): upstream's "now" cancels running tool calls and makes Claude report a refusal nobody gave,
+ * while "next" waits for the next tool result. A person's steer keeps "now". A "next" steer queued
+ * at the result runs as another native turn, held open by `command_lifecycle` frames.
  */
 
 type SteerState = "offered" | "queued" | "taken" | "cancelled";
@@ -109,14 +99,10 @@ const lifecycleStates = new Map<string, SteerState>([
 ]);
 
 /**
- * Whether the turn's result is one segment of the turn rather than its end: a steer of the turn
- * is still to run. Only a clean completion is held, so a failure ends the turn and shows. The
- * adapter holds a person's aborting "now" steer itself without calling this, so the turn keeps
- * its steers across it.
- *
- * For a fresh uuid user message, a held turn ends at the result of the turn consuming it.
- * Neither J5 nor upstream asks the CLI to cancel a queued command, and a person's Stop
- * closes the query, which ends the turn whether or not it is held.
+ * Whether the turn's result is one segment of the turn, not its end, because a steer is still to
+ * run. Only a clean completion is held, so a failure shows. The adapter holds a person's aborting
+ * "now" steer itself. A held turn ends at the result of the turn consuming the steer's fresh uuid
+ * message, or when a person's Stop closes the query.
  */
 export const j5ClaudeSteerHoldsResult = (
   query: ClaudeAgentSdkQuerySession,

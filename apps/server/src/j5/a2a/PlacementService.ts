@@ -174,11 +174,9 @@ export class ParticipantPlacementService extends Context.Service<
 >()("t3/j5/a2a/PlacementService/ParticipantPlacementService") {}
 
 /**
- * Internal write seam for multi-service transactions. drainPermit and
- * lifecyclePermit are independent peers that both precede appendPermit; callers
- * must then preserve appendPermit ≺ mutationPermit ≺ DB. This Semaphore(1)
- * permit is non-reentrant: acquire it before BEGIN and use the provided raw
- * in-transaction API instead of re-acquiring it through the public mutation.
+ * Internal write seam for multi-service transactions. drainPermit and lifecyclePermit both precede
+ * appendPermit; then appendPermit ≺ mutationPermit ≺ DB. The Semaphore(1) permit is non-reentrant:
+ * acquire it before BEGIN and use the raw in-transaction API, never the public mutation.
  */
 export interface ParticipantPlacementTransactionWriterShape {
   readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
@@ -817,21 +815,27 @@ export const layer: Layer.Layer<
     });
 
     const service = ParticipantPlacementService.of({
-      recordCreation: (input) =>
-        mutationPermit
+      recordCreation: Effect.fn("ParticipantPlacementService.recordCreation")(function (input) {
+        return mutationPermit
           .withPermit(sql.withTransaction(recordCreationInTransaction(input)))
-          .pipe(Effect.mapError(preserveDomainError("record participant placement"))),
-      readPlacement: ({ projectId, participantId }) =>
-        Effect.gen(function* () {
+          .pipe(Effect.mapError(preserveDomainError("record participant placement")));
+      }),
+      readPlacement: Effect.fn("j5.a2a.placement.readPlacement")(
+        function* ({ projectId, participantId }) {
           yield* ensureProjectLedger(projectId);
           return yield* selectPlacement(projectId, participantId);
-        }).pipe(Effect.mapError(preserveDomainError("read participant placement"))),
-      listParticipants: (projectId) =>
-        listParticipantsEffect(projectId).pipe(
-          Effect.mapError(preserveDomainError("list participant placements")),
-        ),
-      listSubtree: ({ projectId, participantId }) =>
-        Effect.gen(function* () {
+        },
+        Effect.mapError(preserveDomainError("read participant placement")),
+      ),
+      listParticipants: Effect.fn("ParticipantPlacementService.listParticipants")(
+        function (projectId) {
+          return listParticipantsEffect(projectId).pipe(
+            Effect.mapError(preserveDomainError("list participant placements")),
+          );
+        },
+      ),
+      listSubtree: Effect.fn("j5.a2a.placement.listSubtree")(
+        function* ({ projectId, participantId }) {
           yield* ensureProjectLedger(projectId);
           yield* ensureParticipant(projectId, participantId);
           const participants = yield* listParticipantsEffect(projectId);
@@ -850,27 +854,32 @@ export const layer: Layer.Layer<
           const visited = new Set<ParticipantId>();
           const path: Array<ParticipantId> = [];
           const ordered: Array<ParticipantPlacementView> = [];
-          const visit = (id: ParticipantId): Effect.Effect<void, PlacementGraphCorruptError> =>
-            Effect.gen(function* () {
-              if (visiting.has(id)) {
-                return yield* new PlacementGraphCorruptError({ projectId, path: [...path, id] });
-              }
-              if (visited.has(id)) return;
-              visiting.add(id);
-              path.push(id);
-              for (const childId of children.get(id) ?? []) yield* visit(childId);
-              path.pop();
-              visiting.delete(id);
-              visited.add(id);
-              const participant = byId.get(id);
-              if (participant !== undefined) ordered.push(participant);
-            });
+          const visit = Effect.fn("j5.a2a.placement.visit")(function* (
+            id: ParticipantId,
+          ): Effect.fn.Return<void, PlacementGraphCorruptError> {
+            if (visiting.has(id)) {
+              return yield* new PlacementGraphCorruptError({ projectId, path: [...path, id] });
+            }
+            if (visited.has(id)) return;
+            visiting.add(id);
+            path.push(id);
+            for (const childId of children.get(id) ?? []) yield* visit(childId);
+            path.pop();
+            visiting.delete(id);
+            visited.add(id);
+            const participant = byId.get(id);
+            if (participant !== undefined) ordered.push(participant);
+          });
           yield* visit(participantId);
           return ordered;
-        }).pipe(Effect.mapError(preserveDomainError("list placement subtree"))),
+        },
+        Effect.mapError(preserveDomainError("list placement subtree")),
+      ),
     });
     const transactionWriter = ParticipantPlacementTransactionWriter.of({
-      withPermit: (effect) => mutationPermit.withPermit(effect),
+      withPermit: Effect.fn("ParticipantPlacementTransactionWriter.withPermit")(function (effect) {
+        return mutationPermit.withPermit(effect);
+      }),
       recordCreationInTransaction,
     });
     return Context.make(ParticipantPlacementService, service).pipe(

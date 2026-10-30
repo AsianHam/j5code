@@ -65,7 +65,7 @@ const watchdog: MachineParticipant = {
   name: "billing-watchdog",
 };
 
-const descriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor)({
+const descriptor = Schema.decodeSync(ExecutionEnvironmentDescriptor)({
   environmentId: "environment-work",
   label: "Work VM",
   platform: { os: "linux", arch: "x64" },
@@ -395,45 +395,43 @@ it.effect(
   "tells the sender of a direct message it already tried that it may not have arrived",
   () =>
     Effect.gen(function* () {
-      yield* Effect.gen(function* () {
-        yield* seed();
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`
+      yield* seed();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
         UPDATE j5_a2a_peer
         SET link_mode = 'push', origin = 'https://laptop.example', credential = 'laptop-token'
         WHERE environment_id = ${laptop}
       `;
-        const read = yield* rows;
-        // The first is sent and its answer lost; the second never left.
-        const tried = yield* sendFromBilling("tried");
-        assert.equal((yield* (yield* A2ADeliveryWorker).runOnce)?.state, "retry_scheduled");
-        const untried = yield* sendFromBilling("untried");
+      const read = yield* rows;
+      // The first is sent and its answer lost; the second never left.
+      const tried = yield* sendFromBilling("tried");
+      assert.equal((yield* (yield* A2ADeliveryWorker).runOnce)?.state, "retry_scheduled");
+      const untried = yield* sendFromBilling("untried");
 
-        yield* (yield* PeerRemovalService).remove(laptop);
-        const told = (yield* read.notices).map((notice) => notice.message_text);
-        assert.lengthOf(told, 2);
-        assert.include(
-          told[0]!,
-          `Your message ${tried.messageId} to ${iosBuild} on JM-LT-04213 may not have been delivered: JM-LT-04213 is no longer peered.`,
-        );
-        assert.include(
-          told[1]!,
-          `Your message ${untried.messageId} to ${iosBuild} on JM-LT-04213 was not delivered: JM-LT-04213 is no longer peered.`,
-        );
-      }).pipe(
-        Effect.provide(
-          makeTestLayer({
-            deliverPeer: () =>
-              Effect.fail(
-                new A2ADeliveryTransportError({
-                  operation: "deliver to peer",
-                  cause: "the answer was lost",
-                }),
-              ),
-          }),
-        ),
+      yield* (yield* PeerRemovalService).remove(laptop);
+      const told = (yield* read.notices).map((notice) => notice.message_text);
+      assert.lengthOf(told, 2);
+      assert.include(
+        told[0]!,
+        `Your message ${tried.messageId} to ${iosBuild} on JM-LT-04213 may not have been delivered: JM-LT-04213 is no longer peered.`,
       );
-    }),
+      assert.include(
+        told[1]!,
+        `Your message ${untried.messageId} to ${iosBuild} on JM-LT-04213 was not delivered: JM-LT-04213 is no longer peered.`,
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          deliverPeer: () =>
+            Effect.fail(
+              new A2ADeliveryTransportError({
+                operation: "deliver to peer",
+                cause: "the answer was lost",
+              }),
+            ),
+        }),
+      ),
+    ),
 );
 
 it.effect(

@@ -1,25 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalFetch:off - a standalone Node CLI that runs git and prints markdown.
 /**
- * Publishes before and after screenshots for a pull request and prints the
- * markdown table for its description:
- *
- *   node scripts/j5/pr-evidence.ts <pr-number> --pair "<caption>" <before.png> <after.png>
- *                                               --new "<caption>" <after.png> ...
- *
- * `--pair` is a state the change altered; `--new` is a state the change adds,
- * which has no before. Both repeat, in the order the rows should appear.
- *
- * Each file is checked to really be a PNG, then copied to `pr-<number>/` on
- * the `j5/evidence` branch from a fresh shallow clone in a temporary directory
- * and pushed. Other agents push there too, so a rejected push is rebased and
- * retried. Each image link is then checked to return an image before the table
- * is printed. Screenshots never go on the pull request's own branch.
- *
- * `--remote <url>` and `--branch <name>` point it somewhere else, which is how
- * it is tested without touching the real branch. The only branches it will
- * push to are `j5/evidence` and a self-test branch named
- * `j5/evidence-selftest-*`, unless the remote is a local bare repository. The link
- * check runs only for a GitHub remote.
+ * Publishes PR screenshots to `pr-<number>/` on `j5/evidence` and prints the description's table:
+ *   node scripts/j5/pr-evidence.ts <pr> --pair "<caption>" <before.png> <after.png> --new ...
+ * `--new` is a state the change adds, with no before. Other agents push there too, so a rejected
+ * push is rebased and retried. `--remote` and `--branch` exist for testing; see `branchRefusal`.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -107,12 +91,10 @@ function isLocalBareRepository(remote: string): boolean {
 }
 
 /**
- * Why this script will not push to `branch` on `remote`, or undefined when it
- * may. Evidence goes only to the evidence branch, or to a self-test branch,
- * never to a pull request's own branch or to main. The one exception is a
- * remote proved to be a local bare repository. The rule is "refuse unless
- * proved harmless", because a remote can name the real repository in more
- * forms than any pattern would catch.
+ * Why this script will not push to `branch` on `remote`, or undefined when it may: only the
+ * evidence or a self-test branch, unless the remote is proved a local bare repository. It refuses
+ * unless proved harmless, because a remote can name the real repository in more forms than any
+ * pattern would catch.
  */
 export function branchRefusal(remote: string, branch: string): string | undefined {
   if (branch === DEFAULT_BRANCH || branch.startsWith(SELFTEST_BRANCH_PREFIX)) return undefined;

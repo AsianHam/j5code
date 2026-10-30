@@ -14,6 +14,7 @@ import {
   devicePermissions,
   highestLevel,
 } from "@t3tools/contracts/j5";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -44,22 +45,10 @@ import {
 } from "./PersonAccess.ts";
 
 /**
- * `j5 pair` and `j5 auth pairing create` name the person a device is for (register D36, People
- * and access AC4). Upstream's commands carry these flags and make their link through
- * `pairingLinkForPerson` (FORK.md case 79). A name that matches someone makes the link for them
- * at their levels; one that matches no one creates that person at the level and scope given.
- * Upstream's `--scope` keeps its meaning: it narrows the device's permissions within the level,
- * and becomes the device's ceiling.
- *
- * `j5 pair` refuses without `--person`. `j5 auth pairing create` without it makes upstream's own
- * link, for a device the server will ask about: upstream's desktop app runs that bare command on
- * a host it reaches over SSH, and knows no one's name there. Such a device reaches nothing until
- * it says whose it is (AC5), so it never silently belongs to someone the server assumed.
- *
- * While a server runs for the home, the commands ask it to make the link
- * (`CliPairingHttp.ts`): only the running server can tell open clients, such as a People page,
- * that someone was added. With none running, they write the database themselves, holding the
- * home's server lock (`serverOwnership.ts`) so that none starts meanwhile.
+ * `j5 pair` and `j5 auth pairing create` name the device's person (D36, AC4; FORK.md case 79): an
+ * existing name pairs at their levels, a new one is created at the given level and scope, and
+ * `--scope` caps the device. A bare `auth pairing create` (upstream's SSH desktop flow) makes a
+ * device that reaches nothing until claimed. A running server makes the link (`CliPairingHttp.ts`).
  */
 
 export const personPairingFlags = {
@@ -213,22 +202,24 @@ export const pairingLinkForPerson = Effect.fn("j5.sharing.cliPairing.pairingLink
     // The link and the record of whose it is commit together: a link made without it would pair
     // a device the server could not place. Upstream's link is written through the same database
     // client (`cliEnvironmentAuth` builds both over one runtime).
-    const mintFor = (personId: ParticipantId, levels: ReadonlyArray<HeldLevel>) =>
-      Effect.gen(function* () {
-        const granted = devicePermissions(highestLevel(levels.map((held) => held.level)), ceiling);
-        if (granted.length === 0) {
-          return yield* refuse(`--scope gives nothing within ${name}'s level.`);
-        }
-        const link = yield* input.mint(granted);
-        yield* intents.record({
-          pairingLinkId: link.id,
-          credential: link.credential,
-          personId,
-          linkId: null,
-          ceiling,
-        });
-        return link;
+    const mintFor = Effect.fn("j5.sharing.cliPairing.mintFor")(function* (
+      personId: ParticipantId,
+      levels: ReadonlyArray<HeldLevel>,
+    ) {
+      const granted = devicePermissions(highestLevel(levels.map((held) => held.level)), ceiling);
+      if (granted.length === 0) {
+        return yield* refuse(`--scope gives nothing within ${name}'s level.`);
+      }
+      const link = yield* input.mint(granted);
+      yield* intents.record({
+        pairingLinkId: link.id,
+        credential: link.credential,
+        personId,
+        linkId: null,
+        ceiling,
       });
+      return link;
+    });
     const existing = everyone.find(
       (record) =>
         record.person.displayName !== null &&
@@ -306,12 +297,17 @@ export class PairingServerUnconfirmedError extends Schema.TaggedError<PairingSer
   }
 }
 
-/** Upstream's bounded wait for a starting server to say where it listens (`cli/pair.ts`). */
-export interface RuntimeFileActivation {
-  readonly attempts: number;
-  readonly delay: Duration.Duration;
-  readonly wait: (duration: Duration.Duration) => Effect.Effect<void>;
-}
+// A starting server says where it listens a moment after taking the lock. J5 keeps its own bound
+// since upstream's `pair` stopped waiting for a runtime file (register D21, retired).
+const RUNTIME_FILE_ATTEMPTS = 4;
+const RUNTIME_FILE_DELAY = Duration.seconds(1);
+
+/** The wait for a starting server, overridable so tests run without wall-clock time. */
+export const RuntimeFileActivationDelay = Context.Reference<
+  (duration: Duration.Duration) => Effect.Effect<void>
+>("j5/sharing/cliPairing/RuntimeFileActivationDelay", {
+  defaultValue: () => Effect.sleep,
+});
 
 /** The running server could not make the link, for a reason that is not one of the flags'. */
 export class PairingServerError extends Schema.TaggedError<PairingServerError>()(
@@ -358,92 +354,91 @@ const field = (body: unknown, name: string) =>
     : undefined;
 
 /** Asks the running server at `origin` to make the link, with a session revoked afterwards. */
-const pairThroughServer = (input: {
+const pairThroughServer = Effect.fn("j5.sharing.cliPairing.pairThroughServer")(function* (input: {
   readonly origin: string;
   readonly request: CliPairingRequest;
-}) =>
-  Effect.gen(function* () {
-    const auth = yield* EnvironmentAuth.EnvironmentAuth;
-    const client = yield* HttpClient.HttpClient;
-    const call = (token: string) =>
-      Effect.gen(function* () {
-        const request = yield* HttpClientRequest.post(
-          new URL(J5_CLI_PAIRING_PATH, input.origin).toString(),
-        ).pipe(
-          HttpClientRequest.bearerToken(token),
-          HttpClientRequest.acceptJson,
-          HttpClientRequest.bodyJson(input.request),
-        );
-        // The timeout covers the body too: a server that stalls mid-answer must not hold the CLI,
-        // or its session, open.
-        return yield* Effect.gen(function* () {
-          const response = yield* client.execute(request);
-          // An older server's 404 need not be JSON.
-          const body = parseJson(yield* response.text);
-          return { status: response.status, body };
-        }).pipe(
-          Effect.timeout(LIVE_SERVER_TIMEOUT),
-          Effect.mapError((cause) =>
-            cause._tag === "HttpClientError" &&
-            cause.reason._tag === "TransportError" &&
-            neverConnected(cause.reason.cause)
-              ? new PairingServerUnreachableError({ origin: input.origin, cause })
-              : new PairingServerUnconfirmedError({ origin: input.origin, cause }),
-          ),
-        );
-      }).pipe(
-        Effect.catchTags({
-          HttpBodyError: (cause) =>
-            Effect.fail(new PairingServerUnreachableError({ origin: input.origin, cause })),
-        }),
+}) {
+  const auth = yield* EnvironmentAuth.EnvironmentAuth;
+  const client = yield* HttpClient.HttpClient;
+  const call = Effect.fn("j5.sharing.cliPairing.callServer")(
+    function* (token: string) {
+      const request = yield* HttpClientRequest.post(
+        new URL(J5_CLI_PAIRING_PATH, input.origin).toString(),
+      ).pipe(
+        HttpClientRequest.bearerToken(token),
+        HttpClientRequest.acceptJson,
+        HttpClientRequest.bodyJson(input.request),
       );
-    const reply = yield* Effect.acquireUseRelease(
-      auth.issueSession({
-        scopes: [AuthAccessWriteScope],
-        label: "j5 pair cli",
-        ttl: CLI_SESSION_TTL,
-      }),
-      (issued) => call(issued.token),
-      (issued) => auth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-    );
-    if (reply.status !== 200) {
-      const error = field(reply.body, "error");
-      const message = field(reply.body, "message");
-      const personName = field(reply.body, "personName");
-      if (error === "PairingPersonUnknownError" && typeof personName === "string") {
-        return yield* new PairingPersonUnknownError({ personName });
-      }
-      const reason =
-        typeof message === "string"
-          ? message
-          : reply.status === 404
-            ? "it does not take links from the CLI. It may be an older build: restart it on this one."
-            : "it gave no reason.";
-      return yield* reply.status === 400 && typeof error === "string" && error !== "invalid_request"
-        ? new PairingPersonError({ reason })
-        : new PairingServerError({ origin: input.origin, status: reply.status, reason });
+      // The timeout covers the body too: a server that stalls mid-answer must not hold the CLI,
+      // or its session, open.
+      return yield* Effect.gen(function* () {
+        const response = yield* client.execute(request);
+        // An older server's 404 need not be JSON.
+        const body = parseJson(yield* response.text);
+        return { status: response.status, body };
+      }).pipe(
+        Effect.timeout(LIVE_SERVER_TIMEOUT),
+        Effect.mapError((cause) =>
+          cause._tag === "HttpClientError" &&
+          cause.reason._tag === "TransportError" &&
+          neverConnected(cause.reason.cause)
+            ? new PairingServerUnreachableError({ origin: input.origin, cause })
+            : new PairingServerUnconfirmedError({ origin: input.origin, cause }),
+        ),
+      );
+    },
+    Effect.catchTags({
+      HttpBodyError: (cause) =>
+        Effect.fail(new PairingServerUnreachableError({ origin: input.origin, cause })),
+    }),
+  );
+  const reply = yield* Effect.acquireUseRelease(
+    auth.issueSession({
+      scopes: [AuthAccessWriteScope],
+      label: "j5 pair cli",
+      ttl: CLI_SESSION_TTL,
+    }),
+    (issued) => call(issued.token),
+    (issued) => auth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
+  );
+  if (reply.status !== 200) {
+    const error = field(reply.body, "error");
+    const message = field(reply.body, "message");
+    const personName = field(reply.body, "personName");
+    if (error === "PairingPersonUnknownError" && typeof personName === "string") {
+      return yield* new PairingPersonUnknownError({ personName });
     }
-    const made = yield* decodeResponse(reply.body).pipe(
-      Effect.mapError(
-        () =>
-          new PairingServerError({
-            origin: input.origin,
-            status: reply.status,
-            reason: "it answered in a shape this CLI does not read.",
-          }),
-      ),
-    );
-    const link: EnvironmentAuth.IssuedPairingLink = {
-      id: made.id,
-      credential: made.credential,
-      scopes: made.scopes,
-      subject: "one-time-token",
-      ...(made.label === undefined ? {} : { label: made.label }),
-      createdAt: DateTime.makeUnsafe(made.createdAt),
-      expiresAt: DateTime.makeUnsafe(made.expiresAt),
-    };
-    return { link, said: made.said };
-  });
+    const reason =
+      typeof message === "string"
+        ? message
+        : reply.status === 404
+          ? "it does not take links from the CLI. It may be an older build: restart it on this one."
+          : "it gave no reason.";
+    return yield* reply.status === 400 && typeof error === "string" && error !== "invalid_request"
+      ? new PairingPersonError({ reason })
+      : new PairingServerError({ origin: input.origin, status: reply.status, reason });
+  }
+  const made = yield* decodeResponse(reply.body).pipe(
+    Effect.mapError(
+      () =>
+        new PairingServerError({
+          origin: input.origin,
+          status: reply.status,
+          reason: "it answered in a shape this CLI does not read.",
+        }),
+    ),
+  );
+  const link: EnvironmentAuth.IssuedPairingLink = {
+    id: made.id,
+    credential: made.credential,
+    scopes: made.scopes,
+    subject: "one-time-token",
+    ...(made.label === undefined ? {} : { label: made.label }),
+    createdAt: DateTime.makeUnsafe(made.createdAt),
+    expiresAt: DateTime.makeUnsafe(made.expiresAt),
+  };
+  return { link, said: made.said };
+});
 
 /**
  * What `j5 pair` and `j5 auth pairing create` run: the link for the person the flags name, made
@@ -458,7 +453,6 @@ export const pairingLinkFromCli = Effect.fn("j5.sharing.cliPairing.pairingLinkFr
     readonly ttl: Option.Option<Duration.Duration>;
     readonly label: Option.Option<string>;
     readonly withoutPerson: "refuse" | "ask";
-    readonly activation: RuntimeFileActivation;
   }) {
     const { config } = input;
     const runtime = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
@@ -481,10 +475,10 @@ export const pairingLinkFromCli = Effect.fn("j5.sharing.cliPairing.pairingLinkFr
         const state = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
         if (Option.isSome(state) && isProcessAlive(state.value.pid)) {
           origin = state.value.origin;
-        } else if (attempt >= input.activation.attempts) {
+        } else if (attempt >= RUNTIME_FILE_ATTEMPTS) {
           return yield* new PairingServerUnreachableError({ origin: null });
         } else {
-          yield* input.activation.wait(input.activation.delay);
+          yield* (yield* RuntimeFileActivationDelay)(RUNTIME_FILE_DELAY);
         }
       }
       return yield* pairThroughServer({

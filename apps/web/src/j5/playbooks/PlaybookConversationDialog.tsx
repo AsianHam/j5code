@@ -30,7 +30,7 @@ import { toastManager } from "../../components/ui/toast";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { newMessageId, newThreadId, randomUUID } from "../../lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { useServerConfigs } from "../../state/entities";
+import { useEnvironmentProviders } from "../../state/environments";
 import { environmentProjects } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -66,7 +66,7 @@ export function PlaybookConversationDialog({
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const openThread = useNewThreadHandler();
-  const serverConfigs = useServerConfigs();
+  const providersByEnvironment = useEnvironmentProviders();
   const readCatalog = useAtomQueryRunner(agentPersonaEnvironment.catalog, {
     reportFailure: false,
     refresh: true,
@@ -84,9 +84,8 @@ export function PlaybookConversationDialog({
   const launch = useRef<{ key: string; target: Parameters<typeof startTurn>[0] } | null>(null);
   async function submit() {
     if (!workspace || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
+    // The compiler cannot lower a throw inside try, so the steps throw from their own function.
+    const openConversation = async () => {
       if (name !== null) {
         if (
           (await openPlaybookDraft(workspace, `Start playbook ${name}`, openThread)) === "preserved"
@@ -100,7 +99,7 @@ export function PlaybookConversationDialog({
       } else {
         if (launch.current?.key !== workspace.key) {
           const modelSelection = await ensurePlaybookAuthor({
-            providers: serverConfigs.get(environmentId)?.providers ?? [],
+            providers: providersByEnvironment.get(environmentId) ?? [],
             readCatalog: async () => {
               const result = await readCatalog({ environmentId, input: {} });
               if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -149,12 +148,16 @@ export function PlaybookConversationDialog({
           params: buildThreadRouteParams(threadRef),
         });
       }
+    };
+    setBusy(true);
+    setError(null);
+    try {
+      await openConversation();
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not open the conversation.");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   }
   return (
     <Dialog

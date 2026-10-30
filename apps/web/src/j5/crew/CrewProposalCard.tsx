@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { presentAgentPersonaCatalog } from "@t3tools/client-runtime/j5/agent-personas";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { PencilIcon, PlusIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Badge } from "../../components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../../components/ui/tooltip";
@@ -73,14 +73,11 @@ export function CrewProposalCard(props: {
       ? null
       : agentPersonaEnvironment.catalog({ environmentId: props.environmentId, input: {} }),
   );
-  const rows = useMemo(
-    () =>
-      catalog.data === null || catalog.data === undefined
-        ? []
-        : presentAgentPersonaCatalog(catalog.data),
-    [catalog.data],
-  );
-  const agents = useMemo(() => rows.filter((agent) => agent.availability === "available"), [rows]);
+  const rows =
+    catalog.data === null || catalog.data === undefined
+      ? []
+      : presentAgentPersonaCatalog(catalog.data);
+  const agents = rows.filter((agent) => agent.availability === "available");
   const preview = useCrewProposalPreview(props.environmentId, proposal.id, seats, props.busy);
   const runtimeFor = (seat: CrewProposalSeat) =>
     preview.runtimeSeats?.find((row) => row.seat === seat.seat);

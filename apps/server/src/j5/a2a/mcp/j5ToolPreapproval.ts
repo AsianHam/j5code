@@ -10,21 +10,10 @@ export interface J5RuntimePolicy {
 export const J5_DEFINITION_WRITE_TOOLS: ReadonlyArray<string> = ["j5_playbook_save"];
 
 /**
- * The t3-code tools Codex and Claude pre-approve so the roster gate stays the only human step there.
- * Harnesses gate every MCP tool that is not annotated read-only behind an approval prompt, and a
- * turn whose approval policy is `never` (Codex 0.153+: "MCP tool call requires approval, but
- * approval policy is never") rejects the call outright. Full-access mode and every saved-agent
- * runtime policy send exactly that, so without help `j5_send_message`, `j5_spawn_agent`, and
- * `j5_propose_crew` all fail there. Only the J5 verbs are pre-approved, by name: their handlers
- * authorize each call and their real gates live server-side, plus `j5_write_artifact`, which a saved
- * agent needs for its declared handoff file (application storage, never the workspace), plus the
- * provider-native Subagent verbs (`delegate_task`, `task_status`, `task_cancel`): a Crew member is
- * refused `j5_spawn_agent` and told to run its own helpers as Subagents, so those must work under
- * the same policy, and a child inherits its parent's sandbox through the escalation check. The
- * rest of the t3-code server (worktree handoff, browser preview, scheduling) keeps the harness's
- * own verdict, so a read-only persona under `never` still cannot reach those. Kept as a leaf
- * module (no toolkit import) so adapters avoid a cycle; the test checks the list against
- * J5Toolkit.
+ * The t3-code tools Codex and Claude pre-approve, so the roster gate stays the only human step.
+ * Harnesses prompt for MCP tools not annotated read-only, and approval policy `never` (full access,
+ * every saved-agent policy) rejects them. Pre-approved: the J5 verbs, whose handlers authorize each
+ * call, `j5_write_artifact` for handoffs, and the Subagent verbs Crew members use.
  */
 export const J5_PREAPPROVED_TOOLS: ReadonlyArray<string> = [
   ...J5_DEFINITION_WRITE_TOOLS,

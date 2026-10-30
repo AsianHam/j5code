@@ -54,12 +54,12 @@ export function j5SourceNotice(source: J5ReadSource<unknown>): string | null {
     case "loading":
       return `${source.environmentLabel}: loading…`;
     case "offline":
-      return `${source.environmentLabel}: offline${source.data === null ? "" : " — showing saved results"}.`;
+      return `${source.environmentLabel}: offline${source.data === null ? "" : " (showing saved results)"}.`;
     case "unsupported":
       return source.guest === true
         ? `${source.environmentLabel}: not shared with you.`
         : `${source.environmentLabel}: this server does not provide this J5 feature.`;
     case "error":
-      return `${source.environmentLabel}: ${source.error ?? "could not refresh"}${source.data === null ? "" : " — showing saved results."}`;
+      return `${source.environmentLabel}: ${source.error ?? "could not refresh"}${source.data === null ? "" : " (showing saved results)."}`;
   }
 }

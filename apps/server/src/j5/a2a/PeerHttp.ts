@@ -59,10 +59,9 @@ import {
 
 /**
  * The peering HTTP surface. Another server reaches hello, roster, deliver and poll with its peer
- * credential. `j5 a2a peer` reaches the administrative routes (issue a credential, add, list,
- * remove) with the same `access:*` scopes as Settings → Connections, because a peer is one more
- * authorized session there; a client does the same acts over the WebSocket (`clientActionRpc.ts`),
- * and both call `PeerAdminService`.
+ * credential. `j5 a2a peer` reaches the admin routes with the `access:*` scopes Settings →
+ * Connections uses, since a peer is one more authorized session; clients do the same over the
+ * WebSocket, and both call `PeerAdminService`.
  */
 
 const decodeIssueRequest = Schema.decodeUnknownEffect(IssuePeerCredentialRequest);
@@ -141,8 +140,8 @@ export const peerHttpRouteLayer = Layer.unwrap(
       );
 
     /** A credential alone is not enough: the environment it names must be a recorded peer. */
-    const registeredPeerForSession = (session: EnvironmentAuth.AuthenticatedSession) =>
-      Effect.gen(function* () {
+    const registeredPeerForSession = Effect.fn("j5.a2a.peerHttp.registeredPeerForSession")(
+      function* (session: EnvironmentAuth.AuthenticatedSession) {
         const environmentId = environmentIdFromPeerSubject(session.subject);
         if (environmentId === null) {
           return Result.fail(
@@ -167,7 +166,8 @@ export const peerHttpRouteLayer = Layer.unwrap(
                 `Environment ${environmentId} holds a credential but is not a recorded peer of this server. Record it with \`j5 a2a peer add\` here, or remove the stale credential in Settings → Connections.`,
               ),
             );
-      });
+      },
+    );
 
     const helloRoute = HttpRouter.add(
       "GET",

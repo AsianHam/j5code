@@ -69,7 +69,7 @@ describe("archive warning confirmation content", () => {
       />,
     );
 
-    expect(markup).toContain("2 open asks will be terminated — counterparties are notified");
+    expect(markup).toContain("2 open asks will be terminated (counterparties are notified)");
     expect(markup).toContain(
       'aria-label="Open asks will be terminated and counterparties notified"',
     );

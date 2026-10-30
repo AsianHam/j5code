@@ -1,10 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Messages reach an agent on this server in the order they were accepted, from whichever project:
-// a delivery waits behind an earlier one to the same agent, and a wake hands an agent's waiting
-// deliveries over together. `sent_seq` counts within one project's ledger and `created_at` ties
-// within a millisecond, so each row takes the next `accept_order` as it is written. A recheck
+// Messages reach a local agent in accept order across projects. `sent_seq` is per ledger and
+// `created_at` ties within a millisecond, so each row takes the next `accept_order`. A recheck
 // while held is not a transport failure, so it is counted apart from the attempts that alarm.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

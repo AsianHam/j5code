@@ -57,11 +57,10 @@ import {
 } from "./contracts.ts";
 
 /**
- * Two servers, each with its own database, ledger, send service, inbound
- * service, and worker. The peer transport of each hands the message straight to
- * the other's inbound service, standing in for the HTTP hop, so what is under
- * test is the protocol: an ask crosses, opens the Exchange on both sides, is
- * answered, and the reply closes both.
+ * Two servers, each with its own database, ledger, send, inbound and worker, whose peer transports
+ * hand messages straight to the other's inbound service in place of HTTP. Under test is the
+ * protocol: an ask crosses, opens the Exchange on both sides, is answered, and the reply closes
+ * both.
  */
 
 const timestamp = "2026-09-16T12:00:00.000Z";

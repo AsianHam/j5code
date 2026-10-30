@@ -1,13 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// A resolution claims its proposal first (`approving`, `declining`), does its work, then writes
-// the final status, so two devices resolving one reopened gate cannot undo each other; and the
-// Captain is told how an approval launched by one report, recorded in `reported_at`, so a boot
-// sweep can find a report the server never posted (Jackson's review and dogfood, 2026-09-17).
-// SQLite cannot widen a CHECK in place, so the table is rebuilt with its rows carried. Proposals
-// approved before this change were told under the old scheme, so they count as reported: the
-// sweep must not re-announce every past launch to its Captain.
+// A resolution claims its proposal (`approving`, `declining`) before writing the final status, so
+// two devices resolving one gate cannot undo each other; `reported_at` lets a boot sweep find a
+// launch report never posted. The table is rebuilt to widen the CHECK, and proposals approved
+// before this count as reported, so the sweep does not re-announce every past launch.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

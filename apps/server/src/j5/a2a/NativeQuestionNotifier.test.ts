@@ -453,8 +453,8 @@ it.effect.each(["live", "message"] as const)(
       assert.deepEqual(notice.dispatchMode, { type: "queue_after_active" });
       assert.include(notice.text, childId);
       assert.include(notice.text, request.id);
-      assert.include(notice.text, "t3_pending_request_read");
-      assert.include(notice.text, "t3_pending_request_respond");
+      assert.include(notice.text, "t3_pending_request action read");
+      assert.include(notice.text, "action respond");
     }),
 );
 
@@ -519,7 +519,7 @@ it.effect("notifies about an unresumable pending question without promising an a
     assert.equal(notice?.type, "message.dispatch");
     if (notice?.type !== "message.dispatch") return;
     assert.include(notice.text, childId);
-    assert.notInclude(notice.text, "t3_pending_request_respond");
+    assert.notInclude(notice.text, "action respond");
   }),
 );
 

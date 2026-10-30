@@ -25,16 +25,10 @@ export interface PeerBodyRow {
 }
 
 /**
- * The one body a message crosses to a peer server in, whether this server
- * sends it directly or a polling peer is handed it. Beyond the row: an ask
- * carries its intent so the peer opens the Exchange; a terminal notice carries
- * the fact it was written with, read back from the sent row, never from
- * whatever the Exchange says by the time the row is delivered; a silence notice
- * is not part of its Exchange, so it names the Exchange it concerns from the
- * silence.notice event its own command recorded; and the sender's display name
- * travels for the peer's people, read by the statement the client identity
- * read uses so both servers agree on it. A name this server cannot read never
- * holds a delivery.
+ * The one body a message crosses to a peer in, sent directly or handed to a polling peer. An ask
+ * carries its intent; a terminal notice its fact from the sent row, not the Exchange's later state;
+ * a silence notice its Exchange, from its own event; and the sender's display name, read as the
+ * client identity read does. An unreadable name never holds a delivery.
  */
 export const buildPeerDeliveryBody = Effect.fn("j5.a2a.peer.deliveryBody")(function* (
   sql: SqlClient.SqlClient,

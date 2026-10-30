@@ -52,7 +52,7 @@ export const ReadArtifactTool = Tool.make("j5_read_artifact", {
 
 export const WriteArtifactTool = Tool.make("j5_write_artifact", {
   description:
-    "Create or replace a durable, user-consumable planning artifact shared across the current project's threads and agents. Use this for plans, specifications, diagrams, and research notes—not source code, build output, logs, scratch files, or ordinary repository documentation. The path is relative to artifacts/ and content must be UTF-8 text; HTML, Markdown, Mermaid, and SVG are supported. Paths under handoffs/ keep history: writing an existing handoff adds your content as a new version at the top of the same file instead of replacing it, so j5_read_artifact on such a path returns a versions header followed by every kept version, newest first.",
+    "Create or replace a durable, user-consumable planning artifact shared across the current project's threads and agents. Use this for plans, specifications, diagrams, and research notes (not source code, build output, logs, scratch files, or ordinary repository documentation). The path is relative to artifacts/ and content must be UTF-8 text; HTML, Markdown, Mermaid, and SVG are supported. Paths under handoffs/ keep history: writing an existing handoff adds your content as a new version at the top of the same file instead of replacing it, so j5_read_artifact on such a path returns a versions header followed by every kept version, newest first.",
   parameters: ArtifactWriteInput,
   success: ArtifactWriteResult,
   failure,

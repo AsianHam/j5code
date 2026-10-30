@@ -4,11 +4,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Both the event-kind vocabulary CHECK and the per-kind identity/provenance
-  // CHECK below reserve participant.reparented for the future human-reparent
-  // surface. A6 ships no producer; R21 and the A6 ticket's "Retired human
-  // reparent recovery note" govern recovery from frozen implementation chain
-  // 8fb7139d161aed2f7f9bb8d9d31e4130a3dd604a.
+  // Both CHECKs below reserve participant.reparented for a future human-reparent surface; nothing
+  // produces it yet. Recovery from the frozen chain 8fb7139d16 follows R21 and the A6 ticket.
   yield* sql`
     CREATE TABLE j5_a2a_placement_event (
       seq INTEGER NOT NULL,

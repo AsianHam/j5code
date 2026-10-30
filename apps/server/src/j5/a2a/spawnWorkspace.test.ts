@@ -63,6 +63,7 @@ import {
   type SpawnCheckout,
 } from "./spawnWorkspace.ts";
 import { type FakeCheckout, fakeSpawnWorkspaceLayer } from "./test-support/spawnWorkspaceFakes.ts";
+import { noDocumentTextLayer } from "../test-support/documentText.ts";
 
 const checkout = (
   overrides: Partial<Extract<SpawnCheckout, { readonly readable: true }>> = {},
@@ -213,6 +214,7 @@ const spawnHarness = (input: {
       acceptsUrgency: false,
     } satisfies ParticipantDirectoryRow;
     const dependencies = Layer.mergeAll(
+      noDocumentTextLayer,
       Layer.mock(A2ASendService)({ listParticipants: () => Effect.succeed([callerRow]) }),
       Layer.mock(A2AHomeRegistrar)({
         getHomeForThread: () =>
@@ -271,62 +273,60 @@ const spawnHarness = (input: {
         // The caller is mid-run, as upstream's tool access check requires; the child does not
         // exist yet.
         getThreadShell: (threadId) =>
-          Effect.succeed(
-            threadId === invocation.thread.threadId
-              ? ({
-                  ...callerThread(threadId, input.callerRuntimeMode).thread,
-                  providerInstanceId: invocation.thread.providerInstanceId,
-                  activeRunId: "run:j5:spawn-workspace-caller",
-                  archivedAt: null,
-                  deletedAt: null,
-                } as never)
-              : input.existingChildRuntimeMode === undefined
-                ? null
-                : ({
-                    ...callerThread(threadId, input.existingChildRuntimeMode).thread,
-                    archivedAt: null,
-                    deletedAt: null,
-                  } as never),
+          (input.liveCaller !== undefined && threadId === invocation.thread.threadId
+            ? Ref.get(input.liveCaller).pipe(
+                Effect.map(
+                  (projection) =>
+                    ({
+                      ...projection.thread,
+                      providerInstanceId: invocation.thread.providerInstanceId,
+                      archivedAt: null,
+                      deletedAt: null,
+                      activeRunId: "run:caller",
+                    }) as never,
+                ),
+              )
+            : Effect.succeed(
+                threadId === invocation.thread.threadId
+                  ? ({
+                      ...callerThread(threadId, input.callerRuntimeMode).thread,
+                      providerInstanceId: invocation.thread.providerInstanceId,
+                      activeRunId: "run:j5:spawn-workspace-caller",
+                      archivedAt: null,
+                      deletedAt: null,
+                    } as never)
+                  : input.existingChildRuntimeMode === undefined
+                    ? null
+                    : ({
+                        ...callerThread(threadId, input.existingChildRuntimeMode).thread,
+                        archivedAt: null,
+                        deletedAt: null,
+                      } as never),
+              )
           ).pipe(
-            Effect.flatMap((shell) =>
-              input.liveCaller !== undefined && threadId === invocation.thread.threadId
-                ? Ref.get(input.liveCaller).pipe(
-                    Effect.map(
-                      (projection) =>
-                        ({
-                          ...projection.thread,
-                          providerInstanceId: invocation.thread.providerInstanceId,
+            // A thread this harness has created exists from then on, as a real one does.
+            Effect.filterOrElse(
+              (shell) => shell !== null,
+              () =>
+                Ref.get(commands).pipe(
+                  Effect.map((all) => {
+                    const create = all.find(
+                      (command) =>
+                        command.type === "thread.create" && command.threadId === threadId,
+                    );
+                    return create?.type === "thread.create"
+                      ? ({
+                          ...callerThread(threadId, create.runtimeMode).thread,
+                          modelSelection: create.modelSelection,
+                          interactionMode: create.interactionMode,
+                          branch: create.branch,
+                          worktreePath: create.worktreePath,
                           archivedAt: null,
                           deletedAt: null,
-                          activeRunId: "run:caller",
-                        }) as never,
-                    ),
-                  )
-                : Effect.succeed(shell),
-            ),
-            // A thread this harness has created exists from then on, as a real one does.
-            Effect.flatMap((shell) =>
-              shell !== null
-                ? Effect.succeed(shell)
-                : Ref.get(commands).pipe(
-                    Effect.map((all) => {
-                      const create = all.find(
-                        (command) =>
-                          command.type === "thread.create" && command.threadId === threadId,
-                      );
-                      return create?.type === "thread.create"
-                        ? ({
-                            ...callerThread(threadId, create.runtimeMode).thread,
-                            modelSelection: create.modelSelection,
-                            interactionMode: create.interactionMode,
-                            branch: create.branch,
-                            worktreePath: create.worktreePath,
-                            archivedAt: null,
-                            deletedAt: null,
-                          } as never)
-                        : null;
-                    }),
-                  ),
+                        } as never)
+                      : null;
+                  }),
+                ),
             ),
           ),
         dispatch: (command) =>
@@ -362,14 +362,7 @@ const spawnHarness = (input: {
                   {
                     id: "gpt-5.6-sol",
                     label: "GPT-5.6 Sol",
-                    options: [
-                      {
-                        id: "reasoningEffort",
-                        label: "Reasoning",
-                        type: "select" as const,
-                        options: [{ id: "high", label: "High" }],
-                      },
-                    ],
+                    options: [{ id: "reasoningEffort", values: ["high"] }],
                   },
                 ],
                 canRunChildTask: true,

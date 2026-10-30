@@ -55,7 +55,6 @@ import {
   personNamed,
   raisesToWriting,
   sameScope,
-  widerLabel,
   writingWarning,
 } from "./people.logic";
 import { useAccessRows, useScopeTitle } from "./scopeAccess";
@@ -100,7 +99,7 @@ export function ShareDialog({
   const access = useAccessRows(environmentId, scope);
   const people = useEnvironmentQuery(canManage ? peopleQuery(environmentId) : null);
   const links = useEnvironmentQuery(canManage ? linksQuery(environmentId) : null);
-  // People join and links are used without this client doing anything; each opening reads again.
+  // oxlint-disable-next-line t3code/react-effect-budget -- people join and links are used without this client, so each opening reads again.
   useEffect(() => refreshSharing(environmentId), [environmentId]);
   const nowMs = Date.parse(useNowMinute());
   const [made, setMade] = useState<PeopleLink | null>(null);
@@ -516,52 +515,53 @@ function AddForm({
   const warn =
     mode === "person" && !addsDevice && raisesToWriting(existing === null ? null : heldHere, level);
 
+  const share = async () => {
+    if (existing !== null && raises) {
+      const result = await setLevel({
+        environmentId,
+        input: { personId: existing.personId, scope, level },
+      });
+      if (result._tag === "Failure") {
+        setError(refusalMessage(result));
+        return;
+      }
+      setName("");
+      onShared();
+      return;
+    }
+    if (mode === "person" && !isPersonName(typed)) {
+      setError(NAME_NOT_USABLE);
+      return;
+    }
+    const result = await createLink({
+      environmentId,
+      input:
+        existing !== null
+          ? { kind: "device", personId: existing.personId, lifetime }
+          : mode === "anyone"
+            ? { kind: "invite", scope, level: "viewer", use: "many", name: null, lifetime }
+            : {
+                kind: "invite",
+                scope,
+                level,
+                use: "one",
+                name: typed,
+                lifetime,
+              },
+    });
+    if (result._tag === "Failure") {
+      setError(`The link could not be made. ${refusalMessage(result)}`);
+      return;
+    }
+    onShared();
+    onMade(result.value);
+  };
+
   const submit = async () => {
     setBusy(true);
     setError(null);
-    try {
-      if (existing !== null && raises) {
-        const result = await setLevel({
-          environmentId,
-          input: { personId: existing.personId, scope, level },
-        });
-        if (result._tag === "Failure") {
-          setError(refusalMessage(result));
-          return;
-        }
-        setName("");
-        onShared();
-        return;
-      }
-      if (mode === "person" && !isPersonName(typed)) {
-        setError(NAME_NOT_USABLE);
-        return;
-      }
-      const result = await createLink({
-        environmentId,
-        input:
-          existing !== null
-            ? { kind: "device", personId: existing.personId, lifetime }
-            : mode === "anyone"
-              ? { kind: "invite", scope, level: "viewer", use: "many", name: null, lifetime }
-              : {
-                  kind: "invite",
-                  scope,
-                  level,
-                  use: "one",
-                  name: typed,
-                  lifetime,
-                },
-      });
-      if (result._tag === "Failure") {
-        setError(`The link could not be made. ${refusalMessage(result)}`);
-        return;
-      }
-      onShared();
-      onMade(result.value);
-    } finally {
-      setBusy(false);
-    }
+    await share();
+    setBusy(false);
   };
 
   return (

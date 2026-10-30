@@ -27,7 +27,7 @@ import { isSendRefusal } from "../SendService.ts";
 export const J5AttachmentUploadToolkit = Toolkit.make(
   Tool.make("t3_attachment_prepare_upload", {
     description:
-      "Create the app's signed upload URL. POST the exact bytes to relativeUrl on this MCP server's HTTP origin, then pass the attachment metadata and returned ID in the attachments of j5_send_message or j5_spawn_agent. Upload is separate from sending; provider attachment support is decided by its adapter.",
+      "Get an upload URL. POST the file's exact bytes to `relativeUrl` on this MCP server's HTTP origin, then send via the `attachments` of `j5_send_message` or `j5_spawn_agent` with the returned `attachmentId`.",
     parameters: AttachmentToolkit.tools.t3_attachment_prepare_upload.parametersSchema,
     success: AttachmentToolkit.tools.t3_attachment_prepare_upload.successSchema,
     failure: OrchestratorMcpFailure,

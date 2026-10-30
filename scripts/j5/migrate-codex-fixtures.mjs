@@ -1,23 +1,7 @@
 #!/usr/bin/env node
-// Migrates recorded Codex app-server replay transcripts (codex_transcript.ndjson)
-// to the Codex 0.152.1 wire shape J5 generates its protocol schema from.
-//
-// Rules were derived by structurally diffing every fixture at the previous pin
-// (62aef8587c) against the J5 fork head (8f56083a0f); applying this script to
-// the pin's fixtures reproduces the fork head's fixtures byte for byte.
-//
-//   1. transcript_start.version, thread.cliVersion and the version inside the
-//      initialize result's userAgent (`<client>/<version>`) become 0.152.1.
-//   2. Every `thread` object in a response result or notification params gains
-//      `sessionId` (= thread id) and `projectId: null` when absent.
-//   3. item/started params gain `startedAtMs`, item/completed params gain
-//      `completedAtMs`, and command/file-change approval requests gain
-//      `startedAtMs`, each the constant 1756771200000 when absent.
-//   4. item/tool/requestUserInput params gain `isBlocking: true` when absent.
-//   5. remoteControl/status/changed params gain `installationId` /
-//      `serverName` placeholders when absent.
-// Missing keys are appended; nothing else in a line is changed.
-//
+// Migrates recorded Codex app-server replay transcripts (codex_transcript.ndjson) to the Codex
+// 0.152.1 wire shape J5 generates its protocol schema from. It only sets versions and appends
+// missing keys; nothing else in a line changes.
 // Usage: node migrate-codex-fixtures.mjs <file.ndjson>...   (rewrites in place)
 import * as NodeFS from "node:fs";
 

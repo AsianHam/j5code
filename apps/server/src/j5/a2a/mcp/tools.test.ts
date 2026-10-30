@@ -142,11 +142,9 @@ it("publishes the ratified single-target lifecycle contracts fail-closed", () =>
   assert.isFalse(Context.get(J5StopAgentTool.annotations, Tool.Idempotent));
 });
 
-// Claude Code drops EVERY tool of an MCP server when one tool's input schema has no top-level
-// `type: "object"` (verified 2026-09-10 with a probe server: a single top-level `anyOf` tool made
-// the whole server's inventory vanish while it still reported "connected"). `Schema.Struct({})`
-// encodes as exactly that anyOf, which is how `j5_list_personas` silently took the whole t3-code
-// toolkit away from every Claude thread. No-input tools must omit `parameters` instead.
+// Claude Code drops EVERY tool of an MCP server when one tool's input schema lacks a top-level
+// `type: "object"` (verified 2026-09-10), while still reporting "connected". `Schema.Struct({})`
+// encodes as a top-level anyOf, so no-input tools must omit `parameters`.
 it("publishes every tool with a top-level object input schema", () => {
   for (const tool of [
     ...Object.values(J5Toolkit.tools),

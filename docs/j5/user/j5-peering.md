@@ -2,12 +2,12 @@
 
 Peering lets agents on two J5 servers message each other, for example a work VM and your laptop. Agents still address each other by id, and each sees which server the other lives on, by that server's name. You can tell your agents what each server is for, such as "the laptop has Xcode for iOS builds".
 
-Only peer servers you trust. Peering lets the other server see this server's agents and message them, nothing else. Its credential shows up under **Settings → Connections** as _Peer: <name>_.
+Only peer servers you trust. Peering lets the other server see this server's agents and message them, nothing else. Its credential shows up under **Settings → Sharing & access** as _Peer: <name>_.
 
 ## Peer two servers
 
-1. Connect this app to both servers with administrator access. Add the second one under **Settings → Connections** with **Add environment** if it isn't there yet, and turn on **Manage access** when you create its pairing link (or use the server's own startup pairing link).
-2. In **Settings → Connections → Peer servers**, choose **Add peer** and pick the two servers. Neither has to be the one this app runs.
+1. Connect this app to both servers with administrator access. Add the second one under **Settings → Environments** with **Add environment** if it isn't there yet, and turn on **Manage access** when you create its pairing link (or use the server's own startup pairing link).
+2. In **Settings → Environments → Peer servers**, choose **Add peer** and pick the two servers. Neither has to be the one this app runs.
 3. J5 checks which way each server can reach the other and proposes a setup. It says, in plain lines, how messages will travel in each direction, and asks only what it couldn't work out. Confirm it, or choose **Set up differently** to pick the direction and addresses yourself. Use an https address, or one on a private network such as Tailscale.
 
 Both servers need a version of J5 that supports peering. If one doesn't, the dialog names the server to update. Update peered servers together: while one is behind, no message crosses between them, and messages already sent wait until both are up to date.

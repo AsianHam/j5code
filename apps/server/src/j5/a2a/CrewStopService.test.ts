@@ -101,7 +101,7 @@ it.effect("stops every live seat, for the Captain or a person, and nobody else",
             Ref.update(interrupts, (items) => [
               ...items,
               command.type === "thread.stop"
-                ? `${command.type}:${command.threadId}:${command.commandId}`
+                ? `${command.type}:${command.threadId}:${command.commandId}:${command.reason ?? "no reason"}`
                 : command.type,
             ]).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
           stopDelegatedTasks: () => Effect.void,
@@ -133,12 +133,13 @@ it.effect("stops every live seat, for the Captain or a person, and nobody else",
       );
       // The archived seat is never stopped; live seats get upstream's Stop under the caller's
       // deterministic ids, idle or not, so a held queue and delegated tasks stop too.
+      // The Captain's Stop reads as an agent's; without a reason the timeline says "Stopped by user".
       assert.deepStrictEqual(yield* Ref.get(interrupts), [
-        `thread.stop:${builderThread}:stop:builder`,
-        `thread.stop:${criticThread}:stop:critic`,
+        `thread.stop:${builderThread}:stop:builder:Stopped by an agent`,
+        `thread.stop:${criticThread}:stop:critic:Stopped by an agent`,
       ]);
 
-      // A person stops the same Crew without a participant id.
+      // A person stops the same Crew without a participant id, and the Stop stays theirs.
       const byHuman = yield* service.stop({
         callerParticipantId: null,
         projectId: null,
@@ -146,6 +147,10 @@ it.effect("stops every live seat, for the Captain or a person, and nobody else",
         commandIds,
       });
       assert.lengthOf(byHuman.members, 3);
+      assert.deepStrictEqual((yield* Ref.get(interrupts)).slice(2), [
+        `thread.stop:${builderThread}:stop:builder:no reason`,
+        `thread.stop:${criticThread}:stop:critic:no reason`,
+      ]);
 
       // A member, or any other agent, is refused and pointed at the Captain.
       const refused = yield* service

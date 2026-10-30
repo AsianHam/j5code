@@ -52,15 +52,10 @@ export const levelReaches = (held: PersonLevel | null | undefined, wanted: Perso
   held !== null && held !== undefined && LEVEL_RANK[held] >= LEVEL_RANK[wanted];
 
 /**
- * The one place each level maps onto upstream's permissions (People and access AC16). A device
- * holds exactly its person's highest level's set, cut to any ceiling the device was paired with.
- * When upstream reshapes its permissions, this table changes and the model does not.
- *
- * Upstream's own labels, in `packages/shared/src/authScopeOptions.ts`: a Viewer "View
- * environment"; a Collaborator "View environment", "Operate tasks", "Control previews", "View
- * diagnostics and usage", "View terminals", "Use terminals", "Change source control", "Read
- * files", "Write files" and "View relay"; an Owner every permission upstream lets a client be
- * given.
+ * The one place each level maps onto upstream's permissions (People and access AC16); upstream's
+ * labels for them are in `packages/shared/src/authScopeOptions.ts`. A device holds its person's
+ * highest level's set, cut to any ceiling it was paired with. When upstream reshapes its
+ * permissions, this table changes and the model does not.
  */
 export const LEVEL_PERMISSIONS: Record<PersonLevel, ReadonlyArray<AuthEnvironmentScope>> = {
   viewer: [AuthOrchestrationReadScope],

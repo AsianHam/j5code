@@ -17,7 +17,7 @@ import {
   type PeeringServer,
   type PeeringSide,
 } from "@t3tools/client-runtime/j5/peering";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
@@ -65,15 +65,10 @@ export interface StepReport {
 }
 
 /**
- * The introduction, between any two servers this client is connected to; the
- * first is one it manages, defaulting to its own. Choosing the remote runs a quick check: each server tests
- * the direction it would connect in, and each descriptor says how the server is
- * run. The dialog then shows one setup built from what the check found, in
- * plain lines saying how messages travel each way, and asks only what the
- * check could not settle. "Set up differently" opens the manual form. A server
- * too old for poll mode gets only "update J5 there" and Close. A pair the first
- * server already records is removed under Peer servers before it is peered
- * again; an old record of the first server left on the other one is cleared first.
+ * The introduction between any two servers this client is connected to; the first is one it
+ * manages. Each server tests the direction it would connect in, so the dialog asks only what that
+ * check could not settle. A server too old for poll mode gets only "update J5 there". A pair the
+ * first server already records is removed before peering again; a stale one on the other, cleared.
  */
 export function PeerIntroductionDialog({
   open,
@@ -92,24 +87,17 @@ export function PeerIntroductionDialog({
   const { environments } = useEnvironments();
   const [thisServerId, setThisServerId] = useState(defaultServerId);
   const thisServer = useEnvironment(thisServerId);
-  const candidates = useMemo(
-    () =>
-      environments
-        .filter((environment) => environment.environmentId !== thisServerId)
-        .toSorted((left, right) => left.label.localeCompare(right.label)),
-    [environments, thisServerId],
-  );
   const [otherId, setOtherId] = useState<EnvironmentId | null>(null);
-  const other = candidates.find((environment) => environment.environmentId === otherId) ?? null;
   const thisServerBaseUrl = useEnvironmentHttpBaseUrl(thisServerId);
   const otherBaseUrl = useEnvironmentHttpBaseUrl(otherId);
   const otherCanWriteAccess = useAtomValue(j5Environment.addPeer.permissionAtom(otherId));
+  const candidates = environments
+    .filter((environment) => environment.environmentId !== thisServerId)
+    .toSorted((left, right) => left.label.localeCompare(right.label));
+  const other = candidates.find((environment) => environment.environmentId === otherId) ?? null;
 
-  const local = useMemo(
-    () => (thisServer === null ? null : peeringServerOf(thisServer)),
-    [thisServer],
-  );
-  const remote = useMemo(() => (other === null ? null : peeringServerOf(other)), [other]);
+  const local = thisServer === null ? null : peeringServerOf(thisServer);
+  const remote = other === null ? null : peeringServerOf(other);
   const otherReady =
     other !== null && other.connection.phase === "connected" && otherCanWriteAccess;
   const bothSupportPoll = local?.supportsPoll === true && remote?.supportsPoll === true;
@@ -175,6 +163,7 @@ export function PeerIntroductionDialog({
     local !== null && remote !== null && recordsRead && !heldHere && bothSupportPoll
       ? `${local.environmentId}|${remote.environmentId}`
       : null;
+  // oxlint-disable-next-line t3code/react-effect-budget -- runs the peering check against both servers whenever the pair changes, and drops a stale answer.
   useEffect(() => {
     if (checkKey === null || local === null || remote === null) return;
     let cancelled = false;
@@ -224,9 +213,7 @@ export function PeerIntroductionDialog({
 
   const peer = async () => {
     if (!peerable || choice === null || local === null || remote === null) return;
-    setBusy(true);
-    setReport(null);
-    try {
+    const introduce = async () => {
       // An old record of this server on the other one is cleared first, so the pairing starts clean.
       const cleared: Array<StepReport> = [];
       if (leftover) {
@@ -306,9 +293,10 @@ export function PeerIntroductionDialog({
         onPeered(local.environmentId, remote.environmentId);
         onOpenChange(false);
       }
-    } finally {
-      setBusy(false);
-    }
+    };
+    setBusy(true);
+    setReport(null);
+    await introduce().finally(() => setBusy(false));
   };
 
   const tooOld = recommendation?.kind === "too-old" ? recommendation.server : null;

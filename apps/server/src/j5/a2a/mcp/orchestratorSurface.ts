@@ -1,10 +1,13 @@
 import { J5DelegateTaskTool } from "../../agents/agentDelegation.ts";
 import {
+  NonNegativeInt,
+  OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpFailure,
+  OrchestratorMcpModelOption,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderInteractionMode,
-  ProviderOptionDescriptor,
+  ProviderOptionSelection,
   RuntimeMode,
   ThreadId,
   type OrchestratorMcpCapabilitiesResult,
@@ -24,10 +27,11 @@ export const J5OrchestratorProviderCapability = Schema.Struct({
   models: Schema.Array(
     Schema.Struct({
       id: Schema.String,
-      label: Schema.NullOr(Schema.String),
-      options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+      label: Schema.optional(Schema.String),
+      options: Schema.optional(Schema.Array(OrchestratorMcpModelOption)),
     }),
   ),
+  omittedModels: Schema.optional(NonNegativeInt),
   runtimeModes: Schema.optional(Schema.Array(RuntimeMode)),
   constraints: Schema.Array(Schema.String),
 });
@@ -35,6 +39,9 @@ export const J5OrchestratorProviderCapability = Schema.Struct({
 export const J5OrchestratorCapabilitiesResult = Schema.Struct({
   /** The calling thread, or null when the caller is not a J5 thread. */
   parentThreadId: Schema.NullOr(ThreadId),
+  inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
+  inheritedModel: Schema.NullOr(Schema.String),
+  inheritedOptions: Schema.optional(Schema.Array(ProviderOptionSelection)),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(J5OrchestratorProviderCapability),
@@ -48,17 +55,19 @@ export const mapJ5OrchestratorCapabilities = (
   capabilities: OrchestratorMcpCapabilitiesResult,
 ): typeof J5OrchestratorCapabilitiesResult.Type => ({
   parentThreadId: capabilities.parentThreadId,
+  inheritedProviderInstanceId: capabilities.inheritedProviderInstanceId,
+  inheritedModel: capabilities.inheritedModel,
+  ...(capabilities.inheritedOptions === undefined
+    ? {}
+    : { inheritedOptions: capabilities.inheritedOptions }),
   runtimeMode: capabilities.runtimeMode,
   interactionMode: capabilities.interactionMode,
   providers: capabilities.providers.map((provider) => ({
     providerInstanceId: provider.providerInstanceId,
     driverKind: provider.driverKind,
     displayName: provider.displayName,
-    models: provider.models.map((model) => ({
-      id: model.id,
-      label: model.label,
-      ...(model.options === undefined ? {} : { options: model.options }),
-    })),
+    models: provider.models,
+    ...(provider.omittedModels === undefined ? {} : { omittedModels: provider.omittedModels }),
     ...(provider.runtimeModes === undefined ? {} : { runtimeModes: provider.runtimeModes }),
     constraints: provider.constraints,
   })),
@@ -69,10 +78,11 @@ export const mapJ5OrchestratorCapabilities = (
 });
 
 export const J5_ORCHESTRATOR_CAPABILITIES_DESCRIPTION =
-  "List the provider instances and their current models from the same live catalog as the composer, including configured custom models, with selectable model options, provider constraints, and the runtime and interaction modes available to this caller.";
+  "List providers, models, options, and runtime modes for `delegate_task` and `j5_spawn_agent`, and the provider, model and options this thread runs with. Short list. `search` finds others. Any catalog model works.";
 
 export const J5OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description: J5_ORCHESTRATOR_CAPABILITIES_DESCRIPTION,
+  parameters: OrchestratorMcpCapabilitiesInput,
   success: J5OrchestratorCapabilitiesResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",

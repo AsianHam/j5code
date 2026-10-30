@@ -16,14 +16,10 @@ import {
 } from "./PersonAccess.ts";
 
 /**
- * Who can write to a thread, and whether it is a shared conversation: a thread more than one
- * person can write to, which it stays once it has been (Shared conversations AC6).
- *
- * The first owner writes to every thread, so a thread is shared as soon as anyone else can write
- * to it. That is recorded in two places: inside every change of access that gives someone a
- * writer's level (`recordGainedWriter`, run through `Access`'s write hook), for the threads its
- * scope covers then; and when a person's message reaches a thread with more than one writer
- * (`isShared`), which covers a thread started, or an agent spawned, under a scope shared before.
+ * Who can write to a thread, and whether it is shared: writable by more than one person, which it
+ * stays (Shared conversations AC6). Recorded both by `recordGainedWriter` in `Access`'s write hook,
+ * for threads in scope then, and by `isShared` when a message arrives, covering threads started or
+ * spawned later under a scope shared before.
  */
 
 export interface ThreadWriter {
@@ -121,17 +117,18 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const recordShared = (threadIds: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      if (threadIds.length === 0) return;
-      const at = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
+  const recordShared = Effect.fn("j5.sharing.sharedThreads.recordShared")(function* (
+    threadIds: ReadonlyArray<string>,
+  ) {
+    if (threadIds.length === 0) return;
+    const at = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`
         INSERT INTO j5_a2a_shared_thread ${sql.insert(
           threadIds.map((thread_id) => ({ thread_id, shared_at: at })),
         )}
         ON CONFLICT (thread_id) DO NOTHING
       `;
-    });
+  });
 
   /** A thread and every agent beneath it: its Subagents and its placed Peer Agents, not forks. */
   const threadTree = (threadId: ThreadId) => sql<{ readonly thread_id: string }>`
@@ -164,14 +161,17 @@ const make = Effect.gen(function* () {
     writers,
     projectWriters,
 
-    writerLevel: (personId, threadId) =>
-      access.threadLevel(personId, threadId).pipe(Effect.map(asWriterLevel)),
+    writerLevel: Effect.fn("SharedThreads.writerLevel")(function (personId, threadId) {
+      return access.threadLevel(personId, threadId).pipe(Effect.map(asWriterLevel));
+    }),
 
-    writesTo: (personId, agent) =>
-      (agent.threadId === null
-        ? access.projectLevel(personId, agent.projectId as ProjectId)
-        : access.threadLevel(personId, agent.threadId)
-      ).pipe(Effect.map((level) => asWriterLevel(level) !== null)),
+    writesTo: Effect.fn("SharedThreads.writesTo")(function (personId, agent) {
+      return (
+        agent.threadId === null
+          ? access.projectLevel(personId, agent.projectId as ProjectId)
+          : access.threadLevel(personId, agent.threadId)
+      ).pipe(Effect.map((level) => asWriterLevel(level) !== null));
+    }),
 
     isShared: Effect.fn("j5.sharing.sharedThreads.isShared")(function* (
       threadId,

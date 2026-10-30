@@ -14,7 +14,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeFS from "node:fs";
@@ -84,8 +83,11 @@ const providerInstance = {
 } satisfies ProviderInstance;
 
 const ProviderRegistryTestLayer = Layer.succeed(ProviderInstanceRegistry, {
-  getInstance: (instanceId) =>
-    Effect.succeed(instanceId === providerInstance.instanceId ? providerInstance : undefined),
+  getInstance: Effect.fn("ProviderInstanceRegistry.getInstance")(function (instanceId) {
+    return Effect.succeed(
+      instanceId === providerInstance.instanceId ? providerInstance : undefined,
+    );
+  }),
   listInstances: Effect.succeed([providerInstance]),
   listUnavailable: Effect.succeed([]),
   streamChanges: Stream.empty,
@@ -112,7 +114,7 @@ const HarnessLayer = Layer.merge(OrchestrationV2LayerLive, OrchestrationV2EventS
       resolveLink: () => Effect.die("The J5 load harness does not resolve title links."),
     }),
   ),
-  Layer.provide(Layer.mock(ProjectService)({ getById: () => Effect.succeed(Option.none()) })),
+  Layer.provide(Layer.mock(ProjectService)({ getById: () => Effect.succeedNone })),
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(McpProviderSessions.layer),
   Layer.provideMerge(SqlitePersistenceLive),
@@ -146,19 +148,17 @@ function databaseBytes(): number {
   );
 }
 
-function timedDispatch(
+const timedDispatch = Effect.fn("j5.fleetLoad.timedDispatch")(function* (
   orchestrator: OrchestratorV2Shape,
   command: Parameters<OrchestratorV2Shape["dispatch"]>[0],
 ) {
-  return Effect.gen(function* () {
-    const startedAt = performance.now();
-    const events = yield* orchestrator.dispatch(command);
-    return {
-      elapsedMs: performance.now() - startedAt,
-      storedEvents: events.storedEvents.length,
-    };
-  });
-}
+  const startedAt = performance.now();
+  const events = yield* orchestrator.dispatch(command);
+  return {
+    elapsedMs: performance.now() - startedAt,
+    storedEvents: events.storedEvents.length,
+  };
+});
 
 const program = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;

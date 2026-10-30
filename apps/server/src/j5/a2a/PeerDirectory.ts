@@ -25,15 +25,10 @@ import { ParticipantId, LedgerProjectId } from "./contracts.ts";
 import { peerProtocolHeaders, responseProtocolMismatch } from "./peerProtocol.ts";
 
 /**
- * The address book across peers. Every read asks each peer this server
- * connects to for its roster live: peers are few and a live answer is never
- * stale, and a peer that does not answer is reported as unread rather than
- * guessed at. A peer that polls this server is never called; its roster is the
- * snapshot it sent with its last poll, and before its first it is unread. Once
- * this server has a peer, a reading names this server and each peer by its own
- * name, and says whether each peer is available, so agents see where each
- * participant lives and whether it can hear them now; they still address it by
- * id.
+ * The address book across peers. Each read asks every peer this server connects to for its roster
+ * live (peers are few; one that does not answer is reported unread, not guessed at); a polling
+ * peer's roster is the snapshot from its last poll. Readings name each server and whether each peer
+ * is available; agents still address participants by id.
  */
 
 /**
@@ -124,11 +119,18 @@ export class PeerDirectory extends Context.Service<PeerDirectory, PeerDirectoryS
 export const noneLayer = Layer.succeed(
   PeerDirectory,
   PeerDirectory.of({
-    listAgents: () => Effect.succeed({ agents: [], unreadPeers: [], selfName: null }),
-    resolveAgent: () => Effect.succeed({ agents: [], unreadPeers: [], selfName: null }),
-    snapshotAgent: () => Effect.succeed(null),
-    serverStatus: (environmentId) =>
-      Effect.succeed({ name: environmentId, available: null, lastAvailableAt: null }),
+    listAgents: Effect.fn("PeerDirectory.listAgents")(function () {
+      return Effect.succeed({ agents: [], unreadPeers: [], selfName: null });
+    }),
+    resolveAgent: Effect.fn("PeerDirectory.resolveAgent")(function () {
+      return Effect.succeed({ agents: [], unreadPeers: [], selfName: null });
+    }),
+    snapshotAgent: Effect.fn("PeerDirectory.snapshotAgent")(function () {
+      return Effect.succeed(null);
+    }),
+    serverStatus: Effect.fn("PeerDirectory.serverStatus")(function (environmentId) {
+      return Effect.succeed({ name: environmentId, available: null, lastAvailableAt: null });
+    }),
   }),
 );
 
@@ -264,39 +266,40 @@ export const layer: Layer.Layer<PeerDirectory, never, PeerRegistryService | Http
       const peers = yield* PeerRegistryService;
       const httpClient = yield* HttpClient.HttpClient;
 
-      const listAgents: PeerDirectoryShape["listAgents"] = () =>
-        Effect.gen(function* () {
-          const connections = yield* peers.connections();
-          const selfName = connections.length === 0 ? null : yield* peers.selfLabel;
-          const readings = yield* Effect.forEach(
-            connections,
-            (peer) =>
-              readPeerRosterIfAuthorized(peer, peers).pipe(
-                // One bound for the whole read: connect, body, and decode.
-                Effect.timeout(PEER_ROSTER_TIMEOUT),
-                Effect.provideService(HttpClient.HttpClient, httpClient),
-                Effect.map((agents) => ({ agents, unread: null })),
-                Effect.catch((cause) =>
-                  Effect.succeed({
-                    agents: [] as ReadonlyArray<RemoteAgent>,
-                    unread: {
-                      environmentId: peer.environmentId,
-                      label: peer.label,
-                      reason: reasonOf(cause),
-                    } satisfies UnreadPeer,
-                  }),
-                ),
+      const listAgents: PeerDirectoryShape["listAgents"] = Effect.fn(
+        "j5.a2a.peer.directory.listAgents",
+      )(function* () {
+        const connections = yield* peers.connections();
+        const selfName = connections.length === 0 ? null : yield* peers.selfLabel;
+        const readings = yield* Effect.forEach(
+          connections,
+          (peer) =>
+            readPeerRosterIfAuthorized(peer, peers).pipe(
+              // One bound for the whole read: connect, body, and decode.
+              Effect.timeout(PEER_ROSTER_TIMEOUT),
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.map((agents) => ({ agents, unread: null })),
+              Effect.catch((cause) =>
+                Effect.succeed({
+                  agents: [] as ReadonlyArray<RemoteAgent>,
+                  unread: {
+                    environmentId: peer.environmentId,
+                    label: peer.label,
+                    reason: reasonOf(cause),
+                  } satisfies UnreadPeer,
+                }),
               ),
-            { concurrency: 4 },
-          );
-          return {
-            agents: readings.flatMap((reading) => reading.agents),
-            unreadPeers: readings.flatMap((reading) =>
-              reading.unread === null ? [] : [reading.unread],
             ),
-            selfName,
-          } satisfies PeerDirectoryReading;
-        });
+          { concurrency: 4 },
+        );
+        return {
+          agents: readings.flatMap((reading) => reading.agents),
+          unreadPeers: readings.flatMap((reading) =>
+            reading.unread === null ? [] : [reading.unread],
+          ),
+          selfName,
+        } satisfies PeerDirectoryReading;
+      });
 
       const resolveAgent: PeerDirectoryShape["resolveAgent"] = (participantId) =>
         listAgents().pipe(
@@ -306,25 +309,27 @@ export const layer: Layer.Layer<PeerDirectory, never, PeerRegistryService | Http
           })),
         );
 
-      const serverStatus: PeerDirectoryShape["serverStatus"] = (environmentId) =>
-        Effect.gen(function* () {
-          const peer = yield* peers.get(environmentId);
-          if (peer === null) return { name: environmentId, available: null, lastAvailableAt: null };
-          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-          return { name: peer.label, ...availabilityOf(peer, nowMs) };
-        });
+      const serverStatus: PeerDirectoryShape["serverStatus"] = Effect.fn(
+        "j5.a2a.peer.directory.serverStatus",
+      )(function* (environmentId) {
+        const peer = yield* peers.get(environmentId);
+        if (peer === null) return { name: environmentId, available: null, lastAvailableAt: null };
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        return { name: peer.label, ...availabilityOf(peer, nowMs) };
+      });
 
-      const snapshotAgent: PeerDirectoryShape["snapshotAgent"] = (environmentId, participantId) =>
-        Effect.gen(function* () {
-          const peer = yield* peers.connection(environmentId);
-          if (peer === null || peer.roster === null) return null;
-          const availability = availabilityOf(peer, DateTime.toEpochMillis(yield* DateTime.now));
-          return (
-            remoteAgents(peer, peer.roster, availability).find(
-              (agent) => agent.participantId === participantId,
-            ) ?? null
-          );
-        });
+      const snapshotAgent: PeerDirectoryShape["snapshotAgent"] = Effect.fn(
+        "j5.a2a.peer.directory.snapshotAgent",
+      )(function* (environmentId, participantId) {
+        const peer = yield* peers.connection(environmentId);
+        if (peer === null || peer.roster === null) return null;
+        const availability = availabilityOf(peer, DateTime.toEpochMillis(yield* DateTime.now));
+        return (
+          remoteAgents(peer, peer.roster, availability).find(
+            (agent) => agent.participantId === participantId,
+          ) ?? null
+        );
+      });
 
       return PeerDirectory.of({ listAgents, resolveAgent, snapshotAgent, serverStatus });
     }),

@@ -8,15 +8,9 @@ import { TrimmedNonEmptyString } from "../baseSchemas.ts";
  * (docs/j5/product/features/people-and-access.md).
  */
 
-// What a person's name may not hold: control characters, line and paragraph separators, and
-// every character that draws nothing or was never assigned. That takes in the marks that turn or
-// isolate the direction of text, zero-width characters, the soft hyphen and the invisible tag
-// characters, which a member cannot see and a model reads as plain letters. Emoji joined by a
-// zero-width joiner go with them: a name does not need them, and one plain rule is worth more.
-//
-// Square and angle brackets go too (AC45). A person's name is written into the line that tells
-// an agent who a message is from, `[Message from Priya (collaborator)]`, and into platform notes
-// an agent reads as markup; a name holding a bracket could make either read as something else.
+// Invisible characters (direction marks, zero-width joiners, tag characters) are hidden from
+// members but read as letters by a model, so a name drops them. Brackets go too (AC45): a name
+// is written into `[Message from Priya (collaborator)]` and into notes an agent reads as markup.
 // Parentheses stay: people write names like "Sam (QA)".
 const NOT_IN_A_PERSON_NAME = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}\p{Zl}\p{Zp}[\]<>]/u;
 // An accent or a vowel sign is one or two marks on a letter; a longer run stacks marks to draw

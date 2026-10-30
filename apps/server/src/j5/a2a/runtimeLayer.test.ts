@@ -1,3 +1,4 @@
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 // @effect-diagnostics nodeBuiltinImport:off - the redirect test needs a real HTTP server.
 import * as NodeHttp from "node:http";
 import { DeviceService } from "../../device/DeviceService.ts";
@@ -65,6 +66,7 @@ import { PeerRegistryService } from "./PeerRegistryService.ts";
 import { ReadChanges } from "./ReadChanges.ts";
 import { settledReadRevisions } from "./test-support/readRevisions.ts";
 import { makeJ5A2ARuntimeLayer, peerHttpClient } from "./runtimeLayer.ts";
+import { noDocumentTextLayer } from "../test-support/documentText.ts";
 
 const archiveDependencies = Layer.mergeAll(
   // j5_spawn_agent and Crew seats prepare worktrees through upstream's launch and receipts.
@@ -235,6 +237,7 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
             Layer.provide(countedThreadManagement),
             Layer.provide(emptyEventStore),
             Layer.provide(Layer.mock(DeviceService)({})),
+            Layer.provide(noDocumentTextLayer),
             Layer.provide(Layer.mock(OrchestratorV2)({})),
             Layer.provide(
               outboxLayer.pipe(
@@ -244,6 +247,7 @@ it.effect("shares one runtime and outbox across the production HTTP and MCP regi
               ),
             ),
             Layer.provide(McpSessionRegistry.layer),
+            Layer.provide(McpProviderSessions.layer),
             Layer.provide(PreviewAutomationBroker.layer),
             Layer.provide(
               Layer.mock(ServerEnvironment)({

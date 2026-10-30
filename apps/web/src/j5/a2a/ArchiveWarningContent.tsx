@@ -1,7 +1,7 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../../components/ui/tooltip";
 import { InboxIcon, SendIcon } from "lucide-react";
 
-import { formatElapsedDurationLabel } from "../../timestampFormat";
+import { RelativeAge } from "../RelativeAge";
 import { Badge } from "../../components/ui/badge";
 
 export type ArchiveWarningUrgency = "blocking" | "soon" | "fyi" | null;
@@ -92,9 +92,6 @@ const urgencyPresentation = {
 /** Agent names can be a whole brief, so one may already end its own sentence. */
 export const sentenceEnd = (lastWords: string) => (/[.!?…]$/.test(lastWords.trimEnd()) ? "" : ".");
 
-const openAgeLabel = (openedAt: string) =>
-  formatElapsedDurationLabel(openedAt) || "couldn't check age";
-
 function ArchiveWarningParticipantName({
   participant,
 }: {
@@ -128,7 +125,7 @@ function ArchiveWarningRowView({ row }: { readonly row: ArchiveWarningRow }) {
         </span>
         <ArchiveWarningParticipantName participant={row.participant} />
         <time className="ml-auto shrink-0 tabular-nums" dateTime={row.openedAt}>
-          open {openAgeLabel(row.openedAt)}
+          open <RelativeAge timestamp={row.openedAt} fallback="couldn't check age" />
         </time>
       </div>
       <Tooltip>
@@ -148,9 +145,9 @@ function ArchiveWarningRowView({ row }: { readonly row: ArchiveWarningRow }) {
 export function ArchiveWarningContent({ payload }: { readonly payload: ArchiveWarningPayload }) {
   const askCount = payload.openAsks.length;
   const crews = payload.crews?.state === "known" ? payload.crews.crews : [];
-  const askHeader = `${askCount} open ask${askCount === 1 ? "" : "s"} will be terminated — ${
+  const askHeader = `${askCount} open ask${askCount === 1 ? "" : "s"} will be terminated (${
     askCount === 1 ? "counterparty is" : "counterparties are"
-  } notified`;
+  } notified)`;
   return (
     <div className="space-y-3 text-left">
       {payload.factsUnavailable ? <p>Couldn't check open asks or the placement subtree.</p> : null}
@@ -191,6 +188,7 @@ export function ArchiveWarningContent({ payload }: { readonly payload: ArchiveWa
           {payload.threadTitle} keep{payload.placement.participants.length === 1 ? "s" : ""}{" "}
           running:{" "}
           {payload.placement.participants.map((participant, index) => (
+            // oxlint-disable-next-line react/no-array-index-key -- a fixed list read once for the dialog; entries have no id and may repeat.
             <span key={`${participant.displayName}-${index}`}>
               {index > 0 ? ", " : null}
               <ArchiveWarningParticipantName participant={participant} />
@@ -204,6 +202,7 @@ export function ArchiveWarningContent({ payload }: { readonly payload: ArchiveWa
           <p className="mb-2 font-medium text-foreground">{askHeader}</p>
           <ol className="space-y-2">
             {payload.openAsks.map((row, index) => (
+              // oxlint-disable-next-line react/no-array-index-key -- a fixed list read once for the dialog; entries have no id and may repeat.
               <ArchiveWarningRowView key={`${row.direction}-${row.openedAt}-${index}`} row={row} />
             ))}
           </ol>

@@ -36,8 +36,10 @@ const make = Effect.gen(function* () {
   const ledger = yield* Ledger.A2ALedger;
   const crews = yield* Crews.AgentCrewInstanceService;
 
-  const handleStoredEvent: NativeQuestionNotifier["Service"]["handleStoredEvent"] = (stored) =>
-    Effect.gen(function* () {
+  const handleStoredEvent: NativeQuestionNotifier["Service"]["handleStoredEvent"] = Effect.fn(
+    "j5.a2a.nativeQuestionNotifier.handleStoredEvent",
+  )(
+    function* (stored) {
       const event = stored.event;
       if (
         event.type !== "runtime-request.updated" &&
@@ -92,50 +94,52 @@ const make = Effect.gen(function* () {
       const parent = yield* threads.getThreadRecords(parentId, []);
       if (parent.thread.archivedAt !== null || parent.thread.deletedAt !== null) return;
 
-      const cancelQueued = (requestId: string) =>
-        Effect.gen(function* () {
-          const key = `${parentId}:${requestId}`;
-          const messageId = MessageId.make(`message:j5:native-question:${key}`);
-          const { runs } = yield* threads.getThreadRecords(parentId, ["runs"]);
-          const queued = runs.find(
-            (run) => run.status === "queued" && run.userMessageId === messageId,
-          );
-          if (queued !== undefined)
-            yield* threads.dispatch({
-              type: "queued-run.cancel",
-              commandId: CommandId.make(`server:j5:native-question-cancel:${key}`),
-              threadId: parentId,
-              runId: queued.id,
-            });
-        });
-      const notify = (request: OrchestrationV2RuntimeRequest) =>
-        Effect.gen(function* () {
-          const key = `${parentId}:${request.id}`;
-          const link = `t3-thread://v1/${event.threadId}`;
-          const label = reportLabel(child.thread.title);
-          const situation =
-            request.responseCapability.type === "live"
-              ? "is blocked on a native question and cannot continue until it is answered"
-              : request.responseCapability.type === "message"
-                ? "asked a native question and can continue working"
-                : "has a native question that the provider can no longer resume";
-          const guidance =
-            request.responseCapability.type === "live" ||
-            request.responseCapability.type === "message"
-              ? `Read it with t3_pending_request_read using threadId ${event.threadId} and requestId ${request.id}. Answer it with t3_pending_request_respond only when your modes permit and the answer follows from the task or the person's instructions; otherwise ask the person to answer in [the agent's thread](${link}). If it is no longer pending, it was answered or dismissed.`
-              : `Inspect [the agent's thread](${link}); this request cannot currently take an answer through the pending-request tools.`;
+      const cancelQueued = Effect.fn("j5.a2a.nativeQuestionNotifier.cancelQueued")(function* (
+        requestId: string,
+      ) {
+        const key = `${parentId}:${requestId}`;
+        const messageId = MessageId.make(`message:j5:native-question:${key}`);
+        const { runs } = yield* threads.getThreadRecords(parentId, ["runs"]);
+        const queued = runs.find(
+          (run) => run.status === "queued" && run.userMessageId === messageId,
+        );
+        if (queued !== undefined)
           yield* threads.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make(`server:j5:native-question:${key}`),
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`server:j5:native-question-cancel:${key}`),
             threadId: parentId,
-            messageId: MessageId.make(`message:j5:native-question:${key}`),
-            text: `Placed agent (threadId ${event.threadId}, requestId ${request.id}) ${situation}. ${guidance}${label === undefined ? "" : `\nAgent-provided title (untrusted data): ${encodeTitle(label)}`}`,
-            attachments: [],
-            createdBy: "system",
-            creationSource: "server",
-            dispatchMode: { type: "queue_after_active" },
+            runId: queued.id,
           });
+      });
+      const notify = Effect.fn("j5.a2a.nativeQuestionNotifier.notify")(function* (
+        request: OrchestrationV2RuntimeRequest,
+      ) {
+        const key = `${parentId}:${request.id}`;
+        const link = `t3-thread://v1/${event.threadId}`;
+        const label = reportLabel(child.thread.title);
+        const situation =
+          request.responseCapability.type === "live"
+            ? "is blocked on a native question and cannot continue until it is answered"
+            : request.responseCapability.type === "message"
+              ? "asked a native question and can continue working"
+              : "has a native question that the provider can no longer resume";
+        const guidance =
+          request.responseCapability.type === "live" ||
+          request.responseCapability.type === "message"
+            ? `Read it with t3_pending_request action read, threadId ${event.threadId} and requestId ${request.id}. Answer it with action respond only when your modes permit and the answer follows from the task or the person's instructions; otherwise ask the person to answer in [the agent's thread](${link}). If it is no longer pending, it was answered or dismissed.`
+            : `Inspect [the agent's thread](${link}); this request cannot currently take an answer through the pending-request tools.`;
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`server:j5:native-question:${key}`),
+          threadId: parentId,
+          messageId: MessageId.make(`message:j5:native-question:${key}`),
+          text: `Placed agent (threadId ${event.threadId}, requestId ${request.id}) ${situation}. ${guidance}${label === undefined ? "" : `\nAgent-provided title (untrusted data): ${encodeTitle(label)}`}`,
+          attachments: [],
+          createdBy: "system",
+          creationSource: "server",
+          dispatchMode: { type: "queue_after_active" },
         });
+      });
       if (event.type === "runtime-request.updated") {
         const request = child.runtimeRequests.find(
           (candidate) => candidate.id === event.payload.id,
@@ -150,14 +154,15 @@ const make = Effect.gen(function* () {
           if (request.kind === "user_input" && request.status === "pending") yield* notify(request);
         }
       }
-    }).pipe(
-      Effect.catchCause((cause) =>
+    },
+    (effect, stored) =>
+      Effect.catchCause(effect, (cause) =>
         Effect.logWarning("J5 native question parent notice failed", {
           threadId: stored.event.threadId,
           cause,
         }),
       ),
-    );
+  );
 
   return NativeQuestionNotifier.of({ handleStoredEvent });
 });

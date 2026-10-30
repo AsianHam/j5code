@@ -7,7 +7,7 @@ import {
   type SkillCatalogReplacement,
 } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SkillInventoryPanel } from "./SkillManagementSettings";
 import { skillCatalogEnvironment } from "./skillCatalogAtoms";
@@ -85,22 +85,16 @@ export function SkillInstallerSettings() {
 function MemberSkillInstallerSettings() {
   const ownedEnvironmentIds = useOwnedEnvironmentIds();
   const { environments: everyEnvironment } = useEnvironments();
-  // A server this person does not own is left out: its skills are not theirs to manage.
-  const environments = useMemo(
-    () =>
-      everyEnvironment.filter((environment) => ownedEnvironmentIds.has(environment.environmentId)),
-    [everyEnvironment, ownedEnvironmentIds],
-  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const orderedEnvironments = useMemo(
-    () =>
-      environments.toSorted((left, right) => {
-        const leftPrimary = left.environmentId === primaryEnvironmentId;
-        const rightPrimary = right.environmentId === primaryEnvironmentId;
-        return Number(rightPrimary) - Number(leftPrimary) || left.label.localeCompare(right.label);
-      }),
-    [environments, primaryEnvironmentId],
+  // A server this person does not own is left out: its skills are not theirs to manage.
+  const environments = everyEnvironment.filter((environment) =>
+    ownedEnvironmentIds.has(environment.environmentId),
   );
+  const orderedEnvironments = environments.toSorted((left, right) => {
+    const leftPrimary = left.environmentId === primaryEnvironmentId;
+    const rightPrimary = right.environmentId === primaryEnvironmentId;
+    return Number(rightPrimary) - Number(leftPrimary) || left.label.localeCompare(right.label);
+  });
   const {
     candidates: pickerEnvironments,
     pinnedEnvironmentId,
@@ -205,16 +199,17 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
 
   const [draft, setDraft] = useState<string | null>(null);
   const displayedSource = draft ?? configuredSource;
-  useEffect(() => {
-    if (draft !== null && draft.trim() === configuredSource) setDraft(null);
-  }, [draft, configuredSource]);
+  if (draft !== null && draft.trim() === configuredSource) setDraft(null);
 
   const selectionScope = catalogScopeFor(environmentId, configuredSource);
   // Latest identity for in-flight requests: an Apply started on A must not
   // publish its counts into B's panel when another client switches sources
-  // mid-operation. Written in the reset effect below (not during render) so
-  // it always moves together with the state reset.
+  // mid-operation. Written in an effect, since render may not write refs.
   const selectionScopeRef = useRef(selectionScope);
+  // oxlint-disable-next-line t3code/react-effect-budget -- async handlers compare against the latest selection, and render may not write refs.
+  useEffect(() => {
+    selectionScopeRef.current = selectionScope;
+  }, [selectionScope, selectionScopeRef]);
   const [selection, setSelection] = useState<{ scope: string | null; groups: Array<string> }>({
     scope: null,
     groups: [],
@@ -244,8 +239,9 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
   // settings move (another client saved A → B, or this panel saved), drop
   // the previous catalog's state so Apply cannot submit groups, counts,
   // or errors from the old source.
-  useEffect(() => {
-    selectionScopeRef.current = selectionScope;
+  const [stateScope, setStateScope] = useState(selectionScope);
+  if (stateScope !== selectionScope) {
+    setStateScope(selectionScope);
     setSelection({ scope: null, groups: [] });
     setLastApply(null);
     setReplacementPaths(null);
@@ -253,7 +249,7 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
     setNotice(null);
     setSaveError(null);
     setReviewingApply(false);
-  }, [selectionScope, selectionScopeRef]);
+  }
 
   // Awaited directly (not via the shared fan-out hook): this key is
   // environment-local, and the save must settle before identity resets.
@@ -278,34 +274,31 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
     setNotice(null);
     setSaveError(null);
     setApplyFailure(null);
-    try {
-      const result = await persistSettings({
-        environmentId,
-        input: { patch: { skillCatalogSource: trimmed } },
-      });
-      if (selectionScopeRef.current !== originScope) {
-        // The settings echo can precede the receipt for our own save.
-        if (
-          result._tag === "Success" &&
-          selectionScopeRef.current === catalogScopeFor(environmentId, trimmed)
-        ) {
-          setSourceEditorOpen(false);
-        }
-        return;
+    const result = await persistSettings({
+      environmentId,
+      input: { patch: { skillCatalogSource: trimmed } },
+    });
+    setOperation(null);
+    if (selectionScopeRef.current !== originScope) {
+      // The settings echo can precede the receipt for our own save.
+      if (
+        result._tag === "Success" &&
+        selectionScopeRef.current === catalogScopeFor(environmentId, trimmed)
+      ) {
+        setSourceEditorOpen(false);
       }
-      if (result._tag === "Failure") {
-        // The draft stays visible against the old settings; actions stay
-        // disabled until the displayed source has matching loaded status.
-        setSaveError(messageOf(squashAtomCommandFailure(result)));
-        return;
-      }
-      setSourceEditorOpen(false);
-      // The status query follows the echoed settings. Actions stay disabled
-      // until the new source's status arrives.
-      status.refresh();
-    } finally {
-      setOperation(null);
+      return;
     }
+    if (result._tag === "Failure") {
+      // The draft stays visible against the old settings; actions stay
+      // disabled until the displayed source has matching loaded status.
+      setSaveError(messageOf(squashAtomCommandFailure(result)));
+      return;
+    }
+    setSourceEditorOpen(false);
+    // The status query follows the echoed settings. Actions stay disabled
+    // until the new source's status arrives.
+    status.refresh();
   }
 
   async function applySelected(replacements?: ReadonlyArray<SkillCatalogReplacement>) {
@@ -316,33 +309,30 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
     setReviewingApply(false);
     setNotice(null);
     setApplyFailure(null);
-    try {
-      const result = await applyGroupsCommand({
-        environmentId,
-        input: {
-          expectedSource: configuredSource,
-          groups: selectedGroups,
-          ...(replacements ? { replacements } : {}),
-        },
-      });
-      // The source moved mid-operation: discard A's counts/conflicts instead
-      // of showing them under B.
-      if (selectionScopeRef.current !== originScope) return;
-      if (result._tag === "Failure") {
-        const cause = squashAtomCommandFailure(result);
-        const partial = extractPartialApplyResult(cause) ?? null;
-        setApplyFailure({ message: messageOf(cause), partial });
-        setLastApply(partial);
-      } else {
-        setLastApply(result.value);
-        const message = summarizeApplyResult(result.value);
-        setNotice(message);
-        toastManager.add({ type: "info", title: "Skills", description: message });
-      }
-      status.refresh();
-    } finally {
-      setOperation(null);
+    const result = await applyGroupsCommand({
+      environmentId,
+      input: {
+        expectedSource: configuredSource,
+        groups: selectedGroups,
+        ...(replacements ? { replacements } : {}),
+      },
+    });
+    setOperation(null);
+    // The source moved mid-operation: discard A's counts/conflicts instead
+    // of showing them under B.
+    if (selectionScopeRef.current !== originScope) return;
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
+      const partial = extractPartialApplyResult(cause) ?? null;
+      setApplyFailure({ message: messageOf(cause), partial });
+      setLastApply(partial);
+    } else {
+      setLastApply(result.value);
+      const message = summarizeApplyResult(result.value);
+      setNotice(message);
+      toastManager.add({ type: "info", title: "Skills", description: message });
     }
+    status.refresh();
   }
 
   async function updateCheckout() {
@@ -351,24 +341,21 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
     setOperation("update");
     setNotice(null);
     setApplyFailure(null);
-    try {
-      const result = await updateCatalogCommand({
-        environmentId,
-        input: { expectedSource: configuredSource },
-      });
-      if (selectionScopeRef.current !== originScope) return;
-      if (result._tag === "Failure") {
-        const cause = squashAtomCommandFailure(result);
-        setApplyFailure({ message: messageOf(cause), partial: null });
-      } else {
-        const message = `Catalog updated from ${result.value.upstream}. Review the skill groups and choose Apply changes to update installed skills.`;
-        setNotice(message);
-        toastManager.add({ type: "info", title: "Skills", description: message });
-      }
-      status.refresh();
-    } finally {
-      setOperation(null);
+    const result = await updateCatalogCommand({
+      environmentId,
+      input: { expectedSource: configuredSource },
+    });
+    setOperation(null);
+    if (selectionScopeRef.current !== originScope) return;
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
+      setApplyFailure({ message: messageOf(cause), partial: null });
+    } else {
+      const message = `Catalog updated from ${result.value.upstream}. Review the skill groups and choose Apply changes to update installed skills.`;
+      setNotice(message);
+      toastManager.add({ type: "info", title: "Skills", description: message });
     }
+    status.refresh();
   }
 
   // Actions run only when the input shows the configured source and status
@@ -681,12 +668,12 @@ export function SkillCatalogPanel({ environmentId }: { readonly environmentId: E
                     ) : null}
                     {lastApply.conflicts.map((conflict) => (
                       <p key={`${conflict.skill}${conflict.linkPath}`} className="break-words">
-                        Conflict: {conflict.skill} at {conflict.linkPath} — {conflict.detail}
+                        Conflict: {conflict.skill} at {conflict.linkPath}: {conflict.detail}
                       </p>
                     ))}
                     {lastApply.failed.map((failed) => (
                       <p key={failed.linkPath} className="text-destructive-foreground">
-                        Failed: {failed.linkPath} — {failed.error}
+                        Failed: {failed.linkPath}: {failed.error}
                       </p>
                     ))}
                   </>

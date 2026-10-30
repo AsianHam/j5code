@@ -16,7 +16,7 @@ import {
   MinusIcon,
   MoreHorizontalIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Badge } from "../../components/ui/badge";
@@ -99,54 +99,50 @@ function SkillRecordDetails({ skill }: { readonly skill: ServerProviderSkill }) 
   );
 }
 
+const offersSkillLinks = (provider: ServerProvider) =>
+  provider.driver === "codex" || provider.driver === "claudeAgent";
+
 export function SkillInventoryPanel({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const environment = useEnvironment(environmentId);
   const allProjects = useProjects();
-  const projects = allProjects.filter((project) => project.environmentId === environmentId);
-  // A project named in the settings scope sentence locks the inventory to its checkout.
-  const lockedProject = lockedSettingsScopeProject(
-    useOptionalSettingsScope()?.scope,
-    environmentId,
-  );
+  const settingsScope = useOptionalSettingsScope()?.scope;
   const [projectId, setProjectId] = useState("");
-  const project = lockedProject ?? projects.find((entry) => entry.id === projectId);
-  // Make the primitive explicit so React Compiler preserves the inventory memoization.
-  const cwd = project ? String(project.workspaceRoot) : undefined;
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
-  const providerOptions = useMemo(
-    () =>
-      providers.filter(
-        (provider) => provider.driver === "codex" || provider.driver === "claudeAgent",
-      ),
-    [providers],
-  );
   const [filter, setFilter] = useState<ProviderInstanceId | undefined>();
-  const selectedProvider = providerOptions.find((provider) => provider.instanceId === filter);
-  const selectedProviders = useMemo(
-    () => (selectedProvider ? [selectedProvider] : providers),
-    [selectedProvider, providers],
-  );
   const [query, setQuery] = useState("");
   const [linkSelection, setLinkSelection] = useState<SkillLinkSelection | null>(null);
   const [collapsedOrigins, setCollapsedOrigins] = useState<ReadonlySet<SkillOrigin>>(new Set());
   const [detailsKey, setDetailsKey] = useState<string | null>(null);
-  const connected = environment?.connection.phase === "connected";
   const canOperate = useAtomValue(skillLinkEnvironment.create.permissionAtom(environmentId));
   const refresh = useAtomCommand(serverEnvironment.refreshProviders, { reportFailure: false });
   const attempted = useRef({ selection: "", instances: new Set<ProviderInstanceId>() });
   const [failures, setFailures] = useState<ReadonlySet<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
   const busy = useRef(false);
-  const scopeKey = (instanceId: ProviderInstanceId) => JSON.stringify([instanceId, cwd]);
 
+  // A project named in the settings scope sentence locks the inventory to its checkout.
+  const lockedProject = lockedSettingsScopeProject(settingsScope, environmentId);
+  const project =
+    lockedProject ??
+    allProjects.find((entry) => entry.environmentId === environmentId && entry.id === projectId);
+  // Make the primitive explicit so React Compiler preserves the inventory memoization.
+  const cwd = project ? String(project.workspaceRoot) : undefined;
+  const connected = environment?.connection.phase === "connected";
+
+  // The effect reads only hook values and primitives, and comes before the derived lists: the
+  // compiler caches a value only when no hook call sits between its uses.
+  // oxlint-disable-next-line t3code/react-effect-budget -- refreshes a provider's skills from the server once per selection, for the providers that have no snapshot yet.
   useEffect(() => {
+    const selectedProvider = providers.find(
+      (provider) => offersSkillLinks(provider) && provider.instanceId === filter,
+    );
     const selection = JSON.stringify([cwd, selectedProvider?.instanceId, connected]);
     if (attempted.current.selection !== selection) {
       attempted.current = { selection, instances: new Set() };
     }
     if (!connected || !cwd) return;
-    for (const provider of selectedProviders) {
+    for (const provider of selectedProvider ? [selectedProvider] : providers) {
       if (
         !provider.enabled ||
         !provider.installed ||
@@ -169,88 +165,74 @@ export function SkillInventoryPanel({ environmentId }: { readonly environmentId:
         },
       );
     }
-  }, [
-    connected,
-    cwd,
-    environmentId,
-    selectedProviders,
-    selectedProvider?.instanceId,
-    refresh,
-    attempted,
-  ]);
+  }, [connected, cwd, environmentId, providers, filter, refresh, attempted]);
+
+  const projects = allProjects.filter((entry) => entry.environmentId === environmentId);
+  const providerOptions = providers.filter(offersSkillLinks);
+  const selectedProvider = providerOptions.find((provider) => provider.instanceId === filter);
+  const selectedProviders = selectedProvider ? [selectedProvider] : providers;
+  const scopeKey = (instanceId: ProviderInstanceId) => JSON.stringify([instanceId, cwd]);
 
   const catalogSource = environment?.serverConfig?.settings.skillCatalogSource;
-  const rows = useMemo(
-    () => buildSkillInventory(providers, cwd, catalogSource),
-    [providers, cwd, catalogSource],
-  );
+  const rows = buildSkillInventory(providers, cwd, catalogSource);
   const visibleRows = filterSkillInventory(rows, query, selectedProvider?.instanceId);
   const details = visibleRows.find((row) => row.key === detailsKey);
-  const displayedProviders = useMemo(
-    () =>
-      selectedProvider ? selectedProviders : inventoryColumnProviders(selectedProviders, rows),
-    [selectedProvider, selectedProviders, rows],
-  );
-  const providerDetails = useMemo(
-    () =>
-      new Map(
-        displayedProviders.map((provider) => [
-          provider.instanceId,
-          {
-            label: providerLabel(provider, displayedProviders),
-            state: failures.has(JSON.stringify([provider.instanceId, cwd]))
-              ? ("failed" as const)
-              : !connected
-                ? ("not-checked" as const)
-                : skillDiscoveryState(provider, cwd),
-            driver: provider.driver,
-            checkedAt:
-              (cwd
-                ? provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.checkedAt
-                : undefined) ?? provider.checkedAt,
-          },
-        ]),
-      ),
-    [displayedProviders, failures, connected, cwd],
+  const displayedProviders = selectedProvider
+    ? selectedProviders
+    : inventoryColumnProviders(selectedProviders, rows);
+  const providerDetails = new Map(
+    displayedProviders.map((provider) => [
+      provider.instanceId,
+      {
+        label: providerLabel(provider, displayedProviders),
+        state: failures.has(JSON.stringify([provider.instanceId, cwd]))
+          ? ("failed" as const)
+          : !connected
+            ? ("not-checked" as const)
+            : skillDiscoveryState(provider, cwd),
+        driver: provider.driver,
+        checkedAt:
+          (cwd
+            ? provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.checkedAt
+            : undefined) ?? provider.checkedAt,
+      },
+    ]),
   );
 
   async function refreshInventory() {
     if (busy.current) return;
     busy.current = true;
     setRefreshing(true);
-    try {
-      await Promise.all(
-        selectedProviders.map(async (provider) => {
-          const key = scopeKey(provider.instanceId);
-          // No cwd: the explicit instance refresh replaces its cached workspaces.
-          let result = await refresh({
+    await Promise.all(
+      selectedProviders.map(async (provider) => {
+        const key = scopeKey(provider.instanceId);
+        // No cwd: the explicit instance refresh replaces its cached workspaces.
+        let result = await refresh({
+          environmentId,
+          input: { instanceId: provider.instanceId },
+        });
+        if (
+          result._tag === "Success" &&
+          cwd &&
+          !result.value.providers
+            .find((entry) => entry.instanceId === provider.instanceId)
+            ?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd)
+        ) {
+          result = await refresh({
             environmentId,
-            input: { instanceId: provider.instanceId },
+            input: { instanceId: provider.instanceId, cwd },
           });
-          if (
-            result._tag === "Success" &&
-            cwd &&
-            !result.value.providers
-              .find((entry) => entry.instanceId === provider.instanceId)
-              ?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd)
-          ) {
-            result = await refresh({
-              environmentId,
-              input: { instanceId: provider.instanceId, cwd },
-            });
-          }
-          setFailures((previous) => {
-            const next = new Set(previous);
-            if (result._tag === "Failure") next.add(key);
-            else next.delete(key);
-            return next;
-          });
-        }),
-      );
-    } finally {
-      busy.current = false;
-      setRefreshing(false);
-    }
+        }
+        setFailures((previous) => {
+          const next = new Set(previous);
+          if (result._tag === "Failure") next.add(key);
+          else next.delete(key);
+          return next;
+        });
+      }),
+    );
+    busy.current = false;
+    setRefreshing(false);
   }
 
   return (

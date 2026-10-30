@@ -57,7 +57,7 @@ import { PeerRegistryService } from "../PeerRegistryService.ts";
 import { ParticipantPlacementService } from "../PlacementService.ts";
 import { withDeliveryNotice } from "../receiverBacklog.ts";
 import { A2ASendService } from "../SendService.ts";
-import { stopThread } from "../stopThread.ts";
+import { AGENT_STOP_REASON, stopThread } from "../stopThread.ts";
 import { sendClaimingAttachments } from "./attachments.ts";
 import {
   outsideAgentCaller,
@@ -314,11 +314,9 @@ const handlers = {
       const worker = yield* A2ADeliveryWorker;
       const mode = input.mode ?? "queue";
       const attachments = input.attachments ?? [];
-      // A plain queued message needs nothing read first. A steer, a restart or a file acts on
-      // the receiver's own thread, so the receiver must be an agent on this server.
       // A plain queued message needs nothing read first. A file is claimed into the receiver's
-      // thread, so its receiver must be an agent on this server. A steer or a restart acts on
-      // the receiver's turn: here this server checks it, and on a peer server that server does.
+      // thread, so its receiver must be an agent on this server. A steer or a restart acts on the
+      // receiver's turn: here this server checks it, and on a peer server that server does.
       const receiver =
         mode === "queue" && attachments.length === 0
           ? undefined
@@ -910,7 +908,11 @@ const handlers = {
       // Upstream's Stop, delegated tasks included (see stopThread.ts). The limit goes with it:
       // the target's modes can be raised after the check above, and upstream checks again under
       // the thread's lock.
-      yield* stopThread(threadManagement, { commandId, threadId: target.threadId }, limits).pipe(
+      yield* stopThread(
+        threadManagement,
+        { commandId, threadId: target.threadId, reason: AGENT_STOP_REASON },
+        limits,
+      ).pipe(
         Effect.mapError((error) =>
           stateError(
             `Peer Agent ${input.participant_id} on thread ${target.threadId} could not be stopped: ${error.message}.`,

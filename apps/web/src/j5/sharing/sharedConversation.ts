@@ -13,7 +13,7 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -36,6 +36,7 @@ export function useRereadWhenListed(
       environmentId === null || threadId === null ? null : scopeThreadRef(environmentId, threadId),
     ) !== null;
   const wasListed = useRef(listed);
+  // oxlint-disable-next-line t3code/react-effect-budget -- rereads a shared conversation when its thread is listed again, which the server's snapshot decides.
   useEffect(() => {
     if (listed && !wasListed.current) {
       if (read !== null) appAtomRegistry.refresh(read);
@@ -71,16 +72,14 @@ export function useThreadAuthors(
   readonly failed: boolean;
   readonly refresh: () => void;
 } {
-  const target = useMemo(
-    () =>
-      environmentId === null || threadId === null ? null : { environmentId, input: { threadId } },
-    [environmentId, threadId],
-  );
+  const target =
+    environmentId === null || threadId === null ? null : { environmentId, input: { threadId } };
   const query = target === null ? null : threadAuthors(target);
   const changes = target === null ? null : threadAuthorsChanges(target);
   const authors = useEnvironmentQuery(query);
   const revision = useEnvironmentQuery(changes).data?.revision;
   useRereadWhenListed(environmentId, threadId, query, changes);
+  // oxlint-disable-next-line t3code/react-effect-budget -- rereads message authors when the server's change counter moves.
   useEffect(() => {
     if (query !== null && revision !== undefined && revision > 0) appAtomRegistry.refresh(query);
   }, [query, revision]);

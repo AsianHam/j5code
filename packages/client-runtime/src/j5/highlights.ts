@@ -1,6 +1,6 @@
 /**
  * Highlights: the short "What's new" entries a client shows once after it has a build with a
- * substantial new feature (#624). An entry is committed with its feature's PR; whether a feature
+ * substantial new feature. An entry is committed with its feature's PR; whether a feature
  * deserves one is decided in that PR's review. Seen-tracking is per client, so this module is pure:
  * each client passes in what it has stored.
  */
@@ -24,6 +24,28 @@ export interface Highlight {
 
 /** Newest first. Add an entry at the top. */
 export const HIGHLIGHTS: ReadonlyArray<Highlight> = [
+  {
+    id: "2026-10-new-design",
+    title: "A new look",
+    description:
+      "J5 Code has a refreshed design: a true black dark mode, dimmer read threads and simpler composer controls. Prefer the old one? Turn off New design in Settings, Appearance.",
+    clients: ["web", "desktop"],
+  },
+  {
+    id: "2026-10-timeline-fold",
+    title: "Your messages stay in view",
+    description:
+      "Messages from agents now fold to one line showing who sent them and whether they expect a reply. Click one to read it.",
+    clients: ["web", "desktop"],
+  },
+  {
+    id: "2026-10-upstream-0-1-3",
+    title: "Also new: search inside your messages",
+    description:
+      "Cmd+K now finds text inside messages, not just titles. Pull requests show what kind of code changed, approvals no longer block the composer, and busy threads scroll more smoothly.",
+    learnMoreUrl: "https://j5.codes/whats-new/0-1-3",
+    clients: ["web", "desktop"],
+  },
   {
     id: "2026-10-peering",
     title: "Agents across your machines",

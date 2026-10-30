@@ -155,17 +155,10 @@ export const openInboxCountStatement = (sql: SqlClient.SqlClient, personId: Part
   `;
 
 /**
- * The label a peer sent with the delivery this server recorded last, and the
- * peer that sent it, for each sender asked about. "Last" is by the time this server recorded the row: the
- * receiver stamps received rows with its own clock, so the origin cannot date
- * one into the future, and the stamp orders rows across projects, which `seq`
- * (allocated per project) does not; project id, then seq, break ties so one
- * row wins. A sender id belongs to one peer (the inbound ownership check refuses
- * a second origin), so its latest labeled row is that peer's latest label. Each
- * id is one backward seek on migration 27's index, so the cost follows the ids
- * asked about, never a sender's history. Both facts come back as one JSON value
- * so the seek runs once. An id with no label comes back null; callers skip it
- * (filtering in SQL would evaluate the seek twice).
+ * The label a peer sent with the delivery this server recorded last, and that peer, per sender (a
+ * sender id belongs to one peer). "Last" is by this server's receive stamp, which the origin cannot
+ * date ahead and which orders across projects, unlike `seq`; project id, then seq, break ties. One
+ * seek per id on migration 27's index, returned as one JSON value; no label is null.
  */
 const decodeLatestPeerDelivery = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ label: Schema.String, environmentId: Schema.String })),
@@ -293,92 +286,93 @@ export const layer: Layer.Layer<
     const projectProposal = projectCrewProposal(yield* PlaybookStore);
     const runtimeRequests = yield* CrewRuntimeRequestService;
 
-    const participantIdentities: ClientReadsShape["participantIdentities"] = (input) =>
-      Effect.gen(function* () {
-        const uniqueParticipantIds = uniqueInFirstOccurrenceOrder(input.participantIds);
-        if (uniqueParticipantIds.length === 0) return { entries: [] };
-        const rows: Array<IdentityRow> = [];
-        for (const participantIdBatch of clientReadBatches(uniqueParticipantIds)) {
-          rows.push(...(yield* participantIdentityRows(sql, participantIdBatch)));
-          // Machine senders have no thread; their display name is their registered name.
-          rows.push(
-            ...(yield* sql<IdentityRow>`
+    const participantIdentities: ClientReadsShape["participantIdentities"] = Effect.fn(
+      "j5.a2a.clientReads.participantIdentities",
+    )(function* (input) {
+      const uniqueParticipantIds = uniqueInFirstOccurrenceOrder(input.participantIds);
+      if (uniqueParticipantIds.length === 0) return { entries: [] };
+      const rows: Array<IdentityRow> = [];
+      for (const participantIdBatch of clientReadBatches(uniqueParticipantIds)) {
+        rows.push(...(yield* participantIdentityRows(sql, participantIdBatch)));
+        // Machine senders have no thread; their display name is their registered name.
+        rows.push(
+          ...(yield* sql<IdentityRow>`
                 SELECT participant_id, name AS display_name
                 FROM j5_a2a_machine_participant
                 WHERE participant_id IN ${sql.in(participantIdBatch)}
               `),
-          );
-          // An outside agent has no thread either; it is shown by the label it signed in with.
-          rows.push(...(yield* outsideAgentNameRows(sql, participantIdBatch)));
-          // A person is shown by their name, a removed one by the name they had (People and
-          // access AC47); a first owner who has not given one yet stays unnamed.
-          rows.push(
-            ...(yield* sql<IdentityRow>`
-                SELECT person_id AS participant_id, display_name
-                FROM j5_a2a_human_person
-                WHERE person_id IN ${sql.in(participantIdBatch)}
-              `),
-          );
-          // A sender homed on a peer has no thread here; the label its server
-          // sent with its latest delivery stands in, and only for ids nothing
-          // local named, so local-only reads never touch received history.
-          const named = new Set(rows.map((row) => row.participant_id));
-          const unresolved = participantIdBatch.filter(
-            (participantId) => !named.has(participantId),
-          );
-          if (unresolved.length > 0) {
-            // An agent's id names its thread, on the peer that sent its deliveries.
-            for (const row of yield* peerSenderLabelStatement(sql, unresolved)) {
-              if (row.latest === null) continue;
-              const latest = decodeLatestPeerDelivery(row.latest);
-              rows.push({
-                participant_id: row.participant_id,
-                display_name: latest.label,
-                thread_id: threadIdForParticipant(row.participant_id),
-                thread_environment_id: latest.environmentId,
-              });
-            }
+        );
+        // An outside agent has no thread either; it is shown by the label it signed in with.
+        rows.push(...(yield* outsideAgentNameRows(sql, participantIdBatch)));
+        // A person is shown by their name, a removed one by the name they had (People and
+        // access AC47); a first owner who has not given one yet stays unnamed.
+        rows.push(
+          ...(yield* sql<IdentityRow>`
+              SELECT person_id AS participant_id, display_name
+              FROM j5_a2a_human_person
+              WHERE person_id IN ${sql.in(participantIdBatch)}
+            `),
+        );
+        // A sender homed on a peer has no thread here; the label its server
+        // sent with its latest delivery stands in, and only for ids nothing
+        // local named, so local-only reads never touch received history.
+        const named = new Set(rows.map((row) => row.participant_id));
+        const unresolved = participantIdBatch.filter((participantId) => !named.has(participantId));
+        if (unresolved.length > 0) {
+          // An agent's id names its thread, on the peer that sent its deliveries.
+          for (const row of yield* peerSenderLabelStatement(sql, unresolved)) {
+            if (row.latest === null) continue;
+            const latest = decodeLatestPeerDelivery(row.latest);
+            rows.push({
+              participant_id: row.participant_id,
+              display_name: latest.label,
+              thread_id: threadIdForParticipant(row.participant_id),
+              thread_environment_id: latest.environmentId,
+            });
           }
         }
-        const rowsByParticipant = Map.groupBy(rows, (row) => row.participant_id);
-        return {
-          entries: uniqueParticipantIds.map((participantId) => {
-            return {
-              participantId,
-              identity: toIdentity(rowsByParticipant.get(participantId)?.[0]),
-            } satisfies ParticipantIdentityEntry;
-          }),
-        } satisfies ParticipantIdentitiesResponse;
-      });
+      }
+      const rowsByParticipant = Map.groupBy(rows, (row) => row.participant_id);
+      return {
+        entries: uniqueParticipantIds.map((participantId) => {
+          return {
+            participantId,
+            identity: toIdentity(rowsByParticipant.get(participantId)?.[0]),
+          } satisfies ParticipantIdentityEntry;
+        }),
+      } satisfies ParticipantIdentitiesResponse;
+    });
 
-    const openInboxCount: ClientReadsShape["openInboxCount"] = (requestedPersonId) =>
-      Effect.gen(function* () {
-        const personId = yield* inbox.resolvePersonId(requestedPersonId);
-        // Someone who writes to every thread is asked everything addressed to everyone here,
-        // so their count is two counts by key; anyone else's follows what their inbox lists.
-        if (!(yield* writesEveryThread(sql, personId))) {
-          const open = yield* inbox.list(personId, "open");
-          return { personId, count: open.length } satisfies OpenInboxCount;
-        }
-        const own = yield* openInboxCountStatement(sql, personId);
-        const everyone = yield* openInboxCountStatement(sql, EVERYONE_HERE_PERSON_ID);
-        return {
-          personId,
-          count: (own[0]?.count ?? 0) + (everyone[0]?.count ?? 0),
-        } satisfies OpenInboxCount;
-      });
+    const openInboxCount: ClientReadsShape["openInboxCount"] = Effect.fn(
+      "j5.a2a.clientReads.openInboxCount",
+    )(function* (requestedPersonId) {
+      const personId = yield* inbox.resolvePersonId(requestedPersonId);
+      // Someone who writes to every thread is asked everything addressed to everyone here,
+      // so their count is two counts by key; anyone else's follows what their inbox lists.
+      if (!(yield* writesEveryThread(sql, personId))) {
+        const open = yield* inbox.list(personId, "open");
+        return { personId, count: open.length } satisfies OpenInboxCount;
+      }
+      const own = yield* openInboxCountStatement(sql, personId);
+      const everyone = yield* openInboxCountStatement(sql, EVERYONE_HERE_PERSON_ID);
+      return {
+        personId,
+        count: (own[0]?.count ?? 0) + (everyone[0]?.count ?? 0),
+      } satisfies OpenInboxCount;
+    });
 
     return ClientReadsService.of({
       participantIdentities,
       openInboxCount,
-      humanInbox: (input) =>
-        inbox
+      humanInbox: Effect.fn("ClientReadsService.humanInbox")(function (input) {
+        return inbox
           .resolvePersonId(input.personId)
           .pipe(
             Effect.flatMap((personId) =>
               inbox.list(personId, input.status).pipe(Effect.map((items) => ({ personId, items }))),
             ),
-          ),
+          );
+      }),
       crewProposals: proposals.listOpen().pipe(
         Effect.flatMap((open) => Effect.forEach(open, projectProposal)),
         Effect.map((listed) => ({ proposals: listed })),

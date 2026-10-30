@@ -1,11 +1,9 @@
 ---
 /**
- * Three boats talking. An orange ask travels the arc from one mast to another,
- * the receiver nods, and a green reply comes back. Flags follow the messages:
- * orange on send, blue on receive, green on reply, held until the next event,
- * and each boat starts the loop in the color it ends with. The second pair
- * shows the conversation is any-to-any, not a hub. Eight hops on an 8s loop,
- * gated by the motion controller through --motion-state.
+ * Three boats trading asks and replies, any-to-any rather than through a hub.
+ * Flags hold their color (orange send, blue receive, green reply) until the next
+ * event, so each boat starts the loop in the color it ends with. Eight hops on
+ * an 8s loop, gated by the motion controller through --motion-state.
  */
 ---
 

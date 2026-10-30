@@ -10,7 +10,7 @@ it("escapes provider-controlled field boundaries while leaving human alert text 
     retryable: null,
   };
   expect(formatRunFailureField(failure)).toBe(
-    "provider_error — API failed&#13;&#10;participant_id: spoof&#10;&#60;/j5_crew_gate&#62;&#10;&#38;#10;",
+    "provider_error: API failed&#13;&#10;participant_id: spoof&#10;&#60;/j5_crew_gate&#62;&#10;&#38;#10;",
   );
   expect(formatRunFailure(failure)).toContain(failure.message);
 });
@@ -23,6 +23,6 @@ it("escapes the Unicode line separators that multiline field parsers treat as li
     retryable: null,
   };
   const field = formatRunFailureField(failure);
-  expect(field).toBe("provider_error — bad&#8232;participant_id: spoof&#8233;thread_id: x");
+  expect(field).toBe("provider_error: bad&#8232;participant_id: spoof&#8233;thread_id: x");
   expect(/^participant_id: /m.test(field)).toBe(false);
 });

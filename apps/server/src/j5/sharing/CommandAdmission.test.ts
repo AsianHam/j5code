@@ -92,6 +92,15 @@ it.layer(conversationLayer)("CommandAdmission", (it) => {
         ),
         /^refused/,
       );
+      // Stop is upstream's client command: a Collaborator stops the thread shared, and no other.
+      assert.strictEqual(
+        yield* admitted(onThread, command({ type: "thread.stop", threadId: mine })),
+        "admitted",
+      );
+      assert.match(
+        yield* admitted(onThread, command({ type: "thread.stop", threadId: sibling })),
+        /^refused/,
+      );
       // At thread scope a Collaborator starts, forks and merges back nothing (AC14).
       for (const sent of [
         command({ type: "thread.create", threadId: "thread:new", projectId: PROJECT }),
@@ -131,7 +140,7 @@ it.layer(conversationLayer)("CommandAdmission", (it) => {
       const viewer = yield* deviceOf("Narrow viewer", [
         { scope: { kind: "thread", threadId: mine }, level: "viewer" },
       ]);
-      for (const type of ["message.dispatch", "run.interrupt", "thread.visit"]) {
+      for (const type of ["message.dispatch", "run.interrupt", "thread.stop", "thread.visit"]) {
         assert.match(yield* admitted(viewer, command({ type, threadId: mine })), /^refused/, type);
       }
     }),
@@ -146,7 +155,7 @@ it.layer(conversationLayer)("CommandAdmission", (it) => {
       const launch = (projectId: string) =>
         admission.admitLaunch({ projectId } as unknown as OrchestrationV2ThreadLaunchInput).pipe(
           Effect.as("admitted"),
-          Effect.catch(() => Effect.succeed("refused")),
+          Effect.orElseSucceed(() => "refused"),
         );
       assert.strictEqual(yield* launch(PROJECT), "admitted");
       assert.strictEqual(yield* launch(OTHER_PROJECT), "refused");

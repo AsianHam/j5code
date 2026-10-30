@@ -92,25 +92,24 @@ export function AgentCreateDialog(props: {
     if (!ready || modelRoute === null) return;
     setSaving(true);
     setError(null);
-    try {
-      const result = await create({
-        environmentId: props.environmentId,
-        input: {
-          id: draft.id,
-          displayName: draft.displayName.trim(),
-          description: draft.description.trim(),
-          instructions: draft.instructions,
-          authorityPolicy: draft.authorityPolicy,
-          modelRoute: [modelRoute[0], modelRoute[1]],
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      props.onCreated(draft.displayName.trim());
-    } catch (cause) {
+    const result = await create({
+      environmentId: props.environmentId,
+      input: {
+        id: draft.id,
+        displayName: draft.displayName.trim(),
+        description: draft.description.trim(),
+        instructions: draft.instructions,
+        authorityPolicy: draft.authorityPolicy,
+        modelRoute: [modelRoute[0], modelRoute[1]],
+      },
+    });
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
       setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSaving(false);
+    } else {
+      props.onCreated(draft.displayName.trim());
     }
+    setSaving(false);
   }
   return (
     <Dialog

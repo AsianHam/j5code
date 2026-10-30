@@ -17,8 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { levelReaches, type PersonLevel } from "@t3tools/contracts/j5";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback } from "react";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { environmentCatalog } from "../../connection/catalog";
@@ -134,6 +133,12 @@ export function useCanStartIn(): (
   return useAtomValue(startsAtom);
 }
 
+/** `useCanStartIn` read when called, for upstream's actions that run outside React. */
+export function readCanStartIn(registry: AtomRegistry.AtomRegistry) {
+  return (environmentId: EnvironmentId, projectId: ProjectId | null): boolean =>
+    registry.get(startsAtom)(environmentId, projectId);
+}
+
 /**
  * Whether this connection may start a thread in at least one of these projects. A row or a button
  * that needs the one answer asks this, so it renders again only when that answer changes, not on
@@ -142,11 +147,8 @@ export function useCanStartIn(): (
 export function useCanStartInAny(
   projects: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly id: ProjectId }>,
 ): boolean {
-  const select = useCallback(
-    (starts: (environmentId: EnvironmentId, projectId: ProjectId | null) => boolean) =>
-      projects.some((project) => starts(project.environmentId, project.id)),
-    [projects],
-  );
+  const select = (starts: (environmentId: EnvironmentId, projectId: ProjectId | null) => boolean) =>
+    projects.some((project) => starts(project.environmentId, project.id));
   return useAtomValue(startsAtom, select);
 }
 
@@ -155,11 +157,8 @@ export function useCanStartThreadIn(
   environmentId: EnvironmentId | null,
   projectId: ProjectId | null,
 ): boolean {
-  const select = useCallback(
-    (starts: (environmentId: EnvironmentId, projectId: ProjectId | null) => boolean) =>
-      environmentId === null || projectId === null || starts(environmentId, projectId),
-    [environmentId, projectId],
-  );
+  const select = (starts: (environmentId: EnvironmentId, projectId: ProjectId | null) => boolean) =>
+    environmentId === null || projectId === null || starts(environmentId, projectId);
   return useAtomValue(startsAtom, select);
 }
 
@@ -190,11 +189,10 @@ export function useCanForkThread(
   return environmentId !== null && sharingAllowsStart(access, projectId);
 }
 
-// Upstream's thread action menu asks through `threadOperability.ts` and `sharingMenu.ts`, which
-// hold none of this module's imports; the open thread's view already holds the level, so these
-// reads ask nothing.
-// The level the menu reads by the same rule as `useCanOperateThread`, so the composer, the
-// details panel and the menu agree on a thread that was a draft a moment ago.
+// `threadOperability.ts` and `sharingMenu.ts` hold none of this module's imports, so it provides
+// their reads; the open thread's view already holds the level, so these ask nothing. Same rule as
+// `useCanOperateThread`, so the composer, details panel and menu agree on a thread that was a
+// draft a moment ago.
 const readThreadLevelInProject = (thread: ScopedThreadRef) =>
   threadLevelInProject({
     access: appAtomRegistry.get(j5Sharing.connectionAccess(thread.environmentId)),

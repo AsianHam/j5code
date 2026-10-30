@@ -1,3 +1,4 @@
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import { completionSoundManager } from "./j5/notifications/completionSound";
@@ -19,6 +20,21 @@ export function hasNotificationSound(mode: NotificationMode) {
 
 export function hasDesktopNotifications(mode: NotificationMode) {
   return mode === "notifications" || mode === "notifications-and-sound";
+}
+
+const TAG_HASH_OFFSET_BASIS = 0xcbf29ce484222325n;
+const TAG_HASH_PRIME = 0x100000001b3n;
+const TAG_HASH_MASK = 0xffffffffffffffffn;
+
+/** Windows drops toast notifications with the 73-character environment/thread tag. */
+export function threadNotificationTag(environmentId: EnvironmentId, threadId: ThreadId): string {
+  const key = `${environmentId}:${threadId}`;
+  let hash = TAG_HASH_OFFSET_BASIS;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= BigInt(key.charCodeAt(index));
+    hash = (hash * TAG_HASH_PRIME) & TAG_HASH_MASK;
+  }
+  return hash.toString(16).padStart(16, "0");
 }
 
 let originalFavicon: HTMLLinkElement | undefined;
@@ -85,7 +101,7 @@ export async function playNotificationSound(
   const context = audioContext;
   const url = kind === "completion" ? completionUrl : inputUrl;
   try {
-    // J5 (FORK.md case 82): custom bytes share upstream's playback and burst slot.
+    // J5 (FORK.md case 87): custom bytes share upstream's playback and burst slot.
     const custom = kind === "completion" ? await completionSoundManager.getBuffer(context) : null;
     let buffer = custom ? Promise.resolve(custom) : buffers.get(url);
     if (!buffer) {
@@ -96,10 +112,7 @@ export async function playNotificationSound(
     }
     const decoded = await buffer;
     if (!shouldPlay() || context.state !== "running") return;
-    // Threads that finish together each ask for this sound, and full-volume copies sum into
-    // clipping. One playback stands for the burst. Checked after the decode, since every caller
-    // in a burst is waiting on it. The other kind keeps its own slot, so an input alert is still
-    // heard over a completion.
+    // Coalesce same-sound bursts after decode to avoid clipping; input and completion alerts keep separate slots.
     if (context.currentTime < (playingUntil.get(url) ?? 0)) return;
     const source = context.createBufferSource();
     source.buffer = decoded;

@@ -12,6 +12,7 @@ import type {
 
 import { ComposerInlineControl } from "../../components/ComposerToolbar";
 import { useEnvironmentQuery } from "../../state/query";
+import { clearDraftAgent } from "./agentDraftState";
 import { agentPersonaEnvironment } from "./agentPersonaAtoms";
 
 /** Replaces the model control for a persona thread: the launch route is fixed. */
@@ -19,8 +20,8 @@ export function AgentPersonaAssignmentControls(props: {
   readonly assignment: OrchestrationV2AgentPersonaAssignment;
   /** When known, the current library is compared with the launch snapshot to show drift. */
   readonly environmentId?: EnvironmentId;
-  /** Present only for an unsent draft, where the choice can still be undone. */
-  readonly onClear?: () => void;
+  /** The unsent draft's composer key, where the choice can still be undone. */
+  readonly draftKey?: string;
   /** The server thread this control belongs to; enables the handoff artifact status. */
   readonly threadId?: ThreadId;
 }) {
@@ -39,6 +40,7 @@ export function AgentPersonaAssignmentControls(props: {
       : agentPersonaEnvironment.catalog({ environmentId: props.environmentId, input: {} }),
   );
   const drift = agentPersonaDrift(props.assignment, catalog.data);
+  const draftKey = props.draftKey;
   return (
     <>
       <ComposerInlineControl
@@ -55,14 +57,14 @@ export function AgentPersonaAssignmentControls(props: {
         maxWidth={200}
         static
       />
-      {props.onClear ? (
+      {draftKey !== undefined ? (
         <ComposerInlineControl
           accessibilityLabel="Remove persona"
           accessibilityHint="Start as a regular task instead"
           icon="xmark"
           label=""
           maxWidth={44}
-          onPress={props.onClear}
+          onPress={() => clearDraftAgent(draftKey)}
         />
       ) : null}
       {handoffPresentation ? (

@@ -53,6 +53,7 @@ import { ManagedProjectFolders } from "../../../project/ManagedProjectFolders.ts
 import * as ProjectService from "../../../project/ProjectService.ts";
 import { AntigravityInstallation } from "../../../provider/AntigravityInstallation.ts";
 import * as CodexInstallation from "../../../provider/CodexInstallation.ts";
+import * as CodexManagedTokenBroker from "../../../provider/CodexManagedTokenBroker.ts";
 import * as ModelManifest from "../../../provider/ModelManifest.ts";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
@@ -81,6 +82,7 @@ import {
   J5StopAgentResult,
   J5Toolkit,
 } from "./tools.ts";
+import { noDocumentTextLayer } from "../../test-support/documentText.ts";
 
 const orchestrationLayer = RuntimeLayer.layer.pipe(Layer.provideMerge(J5ThreadRegistrationLayer));
 
@@ -247,7 +249,7 @@ const liveLayer = Layer.mergeAll(
   ),
   Layer.provide(
     Layer.mock(ProjectService.ProjectService)({
-      getById: () => Effect.succeed(Option.none()),
+      getById: () => Effect.succeedNone,
     }),
   ),
   Layer.provide(mcpSessionRegistryTestLayer),
@@ -261,10 +263,19 @@ const liveLayer = Layer.mergeAll(
   Layer.provide(ResetCreditCoordinator.layer),
   Layer.provide(backgroundPolicyLayer),
   Layer.provide(ModelManifest.layerTest),
-  Layer.provide(McpProviderSessions.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      McpProviderSessions.layer,
+      ProviderLatestVersions.layer,
+      // The Codex instance here signs in with its own CLI login, never the managed token broker.
+      Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
+        endpoint: Effect.succeed("unused-private-pipe"),
+      }),
+    ),
+  ),
   Layer.provide(NodeServices.layer),
 );
-const testLayer = Layer.mergeAll(liveLayer, NodeServices.layer);
+const testLayer = Layer.mergeAll(liveLayer, NodeServices.layer, noDocumentTextLayer);
 
 const runStatus = (threadId: ThreadId, statuses: ReadonlySet<string>) =>
   Effect.gen(function* () {
@@ -355,13 +366,9 @@ describe.runIf(process.env.T3_J5_LUNA_LIVE_ORCHESTRATOR === "1")(
           assert.isDefined(codex);
           const luna = codex?.models.find((model) => model.id === lunaSelection.model);
           assert.isDefined(luna);
-          const reasoning = luna?.options?.find(
-            (option) => option.type === "select" && option.id === "reasoningEffort",
-          );
+          const reasoning = luna?.options?.find((option) => option.id === "reasoningEffort");
           assert.isDefined(reasoning);
-          if (reasoning?.type === "select") {
-            assert.isTrue(reasoning.options.some((option) => option.id === "medium"));
-          }
+          assert.include(reasoning?.values ?? [], "medium");
 
           const ledger = yield* A2ALedger;
           yield* ledger.ensureProject({

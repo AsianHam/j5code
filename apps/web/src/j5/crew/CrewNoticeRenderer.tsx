@@ -10,14 +10,17 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "../../components/ui/toolt
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useRightPanelStore } from "../../rightPanelStore";
 import {
+  presentCrewNotice,
+  type CrewNoticeMessage,
+  type CrewNoticePresentation,
+} from "@t3tools/client-runtime/j5/crew-notices";
+
+import {
   artifactPanelPath,
   crewGateFooter,
   crewSeatsTitle,
   crewGateTitle,
-  presentCrewNotice,
   seatRunStatusLabel,
-  type CrewNoticeMessage,
-  type CrewNoticePresentation,
 } from "./crewNotices.logic";
 
 const TONE_CLASS = {

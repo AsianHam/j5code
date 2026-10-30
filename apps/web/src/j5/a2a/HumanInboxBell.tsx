@@ -1,6 +1,5 @@
 import { Link } from "@tanstack/react-router";
 import { InboxIcon } from "lucide-react";
-import { useCallback } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { mergeOpenInboxCounts } from "@t3tools/client-runtime/j5/inbox";
 
@@ -46,9 +45,9 @@ export function HumanInboxBell({ onBackdrop }: { readonly onBackdrop: boolean })
   useCountRefresh();
   useCrewProposalsRefresh();
 
-  const closeMobileSidebar = useCallback(() => {
+  const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);
-  }, [isMobile, setOpenMobile]);
+  };
 
   const label = `${count === null ? "Open inbox" : `Open inbox, ${incomplete ? "last known " : ""}${count} open`}${incomplete ? "; some environments could not be refreshed" : ""}`;
   return (

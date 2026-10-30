@@ -126,7 +126,11 @@ export class A2ADeliveryHooks extends Context.Service<A2ADeliveryHooks, A2ADeliv
 
 export const noopHooks = Layer.succeed(
   A2ADeliveryHooks,
-  A2ADeliveryHooks.of({ afterTransportSuccess: () => Effect.void }),
+  A2ADeliveryHooks.of({
+    afterTransportSuccess: Effect.fn("A2ADeliveryHooks.afterTransportSuccess")(function () {
+      return Effect.void;
+    }),
+  }),
 );
 
 export interface A2ADeliveryWorkerShape {
@@ -597,13 +601,10 @@ const makeLayer = (daemon: boolean) =>
       });
 
       /**
-       * What the sender is told of an alarm: one notice that the message may not
-       * have been delivered, naming the receiver and what the last attempt failed
-       * with. It may have: a peer server's answer can be lost, and a steer can be
-       * acknowledged after the wait for it timed out. So an alarmed ask's Exchange
-       * stays open (a2a AC12), and the alarm stays a problem until the sender
-       * withdraws it. A sender on a peer server is not told, as
-       * with a removed queued message, and nobody is told of a platform notice's alarm.
+       * What the sender is told of an alarm: one notice that the message may not have been
+       * delivered, naming the receiver and the last failure. It may have been (a peer's answer can
+       * be lost), so an alarmed ask's Exchange stays open (a2a AC12) until the sender withdraws it.
+       * Senders on a peer server and platform notices get no alarm notice.
        */
       const alarmNotices = Effect.fn("j5.a2a.delivery.alarmNotices")(function* (
         row: DeliveryRow,
@@ -942,14 +943,10 @@ const makeLayer = (daemon: boolean) =>
         );
       });
       /**
-       * A polling peer's waiting rows, oldest first, up to the batch limit, each
-       * stamped the first time it is handed out. A row not acknowledged is
-       * handed out again next time; the peer records each idempotently by its
-       * message id. A row whose sender or receiver here is no longer available
-       * before its first hand-out is cancelled instead, as a direct attempt would
-       * be. Runs under the store
-       * permit, so a cancellation sees either no hand-out or a stamped row, never
-       * a row in between.
+       * A polling peer's waiting rows, oldest first, up to the batch limit, stamped when first
+       * handed out; an unacknowledged row goes out again and the peer records it idempotently. A
+       * row whose sender or receiver is gone before its first hand-out is cancelled. Runs under the
+       * store permit, so a cancellation sees no hand-out or a stamped row.
        */
       const handOutToPeer = Effect.fn("j5.a2a.delivery.handOutToPeer")(function* (
         environmentId: string,
@@ -1046,27 +1043,37 @@ const makeLayer = (daemon: boolean) =>
       return A2ADeliveryWorker.of({
         // Each kind of row under the permit its receipts take, side by side, so a
         // stored row is cancelled at once while a slow direct attempt holds the drain.
-        cancelParticipantDeliveries: (participantId) =>
-          Effect.all(
-            [
-              drainPermit.withPermit(cancelDirectDeliveries(participantId)),
-              storePermit.withPermit(cancelStoredDeliveries(participantId)),
-            ],
-            { concurrency: "unbounded", discard: true },
-          ).pipe(Effect.mapError(workerError("cancel participant deliveries"))),
+        cancelParticipantDeliveries: Effect.fn("A2ADeliveryWorker.cancelParticipantDeliveries")(
+          function (participantId) {
+            return Effect.all(
+              [
+                drainPermit.withPermit(cancelDirectDeliveries(participantId)),
+                storePermit.withPermit(cancelStoredDeliveries(participantId)),
+              ],
+              { concurrency: "unbounded", discard: true },
+            ).pipe(Effect.mapError(workerError("cancel participant deliveries")));
+          },
+        ),
         notify: Queue.offer(wakeups, undefined).pipe(Effect.asVoid),
         wake,
-        handOutToPeer: (environmentId) =>
-          storePermit
+        handOutToPeer: Effect.fn("A2ADeliveryWorker.handOutToPeer")(function (environmentId) {
+          return storePermit
             .withPermit(handOutToPeer(environmentId))
-            .pipe(Effect.mapError(workerError("hand out to a polling peer"))),
-        acknowledgePeer: (environmentId, acks) =>
-          storePermit
-            .withPermit(acknowledgePeer(environmentId, acks))
-            .pipe(Effect.mapError(workerError("record a polling peer's acknowledgements"))),
+            .pipe(Effect.mapError(workerError("hand out to a polling peer")));
+        }),
+        acknowledgePeer: Effect.fn("A2ADeliveryWorker.acknowledgePeer")(
+          function (environmentId, acks) {
+            return storePermit
+              .withPermit(acknowledgePeer(environmentId, acks))
+              .pipe(Effect.mapError(workerError("record a polling peer's acknowledgements")));
+          },
+        ),
         runOnce,
-        peerAttemptInFlight: (projectId, messageId) =>
-          Effect.sync(() => peerAttemptsInFlight.has(`${projectId} ${messageId}`)),
+        peerAttemptInFlight: Effect.fn("A2ADeliveryWorker.peerAttemptInFlight")(
+          function (projectId, messageId) {
+            return Effect.sync(() => peerAttemptsInFlight.has(`${projectId} ${messageId}`));
+          },
+        ),
         drain,
         listAlarms: sql<{
           readonly project_id: string;

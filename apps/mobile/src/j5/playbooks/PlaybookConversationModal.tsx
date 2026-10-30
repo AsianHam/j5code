@@ -1,11 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import {
   ensurePlaybookAuthor,
   playbookAuthorLaunch,
   playbookWorkspaces,
 } from "@t3tools/client-runtime/j5/playbooks";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   CommandId,
   MessageId,
@@ -72,18 +72,19 @@ export function PlaybookConversationModal({
     if (!workspace || busy) return;
     setBusy(true);
     setError(null);
-    try {
+    const opened = await settlePromise(async () => {
       if (name !== null) {
         const draftId = preparePlaybookDraft(workspace, `Start playbook ${name}`);
-        navigation.navigate("NewTaskSheet", {
-          screen: "NewTaskDraft",
-          params: {
-            environmentId,
-            projectId: workspace.projectId,
-            title: workspace.title,
-            draftId,
-          },
-        });
+        navigation.dispatch(
+          StackActions.push("Thread", {
+            draft: {
+              environmentId,
+              projectId: workspace.projectId,
+              title: workspace.title,
+              draftId,
+            },
+          }),
+        );
       } else {
         if (launch.current?.key !== workspace.key) {
           const modelSelection = await ensurePlaybookAuthor({
@@ -123,14 +124,18 @@ export function PlaybookConversationModal({
         const { target } = launch.current;
         const result = await startTurn(target);
         if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-        navigation.navigate("Thread", { environmentId, threadId: target.input.threadId });
+        navigation.dispatch(
+          StackActions.push("Thread", { environmentId, threadId: target.input.threadId }),
+        );
       }
-      onClose();
-    } catch (cause) {
+    });
+    setBusy(false);
+    if (opened._tag === "Failure") {
+      const cause = squashAtomCommandFailure(opened);
       setError(cause instanceof Error ? cause.message : "Could not open the conversation.");
-    } finally {
-      setBusy(false);
+      return;
     }
+    onClose();
   }
   return (
     <Modal

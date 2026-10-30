@@ -30,13 +30,10 @@ import {
 } from "./contracts.ts";
 
 /**
- * The receiving side of a cross-server delivery. A peer's message becomes the
- * receiver project's own `message.received` row, which the ledger projects into
- * the pending delivery the worker then carries to the agent's thread. An ask
- * also opens the Exchange here, so the local agent's reply is an ordinary
- * same-project reply and the silence detector measures the debt; a reply
- * closes the Exchange the local agent opened. One command id per origin
- * message makes a retry a replay.
+ * The receiving side of a cross-server delivery: a peer's message becomes the receiver project's
+ * own `message.received` row, which the worker delivers. An ask also opens the Exchange here, so
+ * the local reply is an ordinary same-project reply and the silence detector measures the debt. One
+ * command id per origin message makes a retry a replay.
  */
 
 export interface PeerInboundInput extends PeerDeliveryRequest {
@@ -250,20 +247,17 @@ const localMessageIdFor = (input: {
 
 /** Refuse the sender kinds, channels and roles a peer may not use, before anything is read. */
 /**
- * Who a peer may speak as. Its agents, on the peer channel, never a terminal
- * notice. Or the platform itself, as exactly one of two notices, each in the
- * shape its producer writes: the lifecycle's terminal notice (the fact that
- * ends an Exchange) or the silence detector's notice (not part of any
- * Exchange, naming the one whose answerer went quiet). The receive path then
- * checks the Exchange is one this peer is party to.
+ * Who a peer may speak as: its agents on the peer channel, or the platform as exactly one of two
+ * notices in its producer's shape, the lifecycle's terminal notice or the silence detector's
+ * notice. The receive path then checks the Exchange is one this peer is party to.
  */
-const assertSenderShape = (input: PeerInboundInput) => {
+const assertSenderShape = Effect.fn("assertSenderShape")(function* (input: PeerInboundInput) {
   const senderId = ParticipantId.make(input.senderId);
   const refuse = (reason: A2APeerSenderNotAllowedError["reason"]) =>
-    Effect.fail(new A2APeerSenderNotAllowedError({ senderId, reason }));
-  if (isHumanParticipantId(senderId)) return refuse("human");
-  if (isMachineParticipantId(senderId)) return refuse("machine");
-  if (isOutsideAgentParticipantId(senderId)) return refuse("outside");
+    new A2APeerSenderNotAllowedError({ senderId, reason });
+  if (isHumanParticipantId(senderId)) return yield* refuse("human");
+  if (isMachineParticipantId(senderId)) return yield* refuse("machine");
+  if (isOutsideAgentParticipantId(senderId)) return yield* refuse("outside");
   if (isPlatformParticipantId(senderId)) {
     const terminalNotice =
       senderId === LIFECYCLE_PARTICIPANT_ID &&
@@ -271,7 +265,7 @@ const assertSenderShape = (input: PeerInboundInput) => {
       input.exchangeRole === "terminal_notice" &&
       input.exchangeId !== null &&
       input.terminal !== undefined;
-    if (terminalNotice) return Effect.succeed({ senderId, platform: "terminal" as const });
+    if (terminalNotice) return { senderId, platform: "terminal" as const };
     const silenceNotice =
       senderId === SILENCE_DETECTOR_PARTICIPANT_ID &&
       input.envelopeChannel === "silence_notice" &&
@@ -279,13 +273,13 @@ const assertSenderShape = (input: PeerInboundInput) => {
       input.exchangeId === null &&
       input.terminal === undefined &&
       input.regardingExchangeId !== undefined;
-    if (silenceNotice) return Effect.succeed({ senderId, platform: "silence" as const });
-    return refuse("platform");
+    if (silenceNotice) return { senderId, platform: "silence" as const };
+    return yield* refuse("platform");
   }
-  if (input.envelopeChannel !== "peer") return refuse("channel");
-  if (input.exchangeRole === "terminal_notice") return refuse("role");
-  return Effect.succeed({ senderId, platform: null });
-};
+  if (input.envelopeChannel !== "peer") return yield* refuse("channel");
+  if (input.exchangeRole === "terminal_notice") return yield* refuse("role");
+  return { senderId, platform: null };
+});
 
 interface MembershipRow {
   readonly project_id: string;
@@ -387,8 +381,8 @@ export const layer: Layer.Layer<PeerInboundService, never, PeerInboundServiceReq
         }
       });
 
-      const receive: PeerInboundServiceShape["receive"] = (input) =>
-        Effect.gen(function* () {
+      const receive: PeerInboundServiceShape["receive"] = Effect.fn("j5.a2a.peer.inbound.receive")(
+        function* (input) {
           const commandId = peerReceiveCommandId({
             originEnvironmentId: input.originEnvironmentId,
             messageId: input.messageId,
@@ -631,7 +625,8 @@ export const layer: Layer.Layer<PeerInboundService, never, PeerInboundServiceReq
             receivedSeq: received?.seq ?? appended.receipt.resultSeq,
             replay: !appended.committed,
           } satisfies PeerInboundResult;
-        });
+        },
+      );
 
       return PeerInboundService.of({ receive });
     }),

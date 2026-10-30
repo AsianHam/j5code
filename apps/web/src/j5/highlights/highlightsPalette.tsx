@@ -23,9 +23,7 @@ const WHATS_NEW_ITEM: CommandPaletteActionItem = {
 };
 
 /** The palette's "What's new": every highlight in the sidebar's popover, nothing to dismiss. */
-export function useHighlightsPaletteItems(): ReadonlyArray<CommandPaletteActionItem> {
-  return [WHATS_NEW_ITEM];
-}
+export const HIGHLIGHTS_PALETTE_ITEMS: ReadonlyArray<CommandPaletteActionItem> = [WHATS_NEW_ITEM];
 
 /**
  * The list opens from the sidebar's utility row, which a utility page replaces with Back and a
@@ -41,6 +39,7 @@ export function HighlightsSidebarReveal() {
   const { isMobile, open, openMobile, setOpen, setOpenMobile } = useSidebar();
   const requested = popover.open && popover.mode === "all";
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- the palette opens the list from outside the sidebar, so the sidebar opens itself in response.
   useEffect(() => {
     if (!requested) return;
     if (onUtilityPage) void navigateToMainApp();

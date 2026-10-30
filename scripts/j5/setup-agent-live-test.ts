@@ -1,42 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off globalFetch:off globalTimers:off - a standalone Node CLI that manages one child process group and prints instructions.
 /**
- * One command for an agent that needs to live-test J5 Code:
- *
- *   node scripts/j5/setup-agent-live-test.ts            build the test home if needed, start the server
- *   node scripts/j5/setup-agent-live-test.ts status     say whether it is running, and how to reach it
- *   node scripts/j5/setup-agent-live-test.ts restart    stop, then start on the same home
- *   node scripts/j5/setup-agent-live-test.ts stop       stop the server
- *   node scripts/j5/setup-agent-live-test.ts rebuild    stop, delete the test home and repository, build and start again
- *   node scripts/j5/setup-agent-live-test.ts guest "<name>"   add a person, or a device for one, to the running server, with its pairing URL
- *   node scripts/j5/setup-agent-live-test.ts upgrade    in a --base build, run this worktree's build on the base's home, at its address
- *
- * A start and `rebuild` take a mode flag. With none, the home holds a test
- * project and pre-made threads. `--fresh` gives an empty home, so the first-run
- * wizard shows. `--peer` runs two servers, Local and Remote, each with its own
- * home and test project, peered so their agents can message each other;
- * `--peer --poll` has Remote poll Local instead of being reached by it.
- * `--for-dev` is different in kind: a server for the developer to use, on a
- * copy of their data, shared on the tailnet. Agents take no turns on it.
- * `--base <ref>` runs a second server from a checkout of this repository at
- * `<ref>`, on a home built by that checkout's own generator with the same
- * clock, for before and after screenshots. `upgrade` then stops both and
- * starts this worktree's build on the base's home, at the base's ports, as an
- * install upgrades; the home as the base left it is kept, and each `upgrade`
- * starts over from that copy. A
- * worktree has one live-test build at a time and its mode is fixed when it is
- * built: `rebuild` with another flag switches.
- *
- * The test repository, the J5 home that holds only that project, the server's
- * log and the record of its process group live in this worktree's gitignored
- * `.j5code/live-test`. (The dev server and the provider CLIs still write their
- * own caches and session files elsewhere.) Nothing there points at a real
- * repository, the developer's data or the live install. It refuses to run
- * outside a linked git worktree.
- *
- * It signals only the process group it started, and only after confirming
- * that the group's leader is still the process it spawned (same pid and start
- * time) running from this worktree. It never finds a process by name. It runs
- * on Linux, where it reads `/proc`, and on macOS, where it asks `ps` and `lsof`.
+ * One command for an agent that needs to live-test J5 Code (see `USAGE` and the `j5-live-test`
+ * skill). Its test repository and home live in this worktree's gitignored `.j5code/live-test`,
+ * apart from the developer's data and the live install. It signals only the process group it
+ * spawned, after confirming the leader's pid, start time and worktree; never a process by name.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -51,11 +18,9 @@ type LiveTestCommand = (typeof COMMANDS)[number];
 /** The live install's port. A test server must never end up on it. */
 const LIVE_SERVER_PORT = 5773;
 /**
- * How long one start may take from the moment it is asked for, builds included.
- * Every wait and every peering call in it shares this budget. What follows it
- * is printing, which mints a pairing URL per server and takes some seconds
- * more, so the command returns inside the two minutes a shell call usually
- * gets even when it starts two servers and peers them.
+ * How long one start may take, builds, waits and peering included. Printing the pairing URLs
+ * takes some seconds more, so the command still returns inside the two minutes a shell call
+ * usually gets, even when it starts two servers and peers them.
  */
 const START_BUDGET_MS = 100_000;
 const STOP_TIMEOUT_MS = 20_000;
@@ -341,7 +306,7 @@ export interface ServerLogFacts {
   readonly shareFailure: string | undefined;
 }
 
-// eslint-disable-next-line no-control-regex -- the server's pretty logger colours its output.
+// The server's pretty logger colours its output.
 const plainLog = (log: string) => log.replaceAll(/\u001B\[[0-9;]*m/g, "");
 
 /** What the dev server's log says so far. The latest pairing URL wins: a file-watch restart mints a new one. */
@@ -361,11 +326,9 @@ export function readServerLog(log: string): ServerLogFacts {
 }
 
 /**
- * The log's last lines up to the server's exit, when the server has exited
- * since it last minted a pairing URL; undefined while it has not. `node
- * --watch` prints "Failed running" when the server it runs exits, then waits
- * for a file to change, so the dev runner stays up with nothing serving. The
- * lines after it are the web proxy failing to reach the server.
+ * The log's last lines up to the server's exit, if it exited since it last minted a pairing URL.
+ * `node --watch` prints "Failed running" when the server exits, then waits for a file change, so
+ * the dev runner stays up with nothing serving; the lines after it are the web proxy failing.
  */
 export function serverExit(log: string): string | undefined {
   const lines = plainLog(log).split("\n");
@@ -518,15 +481,10 @@ export type ServerState =
   | { readonly kind: "unverified"; readonly group: number; readonly reason: string };
 
 /**
- * Decides whether the recorded process group is this worktree's test server,
- * and whether it is serving.
- *
- * The group is ours only when its leader is still the process that was spawned
- * (same pid and start time) and runs from the worktree. That needs no healthy
- * server, so a crashed or half-started one can still be stopped. A group that
- * is ours is "running" when the listener on the port its log reports is in the
- * group and runs from inside the worktree, and "notServing" otherwise. A live
- * group that is not ours is reported, never signalled.
+ * Whether the recorded group is ours (its leader is still the spawned process, by pid and start
+ * time, running from the worktree), which needs no healthy server, and whether it is serving
+ * (the log's port's listener is in the group). A live group that is not ours is reported, never
+ * signalled.
  */
 export function classifyServer(input: {
   readonly worktree: string;
@@ -710,9 +668,8 @@ How to test is in .agents/skills/j5-live-test/SKILL.md.
 
 /**
  * Every scope a client can be given (`AuthStandardClientScopes` in
- * packages/contracts/src/auth.ts). A bare `pair` grants them all since upstream
- * #20432, but a `--base` server built before it grants no access or relay
- * scopes, and without those a tester cannot use Connections settings.
+ * packages/contracts/src/auth.ts). A bare `pair` grants them all now, but an older `--base`
+ * server grants no access or relay scopes, and without those a tester cannot use Connections.
  */
 export const PAIRING_SCOPES = [
   "orchestration:read",
@@ -1412,11 +1369,9 @@ function peerCli(
 }
 
 /**
- * The `peer credential` and `peer add` arguments that let `holder` deliver to
- * `issuer`: the issuer mints a credential for the holder's environment id, and
- * the holder records the issuer at its origin, proving the credential there.
- * With `poll`, the issuer stores the holder's messages and the holder polls
- * for them, so the issuer never connects to the holder.
+ * The `peer credential` and `peer add` arguments that let `holder` deliver to `issuer`: the
+ * issuer mints a credential for the holder, which records the issuer at its origin. With `poll`,
+ * the issuer stores the holder's messages and the holder polls, so the issuer never connects.
  */
 export function peerSteps(input: {
   readonly issuer: { readonly home: string; readonly origin: string };
@@ -1908,14 +1863,14 @@ const STEP_KILL_GRACE_MS = 5_000;
 
 /**
  * Runs a command in the foreground, in a process group of its own, and waits
- * for it. If `deadline` passes first, the whole group is ended and waited for
+ * for it. If `timeoutMs` passes first, the whole group is ended and waited for
  * before this returns, so nothing the command started is left running. The
  * group was spawned here a moment ago, so signalling it needs no further proof.
  */
 export async function runInOwnGroup(
   command: string,
   args: ReadonlyArray<string>,
-  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv; readonly deadline: number },
+  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv; readonly timeoutMs: number },
 ): Promise<{
   readonly status: number | null;
   readonly output: string;
@@ -1954,7 +1909,7 @@ export async function runInOwnGroup(
       signalGroup("SIGTERM");
       hardKill = setTimeout(() => signalGroup("SIGKILL"), STEP_KILL_GRACE_MS);
     },
-    Math.max(0, options.deadline - Date.now()),
+    Math.max(0, options.timeoutMs),
   );
   // If this command is itself told to stop, the step it is waiting on goes too:
   // the step is in its own group and would otherwise carry on.
@@ -1987,13 +1942,9 @@ export async function runInOwnGroup(
 }
 
 /**
- * Takes the base as far towards a running server as fits before `deadline`:
- * check it out, install it, start its server. Every step runs in the
- * foreground, in its own process group, and leaves its result on disk. A run
- * that is out of time ends the step's whole group and stops, and the same
- * command picks up at the first step that is not done. Returns the base's own
- * start output once its server is up, or undefined when time ran out first.
- * A step that fails is recorded and refused.
+ * Takes the base as far towards a running server (check out, install, start) as fits before
+ * `deadline`. Each step runs in its own process group and records its result on disk, so the
+ * next run resumes at the first step not done. Returns the start output, or undefined on timeout.
  */
 async function advanceBase(paths: LiveTestPaths, deadline: number): Promise<string | undefined> {
   const files = baseFiles(paths);
@@ -2011,7 +1962,11 @@ async function advanceBase(paths: LiveTestPaths, deadline: number): Promise<stri
     cwd: string,
   ): Promise<string | undefined> => {
     if (Date.now() >= deadline) return undefined;
-    const result = await runInOwnGroup(command, args, { cwd, env: environment, deadline });
+    const result = await runInOwnGroup(command, args, {
+      cwd,
+      env: environment,
+      timeoutMs: deadline - Date.now(),
+    });
     // Ended by the deadline: not a failure, just not finished.
     if (result.timedOut) return undefined;
     if (result.status !== 0) {
@@ -2652,12 +2607,9 @@ const cliRefusal = (run: NodeChildProcess.SpawnSyncReturns<string>) =>
     String(run.error ?? "it gave no reason"));
 
 /**
- * Adds a person or a device to the running server through the commands a
- * person would use (register D36): `j5 pair --person`, which makes a link for
- * someone already there or creates someone new at the level and scope given,
- * and a bare `j5 auth pairing create` for a device the server does not know. In
- * a peer build that server is Local: a browser not paired with Local is not
- * served the app, so a person on Remote could not open it.
+ * Adds a person or device through the commands a person would use (register D36): `j5 pair
+ * --person` for a person, a bare `j5 auth pairing create` for an unknown device. In a peer build
+ * that server is Local, since a browser not paired with Local is not served the app.
  */
 function guest(paths: LiveTestPaths, request: GuestRequest): void {
   const built = builtMode(paths);

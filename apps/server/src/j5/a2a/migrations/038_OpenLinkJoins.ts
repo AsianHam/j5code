@@ -1,13 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Each time a person joins a thread through an open link (#614). A guest already signed in who
-// opens a second link joins that link's thread as themselves, so one person can come through
-// several links, and each link's list of who came through it, and its cap, count them.
-//
-// `j5_a2a_human_person.joined_open_link_id` stays: it is the link a person first came to the
-// server through, which is what made their name one they gave themselves. The joins recorded
-// before this are that link's.
+// One row per join through an open link: a signed-in guest who opens a second link joins as
+// themselves, so each link's list and cap count joins, not people. `joined_open_link_id` stays as
+// the link that made a person's name self-given; earlier joins are that link's.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

@@ -133,7 +133,7 @@ export function FleetSourceReadout() {
           )}
           {live.get(source.environmentId) === true
             ? " · runtime live"
-            : " · stale — current facts unavailable"}
+            : " · stale, current facts unavailable"}
         </p>
       ))}
     </div>

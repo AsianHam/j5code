@@ -165,7 +165,7 @@ it.effect("reports a bulk failure after reconciling files that were already dele
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectService.ProjectService)({
-          getById: () => Effect.succeed(Option.some({ id: projectId } as never)),
+          getById: () => Effect.succeedSome({ id: projectId } as never),
         }),
         Layer.mock(ArtifactWorkspace)({
           list: () =>

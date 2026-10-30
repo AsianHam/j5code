@@ -35,24 +35,10 @@ import { formatRunFailureField, runFailureDetail } from "./runFailures.ts";
 import { lifecycleCommandId, lifecycleId } from "./spawnIds.ts";
 
 /**
- * A seat tells its Captain when it finishes: when a member's run ends and it owes no reply to
- * anyone, the platform posts a notice into the Captain's thread with how the run ended, as
- * measured facts, and where the seat's handoff stands. The seat's thread is otherwise left as
- * upstream leaves any thread; nothing here settles it (Jackson's review, 2026-09-17: upstream
- * settles by hand, by merged PR, or by three idle days, and a seat marked settled seconds after
- * launch read as wrong). A later inbound message starts a new run as usual. Captains are never
- * reported on here because they keep coordinating after their own turns end.
- *
- * A member whose definition declares an output artifact writes it as its handoff file, the same
- * shared artifact every saved agent produces; the handoff gate (agentHandoffObserver) checks for
- * it and reminds the seat once. The notice carries the file inline when it exists and is short,
- * so a seat finishing is one message to the Captain, not two.
- *
- * Two rules keep the Captain's queue short (Bryant, 2026-09-14). A notice is posted the first time
- * a seat finishes and again only when its facts changed; a finish whose notice would read exactly
- * like the last one is silent, because the seat's own reply already reached the Captain. And a
- * notice that arrives while the Captain's turn is running folds into the seat notice already
- * queued behind that turn, so the Captain absorbs its Crew's news in one turn, not one per seat.
+ * A seat tells its Captain when its run ends owing no reply: a notice with the measured outcome and
+ * its handoff file (inline when short). The seat is never settled; upstream settles by hand, PR or
+ * idle days. A notice repeats only when its facts changed, and one arriving mid-turn folds into the
+ * seat notice already queued, so a Captain absorbs its Crew's news in one turn.
  */
 export interface CrewSeatFinishNotifierShape {
   /** Returns the seat thread whose Captain was told, or null when the event needed no action. */
@@ -77,11 +63,9 @@ const FINISH_SESSION = "j5-crew-seat-finish";
 export const INLINE_HANDOFF_MAX_CHARS = 4_000;
 
 /**
- * A seat has finished only when its run completed or failed. Interrupted, cancelled, and rolled
- * back runs are terminal to the orchestrator but not finishes for a Crew: `j5_stop_crew` and the
- * person's Stop crew interrupt seats precisely so they can be briefed again, and the definition
- * says nothing is reported then (Crews AC21). Treating those as finishes would wake the Captain
- * to react to its own stop.
+ * A seat has finished only when its run completed or failed. Interrupted, cancelled and rolled back
+ * runs are not finishes: `j5_stop_crew` and Stop crew interrupt seats to brief them again, and
+ * nothing is reported then (Crews AC21), so a Captain is not woken by its own stop.
  */
 const finishedRun = (stored: OrchestrationV2StoredEvent): OrchestrationV2Run | undefined => {
   const event = stored.event;
@@ -233,11 +217,10 @@ const makeLayer = (daemon: boolean) =>
       });
 
       /**
-       * Where the seat's declared handoff stands: the file itself is the fact, not the store. A
-       * read that found no file is "missing"; one too large to inline is still "written", read by
-       * path; a directory or a link out of the artifacts directory is "unavailable" with why.
-       * Those are facts that never change on retry, so the finish notice always goes out. Only a
-       * real I/O failure fails the notice, for the next finish or the boot sweep to retry.
+       * Where the seat's declared handoff stands, read from the file: none is "missing", too large
+       * to inline is "written", a directory or a link out of the artifacts directory is
+       * "unavailable". Those never change on retry, so the notice goes out; only a real I/O failure
+       * fails it, for the next finish or the boot sweep.
        */
       const handoffFact = Effect.fn("j5.a2a.crewSeatFinish.handoffFact")(function* (
         projection: OrchestrationV2ThreadProjection,
@@ -417,18 +400,18 @@ const makeLayer = (daemon: boolean) =>
         ),
       );
 
-      const handleStoredEvent: CrewSeatFinishNotifierShape["handleStoredEvent"] = (stored) =>
-        Effect.gen(function* () {
+      const handleStoredEvent: CrewSeatFinishNotifierShape["handleStoredEvent"] = Effect.fn(
+        "j5.a2a.crewSeatFinish.handleStoredEvent",
+      )(
+        function* (stored) {
           const run = finishedRun(stored);
           if (run === undefined) return null;
           return yield* notifyIfFinished(run.threadId, run);
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("J5 crew seat finish notice skipped", { cause }).pipe(
-              Effect.as(null),
-            ),
-          ),
-        );
+        },
+        Effect.catchCause((cause) =>
+          Effect.logWarning("J5 crew seat finish notice skipped", { cause }).pipe(Effect.as(null)),
+        ),
+      );
 
       if (daemon) {
         // The stream starts from the event store's current high-water mark, so everything that

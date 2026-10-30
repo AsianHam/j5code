@@ -62,6 +62,7 @@ function Landing({
   const listed = useThreadShell(
     openThreadId === null ? null : scopeThreadRef(environmentId, openThreadId),
   );
+  // oxlint-disable-next-line t3code/react-effect-budget -- opens the shared thread once the server lists it, which happens after the landing renders.
   useEffect(() => {
     if (openThreadId === null || listed === null) return;
     void navigate({

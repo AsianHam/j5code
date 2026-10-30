@@ -31,12 +31,10 @@ export interface RecordedSeat {
 }
 
 /**
- * Pure projection: placement rows keyed by parent, annotated with live Crew seats. A Captain's
- * row also carries every seat on its live rosters that no parent holds (reserved but never
- * created, or registered and not yet placed), so a Crew never under-counts or vanishes while its
- * seats are unknown; the client shows those as unknown. A seat whose membership was archived,
- * or that is placed under another parent, is not added here. Parents without children get no
- * entry.
+ * Pure projection: placement rows keyed by parent, annotated with live Crew seats. A Captain's row
+ * also carries roster seats no parent holds yet (reserved, or registered and unplaced), so a Crew
+ * never under-counts while its seats are unknown. Archived or otherwise-placed seats are not added;
+ * parents without children get no entry.
  */
 export const projectSpawnedChildren = (
   threadIds: ReadonlyArray<ThreadId>,

@@ -8,11 +8,9 @@ export type PendingCrewApproval = Pick<
 >;
 
 /**
- * The provider approvals on one thread that the Inbox can answer: the ones the composer's
- * `derivePendingThreadRequests` (client-runtime `state/threadRequests.ts`) shows as answerable
- * (`responseCapability` `live`), described the same way. Questions, `auth_refresh`,
- * `dynamic_tool_call`, and approvals the provider can no longer take stay in the thread. The
- * server reads this, and a client-runtime test holds it to the composer's selector.
+ * The provider approvals on one thread that the Inbox can answer: those the composer's
+ * `derivePendingThreadRequests` shows as `live`, described the same way. Questions, `auth_refresh`
+ * and `dynamic_tool_call` stay in the thread. A client-runtime test holds this to that selector.
  */
 export const inboxAnswerableApprovals = (
   projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems">,

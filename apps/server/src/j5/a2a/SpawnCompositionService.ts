@@ -70,13 +70,10 @@ export const layer: Layer.Layer<
     const sql = yield* SqlClient.SqlClient;
     const changes = yield* ReadChanges;
 
-    // Lifecycle writers share one total lock order:
-    // drainPermit ≺ appendPermit ≺ mutationPermit ≺ DB. Spawn never drains: this
-    // coordinator never acquires drainPermit, which is private to DeliveryWorker
-    // and cannot be held across this call. A delivery drain may be in flight while
-    // this runs; it simply contends for appendPermit. If a future lifecycle path
-    // exposes and holds a drain permit while composing, it must acquire that
-    // permit before appendPermit.
+    // Lifecycle writers share one lock order: drainPermit ≺ appendPermit ≺ mutationPermit ≺ DB.
+    // Spawn never takes drainPermit (private to DeliveryWorker), so an in-flight drain only
+    // contends for appendPermit. A future path holding a drain permit while composing must take it
+    // before appendPermit.
     const recordFacts: SpawnCompositionServiceShape["recordFacts"] = (input) =>
       ledgerWriter.withPermit(
         placements.withPermit(

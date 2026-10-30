@@ -14,11 +14,10 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 export const COALESCE_WINDOW = "500 millis";
 
 /**
- * Says which of J5's client reads went out of date, never what changed. A writer calls `notify`
- * after its commit; every connected client follows `changes` and re-reads what moved. One
- * instance serves the whole server, shared by layer reference between the writers and the
- * WebSocket handler. Its counters start from the time the server started, so a client that
- * reconnects after a restart sees them moved and re-reads what it would not on its own.
+ * Says which of J5's client reads went out of date, never what changed: writers `notify` after
+ * commit, and every client follows `changes` and re-reads. One instance per server, shared by layer
+ * reference. Counters start at server start, so a client reconnecting after a restart sees them
+ * moved and re-reads.
  */
 export class ReadChanges extends Context.Service<
   ReadChanges,
@@ -44,14 +43,15 @@ const make = Effect.gen(function* () {
     sharing: startedAt,
   });
   return ReadChanges.of({
-    notify: (...keys) =>
-      keys.length === 0
+    notify: Effect.fn("ReadChanges.notify")(function (...keys: ReadonlyArray<J5ReadRevisionKey>) {
+      return keys.length === 0
         ? Effect.void
         : SubscriptionRef.update(revisions, (current) => {
             const next = { ...current };
             for (const key of new Set(keys)) next[key] += 1;
             return next;
-          }),
+          });
+    }),
     changes: SubscriptionRef.changes(revisions).pipe(
       // Only that something moved matters here; what is sent is read after the window.
       Stream.buffer({ capacity: 1, strategy: "sliding" }),

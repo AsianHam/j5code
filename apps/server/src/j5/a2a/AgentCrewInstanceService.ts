@@ -94,11 +94,10 @@ export interface AgentCrewInstanceServiceShape {
     input: RecordAgentCrewInput,
   ) => Effect.Effect<AgentCrewInstance, SqlError | CrewStepAlreadyOwnedError>;
   /**
-   * Append approved seats and bump the version; idempotent per seat identity, so a replay of the
-   * same seats reports `added` and writes nothing. The count, the cap, a same-name clash with a
-   * different participant, the retired stamp, the version bump, and the ordinal base are all
-   * decided inside one transaction with an optimistic version check, so two additions approved
-   * at once cannot both slip under the cap, both take one name, or both own one playbook step.
+   * Append approved seats and bump the version; idempotent per seat identity, so a replay reports
+   * `added` and writes nothing. The cap, name clashes, the retired stamp, the version and the
+   * ordinal base are decided in one transaction with an optimistic version check, so two additions
+   * approved at once cannot both slip under the cap, take one name, or own one playbook step.
    */
   readonly addMembers: (
     id: string,
@@ -150,12 +149,10 @@ export interface AgentCrewInstanceServiceShape {
   /** Makes a Crew that retired with its Captain live again; false when it was not one. */
   readonly restoreWithCaptain: (id: string) => Effect.Effect<boolean, SqlError>;
   /**
-   * Run one unit step on a Crew with no other unit step on it: a launch or addition from its
-   * record or reservation through its briefs, and a unit archive from its roster read through
-   * the retired stamp. A seat is therefore either created before an archive reads the roster, so
-   * the archive retires it, or its reservation runs after the stamp and is refused. Held in this
-   * process only; a restart drops the steps it interrupted along with the lock, and an archive
-   * cut short never reached the stamp, so the Crew it leaves is still live.
+   * Run one unit step on a Crew with no other unit step on it (a launch or addition through its
+   * briefs, a unit archive through the retired stamp), so a seat is either created before an
+   * archive reads the roster or refused after the stamp. In-process only: a restart drops
+   * interrupted steps, and an archive cut short never reached the stamp, so its Crew stays live.
    */
   readonly serialize: <A, E, R>(
     id: string,
@@ -562,21 +559,29 @@ export const layerNotifying = Layer.effect(
     const changed = changes.notify("crew");
     return AgentCrewInstanceService.of({
       ...store,
-      record: (input) => store.record(input).pipe(Effect.tap(() => changed)),
-      addMembers: (id, members, options) =>
-        store
+      record: Effect.fn("AgentCrewInstanceService.record")(function (input) {
+        return store.record(input).pipe(Effect.tap(() => changed));
+      }),
+      addMembers: Effect.fn("AgentCrewInstanceService.addMembers")(function (id, members, options) {
+        return store
           .addMembers(id, members, options)
-          .pipe(Effect.tap((outcome) => (outcome.status === "added" ? changed : Effect.void))),
-      removeMembers: (id, seatNames) =>
-        store
+          .pipe(Effect.tap((outcome) => (outcome.status === "added" ? changed : Effect.void)));
+      }),
+      removeMembers: Effect.fn("AgentCrewInstanceService.removeMembers")(function (id, seatNames) {
+        return store
           .removeMembers(id, seatNames)
-          .pipe(Effect.tap((removed) => (removed.length > 0 ? changed : Effect.void))),
-      markArchived: (id, archivedAt, options) =>
-        store.markArchived(id, archivedAt, options).pipe(Effect.tap(() => changed)),
-      restoreWithCaptain: (id) =>
-        store
+          .pipe(Effect.tap((removed) => (removed.length > 0 ? changed : Effect.void)));
+      }),
+      markArchived: Effect.fn("AgentCrewInstanceService.markArchived")(
+        function (id, archivedAt, options) {
+          return store.markArchived(id, archivedAt, options).pipe(Effect.tap(() => changed));
+        },
+      ),
+      restoreWithCaptain: Effect.fn("AgentCrewInstanceService.restoreWithCaptain")(function (id) {
+        return store
           .restoreWithCaptain(id)
-          .pipe(Effect.tap((restored) => (restored ? changed : Effect.void))),
+          .pipe(Effect.tap((restored) => (restored ? changed : Effect.void)));
+      }),
     });
   }),
 ).pipe(Layer.provide(layer));

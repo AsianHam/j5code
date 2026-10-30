@@ -20,7 +20,7 @@ import {
   UserPlusIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ConnectionStatusDot } from "../../components/ConnectionStatusDot";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -93,7 +93,7 @@ import {
 const ROW_NOTE_CLASSNAME = `${ITEM_ROW_CLASSNAME} text-xs text-muted-foreground`;
 
 /** Runs one change, says so plainly when the server refuses, and reads everything again. */
-function useChange(environmentId: EnvironmentId) {
+function changeRunner(environmentId: EnvironmentId) {
   return async (
     title: string,
     run: () => Promise<{ readonly _tag: string; readonly cause?: unknown }>,
@@ -229,7 +229,7 @@ function OwnedServerPeople({
   const links = useEnvironmentQuery(linksQuery(environmentId));
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
-  // People join, leave and pair devices without this client doing anything.
+  // oxlint-disable-next-line t3code/react-effect-budget -- people join, leave and pair devices without this client, so each opening reads again.
   useEffect(() => refreshSharing(environmentId), [environmentId]);
   const nowMs = Date.parse(useNowMinute());
   const everyone = (people.data?.people ?? []).toSorted(byStanding);
@@ -462,7 +462,7 @@ function PersonRow({
   readonly nowMs: number;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const change = useChange(environmentId);
+  const change = changeRunner(environmentId);
   const removePerson = useAtomCommand(sharingManage.removePerson, { reportFailure: false });
   const setLevel = useAtomCommand(sharingManage.setLevel, { reportFailure: false });
   const name = person.name ?? "Someone without a name yet";
@@ -676,7 +676,7 @@ function HeldLevelLine({
   const project = useProject(
     held.scope.kind === "project" ? scopeProjectRef(environmentId, held.scope.projectId) : null,
   );
-  const change = useChange(environmentId);
+  const change = changeRunner(environmentId);
   const setLevel = useAtomCommand(sharingManage.setLevel, { reportFailure: false });
   const removeLevel = useAtomCommand(sharingManage.removeLevel, { reportFailure: false });
   const [pending, setPending] = useState<PersonLevel | null>(null);
@@ -777,7 +777,7 @@ function DeviceLine({
   readonly device: PersonDevice;
   readonly canManage: boolean;
 }) {
-  const change = useChange(environmentId);
+  const change = changeRunner(environmentId);
   const revokeDevice = useAtomCommand(sharingManage.revokeDevice, { reportFailure: false });
   const [busy, setBusy] = useState(false);
   const ceiling = deviceCeiling(device);
@@ -982,7 +982,7 @@ function ProjectRoster({
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
 }) {
-  const scope = useMemo(() => ({ kind: "project" as const, projectId }), [projectId]);
+  const scope = { kind: "project" as const, projectId };
   const { rows, error } = useAccessRows(environmentId, scope);
   const nowMs = Date.parse(useNowMinute());
   return (

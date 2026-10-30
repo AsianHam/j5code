@@ -47,8 +47,43 @@ installing one.
 
 `j5 uninstall` removes the background service, the `j5` launcher, and the
 downloaded versions after showing you the list and asking once. Your projects,
-threads, and settings under `~/.j5code/userdata` are kept. Pass `--yes` from a
-script.
+threads, and settings under `~/.j5code/userdata` are kept, along with `service.env`
+under J5 home. Pass `--yes` from a script.
+
+## Local network access
+
+The service listens on your local network and Tailscale addresses, so the
+desktop and mobile apps on the same network connect directly instead of through
+T3 Connect. The hosted web app at app.t3.codes stays on T3 Connect, because
+browsers block plain HTTP from an HTTPS page. The service does not answer on
+public addresses, and every device still needs to pair or sign in. To keep the service reachable from this machine only, set
+`T3CODE_HOST=127.0.0.1` in `service.env` (below). Any `T3CODE_HOST` value
+replaces this default.
+
+## Configure the service environment
+
+Put custom environment variables in `service.env` under the service's J5 home
+directory, normally `~/.j5code/service.env`. This file survives service installation
+and updates. For example:
+
+```dotenv
+T3CODE_PORT=3773
+T3CODE_HOST=127.0.0.1
+```
+
+Use `KEY=VALUE` entries, quoting values that contain spaces or `#`. Values are
+literal: shell commands and variable expansion are not evaluated. Entries
+override the inherited service environment, except for `PATH`, `J5CODE_HOME`,
+`T3CODE_HOME`, `T3_BOOT_SERVICE_UNIT`, and `T3_SERVICE_LAUNCHER_CONTEXT` (including
+case variants).
+
+Run `j5 service restart` after changing the file. Changes apply when the service
+starts again; switching the server version alone keeps the current values.
+For a service installed before env-file support, run `j5 service install` once
+with an up-to-date CLI.
+A missing file is ignored; other read failures stop service startup.
+If the file contains credentials, restrict access to that file with `chmod 600`
+(for the default J5 home, `chmod 600 ~/.j5code/service.env`).
 
 ## Platform support
 
@@ -111,18 +146,18 @@ Downloads, it may need Full Disk Access for the executable listed in
 `~/Library/LaunchAgents/codes.jackson.j5code.service.plist`.
 
 For failures after signing in to T3 Connect, see
-[connection troubleshooting](./remote-access.md#t3-connect-troubleshooting).
+[connection troubleshooting](./t3-connect-troubleshooting.md).
 
 ## Reclaim database space
 
 T3 Code removes superseded internal history on its own while it runs; your
 conversations are kept. Databases created before this shrank automatically
 still hold the freed space on disk until a one-time offline repair returns it
-and turns on automatic shrinking. Settings > Storage (web and desktop) or
+and turns on automatic shrinking. Settings > Maintenance (web and desktop) or
 Settings > Maintenance (mobile) suggests the repair when at least 1 GiB can be
 reclaimed.
 
-Run `t3 doctor` on the machine that hosts the environment. It reports the
+Run `j5 doctor` on the machine that hosts the environment. It reports the
 database size and the space it can reclaim, then asks which repairs to run;
 pass `--fix` to run the recommended ones without a prompt (for scripts), or
 `--dry-run` to only report. An installed background service for the same data
@@ -136,3 +171,8 @@ database through a temporary copy, so it needs free space of about the
 database's size twice over: once in the system temporary directory (`TMPDIR`
 or `/tmp` on Linux and macOS) and once next to the database for its
 write-ahead log.
+
+If you upgraded from a version that kept its database in `state.sqlite`, that
+file is still kept next to the current one so you can roll back. `j5 doctor` offers to
+delete it, but never selects that repair for you and `--fix` skips it: once it
+is gone, that older version starts with no threads or settings.

@@ -1,22 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Shared server: members, guests and grants. A person is a member unless a
-// member brought them in as a guest; every person recorded before this is the
-// server's own operator, so the default is `member`. A guest has a display
-// name, given by the member who made their share link.
-//
-// A grant is what gives a guest access: one project or one thread, at one
-// level. One row per person and target, so two grants on the same thread
-// cannot disagree; a thread grant and a project grant can overlap, and the
-// reader takes the higher.
-//
-// `j5_a2a_person_session` ties an upstream auth session to a person. It is
-// keyed by upstream's session id and lives here, not as a column on
-// `auth_sessions`: J5 migrations never run in upstream's lane, and upstream
-// has dropped and recreated its auth tables before (its migration 031). A row
-// whose session upstream has since removed is inert, since that session can no
-// longer connect.
+// Every person recorded before this is the operator, so a person defaults to `member`. One grant
+// row per person and target keeps two grants on a thread from disagreeing; a reader takes the
+// higher of a thread and a project grant. `j5_a2a_person_session` lives here, not on upstream's
+// `auth_sessions`, because upstream has dropped and recreated its auth tables before.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

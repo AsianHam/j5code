@@ -82,7 +82,7 @@ jobs:
       # with the Node in J5 Release's CLI archive job.
       - name: Build CLI single-executable
         env:
-          VP_NODE_VERSION: 26.8.2
+          VP_NODE_VERSION: 26.12.1
         run: node apps/server/scripts/cli.ts build-exe --verbose
 
       - name: Build CLI archive

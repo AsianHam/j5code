@@ -158,15 +158,16 @@ export const layer: Layer.Layer<A2AHumanInbox, never, A2ALedger | SqlClient.SqlC
       const sql = yield* SqlClient.SqlClient;
       const shared = yield* SharedThreads;
 
-      const resolvePersonId: A2AHumanInboxShape["resolvePersonId"] = (personId) =>
-        Effect.gen(function* () {
-          if (personId === undefined) return yield* getLocalOperatorHumanPersonId(sql);
-          yield* assertPersonId(personId);
-          if (!(yield* isHumanPerson(sql, personId))) {
-            return yield* new A2AParticipantNotFoundError({ participantId: personId });
-          }
-          return personId;
-        });
+      const resolvePersonId: A2AHumanInboxShape["resolvePersonId"] = Effect.fn(
+        "j5.a2a.humanInbox.resolvePersonId",
+      )(function* (personId) {
+        if (personId === undefined) return yield* getLocalOperatorHumanPersonId(sql);
+        yield* assertPersonId(personId);
+        if (!(yield* isHumanPerson(sql, personId))) {
+          return yield* new A2AParticipantNotFoundError({ participantId: personId });
+        }
+        return personId;
+      });
 
       /**
        * Whether a person may answer what an agent asks: they can write to its thread. Built once
@@ -186,10 +187,12 @@ export const layer: Layer.Layer<A2AHumanInbox, never, A2ALedger | SqlClient.SqlC
           ),
         );
 
-      const list: A2AHumanInboxShape["list"] = (personId, status = "open") =>
-        Effect.gen(function* () {
-          yield* resolvePersonId(personId);
-          const rows = yield* sql<InboxRow>`
+      const list: A2AHumanInboxShape["list"] = Effect.fn("j5.a2a.humanInbox.list")(function* (
+        personId,
+        status = "open",
+      ) {
+        yield* resolvePersonId(personId);
+        const rows = yield* sql<InboxRow>`
             SELECT
               exchange.receiver_id AS person_id,
               exchange.project_id,
@@ -236,38 +239,38 @@ export const layer: Layer.Layer<A2AHumanInbox, never, A2ALedger | SqlClient.SqlC
               inbox.project_id,
               inbox.exchange_id
           `;
-          const writesToAsker = yield* writerOfAskers(personId);
-          const visible = yield* Effect.filter(rows, (row) =>
-            writesToAsker({
-              threadId: row.sender_thread_id,
-              projectId: row.project_id,
-            }),
-          );
-          return visible.map(
-            (row) =>
-              ({
-                personId,
-                projectId: LedgerProjectId.make(row.project_id),
-                projectTitle: row.project_title,
-                exchangeId: ExchangeId.make(row.exchange_id),
-                senderId: ParticipantId.make(row.sender_id),
-                senderThreadId:
-                  row.sender_thread_id === null ? null : ThreadId.make(row.sender_thread_id),
-                intent: row.intent,
-                urgency: row.urgency,
-                message: row.message,
-                openedAt: row.opened_at,
-                status: row.status,
-                terminalAt: row.terminal_at,
-                ...(row.person_id === EVERYONE_HERE_PERSON_ID
-                  ? { forEveryone: true, answeredBy: row.answered_by }
-                  : {}),
-              }) satisfies HumanInboxItem,
-          );
-        });
+        const writesToAsker = yield* writerOfAskers(personId);
+        const visible = yield* Effect.filter(rows, (row) =>
+          writesToAsker({
+            threadId: row.sender_thread_id,
+            projectId: row.project_id,
+          }),
+        );
+        return visible.map(
+          (row) =>
+            ({
+              personId,
+              projectId: LedgerProjectId.make(row.project_id),
+              projectTitle: row.project_title,
+              exchangeId: ExchangeId.make(row.exchange_id),
+              senderId: ParticipantId.make(row.sender_id),
+              senderThreadId:
+                row.sender_thread_id === null ? null : ThreadId.make(row.sender_thread_id),
+              intent: row.intent,
+              urgency: row.urgency,
+              message: row.message,
+              openedAt: row.opened_at,
+              status: row.status,
+              terminalAt: row.terminal_at,
+              ...(row.person_id === EVERYONE_HERE_PERSON_ID
+                ? { forEveryone: true, answeredBy: row.answered_by }
+                : {}),
+            }) satisfies HumanInboxItem,
+        );
+      });
 
-      const answer: A2AHumanInboxShape["answer"] = (input, beforeReply) =>
-        Effect.gen(function* () {
+      const answer: A2AHumanInboxShape["answer"] = Effect.fn("j5.a2a.humanInbox.answer")(
+        function* (input, beforeReply) {
           yield* assertPersonId(input.personId);
           if (!(yield* isHumanPerson(sql, input.personId))) {
             return yield* new A2AParticipantNotFoundError({ participantId: input.personId });
@@ -415,7 +418,8 @@ export const layer: Layer.Layer<A2AHumanInbox, never, A2ALedger | SqlClient.SqlC
             joinedExistingExchange: false,
             durableAtSeq: sent.seq,
           } satisfies SendMessageResult;
-        });
+        },
+      );
 
       return A2AHumanInbox.of({ resolvePersonId, list, answer });
     }),

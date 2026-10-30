@@ -77,23 +77,24 @@ export const layer: Layer.Layer<ThreadRegistration, never, A2AHomeRegistrar | Sq
           ),
         );
 
-      const ensureRegistered: ThreadRegistrationShape["ensureRegistered"] = (threadId) =>
-        Effect.gen(function* () {
-          const existing = yield* registrar
-            .getHomeForThread(threadId)
-            .pipe(Effect.catchTags({ A2AHomeNotFoundError: () => Effect.succeed(null) }));
-          if (existing !== null) return existing;
-          const thread = yield* readRegistrable(threadId);
-          if (thread === null) return null;
-          return yield* registrar.registerAtCreation({
-            projectId: LedgerProjectId.make(thread.projectId),
-            threadId,
-            createdAt: thread.createdAt,
-            commandId: registrationCommandId(threadId),
-            // An older thread can be archived already; it joins as archived in the same command.
-            ...(thread.archivedAt === null ? {} : { archivedAt: thread.archivedAt }),
-          });
+      const ensureRegistered: ThreadRegistrationShape["ensureRegistered"] = Effect.fn(
+        "j5.a2a.threadRegistration.ensureRegistered",
+      )(function* (threadId) {
+        const existing = yield* registrar
+          .getHomeForThread(threadId)
+          .pipe(Effect.catchTags({ A2AHomeNotFoundError: () => Effect.succeed(null) }));
+        if (existing !== null) return existing;
+        const thread = yield* readRegistrable(threadId);
+        if (thread === null) return null;
+        return yield* registrar.registerAtCreation({
+          projectId: LedgerProjectId.make(thread.projectId),
+          threadId,
+          createdAt: thread.createdAt,
+          commandId: registrationCommandId(threadId),
+          // An older thread can be archived already; it joins as archived in the same command.
+          ...(thread.archivedAt === null ? {} : { archivedAt: thread.archivedAt }),
         });
+      });
 
       return ThreadRegistration.of({ ensureRegistered, readRegistrable });
     }),

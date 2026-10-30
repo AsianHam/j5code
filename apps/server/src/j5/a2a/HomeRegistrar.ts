@@ -302,7 +302,9 @@ export const layer: Layer.Layer<A2AHomeRegistrar, never, A2ALedger | SqlClient.S
       });
       return A2AHomeRegistrar.of({
         getHomeForThread,
-        registerAtCreation: (input) => register(input).pipe(Effect.map((result) => result.home)),
+        registerAtCreation: Effect.fn("A2AHomeRegistrar.registerAtCreation")(function (input) {
+          return register(input).pipe(Effect.map((result) => result.home));
+        }),
       });
     }),
   );

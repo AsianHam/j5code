@@ -101,12 +101,9 @@ export const formatClosedPeerEnvelope = (input: {
   });
 
 /**
- * A person's reply from the inbox to an agent's ask, their only ledger message. With a name on
- * record for the person the header says it, with the id after it as the outside-agent header
- * has it: `[Message from Jackson (human:…)]`. In a shared conversation the label also says their
- * level, as the author's line of a message typed in the thread does:
- * `[Message from Jackson (owner) (human:…)]`. With no name on record the header is the id
- * alone, as it has always been.
+ * A person's reply from the inbox to an agent's ask. The header names them as the outside-agent
+ * header does, `[Message from Jackson (human:…)]`, adding their level in a shared conversation
+ * (`[Message from Jackson (owner) (human:…)]`); with no name on record it is the id alone.
  */
 export const formatClosedHumanEnvelope = (input: {
   readonly senderId: ParticipantId;

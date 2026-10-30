@@ -35,7 +35,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { pickAgentDefinitions } from "./pickAgentDefinitions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
@@ -128,6 +128,7 @@ function MemberAgentLibrarySettingsScreen() {
     error: AgentPersonaImportConflictError;
     resolve: (selected: ReadonlyArray<AgentPersonaImportConflict> | null) => void;
   } | null>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- a replaced or unmounted confirmation resolves its waiting import as cancelled.
   useEffect(() => () => confirmation?.resolve(null), [confirmation]);
   const [editing, setEditing] = useState<{
     environmentId: EnvironmentId;
@@ -159,7 +160,7 @@ function MemberAgentLibrarySettingsScreen() {
   ) {
     if (busy) return;
     setBusy(true);
-    try {
+    const copied = await settlePromise(async () => {
       const { definition, fileName, yaml } = await readDefinition(personaId);
       const result = await importAgentPersonasWithConfirmation(
         [{ name: fileName, content: yaml }],
@@ -178,40 +179,30 @@ function MemberAgentLibrarySettingsScreen() {
             ? `${target.label} kept its existing ${definition.displayName}`
             : `Copied ${definition.displayName} to ${target.label}`,
       });
-    } catch (error) {
-      setNotification({
-        type: "error",
-        title: "Persona action failed",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBusy(false);
-    }
+    });
+    setBusy(false);
+    if (copied._tag === "Failure") setNotification(failureNotice("Persona action failed", copied));
   }
   async function saveFolders(folders: ReadonlyArray<string>) {
     if (effectiveEnvironmentId === null || busy) return;
-    const environmentId = effectiveEnvironmentId;
     setBusy(true);
-    try {
-      const result = await setLibraryFolders({ environmentId, input: { folders } });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      librarySources.refresh();
-      catalog.refresh();
-    } catch (error) {
-      setNotification({
-        type: "error",
-        title: "Library folders not saved",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBusy(false);
+    const result = await setLibraryFolders({
+      environmentId: effectiveEnvironmentId,
+      input: { folders },
+    });
+    setBusy(false);
+    if (result._tag === "Failure") {
+      setNotification(failureNotice("Library folders not saved", result));
+      return;
     }
+    librarySources.refresh();
+    catalog.refresh();
   }
   async function importSelection(kind: "folder" | "agent") {
     if (effectiveEnvironmentId === null || busy) return;
     const environmentId = effectiveEnvironmentId;
     setBusy(true);
-    try {
+    const imported = await settlePromise(async () => {
       const files = await pickAgentDefinitions(kind);
       if (files === null) return;
       const result = await importAgentPersonasWithConfirmation(
@@ -229,14 +220,10 @@ function MemberAgentLibrarySettingsScreen() {
         title: `Imported ${result.importedIds.length} persona(s).`,
       });
       catalog.refresh();
-    } catch (error) {
-      setNotification({
-        type: "error",
-        title: "Persona action failed",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBusy(false);
+    });
+    setBusy(false);
+    if (imported._tag === "Failure") {
+      setNotification(failureNotice("Persona action failed", imported));
     }
   }
   const setAgentEnabled = useAtomCommand(agentPersonaEnvironment.setAgentPersonaEnabled, {
@@ -244,43 +231,32 @@ function MemberAgentLibrarySettingsScreen() {
   });
   async function toggleAgent(personaId: string, enabled: boolean) {
     if (effectiveEnvironmentId === null || busy) return;
-    const environmentId = effectiveEnvironmentId;
     setBusy(true);
-    try {
-      const result = await setAgentEnabled({ environmentId, input: { personaId, enabled } });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      catalog.refresh();
-    } catch (error) {
-      setNotification({
-        type: "error",
-        title: "Persona action failed",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBusy(false);
+    const result = await setAgentEnabled({
+      environmentId: effectiveEnvironmentId,
+      input: { personaId, enabled },
+    });
+    setBusy(false);
+    if (result._tag === "Failure") {
+      setNotification(failureNotice("Persona action failed", result));
+      return;
     }
+    catalog.refresh();
   }
   async function removePersona(personaId: string) {
     if (effectiveEnvironmentId === null || busy) return;
-    const environmentId = effectiveEnvironmentId;
     setBusy(true);
-    try {
-      const result = await removeAgent({
-        environmentId,
-        input: { personaId },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      setNotification({ type: "success", title: "Persona removed" });
-      catalog.refresh();
-    } catch (error) {
-      setNotification({
-        type: "error",
-        title: "Persona action failed",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBusy(false);
+    const result = await removeAgent({
+      environmentId: effectiveEnvironmentId,
+      input: { personaId },
+    });
+    setBusy(false);
+    if (result._tag === "Failure") {
+      setNotification(failureNotice("Persona action failed", result));
+      return;
     }
+    setNotification({ type: "success", title: "Persona removed" });
+    catalog.refresh();
   }
   async function readDefinition(personaId: string) {
     if (effectiveEnvironmentId === null) throw new Error("Select an environment first.");
@@ -294,64 +270,38 @@ function MemberAgentLibrarySettingsScreen() {
   async function duplicatePersona(personaId: string) {
     if (busy) return;
     setBusy(true);
-    try {
-      const { definition } = await readDefinition(personaId);
-      setCreating({ initial: agentPersonaDuplicateDraft(definition) });
-    } catch (error) {
-      setNotification({
-        type: "error",
-        title: "Persona action failed",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBusy(false);
+    const read = await settlePromise(() => readDefinition(personaId));
+    setBusy(false);
+    if (read._tag === "Failure") {
+      setNotification(failureNotice("Persona action failed", read));
+      return;
     }
+    setCreating({ initial: agentPersonaDuplicateDraft(read.value.definition) });
   }
-  /** Native platforms share a real .yaml file; the web build falls back to sharing the text. */
   async function exportPersona(personaId: string) {
     if (busy) return;
     setBusy(true);
-    try {
+    const shared = await settlePromise(async () => {
       const { fileName, yaml } = await readDefinition(personaId);
-      if (Platform.OS === "web") {
-        await Share.share({ title: fileName, message: yaml });
-      } else {
-        const [FileSystem, Sharing] = await Promise.all([
-          import("expo-file-system/legacy"),
-          import("expo-sharing"),
-        ]);
-        const uri = `${FileSystem.cacheDirectory ?? ""}${fileName}`;
-        await FileSystem.writeAsStringAsync(uri, yaml);
-        await Sharing.shareAsync(uri, { mimeType: "application/yaml", dialogTitle: fileName });
-      }
-    } catch (error) {
-      setNotification({
-        type: "error",
-        title: "Persona action failed",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBusy(false);
-    }
+      await shareAgentDefinition(fileName, yaml);
+    });
+    setBusy(false);
+    if (shared._tag === "Failure") setNotification(failureNotice("Persona action failed", shared));
   }
   async function restorePersona(personaId: string) {
     if (effectiveEnvironmentId === null || busy) return;
-    const environmentId = effectiveEnvironmentId;
     setBusy(true);
-    try {
-      const result = await restoreAgent({ environmentId, input: { personaId } });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      setNotification({ type: "success", title: "Persona restored" });
-      catalog.refresh();
-    } catch (error) {
-      setNotification({
-        type: "error",
-        title: "Persona action failed",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setBusy(false);
+    const result = await restoreAgent({
+      environmentId: effectiveEnvironmentId,
+      input: { personaId },
+    });
+    setBusy(false);
+    if (result._tag === "Failure") {
+      setNotification(failureNotice("Persona action failed", result));
+      return;
     }
+    setNotification({ type: "success", title: "Persona restored" });
+    catalog.refresh();
   }
   const personas =
     catalog.data === null || catalog.data === undefined
@@ -855,6 +805,36 @@ function MemberAgentLibrarySettingsScreen() {
       ) : null}
     </View>
   );
+}
+
+function failureNotice(
+  title: string,
+  result: Parameters<typeof squashAtomCommandFailure>[0],
+): AgentLibraryNotification {
+  const error = squashAtomCommandFailure(result);
+  return {
+    type: "error",
+    title,
+    description: error instanceof Error ? error.message : String(error),
+  };
+}
+
+/**
+ * Native platforms share a real .yaml file; the web build falls back to sharing the text. Kept
+ * outside the screen because the React Compiler skips a component that holds `import()`.
+ */
+async function shareAgentDefinition(fileName: string, yaml: string) {
+  if (Platform.OS === "web") {
+    await Share.share({ title: fileName, message: yaml });
+    return;
+  }
+  const [FileSystem, Sharing] = await Promise.all([
+    import("expo-file-system/legacy"),
+    import("expo-sharing"),
+  ]);
+  const uri = `${FileSystem.cacheDirectory ?? ""}${fileName}`;
+  await FileSystem.writeAsStringAsync(uri, yaml);
+  await Sharing.shareAsync(uri, { mimeType: "application/yaml", dialogTitle: fileName });
 }
 
 function AgentMessage(props: { readonly title: string }) {

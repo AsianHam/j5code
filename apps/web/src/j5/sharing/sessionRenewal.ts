@@ -3,12 +3,9 @@ import { J5_SESSION_RENEW_PATH } from "@t3tools/contracts/j5";
 import { resolvePrimaryEnvironmentHttpUrl } from "../../environments/primary/target";
 
 /**
- * What asking the primary server to renew this browser's session came to:
- * - `renewed`: J5 had ended it for a change of level, and the new session is the cookie now;
- * - `live`: the session was never ended, and there is nothing to renew;
- * - `refused`: it was ended for good (the device was removed or ended, or it expired), and the
- *   browser pairs again;
- * - `unknown`: the server could not be asked or did not say.
+ * `renewed`: J5 ended the session for a change of level and the new one is the cookie now. `live`:
+ * it was never ended. `refused`: it was ended for good (device removed or ended, or expired), so
+ * the browser pairs again. `unknown`: the server could not be asked or did not say.
  */
 export type PrimarySessionRenewal = "renewed" | "live" | "refused" | "unknown";
 

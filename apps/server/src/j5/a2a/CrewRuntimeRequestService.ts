@@ -91,13 +91,10 @@ export class CrewRuntimeRequestService extends Context.Service<
 >()("t3/j5/a2a/CrewRuntimeRequestService") {}
 
 /**
- * The Captain is the thread the person watches, so its approvals and questions stay inline there;
- * a seat runs out of view, so its provider approvals reach the Inbox (Crews AC9) and are answered
- * through the same `runtime-request.respond` command the composer sends. Only what the Inbox can
- * answer is listed here: approvals the provider can still take. The separate questions read
- * lists placed agents' actionable native questions as links to the original thread forms.
- * The approval list covers only live Crew seats; the question links also cover solo Peer Agents.
- * A Captain's own requests remain inline, and retired seats leave both lists.
+ * The Captain is the thread the person watches, so its requests stay inline; a seat runs out of
+ * view, so its provider approvals reach the Inbox (Crews AC9), answered with the composer's
+ * `runtime-request.respond`. Listed are approvals the provider can still take, for live seats only;
+ * the question links list placed agents' native questions, solo Peer Agents included.
  */
 export const layer = Layer.effect(
   CrewRuntimeRequestService,
@@ -165,51 +162,52 @@ export const layer = Layer.effect(
         .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
     });
 
-    const respond: CrewRuntimeRequestServiceShape["respond"] = (input) =>
-      Effect.gen(function* () {
-        const notFound = new CrewRuntimeRequestNotFoundError({
+    const respond: CrewRuntimeRequestServiceShape["respond"] = Effect.fn(
+      "j5.a2a.crewRuntimeRequest.respond",
+    )(function* (input) {
+      const notFound = new CrewRuntimeRequestNotFoundError({
+        threadId: input.threadId,
+        requestId: input.requestId,
+      });
+      if (!(yield* liveSeatThreads).has(input.threadId)) return yield* notFound;
+      const projection = yield* liveProjection(input.threadId);
+      if (projection === null) return yield* notFound;
+      // The same selection `list` shows, so a request the Inbox never listed is never answered.
+      const listed = inboxAnswerableApprovals(projection).some(
+        (entry) => entry.requestId === input.requestId,
+      );
+      if (!listed) {
+        const resolved = projection.runtimeRequests.find(
+          (entry) => entry.id === input.requestId && entry.status !== "pending",
+        );
+        if (resolved === undefined) return yield* notFound;
+        return yield* new CrewRuntimeRequestConflictError({
+          detail: `This request is already ${resolved.status}; it may have been answered on another device.`,
+        });
+      }
+      yield* threads
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId: input.commandId,
           threadId: input.threadId,
           requestId: input.requestId,
-        });
-        if (!(yield* liveSeatThreads).has(input.threadId)) return yield* notFound;
-        const projection = yield* liveProjection(input.threadId);
-        if (projection === null) return yield* notFound;
-        // The same selection `list` shows, so a request the Inbox never listed is never answered.
-        const listed = inboxAnswerableApprovals(projection).some(
-          (entry) => entry.requestId === input.requestId,
+          decision: input.decision,
+        })
+        .pipe(
+          // The decider refuses with its reason as a string ("... is resolved", "Provider session
+          // ... was not found"): a conflict the person can read. Any other cause is a failure to
+          // send, reported as one.
+          Effect.mapError((error) =>
+            (error._tag === "OrchestratorDispatchError" ||
+              error._tag === "OrchestratorCommandRejectedError") &&
+            typeof error.cause === "string"
+              ? new CrewRuntimeRequestConflictError({
+                  detail: `The request could not be answered: ${error.cause}`,
+                })
+              : new CrewRuntimeRequestDispatchError({ cause: error }),
+          ),
         );
-        if (!listed) {
-          const resolved = projection.runtimeRequests.find(
-            (entry) => entry.id === input.requestId && entry.status !== "pending",
-          );
-          if (resolved === undefined) return yield* notFound;
-          return yield* new CrewRuntimeRequestConflictError({
-            detail: `This request is already ${resolved.status}; it may have been answered on another device.`,
-          });
-        }
-        yield* threads
-          .dispatch({
-            type: "runtime-request.respond",
-            commandId: input.commandId,
-            threadId: input.threadId,
-            requestId: input.requestId,
-            decision: input.decision,
-          })
-          .pipe(
-            // The decider refuses with its reason as a string ("... is resolved", "Provider session
-            // ... was not found"): a conflict the person can read. Any other cause is a failure to
-            // send, reported as one.
-            Effect.mapError((error) =>
-              (error._tag === "OrchestratorDispatchError" ||
-                error._tag === "OrchestratorCommandRejectedError") &&
-              typeof error.cause === "string"
-                ? new CrewRuntimeRequestConflictError({
-                    detail: `The request could not be answered: ${error.cause}`,
-                  })
-                : new CrewRuntimeRequestDispatchError({ cause: error }),
-            ),
-          );
-      });
+    });
 
     return CrewRuntimeRequestService.of({ list, respond, questions });
   }),

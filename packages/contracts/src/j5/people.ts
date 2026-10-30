@@ -15,11 +15,9 @@ import { PersonLevel, PersonScope } from "./levels.ts";
 import { SharingLinkLifetime, SharingPersonName } from "./sharing.ts";
 
 /**
- * People, their levels, devices and links, as an Owner manages them from the Share dialog and the
- * People page, and as anyone who reaches a thread or project sees who else does
- * (docs/j5/product/features/people-and-access.md). Every change needs upstream's Manage access,
- * which only an Owner's devices hold; renaming oneself and reading who reaches a scope need only
- * what every device holds.
+ * People, their levels, devices and links (docs/j5/product/features/people-and-access.md). Every
+ * change needs upstream's Manage access, which only an Owner's devices hold; renaming oneself and
+ * reading who reaches a scope need only what every device holds.
  */
 export const J5_PEOPLE_WS_METHODS = {
   /** Everyone on the server with their levels, devices and unused links. An Owner's request. */

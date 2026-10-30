@@ -6,11 +6,10 @@ import type { CrewProposal, CrewProposalSeat } from "./AgentCrewProposalService.
 import { formatRunFailureField } from "./runFailures.ts";
 
 /**
- * How a seat's launch and first turn went: `started` once provider activity is recorded (or the
- * run completed), `failed` when the run failed before the report, `pending` when the report's
- * window closed before either. `not_started` is a seat whose thread exists but whose home or brief
- * did not go through, so it has no first turn; `not_created` is a seat whose thread was never
- * created, which is not on the roster and cannot be messaged.
+ * How a seat's launch and first turn went: `started` once provider activity is recorded (or the run
+ * completed), `failed` when the run failed first, `pending` when the window closed first.
+ * `not_started`: the thread exists but its home or brief failed; `not_created`: no thread, so not
+ * on the roster.
  */
 export type SeatStartVerdict =
   | { readonly kind: "started" }

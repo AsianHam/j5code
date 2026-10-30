@@ -127,20 +127,25 @@ const make = Effect.gen(function* () {
   const projectProposal = projectCrewProposal(yield* PlaybookStore);
 
   return ClientActionsService.of({
-    previewCrewProposal: (input) => proposals.preview(input),
-    resolveCrewProposal: (input, decidedBy) =>
-      proposals.resolve({ ...input, decidedBy }).pipe(
-        Effect.flatMap((result) =>
-          projectProposal(result.proposal).pipe(
-            Effect.map((proposal) => ({
-              proposal,
-              crewInstanceId: result.instance?.id ?? null,
-            })),
+    previewCrewProposal: Effect.fn("ClientActionsService.previewCrewProposal")(function (input) {
+      return proposals.preview(input);
+    }),
+    resolveCrewProposal: Effect.fn("ClientActionsService.resolveCrewProposal")(
+      function (input, decidedBy) {
+        return proposals.resolve({ ...input, decidedBy }).pipe(
+          Effect.flatMap((result) =>
+            projectProposal(result.proposal).pipe(
+              Effect.map((proposal) => ({
+                proposal,
+                crewInstanceId: result.instance?.id ?? null,
+              })),
+            ),
           ),
-        ),
-      ),
-    stopCrew: ({ crewInstanceId }) =>
-      Effect.gen(function* () {
+        );
+      },
+    ),
+    stopCrew: Effect.fn("j5.a2a.clientActions.stopCrew")(
+      function* ({ crewInstanceId }) {
         const requestKey = yield* freshId;
         return yield* stops.stop({
           callerParticipantId: null,
@@ -156,52 +161,54 @@ const make = Effect.gen(function* () {
             ),
           }),
         });
-      }).pipe(
-        Effect.map((result) => ({
-          crewInstanceId: result.crewInstanceId,
-          members: createdSeats(result.members),
-        })),
-      ),
-    archiveCrew: ({ crewInstanceId }) =>
-      Effect.gen(function* () {
-        const requestKey = yield* freshId;
-        const archivedAt = DateTime.formatIso(yield* DateTime.now);
-        const result = yield* archives.archive({
-          providerSessionId: HUMAN_ARCHIVE_SESSION,
-          callerParticipantId: null,
-          projectId: null,
-          crewInstanceId,
-          clientRequestKey: requestKey,
-          confirmationSatisfied: true,
-          archivedAt,
-          commandIds: (seatName) => ({
-            interruptCommandId: lifecycleCommandId({
-              providerSessionId: HUMAN_ARCHIVE_SESSION,
-              requestKey: crewSeatRequestKey(requestKey, seatName),
-              operation: "archive-crew-interrupt",
-            }),
-            archiveCommandId: lifecycleCommandId({
-              providerSessionId: HUMAN_ARCHIVE_SESSION,
-              requestKey: crewSeatRequestKey(requestKey, seatName),
-              operation: "archive-crew-thread",
-            }),
+      },
+      Effect.map((result) => ({
+        crewInstanceId: result.crewInstanceId,
+        members: createdSeats(result.members),
+      })),
+    ),
+    archiveCrew: Effect.fn("j5.a2a.clientActions.archiveCrew")(function* ({ crewInstanceId }) {
+      const requestKey = yield* freshId;
+      const archivedAt = DateTime.formatIso(yield* DateTime.now);
+      const result = yield* archives.archive({
+        providerSessionId: HUMAN_ARCHIVE_SESSION,
+        callerParticipantId: null,
+        projectId: null,
+        crewInstanceId,
+        clientRequestKey: requestKey,
+        confirmationSatisfied: true,
+        archivedAt,
+        commandIds: (seatName) => ({
+          interruptCommandId: lifecycleCommandId({
+            providerSessionId: HUMAN_ARCHIVE_SESSION,
+            requestKey: crewSeatRequestKey(requestKey, seatName),
+            operation: "archive-crew-interrupt",
           }),
-        });
-        return { crewInstanceId, status: result.status, members: createdSeats(result.members) };
-      }),
-    respondCrewRuntimeRequest: ({ threadId, requestId, decision }, claim) =>
-      freshId.pipe(
-        Effect.flatMap((id) => {
-          // Fresh per answer, so a second answer is refused by the request's state.
-          const commandId = CommandId.make(`j5-crew-runtime-request:${id}`);
-          return (claim?.({ threadId, requestId, commandId }) ?? Effect.void).pipe(
-            Effect.andThen(runtimeRequests.respond({ threadId, requestId, decision, commandId })),
-          );
+          archiveCommandId: lifecycleCommandId({
+            providerSessionId: HUMAN_ARCHIVE_SESSION,
+            requestKey: crewSeatRequestKey(requestKey, seatName),
+            operation: "archive-crew-thread",
+          }),
         }),
-        Effect.as({ threadId, requestId }),
-      ),
-    answerHumanExchange: (input, beforeReply) =>
-      Effect.gen(function* () {
+      });
+      return { crewInstanceId, status: result.status, members: createdSeats(result.members) };
+    }),
+    respondCrewRuntimeRequest: Effect.fn("ClientActionsService.respondCrewRuntimeRequest")(
+      function ({ threadId, requestId, decision }, claim) {
+        return freshId.pipe(
+          Effect.flatMap((id) => {
+            // Fresh per answer, so a second answer is refused by the request's state.
+            const commandId = CommandId.make(`j5-crew-runtime-request:${id}`);
+            return (claim?.({ threadId, requestId, commandId }) ?? Effect.void).pipe(
+              Effect.andThen(runtimeRequests.respond({ threadId, requestId, decision, commandId })),
+            );
+          }),
+          Effect.as({ threadId, requestId }),
+        );
+      },
+    ),
+    answerHumanExchange: Effect.fn("j5.a2a.clientActions.answerHumanExchange")(
+      function* (input, beforeReply) {
         const acceptedAt = DateTime.formatIso(yield* DateTime.now);
         const result = yield* inbox.answer(
           {
@@ -217,7 +224,8 @@ const make = Effect.gen(function* () {
         );
         yield* worker.notify;
         return { result };
-      }),
+      },
+    ),
   });
 });
 

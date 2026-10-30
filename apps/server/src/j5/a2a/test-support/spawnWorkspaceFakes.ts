@@ -81,59 +81,53 @@ export const fakeSpawnWorkspaceLayer = (options: {
       Layer.mergeAll(
         Layer.mock(ProjectService)({
           getById: (id) =>
-            Effect.succeed(
-              Option.some({ id, workspaceRoot: options.workspaceRoot ?? "/repo" } as never),
-            ),
+            Effect.succeedSome({ id, workspaceRoot: options.workspaceRoot ?? "/repo" } as never),
         }),
         Layer.mock(GitWorkflowService)({
-          listRefs: (input) =>
-            Effect.gen(function* () {
-              void input;
-              const checkout = cachedCheckout ?? (cachedCheckout = yield* current);
-              const refs = checkout.isRepo
-                ? fakeRefs(checkout, options.workspaceRoot ?? "/repo")
-                : [];
-              return {
-                refs,
-                isRepo: checkout.isRepo,
-                hasPrimaryRemote: false,
-                nextCursor: null,
-                totalCount: refs.length,
-              };
-            }),
+          listRefs: Effect.fn("j5.a2a.spawnWorkspaceFakes.listRefs")(function* (input) {
+            void input;
+            const checkout = cachedCheckout ?? (cachedCheckout = yield* current);
+            const refs = checkout.isRepo
+              ? fakeRefs(checkout, options.workspaceRoot ?? "/repo")
+              : [];
+            return {
+              refs,
+              isRepo: checkout.isRepo,
+              hasPrimaryRemote: false,
+              nextCursor: null,
+              totalCount: refs.length,
+            };
+          }),
           hasCommit: ({ refName }) =>
             current.pipe(Effect.map((checkout) => !(checkout.missingRefs ?? []).includes(refName))),
           // A checkout's status is cached per path until invalidated, as upstream's is, so only a
           // read that invalidates first sees a branch switched since the last one.
           invalidateLocalStatus: (cwd) => Effect.sync(() => void cachedStatus.delete(cwd)),
-          localStatus: ({ cwd }) =>
-            Effect.gen(function* () {
-              const cached = cachedStatus.get(cwd);
-              if (cached !== undefined) return { isRepo: true, refName: cached } as never;
-              const checkout = yield* current;
-              const branch =
-                cwd === root
-                  ? checkout.refName
-                  : checkout.worktrees?.find((worktree) => worktree.path === cwd)?.branch;
-              if (branch === undefined)
-                return yield* Effect.die(new Error(`no checkout at ${cwd}`));
-              cachedStatus.set(cwd, branch);
-              return { isRepo: true, refName: branch } as never;
-            }),
+          localStatus: Effect.fn("j5.a2a.spawnWorkspaceFakes.localStatus")(function* ({ cwd }) {
+            const cached = cachedStatus.get(cwd);
+            if (cached !== undefined) return { isRepo: true, refName: cached } as never;
+            const checkout = yield* current;
+            const branch =
+              cwd === root
+                ? checkout.refName
+                : checkout.worktrees?.find((worktree) => worktree.path === cwd)?.branch;
+            if (branch === undefined) return yield* Effect.die(new Error(`no checkout at ${cwd}`));
+            cachedStatus.set(cwd, branch);
+            return { isRepo: true, refName: branch } as never;
+          }),
           listLocalBranchNames: () =>
             current.pipe(Effect.map((checkout) => fakeRefs(checkout, root).map((ref) => ref.name))),
         }),
         Layer.mock(ThreadLaunchService)({
-          launch: (input) =>
-            Effect.gen(function* () {
-              if (options.launches) yield* Ref.update(options.launches, (all) => [...all, input]);
-              if (options.launch) yield* options.launch(input);
-              return {
-                threadId: input.threadId as ThreadId,
-                projection: {} as never,
-                resumed: false,
-              };
-            }),
+          launch: Effect.fn("j5.a2a.spawnWorkspaceFakes.launch")(function* (input) {
+            if (options.launches) yield* Ref.update(options.launches, (all) => [...all, input]);
+            if (options.launch) yield* options.launch(input);
+            return {
+              threadId: input.threadId as ThreadId,
+              projection: {} as never,
+              resumed: false,
+            };
+          }),
         }),
         Layer.mock(CommandReceiptStoreV2)({
           getByCommandId: (commandId) =>

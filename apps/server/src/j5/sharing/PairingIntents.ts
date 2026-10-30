@@ -27,16 +27,10 @@ import {
 } from "./PersonAccess.ts";
 
 /**
- * Who a device belongs to, decided as upstream issues its session (People and access AC1 to AC4).
- * Upstream's pairing link carries a subject and permissions and nothing about a person, and J5
- * adds no column to upstream's tables, so the person a pairing credential is for is recorded here
- * beside it, found again by a hash of the credential: that is what upstream's pairing code holds
- * when it issues the session. Upstream's pairing code calls `makePairingSessionIssuer` (FORK.md
- * case 70).
- *
- * A credential with an intent pairs a device as the intent's person, with the intent's ceiling.
- * One without is the first owner's (the startup link, the desktop app), a service's, or a device
- * the server cannot place, which `PersonAccess.sessionReach` tells apart by subject.
+ * Who a device belongs to, decided as upstream issues its session (AC1 to AC4). J5 adds no column
+ * to upstream's tables, so a credential's person is recorded here by its hash, which upstream's
+ * pairing code holds at issue and passes to `makePairingSessionIssuer` (FORK.md case 70). Without
+ * an intent, `PersonAccess.sessionReach` tells first owner, service and unplaced apart by subject.
  */
 
 /**
@@ -132,11 +126,9 @@ export interface PairingIntentsShape {
     readonly ceiling: ReadonlyArray<string> | null;
   }) => Effect.Effect<void, PairingIntentError>;
   /**
-   * Records, for a link made in upstream's Connections settings, that it pairs a device for the
-   * person whose device made it, under the permissions chosen there (AC3, AC18). A link made by a
-   * session that is no person's records nothing, and the link then approves an MCP client as no
-   * one; so one made by a session that is no longer live is refused, since that is a device whose
-   * person was removed while the link was made.
+   * Records that a Connections-settings link pairs a device for the creator's person, under the
+   * permissions chosen there (AC3, AC18). A link from a session that is no longer live is refused,
+   * since its person was removed meanwhile and the link would approve an MCP client as no one.
    */
   readonly recordForCreator: (input: {
     readonly creator: SessionIdentity;
@@ -268,8 +260,8 @@ const make: Layer.Layer<PairingIntents, never, SqlClient.SqlClient | ReadChanges
 
         intentOf,
 
-        forget: (pairingLinkId) =>
-          sql`
+        forget: Effect.fn("PairingIntents.forget")(function (pairingLinkId) {
+          return sql`
           DELETE FROM j5_a2a_pairing_intent WHERE pairing_link_id = ${pairingLinkId}
           RETURNING pairing_link_id
         `.pipe(
@@ -277,7 +269,8 @@ const make: Layer.Layer<PairingIntents, never, SqlClient.SqlClient | ReadChanges
             Effect.mapError(storage),
             Effect.tap((forgotten) => (forgotten ? peopleChanged : Effect.void)),
             Effect.withSpan("j5.sharing.pairingIntents.forget"),
-          ),
+          );
+        }),
 
         approvesMcpClient: Effect.fn("j5.sharing.pairingIntents.approvesMcpClient")(
           function* (grant, credential) {
@@ -454,26 +447,27 @@ export const makeMcpApprovalCheck = Effect.serviceOption(PairingIntents).pipe(
  * the person whose device made it (FORK.md case 70). On a server where sharing is not wired in,
  * nothing is recorded.
  */
-export const recordConnectionsLinkCreator = (input: {
+export const recordConnectionsLinkCreator = Effect.fn(
+  "j5.sharing.pairingIntents.recordConnectionsLinkCreator",
+)(function* (input: {
   readonly creator: SessionIdentity;
   readonly link: { readonly id: string; readonly credential: string };
   readonly scopes: ReadonlyArray<string>;
-}) =>
-  Effect.gen(function* () {
-    const intents = yield* Effect.serviceOption(PairingIntents);
-    if (Option.isNone(intents)) return;
-    const sessions = yield* SessionStore.SessionStore;
-    yield* intents.value.recordForCreator({
-      creator: input.creator,
-      pairingLinkId: input.link.id,
-      credential: input.link.credential,
-      scopes: input.scopes,
-      creatorLive: sessions
-        .listActive()
-        .pipe(
-          Effect.map((active) =>
-            active.some((session) => session.sessionId === input.creator.sessionId),
-          ),
+}) {
+  const intents = yield* Effect.serviceOption(PairingIntents);
+  if (Option.isNone(intents)) return;
+  const sessions = yield* SessionStore.SessionStore;
+  yield* intents.value.recordForCreator({
+    creator: input.creator,
+    pairingLinkId: input.link.id,
+    credential: input.link.credential,
+    scopes: input.scopes,
+    creatorLive: sessions
+      .listActive()
+      .pipe(
+        Effect.map((active) =>
+          active.some((session) => session.sessionId === input.creator.sessionId),
         ),
-    });
+      ),
   });
+});

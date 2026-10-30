@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { UserPlusIcon } from "lucide-react";
-import { useMemo } from "react";
 
 import { ThreadDetailsControl } from "../../components/chat/ThreadDetailsControl";
 import { ThreadDetailsSection } from "../../components/chat/ThreadDetailsSection";
@@ -29,7 +28,7 @@ export function ThreadPeopleChip({
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const scope = useMemo(() => ({ kind: "thread" as const, threadId }), [threadId]);
+  const scope = { kind: "thread" as const, threadId };
   const { rows } = useAccessRows(environmentId, scope);
   const canManage = useAtomValue(sharingManage.createLink.permissionAtom(environmentId));
   if (rows === null || rows.length < 2) return null;
@@ -76,7 +75,7 @@ export function ThreadPeopleSection({
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const scope = useMemo(() => ({ kind: "thread" as const, threadId }), [threadId]);
+  const scope = { kind: "thread" as const, threadId };
   const { rows, error } = useAccessRows(environmentId, scope);
   const canManage = useAtomValue(sharingManage.createLink.permissionAtom(environmentId));
   const links = useEnvironmentQuery(canManage ? linksQuery(environmentId) : null);

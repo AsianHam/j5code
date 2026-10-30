@@ -22,9 +22,11 @@ function startVisibleRefresh(refresh: () => void) {
  */
 export function useVisibleRefresh(refresh: () => void, enabled = true, refreshKey?: string) {
   const lastKey = useRef(refreshKey);
+  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to page visibility, an outside event, for as long as the caller is mounted.
   useEffect(() => {
     if (enabled) return startVisibleRefresh(refresh);
   }, [refresh, enabled]);
+  // oxlint-disable-next-line t3code/react-effect-budget -- a changed key refreshes at once while the page is visible, beside the visibility subscription.
   useEffect(() => {
     if (!enabled || lastKey.current === refreshKey || document.visibilityState !== "visible")
       return;
@@ -42,6 +44,7 @@ export function createVisibleRefreshHook(refresh: () => void) {
   let consumers = 0;
   let stop: (() => void) | undefined;
   return function useVisibleRefresh() {
+    // oxlint-disable-next-line t3code/react-effect-budget -- counts mounted consumers so one visibility subscription serves them all.
     useEffect(() => {
       consumers += 1;
       if (consumers === 1) {

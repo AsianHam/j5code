@@ -54,7 +54,7 @@ export const resolveAgentPersonaRuntime = Effect.fn("resolveAgentPersonaRuntime"
         message: "The assigned persona runtime permissions are unsupported.",
       });
     }
-    // The persona's own text is the whole behavior contract; J5 appends no hidden rules (#439).
+    // The persona's own text is the whole behavior contract; J5 appends no hidden rules.
     instructions = `${definition.instructions}\n\n${PLATFORM_TOOLS_NOTE}`;
     // Declared handoffs bind to the shared artifacts system; the section names the exact path.
     const artifactSection =
@@ -94,19 +94,18 @@ export interface AgentPersonaRuntimePolicyInput {
  * and maps failures through the caller-supplied error constructor, so the upstream file adds no
  * persona logic. A live Crew seat's policy is marked so adapters withhold native question tools.
  */
-export const makeAgentPersonaRuntimePolicyResolver = <E>(
-  toError: (input: AgentPersonaRuntimePolicyInput, cause: unknown) => E,
-) =>
-  Effect.gen(function* () {
-    const library = yield* makeAgentPersonaLibrary;
-    const isCrewSeat = yield* makeCrewSeatLookup;
-    return (input: AgentPersonaRuntimePolicyInput) =>
-      resolveAgentPersonaRuntimePolicy(input, library).pipe(
-        Effect.flatMap((policy) =>
-          isCrewSeat(input.thread).pipe(
-            Effect.map((seat) => (seat ? withCrewSeatQuestions(policy) : policy)),
-          ),
+export const makeAgentPersonaRuntimePolicyResolver = Effect.fn(
+  "j5.agents.agentPersonaRuntime.makeAgentPersonaRuntimePolicyResolver",
+)(function* <E>(toError: (input: AgentPersonaRuntimePolicyInput, cause: unknown) => E) {
+  const library = yield* makeAgentPersonaLibrary;
+  const isCrewSeat = yield* makeCrewSeatLookup;
+  return (input: AgentPersonaRuntimePolicyInput) =>
+    resolveAgentPersonaRuntimePolicy(input, library).pipe(
+      Effect.flatMap((policy) =>
+        isCrewSeat(input.thread).pipe(
+          Effect.map((seat) => (seat ? withCrewSeatQuestions(policy) : policy)),
         ),
-        Effect.mapError((cause) => toError(input, cause)),
-      );
-  });
+      ),
+      Effect.mapError((cause) => toError(input, cause)),
+    );
+});

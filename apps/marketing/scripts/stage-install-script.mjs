@@ -1,9 +1,7 @@
-// The CLI installer lives in scripts/ at the repo root with the rest of the
-// release tooling; the site serves it at https://j5.codes/install.sh so the
-// documented command stays short. Copy it into public/ before every dev
-// server and build so the two never drift. The copy is gitignored. Fail
-// loudly if the source is missing (for example a Vercel build without files
-// outside the root directory), rather than deploying a dead URL.
+// The site serves the repo's scripts/install.sh at /install.sh, so it is copied
+// (gitignored) into public/ before every dev server and build. A missing source
+// (say, a Vercel build without files outside the root directory) fails loudly
+// rather than deploying a dead URL.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";

@@ -59,34 +59,32 @@ class NotTheFirstOwnerError extends Schema.TaggedError<NotTheFirstOwnerError>()(
   }
 }
 
-export const makeAccessRpcHandlers = (options: {
-  readonly people: PersonAccess["Service"];
-  readonly access: Access["Service"];
-  readonly session: SessionIdentity & { readonly scopes: ReadonlyArray<string> };
-}) =>
-  Effect.gen(function* () {
+export const makeAccessRpcHandlers = Effect.fn("j5.sharing.accessRpc.makeAccessRpcHandlers")(
+  function* (options: {
+    readonly people: PersonAccess["Service"];
+    readonly access: Access["Service"];
+    readonly session: SessionIdentity & { readonly scopes: ReadonlyArray<string> };
+  }) {
     const sql = yield* SqlClient.SqlClient;
     const { people, access, session } = options;
 
     // Shown to each Owner until they have seen it, for as long as one of the old links could
     // still have been sent around.
-    const retiredLinks = (personId: string) =>
-      Effect.gen(function* () {
-        const rows = yield* sql<{ readonly count: number; readonly created_at: string }>`
+    const retiredLinks = Effect.fn("j5.sharing.accessRpc.retiredLinks")(function* (
+      personId: string,
+    ) {
+      const rows = yield* sql<{ readonly count: number; readonly created_at: string }>`
         SELECT notice.count, notice.created_at FROM j5_a2a_sharing_notice AS notice
         WHERE notice.kind = 'links_retired' AND NOT EXISTS (
           SELECT 1 FROM j5_a2a_sharing_notice_seen AS seen
           WHERE seen.kind = notice.kind AND seen.person_id = ${personId}
         )
       `;
-        const row = rows[0];
-        if (row === undefined) return null;
-        const until = DateTime.addDuration(
-          DateTime.makeUnsafe(row.created_at),
-          RETIRED_LINKS_NOTICE,
-        );
-        return DateTime.isLessThan(yield* DateTime.now, until) ? row.count : null;
-      });
+      const row = rows[0];
+      if (row === undefined) return null;
+      const until = DateTime.addDuration(DateTime.makeUnsafe(row.created_at), RETIRED_LINKS_NOTICE);
+      return DateTime.isLessThan(yield* DateTime.now, until) ? row.count : null;
+    });
 
     const connectionAccess = Effect.gen(function* () {
       const reach = yield* people.sessionReach(session);
@@ -130,26 +128,27 @@ export const makeAccessRpcHandlers = (options: {
           }),
         ).pipe(Stream.catch((cause) => Stream.fromEffect(refused(cause)))),
 
-      [J5_ACCESS_WS_METHODS.listClaimablePeople]: () =>
-        Effect.gen(function* () {
-          const reach = yield* people.sessionReach(session);
-          // Asked only by a device that is no one's yet; anyone else is told no one.
-          if (reach.kind !== "unknown") return { people: [] };
-          const everyone = yield* people.listPeople;
-          return {
-            people: everyone.flatMap((record) =>
-              record.person.displayName === null
-                ? []
-                : [
-                    {
-                      personId: record.person.personId,
-                      name: record.person.displayName,
-                      levels: record.levels,
-                    },
-                  ],
-            ),
-          };
-        }).pipe(Effect.catch(refused)),
+      [J5_ACCESS_WS_METHODS.listClaimablePeople]: Effect.fn(
+        "j5.sharing.accessRpc.listClaimablePeople",
+      )(function* () {
+        const reach = yield* people.sessionReach(session);
+        // Asked only by a device that is no one's yet; anyone else is told no one.
+        if (reach.kind !== "unknown") return { people: [] };
+        const everyone = yield* people.listPeople;
+        return {
+          people: everyone.flatMap((record) =>
+            record.person.displayName === null
+              ? []
+              : [
+                  {
+                    personId: record.person.personId,
+                    name: record.person.displayName,
+                    levels: record.levels,
+                  },
+                ],
+          ),
+        };
+      }, Effect.catch(refused)),
 
       [J5_ACCESS_WS_METHODS.claimDevice]: (input: ClaimDeviceRequest) =>
         access
@@ -161,29 +160,33 @@ export const makeAccessRpcHandlers = (options: {
           )
           .pipe(Effect.as({}), Effect.catch(refused)),
 
-      [J5_ACCESS_WS_METHODS.setFirstOwnerName]: (input: FirstOwnerNameRequest) =>
-        Effect.gen(function* () {
+      [J5_ACCESS_WS_METHODS.setFirstOwnerName]: Effect.fn("j5.sharing.accessRpc.setFirstOwnerName")(
+        function* (input: FirstOwnerNameRequest) {
           const reach = yield* people.sessionReach(session);
           if (reach.kind !== "person" || !reach.person.firstOwner) {
             return yield* new NotTheFirstOwnerError({});
           }
           yield* access.rename({ personId: reach.person.personId, displayName: input.name });
           return {};
-        }).pipe(Effect.catch(refused)),
+        },
+        Effect.catch(refused),
+      ),
 
       [J5_ACCESS_WS_METHODS.leave]: (input: LeaveScopeRequest) =>
         access.leave(session, input.scope).pipe(Effect.as({}), Effect.catch(refused)),
 
-      [J5_ACCESS_WS_METHODS.markRetiredLinksSeen]: () =>
-        Effect.gen(function* () {
-          const reach = yield* people.sessionReach(session);
-          if (reach.kind !== "person") return {};
-          const seenAt = DateTime.formatIso(yield* DateTime.now);
-          yield* sql`
+      [J5_ACCESS_WS_METHODS.markRetiredLinksSeen]: Effect.fn(
+        "j5.sharing.accessRpc.markRetiredLinksSeen",
+      )(function* () {
+        const reach = yield* people.sessionReach(session);
+        if (reach.kind !== "person") return {};
+        const seenAt = DateTime.formatIso(yield* DateTime.now);
+        yield* sql`
             INSERT OR IGNORE INTO j5_a2a_sharing_notice_seen (kind, person_id, seen_at)
             VALUES ('links_retired', ${reach.person.personId}, ${seenAt})
           `;
-          return {};
-        }).pipe(Effect.catch(refused)),
+        return {};
+      }, Effect.catch(refused)),
     };
-  });
+  },
+);

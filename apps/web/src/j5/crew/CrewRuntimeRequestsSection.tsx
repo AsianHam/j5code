@@ -38,11 +38,10 @@ export function CrewRuntimeRequestsSection(props: {
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not answer the request.");
-    } finally {
-      notifyHumanInboxChanged(request.environmentId);
-      await refreshCrewRuntimeRequests(request.environmentId).catch(() => undefined);
-      setBusyKey(null);
     }
+    notifyHumanInboxChanged(request.environmentId);
+    await refreshCrewRuntimeRequests(request.environmentId).catch(() => undefined);
+    setBusyKey(null);
   };
 
   return (

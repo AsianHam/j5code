@@ -1,11 +1,8 @@
 /**
- * `j5 a2a` - the machine-sender CLI: send, list, whoami, participant create,
- * token issue. Scripts and watchdogs use it in place of an agent session. The
- * `peer` group is the operator's side of peering: credential, add, list, remove.
- *
- * Stable exit codes, kept in `A2A_EXIT_CODES`: 0 ok, 2 usage, 3 unauthenticated,
- * 4 recipient not found or ambiguous, 5 refused by policy, 6 server unreachable,
- * 1 anything else. Nothing here ever prompts: a missing input is a usage error.
+ * `j5 a2a`, the machine-sender CLI for scripts and watchdogs, plus the operator's `peer` group.
+ * Exit codes are stable (`A2A_EXIT_CODES`): 0 ok, 2 usage, 3 unauthenticated, 4 recipient not
+ * found or ambiguous, 5 refused by policy, 6 server unreachable, 1 anything else. Nothing here
+ * prompts: a missing input is a usage error.
  */
 import { AuthA2ASendScope, AuthStandardClientScopes } from "@t3tools/contracts";
 import {
@@ -124,7 +121,7 @@ const usage = (message: string) =>
   new A2ACliFailure({ exitCode: A2A_EXIT_CODES.usage, error: "usage", message });
 
 const requireFlag = <A>(value: Option.Option<A>, flag: string) =>
-  Option.isSome(value) ? Effect.succeed(value.value) : Effect.fail(usage(`${flag} is required.`));
+  Effect.fromOption(value).pipe(Effect.mapError(() => usage(`${flag} is required.`)));
 
 const resolveOrigin = Effect.fn("j5.a2a.cli.resolveOrigin")(function* (flags: ConnectionFlags) {
   const explicit = Option.orElse(flags.origin, () => Option.none<string>());
@@ -470,7 +467,7 @@ const whoamiCommand = Command.make("whoami", connectionFlags).pipe(
         const identity = yield* decodeReply(MachineWhoamiResponse, reply.body);
         return {
           json: { ...identity, origin },
-          text: `${identity.participant.participantId} in project ${identity.participant.projectTitle} (${identity.participant.projectId}) — server v${identity.server.version} at ${origin}`,
+          text: `${identity.participant.participantId} in project ${identity.participant.projectTitle} (${identity.participant.projectId}), server v${identity.server.version} at ${origin}`,
         } satisfies Outcome;
       }),
     ),
@@ -478,46 +475,48 @@ const whoamiCommand = Command.make("whoami", connectionFlags).pipe(
 );
 
 /** Runs against the local auth control plane, exactly like `j5 auth`; no server is needed. */
-const withLocalEnvironmentAuth = <A, E, R>(
+const withLocalEnvironmentAuth = Effect.fn("j5.a2a.cli.withLocalEnvironmentAuth")(function* <
+  A,
+  E,
+  R,
+>(
   flags: CliAuthLocationFlags,
   run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E, R>,
-) =>
-  Effect.gen(function* () {
-    const logLevel = yield* GlobalFlag.LogLevel;
-    const config = yield* resolveCliAuthConfig(flags, logLevel);
-    return yield* Effect.flatMap(EnvironmentAuth.EnvironmentAuth, run).pipe(
-      Effect.provide(
-        Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
-          Layer.provide(ServerConfig.layer(config)),
-          Layer.provide(Layer.succeed(References.MinimumLogLevel, "Error")),
-        ),
+) {
+  const logLevel = yield* GlobalFlag.LogLevel;
+  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  return yield* Effect.flatMap(EnvironmentAuth.EnvironmentAuth, run).pipe(
+    Effect.provide(
+      Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
+        Layer.provide(ServerConfig.layer(config)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, "Error")),
       ),
-    );
-  });
+    ),
+  );
+});
 
 /**
  * Runs `use` with an explicit token when one was given; otherwise, on the server
  * host, with a temporary local admin session that is revoked afterwards.
  */
-const withAdminToken = <A, E, R>(
+const withAdminToken = Effect.fn("j5.a2a.cli.withAdminToken")(function* <A, E, R>(
   flags: ConnectionFlags,
   label: string,
   use: (token: string) => Effect.Effect<A, E, R>,
-) =>
-  Effect.gen(function* () {
-    const explicitToken = yield* tryResolveToken(flags);
-    if (Option.isSome(explicitToken) && explicitToken.value.length > 0) {
-      return yield* use(explicitToken.value);
-    }
-    return yield* withLocalEnvironmentAuth(flags, (environmentAuth) =>
-      Effect.acquireUseRelease(
-        environmentAuth.issueSession({ scopes: AuthStandardClientScopes, label }),
-        (issued) => use(issued.token),
-        (issued) =>
-          environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-      ),
-    );
-  });
+) {
+  const explicitToken = yield* tryResolveToken(flags);
+  if (Option.isSome(explicitToken) && explicitToken.value.length > 0) {
+    return yield* use(explicitToken.value);
+  }
+  return yield* withLocalEnvironmentAuth(flags, (environmentAuth) =>
+    Effect.acquireUseRelease(
+      environmentAuth.issueSession({ scopes: AuthStandardClientScopes, label }),
+      (issued) => use(issued.token),
+      (issued) =>
+        environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
+    ),
+  );
+});
 
 const participantCreateCommand = Command.make("create", {
   ...connectionFlags,
@@ -542,25 +541,24 @@ const participantCreateCommand = Command.make("create", {
         const projectId = yield* requireFlag(flags.project, "--project");
         const name = yield* requireFlag(flags.name, "--name");
         const origin = yield* resolveOrigin(flags);
-        const register = (token: string) =>
-          Effect.gen(function* () {
-            const reply = yield* callServer({
-              origin,
-              token,
-              method: "POST",
-              path: J5_MACHINE_API_PATHS.machineParticipants,
-              body: { projectId, name },
-              timeoutMs: flags.timeoutMs,
-            });
-            if (reply.status !== 200 && reply.status !== 201) {
-              return yield* failureFromReply(reply, { conflictExitCode: A2A_EXIT_CODES.refused });
-            }
-            const registered = yield* decodeReply(RegisterMachineParticipantResponse, reply.body);
-            return {
-              json: { ...registered },
-              text: `${registered.created ? "Registered" : "Already registered"} ${registered.participant.participantId} in project ${registered.participant.projectTitle}. Next: j5 a2a token issue --participant ${registered.participant.name}`,
-            } satisfies Outcome;
+        const register = Effect.fn("j5.a2a.cli.register")(function* (token: string) {
+          const reply = yield* callServer({
+            origin,
+            token,
+            method: "POST",
+            path: J5_MACHINE_API_PATHS.machineParticipants,
+            body: { projectId, name },
+            timeoutMs: flags.timeoutMs,
           });
+          if (reply.status !== 200 && reply.status !== 201) {
+            return yield* failureFromReply(reply, { conflictExitCode: A2A_EXIT_CODES.refused });
+          }
+          const registered = yield* decodeReply(RegisterMachineParticipantResponse, reply.body);
+          return {
+            json: { ...registered },
+            text: `${registered.created ? "Registered" : "Already registered"} ${registered.participant.participantId} in project ${registered.participant.projectTitle}. Next: j5 a2a token issue --participant ${registered.participant.name}`,
+          } satisfies Outcome;
+        });
         return yield* withAdminToken(flags, "j5 a2a participant create", register);
       }),
     ),

@@ -15,21 +15,15 @@ interface EnvironmentReads {
   scopeReadState: ScopedThreadReadState;
 }
 
-/**
- * A per-thread read model keyed by scoped thread ref, filled by batched reads per environment.
- * Thread homes, Crew memberships, and spawned children all fit this shape: the sidebar asks for
- * the visible rows, each environment reads only what it is missing (or everything when forced),
- * and a read from a replaced connection or a removed environment is discarded. `replace` decides
- * how a batch of entries updates the map for the threads that were requested, so a read model
- * where absence is meaningful (a thread that left its Crew) can delete keys the batch did not
- * mention. A row a batch answered for is loaded whether or not it got a value, so a negative is
- * never re-read just because the requested set changed shape; only `refreshRows` and
- * `refreshRequested` re-read rows on purpose. A batch that changes nothing keeps the previous
- * map, so subscribers see the same snapshot and skip their render.
- */
 /** Every J5 per-thread read caps a request at 500 ids; batches stay well under it. */
 export const THREAD_READ_BATCH_SIZE = 200;
 
+/**
+ * A per-thread read model filled by batched reads per environment; a read from a replaced
+ * connection or removed environment is discarded. `replace` may delete keys a batch did not
+ * mention, where absence means something. An answered row counts as loaded even without a value,
+ * so only `refreshRows` and `refreshRequested` re-read it.
+ */
 export function createScopedThreadReadStore<Value, Entry>(options: {
   readonly load: (
     environmentId: EnvironmentId,
@@ -145,12 +139,9 @@ export function createScopedThreadReadStore<Value, Entry>(options: {
   };
 
   /**
-   * Re-read only these rows, and only where a caller asked for them: the caller names the
-   * rows some other read says are involved, so its cost follows that involvement rather than the
-   * length of the thread list. With `held`, every requested row that currently holds a value is
-   * re-read as well: a row whose relation ended (its Crew retired, its last child archived) is
-   * named by no live read any more, and only a re-read can clear what it still shows. The cost
-   * still follows involvement, since a row holds a value only while it was involved.
+   * Re-reads the rows another read says are involved, so the cost follows involvement, not the
+   * thread list. With `held`, requested rows that hold a value are re-read too: a row whose
+   * relation ended (Crew retired, last child archived) is named by no live read any more.
    */
   const refreshRows = (
     refs: ReadonlyArray<ScopedThreadRef>,

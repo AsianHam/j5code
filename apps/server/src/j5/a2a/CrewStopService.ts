@@ -11,7 +11,7 @@ import {
 import { AgentCrewInstanceService, type AgentCrewMember } from "./AgentCrewInstanceService.ts";
 import { A2AArchiveFacts } from "./ArchiveFactsService.ts";
 import type { ParticipantId, LedgerProjectId } from "./contracts.ts";
-import { stopThread } from "./stopThread.ts";
+import { AGENT_STOP_REASON, stopThread } from "./stopThread.ts";
 import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
 
 /** `never_created`: the seat's row was recorded but its thread never came to exist. */
@@ -71,11 +71,9 @@ export type CrewStopError = CrewStopNotFoundError | CrewStopRequestError | CrewS
 
 export interface CrewStopServiceShape {
   /**
-   * Stop every seat the way upstream's Stop does (`thread.stop`: the running turn is interrupted,
-   * its queue held, its delegated tasks stopped); nothing settles or archives, and the Crew stays
-   * live so any seat can be messaged again. Only the Captain or a
-   * person may stop a Crew: stopping is a controller's act, and a member owns nothing about its
-   * crewmates' turns (Bryant, 2026-09-14).
+   * Stop every seat the way upstream's Stop does (`thread.stop`); nothing settles or archives, and
+   * the Crew stays live so any seat can be messaged again. Only the Captain or a person may stop a
+   * Crew: stopping is a controller's act, and a member owns nothing about its crewmates' turns.
    */
   readonly stop: (input: StopCrewInput) => Effect.Effect<StopCrewOutcome, CrewStopError>;
 }
@@ -116,8 +114,8 @@ export const layer = Layer.effect(
     });
 
     // Under the Crew's unit lock, like archive, so a seat mid-spawn is never read as missing.
-    const stop: CrewStopServiceShape["stop"] = (input) =>
-      Effect.gen(function* () {
+    const stop: CrewStopServiceShape["stop"] = Effect.fn("j5.a2a.crewStop.stop")(
+      function* (input) {
         const instance = yield* crews
           .read(input.crewInstanceId)
           .pipe(
@@ -167,6 +165,8 @@ export const layer = Layer.effect(
               yield* stopThread(threads, {
                 commandId: input.commandIds(member.seatName).interruptCommandId,
                 threadId: member.threadId,
+                // A person's stop keeps upstream's "Stopped by user".
+                ...(input.callerParticipantId === null ? {} : { reason: AGENT_STOP_REASON }),
               }).pipe(
                 Effect.mapError(
                   (cause) =>
@@ -189,7 +189,9 @@ export const layer = Layer.effect(
           { concurrency: 1 },
         );
         return { crewInstanceId: instance.id, members };
-      }).pipe((unit) => crews.serialize(input.crewInstanceId, unit));
+      },
+      (unit, input) => crews.serialize(input.crewInstanceId, unit),
+    );
 
     return CrewStopService.of({ stop });
   }),

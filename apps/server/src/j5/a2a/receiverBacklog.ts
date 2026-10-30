@@ -43,15 +43,10 @@ export type ReceiverBacklog =
 const decodeParticipant = Schema.decodeUnknownEffect(Schema.fromJsonString(Participant));
 
 /**
- * What a just-sent message is waiting behind: the receiver's running turn and the
- * A2A messages after it, both those already queued as runs and those the delivery
- * worker has not handed over yet; or a held queue or usage limit, which only a resume
- * or a continue lifts (D4). Undefined when the message will not wait: the receiver is
- * idle and takes it now, takes it mid-turn (Claude or a GPT 6 model, or a steer or restart), is
- * not an agent on this server, or the message has already run or will never run.
- * Measured when called and never stored, so it is advice to the sender, not a delivery
- * fact. A failed read is logged and reads as undefined: the message is already
- * committed, and the send must not fail over advice.
+ * What a just-sent message waits behind: the receiver's running turn and the A2A messages queued or
+ * not yet handed over after it, or a held queue or usage limit (D4). Undefined when it will not
+ * wait (idle receiver, mid-turn delivery, not a local agent, already run or never will). Advice
+ * measured on call, never stored, so a failed read logs and reads as undefined.
  */
 export const readReceiverBacklog = Effect.fn("j5.a2a.readReceiverBacklog")(
   function* (input: {

@@ -72,7 +72,7 @@ const projects = Layer.mock(ProjectStore.ProjectStoreV2)({
   get: () => Effect.succeedNone,
 });
 const providerInstances = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
-  getInstance: () => Effect.succeed(undefined),
+  getInstance: () => Effect.undefined,
   listInstances: Effect.succeed([]),
   listUnavailable: Effect.succeed([]),
   streamChanges: Stream.empty,

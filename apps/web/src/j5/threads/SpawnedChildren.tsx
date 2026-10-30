@@ -5,8 +5,6 @@ import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
 import {
-  useCallback,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -22,7 +20,7 @@ import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../..
 import { useThreadShells } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { formatElapsedDurationLabel } from "../../timestampFormat";
+import { RelativeAge } from "../RelativeAge";
 import { stopCrew } from "../crew/crewStopClient";
 import { j5Environment } from "../state";
 import { useSpawnedChildren, type SpawnedChild } from "./SpawnedChildrenClient";
@@ -68,11 +66,9 @@ export interface SpawnedChildActions {
 }
 
 /**
- * SB5 refinement: agent-spawned Peer Agents stay out of the flat list, but the row that spawned
- * them (a Captain or any spawner) can expand into its placed children so the work is one click
- * away. Each Crew the row commands is its own named, collapsible group, and the solo peers it
- * spawned form one more; collapsed by default, with a measured "needs a human" fact on any child
- * shown on the collapsed header.
+ * SB5: agent-spawned Peer Agents stay out of the flat list, but their spawner's row expands into
+ * them. Each Crew the row commands is its own collapsible group and its solo peers form one more;
+ * collapsed by default, with any child's "needs a human" fact shown on the collapsed header.
  */
 export function SpawnedChildren(
   props: SpawnedChildActions & { readonly thread: EnvironmentThreadShell },
@@ -95,41 +91,27 @@ function SpawnedChildrenRows(
   const threads = useThreadShells();
   const expandedSet = useSyncExternalStore(subscribeExpansion, getExpansion, getExpansion);
   const navigate = useNavigate();
-  // Children are placed on the parent's environment; the same local id elsewhere is unrelated.
-  const threadsById = useMemo(
-    () =>
-      new Map(
-        threads
-          .filter((thread) => thread.environmentId === props.thread.environmentId)
-          .map((thread) => [thread.id as string, thread]),
-      ),
-    [props.thread.environmentId, threads],
-  );
-  const rows = useMemo(
-    () => selectSpawnedChildRows(children, threadsById),
-    [children, threadsById],
-  );
-  const open = useCallback(
-    (child: EnvironmentThreadShell) => {
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(child.environmentId, child.id)),
-      });
-    },
-    [navigate],
-  );
-  const groups = useMemo(() => groupSpawnedChildren(rows), [rows]);
   // Seat rows show their provider the way the parent card does; entries are the parent's
   // environment's, since a child is placed where its parent runs.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const providerEntries = useMemo(
-    () =>
-      new Map(
-        deriveProviderInstanceEntries(
-          serverConfigs.get(props.thread.environmentId)?.providers ?? [],
-        ).map((entry) => [entry.instanceId as string, entry] as const),
-      ),
-    [props.thread.environmentId, serverConfigs],
+  // Children are placed on the parent's environment; the same local id elsewhere is unrelated.
+  const threadsById = new Map(
+    threads
+      .filter((thread) => thread.environmentId === props.thread.environmentId)
+      .map((thread) => [thread.id as string, thread]),
+  );
+  const rows = selectSpawnedChildRows(children, threadsById);
+  const open = (child: EnvironmentThreadShell) => {
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(scopeThreadRef(child.environmentId, child.id)),
+    });
+  };
+  const groups = groupSpawnedChildren(rows);
+  const providerEntries = new Map(
+    deriveProviderInstanceEntries(
+      serverConfigs.get(props.thread.environmentId)?.providers ?? [],
+    ).map((entry) => [entry.instanceId as string, entry] as const),
   );
   if (groups.length === 0) return null;
   return (
@@ -246,7 +228,6 @@ function SpawnedChildGroupRows(
                 </li>
               );
             const status = resolveThreadStatusPill({ thread });
-            const elapsed = formatElapsedDurationLabel(thread.updatedAt);
             const providerEntry =
               props.providerEntries.get(
                 thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId,
@@ -273,11 +254,9 @@ function SpawnedChildGroupRows(
                   ) : (
                     <span className="truncate text-foreground">{thread.title}</span>
                   )}
-                  {elapsed ? (
-                    <span className="ms-auto shrink-0 text-2xs text-muted-foreground tabular-nums">
-                      {elapsed}
-                    </span>
-                  ) : null}
+                  <span className="ms-auto shrink-0 text-2xs text-muted-foreground tabular-nums">
+                    <RelativeAge timestamp={thread.updatedAt} fallback="" />
+                  </span>
                 </span>
                 <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
                   {status === null ? (

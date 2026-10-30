@@ -39,12 +39,10 @@ import {
 import type { PairingIntentError } from "./PairingIntents.ts";
 
 /**
- * People and their levels, as an Owner manages them from the People page and the Share dialog,
- * and as anyone who reaches a thread or project sees who else does
- * (docs/j5/product/features/people-and-access.md). Each change goes through `Access`, which
- * renews the person's devices when it must and runs its write hook. The transports over this
- * check who may call which: every change needs upstream's Manage access, which only an Owner's
- * devices hold. No agent tool reaches this service: an agent cannot share (AC34).
+ * People and their levels, for the People page and Share dialog, and who else reaches a thread or
+ * project. Changes go through `Access`, which renews devices and runs its write hook; transports
+ * require upstream's Manage access, which only an Owner's devices hold. No agent tool reaches
+ * this: an agent cannot share (AC34).
  */
 
 export class ScopeNotSharedError extends Schema.TaggedError<ScopeNotSharedError>()(
@@ -217,13 +215,12 @@ export const layer: Layer.Layer<
         const askerId = reach.kind === "person" ? reach.person.personId : null;
         const everyone = yield* people.scopePeople(scope);
         const titles = new Map<string, string | null>();
-        const title = (held: PersonScope) =>
-          Effect.gen(function* () {
-            const columns = scopeColumns(held);
-            const key = `${columns.kind}:${columns.id}`;
-            if (!titles.has(key)) titles.set(key, yield* titleOf(held));
-            return titles.get(key) ?? null;
-          });
+        const title = Effect.fn("j5.sharing.people.title")(function* (held: PersonScope) {
+          const columns = scopeColumns(held);
+          const key = `${columns.kind}:${columns.id}`;
+          if (!titles.has(key)) titles.set(key, yield* titleOf(held));
+          return titles.get(key) ?? null;
+        });
         return {
           people: yield* Effect.forEach(everyone, (entry) =>
             Effect.gen(function* () {

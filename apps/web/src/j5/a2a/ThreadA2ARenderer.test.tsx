@@ -1,19 +1,18 @@
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { MessageId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
+import { presentJ5UserMessage } from "@t3tools/client-runtime/j5/user-message";
+
+import { resolveUserMessageContext } from "~/lib/composerContextRecords";
 import type { ChatMessage } from "~/types";
 import {
-  formatTimeSinceSent,
-  J5_A2A_DELIVERY_MESSAGE_PREFIX,
   formatThreadA2AQueuedDelivery,
-  isThreadA2ADeliveryMessage,
+  J5_A2A_DELIVERY_MESSAGE_PREFIX,
+  literalUserMessageContext,
   participantIdsForThreadA2ADelivery,
   participantIdsForThreadA2AEnvelope,
-  presentInboxReplyAttribution,
-  presentThreadA2ADelivery,
   renderThreadA2ADelivery,
-  ThreadA2ADeliveryRenderer,
 } from "./ThreadA2ARenderer";
 
 const CREATED_AT = "2026-08-29T12:00:00.000Z";
@@ -35,14 +34,6 @@ function message(input: Partial<ChatMessage> = {}): ChatMessage {
   };
 }
 
-const peerRaw = [
-  "[Cross-agent message from agent:delivery-sender in project project-alpha (Alpha)]",
-  "",
-  "Please verify the worker.",
-  "",
-  'Reply once with j5_send_message(to="agent:delivery-sender", exchange_id="exchange:one", message="...") to close the exchange. Follow-ups from the asker carrying this id join the same exchange.',
-].join("\n");
-
 const peerPlainRaw = [
   "[Cross-agent message from agent:delivery-sender in project project-alpha (Alpha)]",
   "",
@@ -51,33 +42,12 @@ const peerPlainRaw = [
   "The sender did not request a reply to this message. Use j5_send_message without exchange_id only if a new message is needed.",
 ].join("\n");
 
-const closedInstruction =
-  "The platform closed this exchange when this reply was sent. No further reply is required.";
-
-const peerClosedRaw = [
-  "[Cross-agent message from agent:delivery-sender in project project-alpha (Alpha)]",
-  "",
-  "Peer reply delivered verbatim.",
-  "",
-  closedInstruction,
-].join("\n");
-
-const humanRaw = [
-  "[Message from human:viewer]",
-  "",
-  "Please prioritize the alert.",
-  "",
-  "This person is not watching this chat. They see only what you send back on this exchange.",
-  "",
-  'Reply once with j5_send_message(to="human:viewer", exchange_id="exchange:human", message="...") to close the exchange. Follow-ups from the asker carrying this id join the same exchange.',
-].join("\n");
-
 const humanClosedRaw = [
   "[Message from human:viewer]",
   "",
   "Human reply delivered verbatim.",
   "",
-  closedInstruction,
+  "The platform closed this exchange when this reply was sent. No further reply is required.",
 ].join("\n");
 
 const silenceRaw = [
@@ -88,747 +58,132 @@ const silenceRaw = [
   "This is a platform-authored delivery signal, not a peer reply.",
 ].join("\n");
 
-describe("ThreadA2ADeliveryRenderer", () => {
-  it("renders the peer exchange badge inline beside the sender without protocol metadata", () => {
-    const source = message({ text: peerRaw });
-    const parsed = presentThreadA2ADelivery({
-      message: source,
-      participantLabels: new Map([["agent:delivery-sender", "Alice"]]),
-    });
-    const markup = renderToStaticMarkup(
-      <ThreadA2ADeliveryRenderer
-        message={source}
-        participantLabels={new Map([["agent:delivery-sender", "Alice"]])}
-        now={Date.parse(CREATED_AT) + 5 * 60_000}
-      />,
-    );
-
-    expect(parsed).toMatchObject({
-      kind: "peer",
-      senderId: "agent:delivery-sender",
-      senderLabel: "Alice",
-      body: "Please verify the worker.",
-      exchange: "expects-reply",
-      exchangeId: "exchange:one",
-      rawEnvelope: peerRaw,
-    });
-    expect(markup).toContain('data-j5-a2a-renderer="peer"');
-    expect(markup).toContain("From");
-    expect(markup).toContain("Alice");
-    expect(markup).toContain("Expects reply");
-    expect(markup).toContain(">5m<");
-    expect(markup).toContain('dateTime="2026-08-29T12:00:00.000Z"');
-    expect(markup).toContain("max-h-10");
-    expect(markup).not.toContain("project-alpha");
-    expect(markup).not.toContain("exchange:one");
-    expect(markup).not.toContain("Show raw envelope");
-    expect(parsed?.rawEnvelope).toBe(peerRaw);
-  });
-
-  it("falls back to an explicitly unnamed participant before the identity read supplies a label", () => {
-    const parsed = presentThreadA2ADelivery({ message: message({ text: peerRaw }) });
-    expect(parsed).toMatchObject({ kind: "peer", senderLabel: "Unnamed participant" });
-    expect(parsed).toMatchObject({ senderTooltipParticipantId: "agent:delivery-sender" });
-    expect(
-      renderToStaticMarkup(<ThreadA2ADeliveryRenderer message={message({ text: peerRaw })} />),
-    ).not.toContain("agent:delivery-sender");
-  });
-
-  it("places the sender's thread where the identity read put it", () => {
-    const senderThread = {
-      environmentId: EnvironmentId.make("environment:peer"),
-      threadId: ThreadId.make("thread:sender"),
-    };
-    const present = (participantThreads?: ReadonlyMap<string, typeof senderThread>) =>
-      presentThreadA2ADelivery({ message: message({ text: peerRaw }), participantThreads });
-
-    expect(present(new Map([["agent:delivery-sender", senderThread]]))).toMatchObject({
-      senderThreadRef: senderThread,
-    });
-    // A sender with no thread (or before the read answers) has nothing to open.
-    expect(present(new Map())).toMatchObject({ senderThreadRef: null });
-    expect(present()).toMatchObject({ senderThreadRef: null });
-  });
-
-  it("formats queued peer deliveries with the timeline identity formatter", () => {
-    expect(
-      formatThreadA2AQueuedDelivery(peerPlainRaw, new Map([["agent:delivery-sender", "Alice"]])),
-    ).toEqual({ label: "From Alice — Nothing further is needed.", tooltipParticipantId: null });
-    expect(formatThreadA2AQueuedDelivery(peerPlainRaw, new Map())).toEqual({
-      label: "From Unnamed participant — Nothing further is needed.",
-      tooltipParticipantId: "agent:delivery-sender",
-    });
-  });
-
-  it("renders no chip for a one-shot delivery whose role is not a measured reply", () => {
-    const markup = renderToStaticMarkup(
-      <ThreadA2ADeliveryRenderer message={message({ text: peerPlainRaw })} />,
-    );
-
-    expect(markup).not.toContain("Reply");
-    expect(markup).not.toContain("plain");
-    expect(markup).not.toContain("closed");
-  });
-
-  it("renders peer and human bodies as markdown", () => {
-    const markdownBody = "**Terms.**\n\n- Scopes: Server, Project, Thread.";
-    const peerMarkup = renderToStaticMarkup(
-      <ThreadA2ADeliveryRenderer
-        message={message({
-          text: peerPlainRaw.replace("Nothing further is needed.", markdownBody),
-        })}
-      />,
-    );
-    const humanMarkup = renderToStaticMarkup(
-      <ThreadA2ADeliveryRenderer
-        message={message({
-          id: deliveryId("human-markdown"),
-          createdBy: "user",
-          text: humanRaw.replace("Please prioritize the alert.", markdownBody),
-        })}
-      />,
-    );
-
-    for (const markup of [peerMarkup, humanMarkup]) {
-      expect(markup).toContain("<strong>Terms.</strong>");
-      expect(markup).toContain("<li>Scopes: Server, Project, Thread.</li>");
-      expect(markup).not.toContain("**Terms.**");
-    }
-  });
-
-  it("renders the exact v13 peer reply as a closed exchange without reply instructions", () => {
-    const source = message({ id: deliveryId("peer-closed"), text: peerClosedRaw });
-    const presentation = presentThreadA2ADelivery({ message: source });
-    const markup = renderToStaticMarkup(<ThreadA2ADeliveryRenderer message={source} />);
-
-    expect(presentation).toMatchObject({
-      kind: "peer",
-      body: "Peer reply delivered verbatim.",
-      exchange: "closed",
-      exchangeId: null,
-    });
-    expect(markup).toContain("Closed your exchange");
-    expect(markup).not.toContain("Expects reply");
-    expect(markup).not.toContain(closedInstruction);
-    expect(markup).not.toContain("send_message");
-    expect(markup).not.toContain("Show raw envelope");
-  });
-
-  it("reads the name of an inbox reply that carries one, without the level the agent is told", () => {
-    for (const [header, label] of [
-      ["[Message from Jackson (human:viewer)]", "Jackson"],
-      ["[Message from Priya (collaborator) (human:viewer)]", "Priya"],
-      // A name with spaces and parentheses of its own.
-      ["[Message from Ada (she/her) Lovelace (owner) (human:viewer)]", "Ada (she/her) Lovelace"],
-    ] as const) {
-      const source = message({
-        id: deliveryId(`human-named-${label}`),
-        createdBy: "user",
-        text: humanClosedRaw.replace("[Message from human:viewer]", header),
-      });
-      expect(presentThreadA2ADelivery({ message: source })).toMatchObject({
-        kind: "human",
-        senderId: "human:viewer",
-        senderLabel: label,
-        exchange: "closed",
-      });
-    }
-  });
-
-  it("reads a named reply in the exact form the server writes it", () => {
-    // `humanNamedClosedMessage` in the server's `j5/a2a/envelopes.v1.json`:
-    // "[Message from {{senderLabel}} ({{senderId}})]\n\n{{message}}\n\n{{closedExchangeInstruction}}",
-    // with the label "Priya (collaborator)" in a shared conversation.
-    const closedInstruction = humanClosedRaw.slice(humanClosedRaw.lastIndexOf("\n\n") + 2);
-    const text = `[Message from Priya (collaborator) (human:viewer)]\n\nCall Acme first.\n\n${closedInstruction}`;
-    expect(
-      presentThreadA2ADelivery({
-        message: message({ id: deliveryId("human-server-form"), createdBy: "user", text }),
-      }),
-    ).toMatchObject({
-      kind: "human",
-      senderId: "human:viewer",
-      senderLabel: "Priya",
-      body: "Call Acme first.",
-      exchange: "closed",
-    });
-  });
-
-  it("keeps a reply that carries only the id as it was", () => {
-    const source = message({ id: deliveryId("human-id"), createdBy: "user", text: humanClosedRaw });
-    expect(presentThreadA2ADelivery({ message: source })).toMatchObject({
-      senderId: "human:viewer",
-      senderLabel: null,
-    });
-  });
-
-  it("says You to the person who answered and names them to anyone else", () => {
-    const labels = new Map([["human:viewer", "Priya Today"]]);
-    const attribution = (senderLabel: string | null, viewerParticipantId: string | null) =>
-      presentInboxReplyAttribution({
-        senderId: "human:viewer",
-        senderLabel,
-        viewerParticipantId,
-        participantLabels: labels,
-      });
-
-    expect(attribution("Priya", "human:viewer")).toEqual({
-      label: "You · via Inbox",
-      tooltipParticipantId: null,
-    });
-    // The name the reply came with stands, even after a rename.
-    expect(attribution("Priya", "human:other").label).toBe("Via Inbox · Priya");
-    expect(attribution("Priya", null).label).toBe("Via Inbox · Priya");
-    expect(attribution(null, "human:other").label).toBe("Via Inbox · Priya Today");
-    expect(
-      presentInboxReplyAttribution({
-        senderId: "human:viewer",
-        senderLabel: null,
-        viewerParticipantId: null,
-        participantLabels: new Map(),
-      }),
-    ).toEqual({
-      label: "Via Inbox · Unnamed participant",
-      tooltipParticipantId: "human:viewer",
-    });
-  });
-
-  it("asks the identity read for a person only when their reply carries no name", () => {
-    const closedInstruction = humanClosedRaw.slice(humanClosedRaw.lastIndexOf("\n\n") + 2);
-    const named = `[Message from Priya (human:viewer)]\n\nCall Acme first.\n\n${closedInstruction}`;
-    expect(
-      participantIdsForThreadA2ADelivery(
-        message({ id: deliveryId("human-named"), createdBy: "user", text: named }),
-      ),
-    ).toEqual([]);
-    expect(
-      participantIdsForThreadA2ADelivery(
-        message({ id: deliveryId("human-id-only"), createdBy: "user", text: humanClosedRaw }),
-      ),
-    ).toEqual(["human:viewer"]);
-  });
-
-  it("renders the exact v13 human reply as a closed exchange without reply instructions", () => {
-    const source = message({
-      id: deliveryId("human-closed"),
-      createdBy: "user",
-      text: humanClosedRaw,
-    });
-    const presentation = presentThreadA2ADelivery({ message: source });
-    const markup = renderToStaticMarkup(<ThreadA2ADeliveryRenderer message={source} />);
-
-    expect(presentation).toMatchObject({
-      kind: "human",
-      senderId: "human:viewer",
-      body: "Human reply delivered verbatim.",
-      exchange: "closed",
-    });
-    expect(markup).toContain("Closed your exchange");
-    expect(markup).not.toContain("Expects reply");
-    expect(markup).not.toContain(closedInstruction);
-    expect(markup).not.toContain("send_message");
-    expect(markup).not.toContain("Show raw envelope");
-  });
-
-  it.each([
-    [
-      "peer",
-      message({
-        id: deliveryId("peer-future-closed"),
-        text: peerClosedRaw.replace("No further reply is required.", "This exchange is complete."),
-      }),
-    ],
-    [
-      "human",
-      message({
-        id: deliveryId("human-future-closed"),
-        createdBy: "user",
-        text: humanClosedRaw.replace("No further reply is required.", "This exchange is complete."),
-      }),
-    ],
-  ] as const)("raw-renders a future %s closed instruction instead of guessing", (_kind, source) => {
-    const presentation = presentThreadA2ADelivery({ message: source });
-    const markup = renderToStaticMarkup(<ThreadA2ADeliveryRenderer message={source} />);
-
-    expect(presentation).toEqual({ kind: "raw", rawEnvelope: source.text });
-    expect(markup).toContain('data-j5-a2a-renderer="raw"');
-    expect(markup).toContain("Show raw envelope");
-  });
-
-  it("raw-renders the older v6 human template instead of treating it as #11", () => {
-    const raw = [
-      "[Message from the human]",
-      "",
-      "Legacy human delivery.",
-      "",
-      "The human is not watching this chat. They see only what you send back on this exchange.",
-      "",
-      "No reply is required. Use send_message without exchange_id only if a new message is needed.",
-    ].join("\n");
-
-    expect(
-      presentThreadA2ADelivery({
-        message: message({ id: deliveryId("human-v6"), createdBy: "user", text: raw }),
-      }),
-    ).toEqual({ kind: "raw", rawEnvelope: raw });
-  });
-
-  it("renders a silence notice as a muted platform line without a raw expander", () => {
-    const source = message({ id: deliveryId("silence"), createdBy: "system", text: silenceRaw });
-    const markup = renderToStaticMarkup(
-      <ThreadA2ADeliveryRenderer message={source} timestampLabel={TIMESTAMP_LABEL} />,
-    );
-
-    expect(markup).toContain('data-j5-a2a-renderer="silence"');
-    expect(markup).toContain("agent:counterpart");
-    expect(markup).toContain("turn ended without replying");
-    expect(markup).toContain(TIMESTAMP_LABEL);
-    expect(markup).not.toContain("Show raw envelope");
-    expect(presentThreadA2ADelivery({ message: source })).toMatchObject({
-      kind: "silence",
-      summary: "agent:counterpart's turn ended without replying",
-      rawEnvelope: silenceRaw,
-    });
-    const summary = markup.match(/<span data-j5-a2a-silence-summary="true">(.*?)<\/span>/)?.[1];
-    expect(summary).toBeDefined();
-    expect(summary).not.toContain("turn-ended-no-reply");
-    expect(summary).not.toContain(CREATED_AT);
-  });
-
-  it.each([
-    ["peer", message({ text: peerRaw })],
-    ["peer closed", message({ id: deliveryId("peer-closed-parsed"), text: peerClosedRaw })],
-    ["human", message({ id: deliveryId("human-parsed"), createdBy: "user", text: humanRaw })],
-    [
-      "human closed",
-      message({ id: deliveryId("human-closed-parsed"), createdBy: "user", text: humanClosedRaw }),
-    ],
-    [
-      "silence",
-      message({ id: deliveryId("silence-parsed"), createdBy: "system", text: silenceRaw }),
-    ],
-  ] as const)("keeps parsed %s cards free of raw-envelope expanders", (_kind, source) => {
-    const markup = renderToStaticMarkup(<ThreadA2ADeliveryRenderer message={source} />);
-
-    expect(presentThreadA2ADelivery({ message: source })?.kind).not.toBe("raw");
-    expect(markup).not.toContain("Show raw envelope");
-  });
-
-  it.each([
-    [
-      "errored",
-      "agent:counterpart errored without replying on exchange:one: socket closed",
-      "agent:counterpart errored without replying",
-    ],
-    [
-      "stopped/cancelled",
-      "agent:counterpart was interrupted without replying on exchange:one. The participant was interrupted.",
-      "agent:counterpart was interrupted without replying",
-    ],
-    [
-      "stopped/cancelled",
-      "agent:counterpart was cancelled without replying on exchange:one. The participant was cancelled.",
-      "agent:counterpart was cancelled without replying",
-    ],
-    [
-      "stopped/cancelled",
-      "agent:counterpart was rolled_back without replying on exchange:one. The participant was rolled back.",
-      "agent:counterpart was rolled_back without replying",
-    ],
-    [
-      "queued-message-removed",
-      "Your message to agent:counterpart was removed from its queue before it ran, so agent:counterpart never read it. Send it again if it still matters. The message began: Review part 2.\nSecond line.",
-      "agent:counterpart never read a queued message: it was removed before it ran",
-    ],
-    [
-      "awaiting-human",
-      "agent:counterpart is awaiting the human on exchange:human (awaiting-human).",
-      "agent:counterpart is awaiting the human",
-    ],
-    [
-      "blocked-on-peer",
-      "agent:counterpart is blocked on agent:peer via exchange:peer.",
-      "agent:counterpart is blocked on agent:peer",
-    ],
-  ])("maps known %s detector text to a truthful human summary", (noticeType, body, summary) => {
-    const raw = [
-      `[Cross-agent messaging system notice: ${noticeType}]`,
-      "",
-      body,
-      "",
-      "This is a platform-authored delivery signal, not a peer reply.",
-    ].join("\n");
-
-    expect(
-      presentThreadA2ADelivery({
-        message: message({
-          id: deliveryId(`silence-${noticeType}`),
-          createdBy: "system",
-          text: raw,
-        }),
-      }),
-    ).toMatchObject({ kind: "silence", summary, rawEnvelope: raw });
-  });
-
-  it("raw-renders an unrecognized silence body rather than guessing its counterpart", () => {
-    const raw = [
-      "[Cross-agent messaging system notice: turn-ended-no-reply]",
-      "",
-      "Future detector wording without a structural counterpart.",
-      "",
-      "This is a platform-authored delivery signal, not a peer reply.",
-    ].join("\n");
-    const source = message({ id: deliveryId("silence-future"), createdBy: "system", text: raw });
-    const markup = renderToStaticMarkup(<ThreadA2ADeliveryRenderer message={source} />);
-
-    expect(presentThreadA2ADelivery({ message: source })).toEqual({
-      kind: "raw",
-      rawEnvelope: raw,
-    });
-    expect(markup).toContain(raw);
-    expect(markup).toMatch(/<details[^>]*\bopen(?:=|\s|>)/);
-  });
-
-  it("raw-renders a stopped/cancelled body outside the production lifecycle forms", () => {
-    const raw = [
-      "[Cross-agent messaging system notice: stopped/cancelled]",
-      "",
-      "agent:counterpart was stopped without replying on exchange:one. The participant was stopped.",
-      "",
-      "This is a platform-authored delivery signal, not a peer reply.",
-    ].join("\n");
-    const source = message({
-      id: deliveryId("silence-stopped-mismatch"),
-      createdBy: "system",
-      text: raw,
-    });
-
-    expect(presentThreadA2ADelivery({ message: source })).toEqual({
-      kind: "raw",
-      rawEnvelope: raw,
-    });
-  });
-
-  it("raw-renders an unknown silence type instead of exposing its slug", () => {
-    const raw = [
-      "[Cross-agent messaging system notice: future-detector-v7]",
-      "",
-      "agent:counterpart's turn ended without replying on exchange:one. The latest delivered message was processed.",
-      "",
-      "This is a platform-authored delivery signal, not a peer reply.",
-    ].join("\n");
-    const source = message({
-      id: deliveryId("silence-type-future"),
-      createdBy: "system",
-      text: raw,
-    });
-
-    expect(presentThreadA2ADelivery({ message: source })).toEqual({
-      kind: "raw",
-      rawEnvelope: raw,
-    });
-  });
-
-  it("raw-renders a future or malformed delivery instead of hiding it", () => {
-    const raw =
-      "[Cross-agent message from agent:delivery-sender in project project-alpha (Alpha)]\n\nFuture envelope v7";
-    const source = message({ text: raw });
-    const presentation = presentThreadA2ADelivery({ message: source });
-    const markup = renderToStaticMarkup(<ThreadA2ADeliveryRenderer message={source} />);
-
-    expect(presentation).toEqual({ kind: "raw", rawEnvelope: raw });
-    expect(markup).toContain('data-j5-a2a-renderer="raw"');
-    expect(markup).toContain(raw);
-    expect(markup).toContain("Show raw envelope");
-    expect(markup).toMatch(/<details[^>]*\bopen(?:=|\s|>)/);
-  });
-
-  it("uses only user role and the exact delivery prefix as its composition gate", () => {
-    const { createdBy: _discardedCreator, ...unknownCreator } = message({
-      creationSource: "provider",
-    });
-    expect(isThreadA2ADeliveryMessage(unknownCreator)).toBe(true);
-    expect(presentThreadA2ADelivery({ message: unknownCreator })).toEqual({
-      kind: "raw",
-      rawEnvelope: "",
-    });
-    expect(isThreadA2ADeliveryMessage(message({ role: "assistant" }))).toBe(false);
-    expect(isThreadA2ADeliveryMessage(message({ id: MessageId.make("message:ordinary") }))).toBe(
-      false,
-    );
-  });
-
-  it.each([
-    "message:mcp:provider-session:thread-send:delivery",
-    "message:delegated-task:parent:child",
-    "scheduled-task-message:task:run",
-  ])("returns null so generic rendering owns non-A2A %s messages", (id) => {
-    const nativeMcpMessage = message({
-      id: MessageId.make(id),
-      createdBy: "agent",
-      creationSource: "mcp",
-      text: peerRaw,
-    });
-    const delegated = renderThreadA2ADelivery({ message: nativeMcpMessage });
-    const markup = renderToStaticMarkup(
-      delegated ?? <p data-generic-user-row="true">generic user row</p>,
-    );
-
-    expect(isThreadA2ADeliveryMessage(nativeMcpMessage)).toBe(false);
-    expect(delegated).toBeNull();
-    expect(markup).toContain('data-generic-user-row="true"');
-    expect(markup).not.toContain("data-j5-a2a-renderer");
-  });
-
-  it("formats sent time from the delivery record at a supplied clock instant", () => {
-    const sentAt = "2026-08-29T12:00:00.000Z";
-    expect(formatTimeSinceSent(sentAt, Date.parse(sentAt) + 59_000)).toBe("just now");
-    expect(formatTimeSinceSent(sentAt, Date.parse(sentAt) + 5 * 60_000)).toBe("5m");
-    expect(formatTimeSinceSent(sentAt, Date.parse(sentAt) + 3 * 60 * 60_000)).toBe("3h");
-    expect(formatTimeSinceSent(sentAt, Date.parse(sentAt) + 2 * 24 * 60 * 60_000)).toBe("2d");
-  });
-});
-
-const machineInstruction =
-  "This message came from an automated sender outside any agent session. It cannot receive a reply; act on it directly, and take any question to a person or a peer agent with j5_send_message.";
-
 const machineRaw = [
   "[Message from automation machine:watchdog in project project-monitoring (Monitoring)]",
   "",
   "canary 42",
   "",
-  machineInstruction,
+  "This message came from an automated sender outside any agent session. It cannot receive a reply; act on it directly, and take any question to a person or a peer agent with j5_send_message.",
 ].join("\n");
 
-describe("ThreadA2ADeliveryRenderer machine senders", () => {
-  it("presents a machine envelope as an automated plain card named after the sender", () => {
-    const presentation = presentThreadA2ADelivery({
-      message: message({ text: machineRaw }),
-      participantLabels: new Map([["machine:watchdog", "watchdog"]]),
-    });
-    expect(presentation).toEqual({
-      kind: "peer",
-      rawEnvelope: machineRaw,
-      senderId: "machine:watchdog",
-      senderLabel: "watchdog",
-      senderTooltipParticipantId: null,
-      senderThreadRef: null,
-      body: "canary 42",
-      exchange: "plain",
-      exchangeId: null,
-      automated: true,
-      outsideAgent: false,
-    });
+const outsideAgentRaw = [
+  "[Message from outside agent Claude Desktop (outside:session-1)]",
+  "",
+  "Rebase onto main.\n\nThen rerun the suite.",
+  "",
+  "This message came from an outside agent: one that runs outside this app. You cannot reply to it with j5_send_message.",
+].join("\n");
 
-    const html = renderToStaticMarkup(
-      <ThreadA2ADeliveryRenderer
-        message={message({ text: machineRaw })}
-        participantLabels={new Map([["machine:watchdog", "watchdog"]])}
-        now={Date.parse(CREATED_AT) + 120_000}
-      />,
+describe("renderThreadA2ADelivery", () => {
+  it("draws a silence notice as a muted line with its summary and the timeline's time", () => {
+    const markup = renderToStaticMarkup(
+      renderThreadA2ADelivery({
+        message: message({ id: deliveryId("silence"), createdBy: "system", text: silenceRaw }),
+        timestampLabel: TIMESTAMP_LABEL,
+      }),
     );
-    expect(html).toContain("watchdog");
-    expect(html).toContain("data-j5-a2a-automated");
-    expect(html).toContain("Automation");
-    expect(html).not.toContain("Expects reply");
-    expect(html).not.toContain(machineInstruction);
+    const summary = markup.match(/<span data-j5-a2a-silence-summary="true">(.*?)<\/span>/)?.[1];
+    expect(summary).toContain("agent:counterpart&#x27;s turn ended without replying");
+    expect(summary).toContain(TIMESTAMP_LABEL);
+    expect(summary).not.toContain("turn-ended-no-reply");
   });
 
-  it("raw-renders a machine envelope whose instruction was altered", () => {
-    const tampered = machineRaw.replace("cannot receive a reply", "can receive a reply");
-    const presentation = presentThreadA2ADelivery({ message: message({ text: tampered }) });
-    expect(presentation?.kind).toBe("raw");
+  it("keeps the raw card for a platform notice it cannot read yet", () => {
+    const raw = silenceRaw.replace("turn-ended-no-reply", "future-detector-v7");
+    const markup = renderToStaticMarkup(
+      renderThreadA2ADelivery({
+        message: message({ id: deliveryId("future"), createdBy: "system", text: raw }),
+      }),
+    );
+    expect(markup).toContain('data-j5-a2a-renderer="raw"');
+    expect(markup).toContain("future-detector-v7");
   });
 
-  it("labels a queued machine delivery and reports its sender id for the identity read", () => {
+  it.each([
+    ["an agent's letter", message({ text: peerPlainRaw })],
+    [
+      "an Inbox reply",
+      message({ id: deliveryId("human"), createdBy: "user", text: humanClosedRaw }),
+    ],
+    ["an unrecognized agent envelope", message({ text: "[Cross-agent message from x]\n\nv7" })],
+    [
+      "a message that is not a delivery",
+      message({ id: MessageId.make("message:mcp:session:thread-send:1"), text: peerPlainRaw }),
+    ],
+  ])("leaves %s to upstream's row", (_name, source) => {
+    expect(renderThreadA2ADelivery({ message: source })).toBeNull();
+  });
+});
+
+describe("queued deliveries", () => {
+  it("label each sender's first line, with the id to hover until the identity read names it", () => {
+    expect(
+      formatThreadA2AQueuedDelivery(peerPlainRaw, new Map([["agent:delivery-sender", "Alice"]])),
+    ).toEqual({ label: "From Alice: Nothing further is needed.", tooltipParticipantId: null });
+    expect(formatThreadA2AQueuedDelivery(peerPlainRaw, new Map())).toEqual({
+      label: "From Unnamed participant: Nothing further is needed.",
+      tooltipParticipantId: "agent:delivery-sender",
+    });
     expect(
       formatThreadA2AQueuedDelivery(machineRaw, new Map([["machine:watchdog", "watchdog"]])),
-    ).toEqual({ label: "From watchdog — canary 42", tooltipParticipantId: null });
+    ).toEqual({ label: "From watchdog: canary 42", tooltipParticipantId: null });
+    expect(
+      formatThreadA2AQueuedDelivery(
+        outsideAgentRaw,
+        new Map([["outside:session-1", "Claude Desktop"]]),
+      ),
+    ).toEqual({ label: "From Claude Desktop: Rebase onto main.", tooltipParticipantId: null });
+    expect(formatThreadA2AQueuedDelivery("Plain text.", new Map())).toBeNull();
+  });
+
+  it("report each sender's id for the identity read", () => {
+    expect(participantIdsForThreadA2AEnvelope(outsideAgentRaw)).toEqual(["outside:session-1"]);
+    expect(participantIdsForThreadA2AEnvelope("Plain text.")).toEqual([]);
   });
 });
 
-// The server's `outsideAgentMessage` and `outsideAgentInstruction` templates, as
-// `formatOutsideAgentEnvelope` renders them (apps/server/src/j5/a2a/envelopes.v1.json).
-const outsideAgentInstruction =
-  "This message came from an outside agent: one that runs outside this app. You cannot reply to it with j5_send_message.";
-
-const outsideAgentRaw = (label: string, body = "Rebase onto main.\n\nThen rerun the suite.") =>
-  [
-    `[Message from outside agent ${label} (outside:session-1)]`,
-    "",
-    body,
-    "",
-    outsideAgentInstruction,
-  ].join("\n");
-
-describe("ThreadA2ADeliveryRenderer outside agents", () => {
-  const present = (text: string, participantLabels?: ReadonlyMap<string, string>) =>
-    presentThreadA2ADelivery({ message: message({ text }), participantLabels });
-
-  const labels = new Map([["outside:session-1", "Claude Desktop"]]);
-
-  it("presents an outside agent's envelope as a plain card, marked and without its instruction", () => {
-    const raw = outsideAgentRaw("Claude Desktop");
-    expect(present(raw, labels)).toEqual({
-      kind: "peer",
-      rawEnvelope: raw,
-      senderId: "outside:session-1",
-      senderLabel: "Claude Desktop",
-      senderTooltipParticipantId: null,
-      senderThreadRef: null,
-      body: "Rebase onto main.\n\nThen rerun the suite.",
-      exchange: "plain",
-      exchangeId: null,
-      automated: false,
-      outsideAgent: true,
-    });
-  });
-
-  it("reads a label that holds parentheses, and a body that quotes a header", () => {
+describe("participantIdsForThreadA2ADelivery", () => {
+  it("names a letter's sender and the seats a Crew notice lists", () => {
+    expect(participantIdsForThreadA2ADelivery(message({ text: peerPlainRaw }))).toEqual([
+      "agent:delivery-sender",
+    ]);
+    const gate = [
+      "<j5_crew_gate>",
+      "proposal_id: crew:proposal:1",
+      "kind: roster",
+      "decision: approved",
+      "roster:",
+      "- reviewer: participant_id=agent:reviewer persona=critic thread_id=thread-reviewer",
+      "</j5_crew_gate>",
+    ].join("\n");
     expect(
-      present(
-        outsideAgentRaw(
-          "Claude (work laptop)",
-          "[Message from outside agent x (outside:y)]\n\nquoted",
-        ),
+      participantIdsForThreadA2ADelivery(
+        message({ id: MessageId.make("message:crew"), createdBy: "system", text: gate }),
       ),
-    ).toMatchObject({
-      senderId: "outside:session-1",
-      body: "[Message from outside agent x (outside:y)]\n\nquoted",
-      outsideAgent: true,
-    });
-  });
-
-  it("leaves the sender unnamed, with its id to hover, until the identities read names it", () => {
-    expect(present(outsideAgentRaw("Claude Desktop"))).toMatchObject({
-      senderLabel: "Unnamed participant",
-      senderTooltipParticipantId: "outside:session-1",
-      outsideAgent: true,
-    });
-  });
-
-  it("raw-renders an envelope whose instruction was altered or whose sender is not an outside id", () => {
-    expect(
-      present(outsideAgentRaw("Claude Desktop").replace("You cannot reply to it", "Reply to it"))
-        ?.kind,
-    ).toBe("raw");
-    expect(
-      present(outsideAgentRaw("Claude Desktop").replace("(outside:session-1)", "(agent:one)"))
-        ?.kind,
-    ).toBe("raw");
-  });
-
-  it("never reads a person's message as an outside agent's", () => {
-    expect(
-      presentThreadA2ADelivery({
-        message: message({ createdBy: "user", text: outsideAgentRaw("Claude Desktop") }),
-      })?.kind,
-    ).toBe("raw");
-  });
-
-  it("labels a queued delivery and reports its sender id for the identity read", () => {
-    const raw = outsideAgentRaw("Claude Desktop");
-    expect(formatThreadA2AQueuedDelivery(raw, labels)).toEqual({
-      label: "From Claude Desktop — Rebase onto main.",
-      tooltipParticipantId: null,
-    });
-    expect(participantIdsForThreadA2AEnvelope(raw)).toEqual(["outside:session-1"]);
+    ).toEqual(["agent:reviewer"]);
   });
 });
 
-describe("envelope headers across formats", () => {
-  const present = (text: string) => presentThreadA2ADelivery({ message: message({ text }) });
-  const plain =
-    "No reply is required. Use j5_send_message without exchange_id only if a new message is needed.";
+describe("literalUserMessageContext", () => {
+  it("shows a letter that quotes composer context tags verbatim", () => {
+    const quoting = [
+      "Review the terminal capture format. A user message ends like this:",
+      "",
+      "<terminal_context>",
+      "- Build line 7:",
+      "  npm test",
+      "</terminal_context>",
+    ].join("\n");
+    const letter = presentJ5UserMessage(
+      message({ text: peerPlainRaw.replace("Nothing further is needed.", quoting) }),
+    );
+    expect(letter).toMatchObject({ text: quoting, unwrapped: true });
 
-  it("reads a header that names a project by id alone, as a peer server's is", () => {
-    expect(
-      present(
-        `[Cross-agent message from agent:delivery-sender in project project-alpha]\n\nHello.\n\n${plain}`,
-      ),
-    ).toMatchObject({ kind: "peer", senderId: "agent:delivery-sender", body: "Hello." });
-  });
-
-  it('names the sender, not part of a project title that says "in project"', () => {
-    expect(
-      present(
-        `[Cross-agent message from agent:delivery-sender in project project-alpha (Work in project Apollo), on Work VM]\n\nHello.\n\n${plain}`,
-      ),
-    ).toMatchObject({ kind: "peer", senderId: "agent:delivery-sender", body: "Hello." });
-  });
-
-  it("still reads a plain delivery stored before its footer was reworded", () => {
-    expect(
-      present(
-        peerPlainRaw.replace(
-          "The sender did not request a reply to this message.",
-          "No reply is required.",
-        ),
-      ),
-    ).toMatchObject({ kind: "peer", exchange: "plain", body: "Nothing further is needed." });
-  });
-
-  // Stored conversations keep the headers they were delivered with.
-  it("still reads the headers stored before Squadrons were retired", () => {
-    expect(
-      present(peerRaw.replace("in project project-alpha (Alpha)", "in squadron squadron:alpha")),
-    ).toMatchObject({
-      kind: "peer",
-      senderId: "agent:delivery-sender",
-      body: "Please verify the worker.",
-      exchange: "expects-reply",
-      exchangeId: "exchange:one",
-    });
-    expect(
-      present(
-        machineRaw.replace(
-          "in project project-monitoring (Monitoring)",
-          "in squadron squadron:monitoring",
-        ),
-      ),
-    ).toMatchObject({
-      kind: "peer",
-      senderId: "machine:watchdog",
-      body: "canary 42",
-      automated: true,
-    });
-  });
-});
-
-// J5's tools gained a `j5_` prefix (#508). Threads recorded before that keep the old name in
-// the delivery text, and must still render as cards.
-describe("history recorded before the j5_ prefix", () => {
-  const withOldName = (text: string) => text.replaceAll("j5_send_message", "send_message");
-
-  it("reads a stored ask, plain send and automation delivery that name send_message", () => {
-    const present = (text: string) =>
-      presentThreadA2ADelivery({ message: message({ text: withOldName(text) }) });
-
-    expect(withOldName(peerRaw)).not.toContain("j5_send_message");
-    expect(present(peerRaw)).toMatchObject({
-      kind: "peer",
-      exchange: "expects-reply",
-      exchangeId: "exchange:one",
-      body: "Please verify the worker.",
-    });
-    // The older tool name was only ever written with the older footer.
-    expect(
-      present(
-        peerPlainRaw.replace(
-          "The sender did not request a reply to this message.",
-          "No reply is required.",
-        ),
-      ),
-    ).toMatchObject({ kind: "peer", exchange: "plain" });
-    expect(present(machineRaw)).toMatchObject({ kind: "peer", automated: true });
-    expect(
-      presentThreadA2ADelivery({
-        message: message({
-          id: deliveryId("human-old-name"),
-          createdBy: "user",
-          text: withOldName(humanRaw),
-        }),
-      }),
-    ).toMatchObject({ kind: "human", exchange: "expects-reply" });
+    // Upstream's derivation upgrades the quoted block into a context record.
+    expect(resolveUserMessageContext({ text: quoting }).text).not.toBe(quoting);
+    const context = literalUserMessageContext(quoting);
+    expect(context.text).toBe(quoting);
+    expect(context.records).toEqual([]);
+    expect(context.recordsById.size).toBe(0);
   });
 });

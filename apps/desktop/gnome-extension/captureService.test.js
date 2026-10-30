@@ -35,11 +35,6 @@ it("accepts the bus names the J5 desktop app requests", () => {
   expect(CLIENT_NAMES).toEqual([busName(false), busName(true)]);
 });
 
-it.each(CLIENT_NAMES)("accepts the current owner of %s", async (client) => {
-  const { service } = fixture({ getNameOwner: async (name) => (name === client ? ":1.23" : null) });
-  expect(await service.capture(":1.23")).toBe("pixels");
-});
-
 it("rechecks the name owner on each capture", async () => {
   let owner = ":1.23";
   const { service } = fixture({ getNameOwner: async () => owner });

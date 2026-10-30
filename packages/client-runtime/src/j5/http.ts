@@ -26,11 +26,9 @@ export class J5HttpError extends Schema.TaggedError<J5HttpError>()("J5HttpError"
 }
 
 /**
- * Authorizes against this prepared environment only, through the same
- * request-time credential resolution the client uses for its other
- * authenticated HTTP reads: cookies for the browser's own server, a static
- * bearer token, or a relay access token with a fresh DPoP proof per request.
- * A relay token the server rejects gets one refresh and retry.
+ * Authorizes against this prepared environment only, resolving credentials per request as the
+ * client's other authenticated HTTP reads do (cookie, bearer token, or relay token with a fresh
+ * DPoP proof). A relay token the server rejects gets one refresh and retry.
  */
 export const executeJ5Request = Effect.fn("j5.http.executeRequest")(function* (
   prepared: PreparedConnection,

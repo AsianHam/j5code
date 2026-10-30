@@ -1,5 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { notifyHumanInboxChanged } from "../a2a/humanInboxRefresh";
@@ -31,35 +31,34 @@ export function CrewRosterGate(props: {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const resolve = useCallback(
-    async (
-      proposal: CrewProposal,
-      decision: "approve" | "decline",
-      seats: ReadonlyArray<CrewProposalSeat>,
-      approvalToken?: string,
-    ) => {
-      if (environmentId === undefined) return;
-      setBusyId(proposal.id);
-      setError(null);
-      try {
-        if (decision === "approve" && approvalToken === undefined)
-          throw new Error("Refresh the runtime preview before approving.");
-        await resolveCrewProposal(
-          environmentId,
-          decision === "approve"
-            ? { proposalId: proposal.id, decision, seats, approvalToken: approvalToken! }
-            : { proposalId: proposal.id, decision },
-        );
-        notifyHumanInboxChanged(environmentId);
-        await refreshCrewProposals(environmentId).catch(() => undefined);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Could not resolve the crew request.");
-      } finally {
-        setBusyId(null);
-      }
-    },
-    [environmentId],
-  );
+  const resolve = async (
+    proposal: CrewProposal,
+    decision: "approve" | "decline",
+    seats: ReadonlyArray<CrewProposalSeat>,
+    approvalToken?: string,
+  ) => {
+    if (environmentId === undefined) return;
+    if (decision === "approve" && approvalToken === undefined) {
+      setBusyId(null);
+      setError("Refresh the runtime preview before approving.");
+      return;
+    }
+    setBusyId(proposal.id);
+    setError(null);
+    try {
+      await resolveCrewProposal(
+        environmentId,
+        decision === "approve"
+          ? { proposalId: proposal.id, decision, seats, approvalToken: approvalToken! }
+          : { proposalId: proposal.id, decision },
+      );
+      notifyHumanInboxChanged(environmentId);
+      await refreshCrewProposals(environmentId).catch(() => undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not resolve the crew request.");
+    }
+    setBusyId(null);
+  };
 
   const gates = rosterGatesForThread(query.data ?? [], threadId);
   if (gates.length === 0 || environmentId === undefined) return null;

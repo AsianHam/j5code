@@ -2,26 +2,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// People and access (docs/j5/product/features/people-and-access.md): members and guests become
-// people who each hold a level at a scope.
-//
-// `j5_a2a_person_level` replaces the guest's grant. A grant on a project or thread becomes a level
-// at the same scope, View as Viewer and Collaborate as Collaborator; the line a member wrote when
-// sharing goes, as the definitions retired it. Every member holds Owner at server scope. The
-// server's own operator, `is_local_operator`, is the first owner; nothing lowers or removes it.
-// Any other member is a person migration 006 found in the ledger from before people were
-// recorded: they had an inbox and agents could address them, and as Owners they still do.
-//
-// Every live session upstream holds that no guest was paired with belongs to the first owner
-// (AC7). Its permissions as they stand become its ceiling, which a new session for it never
-// exceeds (AC18). The sessions of agents, peer servers, `j5 a2a` machine senders and the CLI are
-// no one's device, and stay unbound. Upstream's auth tables are read and not changed, except that the guest links nobody
-// used are revoked there: they are retired, and would otherwise look live in Connections.
-//
-// Unused links of either old kind stop working, and their count is kept for a notice Owners see.
-// Whoever already joined keeps what they had.
-//
-// The fold of a name and its unique index (037) stay as they were.
+// Levels replace guest grants (View as Viewer, Collaborate as Collaborator); every member is an
+// Owner, the local operator first. Unbound live sessions go to the first owner with their current
+// permissions as ceiling; agent, peer, machine and CLI sessions stay unbound. Upstream's tables
+// are only read, except that unused guest links are revoked so Connections stops showing them.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const now = DateTime.formatIso(yield* DateTime.now);

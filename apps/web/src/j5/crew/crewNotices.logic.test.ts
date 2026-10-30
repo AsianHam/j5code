@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  participantIdsForCrewNotice,
+  presentCrewNotice,
+} from "@t3tools/client-runtime/j5/crew-notices";
+
+import {
   artifactPanelPath,
   crewGateFooter,
   crewGateTitle,
   crewSeatsTitle,
-  participantIdsForCrewNotice,
-  presentCrewNotice,
   seatRunStatusLabel,
 } from "./crewNotices.logic";
 
@@ -109,7 +112,7 @@ describe("crew notices in the Captain's thread", () => {
       "crew_version: 1",
       "changes: added prosecutor; removed sitter",
       "launch: 1 started, 1 failed, 1 not started after 60s",
-      "seat_failed: punchline | failed | provider_error — API Error: Can't reach the API server | check DNS",
+      "seat_failed: punchline | failed | provider_error: API Error: Can't reach the API server | check DNS",
       "seat_pending: prosecutor",
       "roster:",
       "- setup: participant_id=agent:j5:a2a:s persona=scout thread_id=thread:s start=started",
@@ -127,7 +130,7 @@ describe("crew notices in the Captain's thread", () => {
         {
           seat: "punchline",
           runStatus: "failed",
-          detail: "provider_error — API Error: Can't reach the API server | check DNS",
+          detail: "provider_error: API Error: Can't reach the API server | check DNS",
         },
       ],
       pendingSeats: ["prosecutor"],
@@ -259,7 +262,7 @@ describe("crew notices in the Captain's thread", () => {
       "participant_id: agent:j5:a2a:b",
       "thread_id: thread:b",
       "run_status: failed",
-      "failure: provider_error — API Error: Can't reach the API server",
+      "failure: provider_error: API Error: Can't reach the API server",
       "handoff: none declared",
       "</j5_seat_finished>",
     ].join("\n");
@@ -292,7 +295,7 @@ describe("crew notices in the Captain's thread", () => {
           participantId: "agent:j5:a2a:b",
           threadId: "thread:b",
           runStatus: "failed",
-          failure: "provider_error — API Error: Can't reach the API server",
+          failure: "provider_error: API Error: Can't reach the API server",
           handoff: { status: "none declared" },
         },
       ],

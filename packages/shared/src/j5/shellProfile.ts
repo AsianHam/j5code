@@ -1,6 +1,6 @@
 /**
- * The line J5 adds to a shell's startup file so `j5` resolves in new terminals
- * (#397). `scripts/install.sh` writes the same marker; keep the two in step.
+ * The line J5 adds to a shell's startup file so `j5` resolves in new terminals.
+ * `scripts/install.sh` writes the same marker; keep the two in step.
  * `j5 uninstall` removes every line that ends with it.
  */
 export const J5_PATH_MARKER = "# Added by J5 Code; `j5 uninstall` removes this line.";

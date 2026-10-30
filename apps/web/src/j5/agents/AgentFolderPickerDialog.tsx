@@ -6,7 +6,7 @@ import { getAddProjectInitialQuery } from "@t3tools/client-runtime/operations/pr
 import { appendBrowsePathSegment } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { CornerLeftUpIcon, FileTextIcon, FolderIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -56,10 +56,7 @@ export function AgentFolderPickerDialog(props: {
     setBrowsed(true);
     setPathInput(path);
   };
-  const browsePath = useMemo(
-    () => getFilesystemBrowsePath(pathInput, platform),
-    [pathInput, platform],
-  );
+  const browsePath = getFilesystemBrowsePath(pathInput, platform);
   const browseState = useEnvironmentQuery(
     browsePath.directoryPath.length === 0
       ? null
@@ -68,9 +65,9 @@ export function AgentFolderPickerDialog(props: {
           input: { partialPath: browsePath.directoryPath },
         }),
   );
-  const { visibleEntries, exactEntry } = useMemo(
-    () => filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browsePath.filterQuery),
-    [browsePath.filterQuery, browseState.data?.entries],
+  const { visibleEntries, exactEntry } = filterFilesystemBrowseEntries(
+    browseState.data?.entries ?? [],
+    browsePath.filterQuery,
   );
   const listedDirectory = browseState.data?.parentPath ?? null;
   const fileState = useEnvironmentQuery(
@@ -81,10 +78,7 @@ export function AgentFolderPickerDialog(props: {
           input: { directory: listedDirectory },
         }),
   );
-  const files = useMemo(
-    () => filterFilesystemBrowseEntries(fileState.data?.files ?? [], browsePath.filterQuery),
-    [browsePath.filterQuery, fileState.data?.files],
-  );
+  const files = filterFilesystemBrowseEntries(fileState.data?.files ?? [], browsePath.filterQuery);
   // A typed name that matches a listed entry selects it. Folder mode falls back to the listed
   // directory; file mode needs a file.
   const selection = pickFile

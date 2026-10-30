@@ -53,12 +53,15 @@ const fixture = Effect.gen(function* () {
       sharing: 0,
     });
     readRevisions.set(environmentId, readRevision);
+    // A socket answers after the read that asked has been built, never inside it. An answer
+    // inside the build would reach the query's stale-while-revalidate wrapper on mount, and a
+    // first answer that failed would then be read once more for no revision.
     const answer =
       <A, E = never>(method: string, respond: () => Effect.Effect<A, E>) =>
       (input: unknown) =>
         Effect.suspend(() => {
           calls.push([environmentId, method, input]);
-          return respond();
+          return Effect.promise(() => Promise.resolve()).pipe(Effect.andThen(respond));
         });
     const fleetReads = () =>
       calls.filter(([id, method]) => id === environmentId && method === READS.readFleet);

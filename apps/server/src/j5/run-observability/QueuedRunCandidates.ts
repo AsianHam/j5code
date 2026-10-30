@@ -70,11 +70,12 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     yield* runMigrations();
     return QueuedRunCandidates.of({
-      list: (input) =>
-        candidateStatement(sql, input).pipe(
+      list: Effect.fn("QueuedRunCandidates.list")(function (input) {
+        return candidateStatement(sql, input).pipe(
           Effect.flatMap((rows) => Effect.forEach(rows, (row) => decode(row.payload_json))),
           Effect.mapError((cause) => new CandidateReadError({ cause })),
-        ),
+        );
+      }),
     });
   }),
 );

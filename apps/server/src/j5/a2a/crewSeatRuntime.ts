@@ -32,11 +32,10 @@ export const withCrewSeatQuestions = (
   });
 
 /**
- * Whether a thread holds a seat in a live Crew, read from the Crew store once per resolved
- * policy. The runtime-policy layers carry no Crew dependency, so the store is built over the
- * ambient SQL client when there is one; without it (unit layers) nothing is a seat. Only
- * platform-spawned threads (`agent`/`mcp`, as every seat is created) are looked up. A store that
- * cannot be read logs and answers "not a seat", so an outage never blocks a turn.
+ * Whether a thread holds a seat in a live Crew. The runtime-policy layers carry no Crew dependency,
+ * so the store is built over the ambient SQL client if any (in unit layers nothing is a seat). Only
+ * platform-spawned threads are looked up, and an unreadable store logs and answers "not a seat", so
+ * an outage never blocks a turn.
  */
 export const makeCrewSeatLookup = Effect.gen(function* () {
   const sql = yield* Effect.serviceOption(SqlClient.SqlClient);

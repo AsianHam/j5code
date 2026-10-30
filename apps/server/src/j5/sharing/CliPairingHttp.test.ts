@@ -27,7 +27,6 @@ import {
 } from "effect/http";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
-import { RuntimeFileActivationDelay, runtimeFileActivation } from "../../cli/pair.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import { acquireServerOwnership } from "../../serverOwnership.ts";
@@ -35,15 +34,17 @@ import { makePersistedServerRuntimeState } from "../../serverRuntimeState.ts";
 import { ReadChanges, layer as readChangesLayer } from "../a2a/ReadChanges.ts";
 import { cliEnvironmentAuth } from "./AccessGate.ts";
 import { cliPairingHttpRouteLayer } from "./CliPairingHttp.ts";
-import { CLI_SESSION_SUBJECT, pairingLinkFromCli } from "./cliPairing.ts";
+import {
+  CLI_SESSION_SUBJECT,
+  pairingLinkFromCli,
+  RuntimeFileActivationDelay,
+} from "./cliPairing.ts";
 import { PersonAccess } from "./PersonAccess.ts";
 
 /**
- * `j5 pair --person` and `j5 auth pairing create` while a server runs for the home: the running
- * server makes the change, so its own change signal moves and an open People page re-reads
- * (#643). The server here is the route over the home's database, holding the home's lock and
- * publishing where it listens, as `server.ts` does; the CLI side runs in its own layers over the
- * same files, as a separate process would.
+ * `j5 pair --person` and `j5 auth pairing create` against a running server: the server makes the
+ * change, so its change signal moves and an open People page re-reads. The server holds the home's
+ * lock and publishes where it listens, as `server.ts` does; the CLI runs in separate layers.
  */
 
 const homeConfig = ServerConfig.ServerConfig.pipe(
@@ -158,17 +159,14 @@ const pairFromCli = (
   config: ServerConfig.ServerConfig["Service"],
   input: { readonly person?: string; readonly level?: PersonLevel },
 ) =>
-  Effect.gen(function* () {
-    return yield* pairingLinkFromCli({
-      config,
-      minimumLogLevel: "Error",
-      flags: cliFlags(input),
-      scopes: { scopes: AuthStandardClientScopes, given: false },
-      ttl: Option.none(),
-      label: Option.some("j5 pair"),
-      withoutPerson: "refuse",
-      activation: yield* runtimeFileActivation,
-    });
+  pairingLinkFromCli({
+    config,
+    minimumLogLevel: "Error",
+    flags: cliFlags(input),
+    scopes: { scopes: AuthStandardClientScopes, given: false },
+    ttl: Option.none(),
+    label: Option.some("j5 pair"),
+    withoutPerson: "refuse",
   });
 
 /** Records each activation wait, running `then` for the n-th. */

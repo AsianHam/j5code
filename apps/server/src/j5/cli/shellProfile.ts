@@ -10,9 +10,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { launcherOwnsVersionsDir } from "../../cli/update.ts";
 import { agentCliDirectory } from "./agentPath.ts";
-import { pinnedRuntimeVersionsDir } from "../../cloud/pinnedRuntime.ts";
+import { launcherOwnsVersionsDir, pinnedRuntimeVersionsDir } from "../../cloud/pinnedRuntime.ts";
 
 // Profiles needn't be UTF-8. Reading each byte as one latin1 character keeps
 // every byte through the edit; the marker itself is ASCII.
@@ -27,17 +26,10 @@ const asBytes = (contents: Uint8Array) => Buffer.from(contents).toString("latin1
 const appLinkFolders = (home: string) => ["/opt/homebrew/bin", "/usr/local/bin", `${home}/bin`];
 
 /**
- * What `j5 uninstall` removes from the person's shell setup along with a home:
- * the installer's `~/.local/bin/j5` link and the PATH line that finds it. Both
- * go when that link belongs to this home (the installer's, into its runtime,
- * or the desktop app's, to its `bin`), however uninstall was started, or when
- * no `j5` is there at all (an orphaned line). A `j5` that
- * belongs to something else, such as another home while an agent uninstalls a
- * scratch one, is left alone with its line. The desktop app's link
- * in `/opt/homebrew/bin`, `/usr/local/bin` or `~/bin` goes too (`appLinks`),
- * when it points at this home's launcher; anything else there is left alone.
- * A startup file that exists but can't be read fails the uninstall rather than
- * being skipped. `folders` is for tests.
+ * What `j5 uninstall` removes besides a home: the `j5` link and PATH line, when the link belongs
+ * to this home or is missing (an orphaned line), and the desktop app's links to this home's
+ * launcher. Anything that belongs elsewhere, such as another home, is left alone. An unreadable
+ * startup file fails the uninstall rather than being skipped. `folders` is for tests.
  */
 export const planShellCleanup = Effect.fn("j5.cli.plan_shell_cleanup")(function* (
   baseDir: string,
@@ -85,7 +77,7 @@ export const planShellCleanup = Effect.fn("j5.cli.plan_shell_cleanup")(function*
   });
   for (const file of files) {
     const contents = yield* fs.readFile(file).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchTags({
         PlatformError: (error) =>
           error.reason._tag === "NotFound"
@@ -120,7 +112,7 @@ export const removeAppLinks = Effect.fn("j5.cli.remove_app_links")(function* (
   for (const link of links) {
     const removed = yield* fs.remove(link, { force: true }).pipe(
       Effect.as(true),
-      Effect.catch(() => Effect.succeed(false)),
+      Effect.orElseSucceed(() => false),
     );
     yield* Console.log(
       removed

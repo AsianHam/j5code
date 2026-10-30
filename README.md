@@ -52,6 +52,7 @@ There is no public J5 Code mobile app yet. iOS builds go to TestFlight testers; 
 
 For using J5 Code:
 
+- [FAQ](./docs/user/faq.md)
 - [Install and first run](./docs/user/install.md)
 - [Working with threads](./docs/user/thread-sidebar.md)
 - [Permission modes](./docs/user/permission-modes.md)

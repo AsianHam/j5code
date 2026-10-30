@@ -636,7 +636,7 @@ it.effect("posts one report once every seat has started or failed, with the run'
       assert.include(report!, "changes: added prosecutor");
       assert.include(
         report!,
-        "seat_failed: punchline | failed | provider_error — API Error: Can't reach the API server",
+        "seat_failed: punchline | failed | provider_error: API Error: Can't reach the API server",
       );
       assert.include(report!, `thread_id=${crewSeatThreadId(id, "setup")} start=started`);
       assert.include(report!, `thread_id=${crewSeatThreadId(id, "prosecutor")} start=started`);

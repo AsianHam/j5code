@@ -1,18 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// The one kind of link (People and access AC31 to AC43). Its token is kept as it was made, so an
-// Owner can copy the link again until it expires, is revoked or, for one person, is used.
-//
-// A `device` link pairs one more device for someone already on the server, and stores no scope
-// or level: their device follows what they hold. An `invite` brings someone in at its scope and
-// level, which the join applies to the person it creates; a link for many is a Viewer's. The
-// name an invite offers is only offered: the person is made when the link is used.
-//
-// Who joined with a link is kept beside it, a person once per link.
-//
-// What an Owner has seen of the notice that links made before levels stopped working (039) is
-// kept per person, so it is shown once to each Owner.
+// The one kind of link. Its token is kept so an Owner can copy it until it expires, is revoked or
+// (for one person) used. A `device` link stores no scope or level: the device follows what its
+// person holds. An `invite` applies its scope and level to the person it creates; a link for many
+// is a Viewer's. Which Owners have seen the dead-links notice (039) is kept per person.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

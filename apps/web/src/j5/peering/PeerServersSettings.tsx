@@ -47,12 +47,9 @@ const refreshPeerLists = (serversKey: string) => {
 };
 
 /**
- * Every pairing among the servers this client manages, one row per pair,
- * including pairs between two servers that are neither of them this client's
- * own. A peer is also an authorized session in the list above; this section is
- * where the pairing is made and where it is taken apart. Removal takes down
- * every side this client manages, as the introduction made them; leaving a
- * side it cannot reach is a choice the person is warned about, never an accident.
+ * Every pairing among the servers this client manages, including pairs where neither side is
+ * this client's own. Removal takes down every side this client manages; leaving a side it cannot
+ * reach is a choice the person is warned about, never an accident.
  */
 export function PeerServersSettings({
   primaryEnvironmentId,

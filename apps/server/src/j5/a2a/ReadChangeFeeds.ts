@@ -156,17 +156,16 @@ export const layer = Layer.effectDiscard(
     // Only what happens from here on: the revisions start with the server, and a client reads
     // when it connects. The store filters by type before it queues, so the turn items this
     // daemon drops are the only traffic it sees beyond what it acts on.
-    const follow = (resumed: boolean) =>
-      Effect.gen(function* () {
-        const afterSequence = yield* readEventStoreHighWater("J5 read change feed").pipe(
-          Effect.provideService(EventSinkV2, events),
-        );
-        // Whatever a broken stream did not deliver is at or below this mark and will not be
-        // replayed, so one notify covers it. It comes after the mark is read: an event stored
-        // any later is past the mark and is streamed.
-        if (resumed) yield* changes.notify("runtimeRequests");
-        yield* followFrom(afterSequence);
-      });
+    const follow = Effect.fn("j5.a2a.readChangeFeeds.follow")(function* (resumed: boolean) {
+      const afterSequence = yield* readEventStoreHighWater("J5 read change feed").pipe(
+        Effect.provideService(EventSinkV2, events),
+      );
+      // Whatever a broken stream did not deliver is at or below this mark and will not be
+      // replayed, so one notify covers it. It comes after the mark is read: an event stored
+      // any later is past the mark and is streamed.
+      if (resumed) yield* changes.notify("runtimeRequests");
+      yield* followFrom(afterSequence);
+    });
     const followFrom = (afterSequence: number) =>
       Stream.mergeAll(
         RUNTIME_REQUEST_EVENT_TYPES.map((eventType) => events.stream({ afterSequence, eventType })),

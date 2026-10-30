@@ -169,6 +169,7 @@ it.effect("counts what the fleet is doing right now, and names nothing", () =>
                 record: (event, properties = {}) =>
                   Effect.sync(() => void recorded.push({ event, ...properties })),
                 flush: Effect.void,
+                recordOwners: () => Effect.void,
               }),
             ),
           ),

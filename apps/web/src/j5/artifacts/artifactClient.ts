@@ -41,12 +41,9 @@ export async function listArtifacts(input: {
 }
 
 /**
- * One artifact's content can be megabytes, so it stays an HTTP read while the list is an RPC. It
- * goes through the shared J5 request helper, which resolves the credential at request time
- * (cookie, static bearer, or relay access token with a fresh DPoP proof) and refreshes a rejected
- * relay token once. A hand-rolled bearer/DPoP branch here signed with whatever token the prepared
- * connection held at page load, so on T3 Connect the change stream kept flowing while every read
- * returned 401 once that token expired.
+ * One artifact's content can be megabytes, so it stays an HTTP read while the list is an RPC. The
+ * shared J5 request helper resolves the credential at request time and refreshes a rejected relay
+ * token once; a token captured at page load would 401 on T3 Connect once it expired.
  */
 const readArtifactEffect = Effect.fn("j5.artifacts.client.read")(function* (input: {
   readonly environmentId: EnvironmentId;

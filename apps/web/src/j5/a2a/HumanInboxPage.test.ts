@@ -2,11 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { scopedInboxItemKey } from "@t3tools/contracts/j5";
 import { assert, it, vi } from "@effect/vitest";
 
-import {
-  captureHumanInboxAnswer,
-  formatAnsweredAgeLabel,
-  submitHumanInboxAnswer,
-} from "./HumanInboxPage";
+import { captureHumanInboxAnswer, submitHumanInboxAnswer } from "./HumanInboxPage";
 import type { ScopedHumanInboxItem as HumanInboxItem } from "./humanInboxClient";
 
 it("captures typed answer text before the state updater runs", () => {
@@ -30,12 +26,6 @@ it("captures typed answer text before the state updater runs", () => {
     existing: "Kept",
     "exchange:deferred-update": "Verbatim answer",
   });
-});
-
-it("formats answered ages without appending ago to just now", () => {
-  assert.equal(formatAnsweredAgeLabel("just now"), "answered just now");
-  assert.equal(formatAnsweredAgeLabel("4h"), "answered 4h ago");
-  assert.equal(formatAnsweredAgeLabel(""), "answered");
 });
 
 it("clears pending state when answer attempt id generation fails", async () => {

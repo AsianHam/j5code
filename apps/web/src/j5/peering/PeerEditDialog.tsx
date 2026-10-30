@@ -111,6 +111,7 @@ export function PeerEditDialog({
     )
     .join(",");
   /* oxlint-disable react/exhaustive-effect-dependencies -- Keyed on checkKey; see above. */
+  // oxlint-disable-next-line t3code/react-effect-budget -- checks each side's reach from the server whenever the pair changes, and drops a stale answer.
   useEffect(() => {
     let cancelled = false;
     void Promise.all(

@@ -367,11 +367,17 @@ describe("Fleet runtime measurements", () => {
       latestRunStartedAt: date,
       latestRunCompletedAt: date,
     });
-    expect(
-      derive({ ...completed, pendingBackgroundTasks: [{ kind: "command", taskId: "dev-server" }] })
-        .facts.runtime,
-    ).toMatchObject({ status: "idle", since: at });
-    for (const kind of ["subagent", "monitor", "background_task"] as const) {
+    for (const kind of ["command", "monitor"] as const) {
+      expect(
+        derive({ ...completed, pendingBackgroundTasks: [{ kind, taskId: "dev-server" }] }).facts
+          .runtime,
+      ).toMatchObject({ status: "idle", since: at });
+      expect(
+        derive({ ...completed, pendingBackgroundTasks: [{ kind, taskId: "work", awaited: true }] })
+          .facts.runtime,
+      ).toMatchObject({ status: "waiting", settled: false });
+    }
+    for (const kind of ["subagent", "background_task"] as const) {
       expect(
         derive({ ...completed, pendingBackgroundTasks: [{ kind, taskId: "work" }] }).facts.runtime,
       ).toMatchObject({ status: "waiting", settled: false });

@@ -1,7 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useLocation } from "@tanstack/react-router";
-import { ScrollTextIcon } from "lucide-react";
-import { type ComponentType, type ReactNode, useMemo } from "react";
+import { type ReactNode } from "react";
 
 import type { SettingsPath } from "../../components/settings/settingsSearch";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../../components/ui/empty";
@@ -12,31 +11,14 @@ import {
   LICENSES_PATH,
   PAGES_FOR_EVERYONE,
   ownerOnlySettingsNotice,
-  settingsNavItems,
+  settingsNavGroups,
   settingsPageShown,
+  type SettingsNavGroup,
 } from "./settingsAccess.logic";
 
-type NavItem = {
-  readonly label: string;
-  readonly to: SettingsPath;
-  readonly icon: ComponentType<{ className?: string }>;
-};
-
-// Upstream's navigation takes any route it can navigate to; Licenses is not one of its sections,
-// so it is not in `SettingsPath`, which only types the table.
-const LICENSES_ITEM = {
-  label: "Open-source licenses",
-  to: LICENSES_PATH as SettingsPath,
-  icon: ScrollTextIcon,
-};
-
-/** Settings' sidebar as this person sees it; see `settingsNavItems`. */
-export function useSettingsNavItems<Item extends NavItem>(items: ReadonlyArray<Item>) {
-  return settingsNavItems<NavItem>(
-    items,
-    useOwnerSomewhere() === true,
-    LICENSES_ITEM,
-  ) as ReadonlyArray<Item>;
+/** Settings' sidebar groups as this person sees them; see `settingsNavGroups`. */
+export function useSettingsNavGroups(groups: ReadonlyArray<SettingsNavGroup<SettingsPath>>) {
+  return settingsNavGroups(groups, useOwnerSomewhere() === true, LICENSES_PATH);
 }
 
 /** Settings search finds only the pages a person is shown (AC28). */
@@ -111,8 +93,5 @@ export function useOwnedEnvironments<Environment extends { readonly environmentI
   environments: ReadonlyArray<Environment>,
 ): ReadonlyArray<Environment> {
   const owned = useOwnedEnvironmentIds();
-  return useMemo(
-    () => environments.filter((environment) => owned.has(environment.environmentId)),
-    [environments, owned],
-  );
+  return environments.filter((environment) => owned.has(environment.environmentId));
 }

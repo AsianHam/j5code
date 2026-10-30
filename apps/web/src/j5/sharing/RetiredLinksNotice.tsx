@@ -27,6 +27,7 @@ function ServerRetiredLinksNotice({
   const navigate = useNavigate();
   const markSeen = useAtomCommand(sharingManage.markRetiredLinksSeen, { reportFailure: false });
   const retired = access?.kind === "person" ? access.retiredLinks : null;
+  // oxlint-disable-next-line t3code/react-effect-budget -- shows a toast once per server when its access answer reports retired links.
   useEffect(() => {
     if (retired === null || retired === 0 || shown.has(environmentId)) return;
     shown.add(environmentId);

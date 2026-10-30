@@ -79,8 +79,9 @@ const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
   scope: McpInvocationScope,
   input: { readonly provider: string; readonly model: string; readonly reasoning: string },
 ) {
+  // The default listing is a short list; a search by the model id reaches the whole catalog.
   const capabilities = yield* (yield* OrchestratorMcpService.OrchestratorMcpService)
-    .capabilities(scope)
+    .capabilities(scope, { search: input.model })
     .pipe(
       Effect.mapError((error) =>
         stateError(
@@ -108,22 +109,24 @@ const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
   if (model === undefined) {
     return yield* stateError(
       `Model ${input.model} is not listed for provider ${input.provider}.`,
-      "Call orchestrator_capabilities and retry j5_spawn_agent with a model listed for that provider.",
+      "Call orchestrator_capabilities, passing search to find models it leaves out, and retry j5_spawn_agent with a model id it lists for that provider.",
     );
   }
   const reasoningDescriptor = model.options?.find(
-    (descriptor) => descriptor.type === "select" && isAgentPersonaReasoningOptionId(descriptor.id),
+    (descriptor) =>
+      isAgentPersonaReasoningOptionId(descriptor.id) &&
+      descriptor.values.every((value) => typeof value === "string"),
   );
-  if (reasoningDescriptor === undefined || reasoningDescriptor.type !== "select") {
+  if (reasoningDescriptor === undefined) {
     return yield* stateError(
       `Model ${input.model} on provider ${input.provider} exposes no reasoning options; j5_spawn_agent requires explicit reasoning selection.`,
       "Call orchestrator_capabilities and choose a model that exposes reasoning options before retrying j5_spawn_agent.",
     );
   }
-  if (!reasoningDescriptor.options.some((option) => option.id === input.reasoning)) {
+  if (!reasoningDescriptor.values.includes(input.reasoning)) {
     return yield* stateError(
       `Reasoning ${input.reasoning} is not listed for model ${input.model} on provider ${input.provider}.`,
-      `Call orchestrator_capabilities and retry j5_spawn_agent with one of: ${reasoningDescriptor.options.map((option) => option.id).join(", ")}.`,
+      `Call orchestrator_capabilities and retry j5_spawn_agent with one of: ${reasoningDescriptor.values.join(", ")}.`,
     );
   }
   return {
@@ -134,12 +137,10 @@ const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
 });
 
 /**
- * A Role-ful spawn keeps the explicit provider/model/reasoning pick; the saved agent's declared
- * routes constrain it and its authority policy becomes the child's runtime mode. A child's
- * permissions come from its own saved agent's policy or from the human's approval, never from
- * the parent: J5 carries no parent-child permission ceiling (Jackson, 2026-09-16), because any
- * such guard is one message to a trusting peer away from bypass and every child-creation door
- * would have to enforce it identically.
+ * A Role-ful spawn keeps the explicit provider, model and reasoning pick; the saved agent's routes
+ * constrain it and its authority policy becomes the child's runtime mode. Permissions come from the
+ * child's saved agent or the human's approval, never the parent: a parent-child ceiling would be
+ * one message to a trusting peer from bypass, and every door would need it.
  */
 const prepareSpawnPersona = Effect.fn("j5.a2a.mcp.prepareSpawnPersona")(function* (
   input: {
@@ -410,11 +411,10 @@ const spawn = Effect.fn("j5.a2a.spawnAgent")(function* (
     }
   }
   const firstAttempt = existing === null;
-  // A retry finishes the agent its first attempt created, in the modes it was created with.
-  // A caller's modes can be narrowed within one provider session, so those are checked
-  // against what the caller may touch now. A persona's agent runs under its own policy,
-  // except for an outside agent, whose approved level caps every agent it starts. The start
-  // checks, after reading the thread again, so an agent a concurrent attempt created counts too.
+  // A retry finishes its first attempt's agent in that agent's modes, checked against what the
+  // caller may touch now, since its modes can narrow. A persona's agent runs under its own policy
+  // unless an outside agent's approved level caps it. The start checks after reading the thread
+  // again, so an agent a concurrent attempt created counts too.
   const replayExceedsCaller = (caller: DispatchModes, thread: DispatchModes) => {
     if (personaId !== undefined && outside === undefined) return Effect.void;
     const exceeded = exceededDispatchModeLimit(caller, thread);
@@ -527,12 +527,10 @@ const spawn = Effect.fn("j5.a2a.spawnAgent")(function* (
     .withSpawnStart(
       { stableInput, threadId },
       Effect.gen(function* () {
-        // What a shared-type thread binds: the caller's checkout, or the project's main one.
-        // As upstream's launch does, a main-checkout thread asks for a folder of its own, and
-        // gets one only in the "No project" project. It is claimed here, inside the start
-        // that only one call at a time may run, and only before the thread exists; a replay
-        // replays its create. The thread is looked for again now that this call holds the
-        // start: an earlier attempt may have created it since the read above.
+        // A shared-type thread binds the caller's checkout or the main one; as in upstream's
+        // launch, a main-checkout thread gets its own folder only in "No project". Claimed
+        // here, in the one-at-a-time start and before the thread exists, so a replay replays
+        // its create. The thread is looked for again: an earlier attempt may have created it.
         const current = yield* threadManagement
           .getThreadShell(threadId)
           .pipe(Effect.mapError(spawnReadFailure));

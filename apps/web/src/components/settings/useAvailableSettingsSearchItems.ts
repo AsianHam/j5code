@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 
 import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
@@ -20,60 +19,55 @@ import {
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
   const { environments } = useEnvironments();
+  // Explicit booleans keep flags out of the filter cache so environment updates do not rebuild the list.
+  const hasEnvironment =
+    environments.some((environment) => environment.serverConfig !== null) === true;
+  const hasProviderSettingsEnvironment =
+    environments.some((environment) =>
+      isProviderSettingsEnvironmentAvailable({
+        connectionPhase: environment.connection.phase,
+        hasServerConfig: environment.serverConfig !== null,
+      }),
+    ) === true;
+  const hasMacProviderSettingsEnvironment =
+    environments.some(
+      (environment) =>
+        (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
+        environment.serverConfig?.environment.platform.os === "darwin" &&
+        isProviderSettingsEnvironmentAvailable({
+          connectionPhase: environment.connection.phase,
+          hasServerConfig: true,
+        }),
+    ) === true;
+  const hasThreadAutoSettlement =
+    getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const localEnvironmentDisabled = isLocalEnvironmentDisabled();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
-  const canManageLocalBackend = !localEnvironmentDisabled && canMaintain;
-  const desktopWsl = useEnvironmentQuery(
-    isElectron && canManageLocalBackend ? desktopWslStateAtom : null,
-  );
   const cloudLinkState = usePrimaryCloudLinkState().data;
   // Same fallback as the Connections row: older servers imply a tunnel from `linked`.
   const managedTunnelActive =
     cloudLinkState?.linkRevoked !== true &&
-    (cloudLinkState?.managedTunnelActive ?? cloudLinkState?.linked ?? false);
-
-  const items = useMemo(
-    () =>
-      filterAvailableSettingsSearchItems({
-        localEnvironmentDisabled,
-        hasCloudPublicConfig: hasCloudPublicConfig(),
-        hasEnvironment: environments.some((environment) => environment.serverConfig !== null),
-        hasProviderSettingsEnvironment: environments.some((environment) =>
-          isProviderSettingsEnvironmentAvailable({
-            connectionPhase: environment.connection.phase,
-            hasServerConfig: environment.serverConfig !== null,
-          }),
-        ),
-        hasMacProviderSettingsEnvironment: environments.some(
-          (environment) =>
-            (scopeSearch.machine === undefined ||
-              environment.environmentId === scopeSearch.machine) &&
-            environment.serverConfig?.environment.platform.os === "darwin" &&
-            isProviderSettingsEnvironmentAvailable({
-              connectionPhase: environment.connection.phase,
-              hasServerConfig: true,
-            }),
-        ),
-        canManageLocalBackend,
-        isWslSettingsRowVisible: isWslSettingsRowVisible({
-          state: desktopWsl.data,
-          error: desktopWsl.error,
-        }),
-        hasThreadAutoSettlement:
-          getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
-        managedTunnelActive,
-      }),
-    [
-      managedTunnelActive,
-      canManageLocalBackend,
-      desktopWsl.data,
-      desktopWsl.error,
-      environments,
-      localEnvironmentDisabled,
-      scopeSearch.machine,
-    ],
+    (cloudLinkState?.managedTunnelActive ?? cloudLinkState?.linked ?? false) === true;
+  const localEnvironmentDisabled = isLocalEnvironmentDisabled() === true;
+  const canManageLocalBackend = !localEnvironmentDisabled && canMaintain;
+  const desktopWsl = useEnvironmentQuery(
+    isElectron && canManageLocalBackend ? desktopWslStateAtom : null,
   );
+  const cloudPublicConfig = hasCloudPublicConfig() === true;
+  const wslSettingsRowVisible =
+    isWslSettingsRowVisible({ state: desktopWsl.data, error: desktopWsl.error }) === true;
+
+  const items = filterAvailableSettingsSearchItems({
+    localEnvironmentDisabled,
+    hasCloudPublicConfig: cloudPublicConfig,
+    hasEnvironment,
+    hasProviderSettingsEnvironment,
+    hasMacProviderSettingsEnvironment,
+    canManageLocalBackend,
+    isWslSettingsRowVisible: wslSettingsRowVisible,
+    hasThreadAutoSettlement,
+    managedTunnelActive,
+  });
   // J5 (case 72): search finds only the pages a person is shown.
   return useShownSettingsSearchItems(items);
 }

@@ -198,7 +198,7 @@ jobs:
 
       - uses: pnpm/action-setup@v6
         with:
-          version: 11.10.0
+          version: 12.14.0
           run_install: false
 
       - uses: actions/setup-node@v6
@@ -268,7 +268,7 @@ jobs:
 
       - uses: pnpm/action-setup@v6
         with:
-          version: 11.10.0
+          version: 12.14.0
           run_install: false
 
       - uses: actions/setup-node@v6
@@ -282,7 +282,11 @@ jobs:
         if: needs.resolve.outputs.stamp == 'true'
         run: pnpm exec node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
 
+      # The server bundle stamps its telemetry channel at build time and reports
+      # "dev" without one (apps/server/vite.config.ts).
       - name: Build server and web client
+        env:
+          T3CODE_TELEMETRY_CHANNEL: ${{ needs.resolve.outputs.channel }}
         run: pnpm exec vp run --filter t3 build
 
       # `cli.ts build` stamps the development icons into dist/client; the
@@ -291,15 +295,17 @@ jobs:
         run: pnpm exec node scripts/apply-web-brand-assets.ts production apps/server/dist/client
 
       # Node single-executables need a host Node with --build-sea (25.7+).
-      # Keep in step with SEA_NODE_VERSION in apps/server/vite.config.ts and
+      # Keep in step with engines.node in package.json, which apps/server/vite.config.ts embeds, and
       # VP_NODE_VERSION in upstream's release-desktop.yml.
       - uses: actions/setup-node@v6
         with:
-          node-version: 26.8.2
+          node-version: 26.12.1
 
+      # The executable bundles the server again, so it needs the same channel.
       - name: Build CLI single-executable
         env:
-          VP_NODE_VERSION: 26.8.2
+          VP_NODE_VERSION: 26.12.1
+          T3CODE_TELEMETRY_CHANNEL: ${{ needs.resolve.outputs.channel }}
         run: pnpm exec node apps/server/scripts/cli.ts build-exe --verbose
 
       # The executable embeds this Node, and CI tests on the one in .nvmrc. They
@@ -313,7 +319,7 @@ jobs:
       - name: Run the database startup tests on the Node the executable embeds
         working-directory: apps/server
         run: |
-          test "$(node --version)" = "v26.8.2"
+          test "$(node --version)" = "v26.12.1"
           pnpm exec vp test run src/j5/persistence src/persistence src/serverRuntimeState.test.ts
 
       - uses: actions/setup-node@v6

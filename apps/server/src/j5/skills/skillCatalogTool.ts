@@ -155,18 +155,15 @@ export const createSkillCatalogTool = (deps: SkillCatalogToolDeps) => {
           }),
       ),
     );
-    yield* Effect.flatMap(
+    yield* Effect.filterOrFail(
       runCommand("Skill catalog clone", "git", ["clone", "--", source, staging], recordDir),
+      (result) => result.code === 0,
       (result) =>
-        result.code === 0
-          ? Effect.succeed(result)
-          : Effect.fail(
-              new SkillCatalogError({
-                message:
-                  `Skill catalog clone failed for ${redactGitUrlUserInfo(source)} (exit ${result.code ?? "unknown"}). ` +
-                  `Stderr: ${boundDiagnostic(result.stderr)}`,
-              }),
-            ),
+        new SkillCatalogError({
+          message:
+            `Skill catalog clone failed for ${redactGitUrlUserInfo(source)} (exit ${result.code ?? "unknown"}). ` +
+            `Stderr: ${boundDiagnostic(result.stderr)}`,
+        }),
     ).pipe(
       Effect.tapError(() =>
         fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore),

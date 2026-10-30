@@ -785,7 +785,7 @@ it.effect("tells the sender once when its queued message is removed before it ru
   }).pipe(Effect.provide(makeTestLayer())),
 );
 
-// FORK.md case 84: cleanup survives removal of the unread-after-Stop notice (#694).
+// FORK.md case 89: cleanup survives removal of the unread-after-Stop notice.
 it.effect.each([
   { status: "interrupted", registered: true },
   { status: "failed", registered: true },

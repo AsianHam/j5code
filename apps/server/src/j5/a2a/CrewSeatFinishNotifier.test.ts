@@ -350,7 +350,7 @@ it.effect("tells the Captain how each finished seat ended, and settles nothing",
         assert.match(scoutNotice.text, /^<j5_seat_finished>\nrun_status: failed\nfailure: /);
         assert.include(
           scoutNotice.text,
-          "failure: provider_error — API Error: Can't reach the API server",
+          "failure: provider_error: API Error: Can't reach the API server",
         );
         assert.include(scoutNotice.text, "seat: scout");
         assert.include(scoutNotice.text, "handoff: none declared");
@@ -1096,8 +1096,8 @@ it.effect(
       const harness = yield* daemonHarness(() => Effect.succeed(4200));
       yield* Effect.gen(function* () {
         yield* CrewSeatFinishNotifier;
-        // Replaying from 0 re-fires old reactions, such as an old Captain archive retiring
-        // live Crews on every restart (#349).
+        // Replaying from 0 re-fires old reactions, such as an old Captain archive retiring live
+        // Crews on every restart.
         assert.equal(yield* Deferred.await(harness.started), 4200);
       }).pipe(Effect.provide(harness.layer));
     }).pipe(Effect.scoped),

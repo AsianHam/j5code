@@ -46,12 +46,10 @@ const NOT_A_VIEWERS: ReadonlySet<string> = new Set(["mark-unread"]);
 const STARTS_A_THREAD: ReadonlySet<string> = new Set(["new-thread-on-branch"]);
 
 /**
- * Upstream's thread menu as People and access changes it. "Share thread…" goes after "Copy"
- * (AC34), disabled on a device without "Manage access", as upstream shows an action a device
- * lacks. For someone who is not an Owner, the items that are Owners' go, and "Leave thread" takes
- * Archive's place when they hold a level on the thread itself (AC48). "New thread on <branch>" is
- * disabled for someone who cannot start a thread in the project. Upstream's own list is left as it
- * was built.
+ * "Share thread…" follows "Copy" (AC34), disabled without "Manage access" as upstream shows actions
+ * a device lacks. Non-Owners lose Owners' items, and "Leave thread" takes Archive's place when they
+ * hold a level on the thread itself (AC48). "New thread on <branch>" is disabled for someone who
+ * cannot start a thread in the project. Upstream's own items are left as built.
  */
 export function withSharingMenuItems<Id extends string>(
   items: ReadonlyArray<ContextMenuItem<Id>>,

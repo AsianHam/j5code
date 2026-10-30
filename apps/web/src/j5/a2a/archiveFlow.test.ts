@@ -54,8 +54,8 @@ describe("archive flow", () => {
   });
 
   it("builds every consequential fact into the existing dialog's two-line rows", () => {
-    const inboundOpenedAt = new Date(Date.now() - 4 * 60 * 60_000).toISOString();
-    const outboundOpenedAt = new Date(Date.now() - 15 * 60_000).toISOString();
+    const inboundOpenedAt = "2026-01-01T08:00:00.000Z";
+    const outboundOpenedAt = "2026-01-01T11:45:00.000Z";
     const preflight = registered({
       openExchanges: [
         {
@@ -89,7 +89,7 @@ describe("archive flow", () => {
     expect(warning.confirmLabel).toBe("Archive anyway");
     expect(markup).toContain("1 agent placed under Release agent keeps running:");
     expect(markup).toContain("Child");
-    expect(markup).toContain("2 open asks will be terminated — counterparties are notified");
+    expect(markup).toContain("2 open asks will be terminated (counterparties are notified)");
     expect(markup).toContain("Blocking");
     expect(markup).toContain("From");
     expect(markup).toContain("Waiter");
@@ -196,7 +196,7 @@ describe("archive flow", () => {
           counterpartyId: unknownParticipantId,
           intent: "Need an answer before archive",
           urgency: "fyi",
-          openedAt: new Date().toISOString(),
+          openedAt: "2026-01-01T12:00:00.000Z",
         },
       ],
     });
@@ -220,7 +220,7 @@ describe("archive flow", () => {
           counterpartyId: humanParticipantId,
           intent: "Please confirm the rollout",
           urgency: "soon",
-          openedAt: new Date().toISOString(),
+          openedAt: "2026-01-01T12:00:00.000Z",
         },
       ],
     });
@@ -345,7 +345,7 @@ describe("archive flow", () => {
             counterpartyId: "agent:waiter",
             intent: "Wait for the remote archive",
             urgency: "blocking",
-            openedAt: new Date().toISOString(),
+            openedAt: "2026-01-01T12:00:00.000Z",
           },
         ],
       });

@@ -64,11 +64,10 @@ const byLabel = (left: FleetAgent, right: FleetAgent) =>
   (left.displayName ?? left.participantId).localeCompare(right.displayName ?? right.participantId);
 
 /**
- * Placement tree per project, the unit each machine's ledger answers in: roots are agents whose parent is null or not in the
- * project; Crew members are pulled out of the plain child list and grouped under their
- * Captain by Crew. A seat on the roster that is not placed yet (or never created: the read
- * carries it with no thread) still hangs under its Captain, so a Crew's group always counts
- * every seat. Agents that sit in a Crew but whose Captain is gone still render at the root.
+ * Per project, the unit each machine's ledger answers in. A seat not placed yet (or never created:
+ * the read carries it with no thread) still hangs under its Captain, so a Crew's group always
+ * counts every seat. Crew members whose Captain is gone, or whose parent is outside the project,
+ * render at the root.
  */
 export function buildFleetTree(ledgerProject: FleetLedgerProject): ReadonlyArray<FleetNode> {
   const byId = new Map(ledgerProject.agents.map((agent) => [agent.participantId, agent]));
@@ -184,11 +183,10 @@ export function* fleetNodeAgents(node: FleetNode): Generator<FleetAgent> {
 }
 
 /**
- * A subtree is settled only when every agent in it, Crew seats included, reads as settled from
- * the same measured runtime and settle facts its row displays. One running, failed, needs-you, idle, or unknown agent anywhere
- * beneath the root keeps the whole subtree in Active: a settled Captain whose seats still work is
- * not done, and an agent the client cannot see is not assumed done. Idle is not settled; nothing
- * is inferred from silence.
+ * Settled only when every agent beneath, Crew seats included, reads as settled from the measured
+ * runtime and settle facts its row displays: a settled Captain whose seats still work is not done,
+ * and an agent the client cannot see is not assumed done. Idle is not settled; nothing is inferred
+ * from silence.
  */
 export const isSettledFleetNode = (
   node: FleetNode,
@@ -199,12 +197,9 @@ export const isSettledFleetNode = (
 };
 
 /**
- * The Active and Settled sections across every project. The roster read already leaves out
- * retired agents (fleet-page AC11), and the client's thread shells never hold archived threads,
- * so the child of a retired agent roots through `buildFleetTree` and nothing here filters. Roots
- * keep the order `buildFleetTree` gives them, project by project, so nothing is reordered by
- * activity (AC9); a root and its whole subtree land in one section together, placed by
- * `isSettledFleetNode`.
+ * Nothing here filters: the roster read already leaves out retired agents (fleet-page AC11) and
+ * thread shells never hold archived threads. Roots keep `buildFleetTree`'s order so nothing is
+ * reordered by activity (AC9), and a root lands in one section with its whole subtree.
  */
 export function partitionFleet<
   S extends FleetLedgerProject & { readonly environmentId: EnvironmentId },
@@ -299,13 +294,10 @@ export const originLabel = (agent: Pick<FleetAgent, "origin" | "outsideSpawner">
         : "?";
 
 /**
- * The sidebar rows the roster says are involved in a Crew or a spawn: every seat, every Captain
- * a seat names, and every agent with a placed child. When the roster changes, Crew chips and
- * children are re-read for these rows (and for the rows still showing one; see
- * refreshCrewMembershipRows) and no others, so that read's cost follows involvement, not the
- * thread list. A Captain that gained a Crew on another device is named here by the roster read
- * that change causes. The live read carries no retired Crew, so a Captain whose last Crew
- * retired is not named here; its chip clears because the row still holds one.
+ * Every seat, every Captain a seat names, and every agent with a placed child: the rows re-read on
+ * a roster change, so that cost follows involvement, not the thread list. The live read carries no
+ * retired Crew, so a Captain whose last Crew retired is not named here; its chip clears because
+ * the row still holds one (see refreshCrewMembershipRows).
  */
 export function fleetInvolvedThreadRefs(
   projects: ReadonlyArray<FleetLedgerProject & { readonly environmentId: EnvironmentId }>,
@@ -331,11 +323,9 @@ export function fleetInvolvedThreadRefs(
 }
 
 /**
- * Re-reads the sidebar's Crew chips and spawned children when the server says they may have
- * changed. Call it with each roster read an environment settles and the revisions that read was
- * made under: a moved `crew` revision re-reads both for the rows the roster names, a moved `fleet`
- * revision re-reads the children alone, and an unmoved pair re-reads nothing. The first read of
- * an environment re-reads both.
+ * Call it with each settled roster read and its revisions: a moved `crew` revision re-reads Crew
+ * chips and children for the rows the roster names, a moved `fleet` revision re-reads children
+ * alone, and an unmoved pair re-reads nothing. An environment's first read re-reads both.
  */
 export function createFleetRowRefresher(refresh: {
   readonly memberships: (refs: ReadonlyArray<ScopedThreadRef>) => void;

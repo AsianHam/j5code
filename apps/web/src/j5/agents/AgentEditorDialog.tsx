@@ -35,6 +35,7 @@ export function AgentEditorDialog(props: {
   const read = useAtomCommand(agentPersonaEnvironment.readAgentPersona, {
     reportFailure: false,
   });
+  // oxlint-disable-next-line t3code/react-effect-budget -- loads the persona's instructions from the server when the dialog opens.
   useEffect(() => {
     let cancelled = false;
     void read({ environmentId: props.environmentId, input: { personaId: props.initial.personaId } })
@@ -54,23 +55,22 @@ export function AgentEditorDialog(props: {
     if (saving || instructions === null) return;
     setSaving(true);
     setError(null);
-    try {
-      const result = await save({
-        environmentId: props.environmentId,
-        input: {
-          ...draft,
-          displayName: draft.displayName.trim(),
-          description: draft.description.trim(),
-          instructions,
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      props.onSaved();
-    } catch (cause) {
+    const result = await save({
+      environmentId: props.environmentId,
+      input: {
+        ...draft,
+        displayName: draft.displayName.trim(),
+        description: draft.description.trim(),
+        instructions,
+      },
+    });
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
       setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSaving(false);
+    } else {
+      props.onSaved();
     }
+    setSaving(false);
   }
   return (
     <Dialog

@@ -140,12 +140,9 @@ export class A2ALedger extends Context.Service<A2ALedger, A2ALedgerShape>()(
 ) {}
 
 /**
- * Internal write seam for multi-service transactions. drainPermit and
- * lifecyclePermit are independent peers that both precede appendPermit; the
- * remaining order is appendPermit ≺ mutationPermit ≺ DB. This Semaphore(1)
- * permit is non-reentrant: callers of this seam must acquire it before BEGIN
- * and use the provided raw in-transaction APIs instead of re-acquiring it
- * through the public append methods.
+ * Internal write seam for multi-service transactions. drainPermit and lifecyclePermit both precede
+ * appendPermit; then appendPermit ≺ mutationPermit ≺ DB. The Semaphore(1) permit is non-reentrant:
+ * acquire it before BEGIN and use the raw in-transaction APIs, never the public append methods.
  */
 export interface A2ALedgerTransactionWriterShape {
   readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
@@ -906,29 +903,35 @@ export const layer: Layer.Layer<
     );
 
     const ledger = A2ALedger.of({
-      ensureProject: (command) =>
-        Effect.gen(function* () {
+      ensureProject: Effect.fn("j5.a2a.ledger.ensureProject")(
+        function* (command) {
           yield* sql`
             INSERT INTO j5_a2a_project_ledger (project_id, created_at)
             VALUES (${command.projectId}, ${command.createdAt})
             ON CONFLICT(project_id) DO NOTHING
           `;
-        }).pipe(Effect.mapError(preserveDomainError("ensure project ledger"))),
-      listProjectLedgers: () =>
-        Effect.gen(function* () {
+        },
+        Effect.mapError(preserveDomainError("ensure project ledger")),
+      ),
+      listProjectLedgers: Effect.fn("j5.a2a.ledger.listProjectLedgers")(
+        function* () {
           return yield* Effect.forEach(yield* selectProjectLedgers(null), projectLedgerFromRow, {
             concurrency: 1,
           });
-        }).pipe(Effect.mapError(preserveDomainError("list project ledgers"))),
-      readProjectLedger: (ledgerProjectId) =>
-        Effect.gen(function* () {
+        },
+        Effect.mapError(preserveDomainError("list project ledgers")),
+      ),
+      readProjectLedger: Effect.fn("j5.a2a.ledger.readProjectLedger")(
+        function* (ledgerProjectId) {
           const row = (yield* selectProjectLedgers(ledgerProjectId))[0];
           if (row === undefined)
             return yield* new ProjectLedgerNotFoundError({ projectId: ledgerProjectId });
           return yield* projectLedgerFromRow(row);
-        }).pipe(Effect.mapError(preserveDomainError("read project ledger"))),
-      append: (command) =>
-        appendPermit
+        },
+        Effect.mapError(preserveDomainError("read project ledger")),
+      ),
+      append: Effect.fn("A2ALedger.append")(function (command) {
+        return appendPermit
           .withPermit(
             appendEventsEffect({
               commandId: command.commandId,
@@ -948,17 +951,22 @@ export const layer: Layer.Layer<
               }),
             ),
           )
-          .pipe(Effect.mapError(preserveDomainError("append communication event"))),
-      appendEvents: (command) =>
-        appendPermit
+          .pipe(Effect.mapError(preserveDomainError("append communication event")));
+      }),
+      appendEvents: Effect.fn("A2ALedger.appendEvents")(function (command) {
+        return appendPermit
           .withPermit(appendEventsEffect(command))
-          .pipe(Effect.mapError(preserveDomainError("append communication events"))),
-      appendEventsIfExchangeOpen: (command, exchangeId) =>
-        appendPermit
-          .withPermit(appendEventsIfExchangeOpenEffect(command, exchangeId))
-          .pipe(Effect.mapError(preserveDomainError("append communication events if open"))),
-      readEvents: ({ projectId: ledgerProjectId, cursor, limit }) =>
-        Effect.gen(function* () {
+          .pipe(Effect.mapError(preserveDomainError("append communication events")));
+      }),
+      appendEventsIfExchangeOpen: Effect.fn("A2ALedger.appendEventsIfExchangeOpen")(
+        function (command, exchangeId) {
+          return appendPermit
+            .withPermit(appendEventsIfExchangeOpenEffect(command, exchangeId))
+            .pipe(Effect.mapError(preserveDomainError("append communication events if open")));
+        },
+      ),
+      readEvents: Effect.fn("j5.a2a.ledger.readEvents")(
+        function* ({ projectId: ledgerProjectId, cursor, limit }) {
           yield* ensureProjectLedger(ledgerProjectId);
           const highWaterRows = yield* sql<{ readonly high_water: number }>`
             SELECT COALESCE(MAX(seq), 0) AS high_water
@@ -1017,17 +1025,23 @@ export const layer: Layer.Layer<
             nextCursor: { afterSeq, snapshotEnd },
             complete: afterSeq === snapshotEnd,
           };
-        }).pipe(Effect.mapError(preserveDomainError("read communication events"))),
-      listMembership: (ledgerProjectId) =>
-        listMembershipEffect(ledgerProjectId).pipe(
+        },
+        Effect.mapError(preserveDomainError("read communication events")),
+      ),
+      listMembership: Effect.fn("A2ALedger.listMembership")(function (ledgerProjectId) {
+        return listMembershipEffect(ledgerProjectId).pipe(
           Effect.mapError(preserveDomainError("list project membership")),
-        ),
-      findHistoricalAgentParticipantId: (input) =>
-        findHistoricalAgentParticipantId(input).pipe(
-          Effect.mapError(preserveDomainError("find historical agent participant")),
-        ),
-      rebuildMembership: (ledgerProjectId) =>
-        appendPermit
+        );
+      }),
+      findHistoricalAgentParticipantId: Effect.fn("A2ALedger.findHistoricalAgentParticipantId")(
+        function (input) {
+          return findHistoricalAgentParticipantId(input).pipe(
+            Effect.mapError(preserveDomainError("find historical agent participant")),
+          );
+        },
+      ),
+      rebuildMembership: Effect.fn("A2ALedger.rebuildMembership")(function (ledgerProjectId) {
+        return appendPermit
           .withPermit(
             sql.withTransaction(
               Effect.gen(function* () {
@@ -1056,13 +1070,16 @@ export const layer: Layer.Layer<
               }),
             ),
           )
-          .pipe(Effect.mapError(preserveDomainError("rebuild project membership"))),
+          .pipe(Effect.mapError(preserveDomainError("rebuild project membership")));
+      }),
       subscribeCommitted: PubSub.subscribe(committed).pipe(
         Effect.map((subscription) => Stream.fromSubscription(subscription)),
       ),
     });
     const transactionWriter = A2ALedgerTransactionWriter.of({
-      withPermit: (effect) => appendPermit.withPermit(effect),
+      withPermit: Effect.fn("A2ALedgerTransactionWriter.withPermit")(function (effect) {
+        return appendPermit.withPermit(effect);
+      }),
       appendInTransaction,
       appendEventsInTransaction,
       publishCommitted,

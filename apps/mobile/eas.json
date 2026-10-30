@@ -8,8 +8,8 @@
     "j5-testflight": {
       "extends": "production",
       "corepack": false,
-      "node": "24.14.0",
-      "pnpm": "11.10.0",
+      "node": "26.12.1",
+      "pnpm": "12.14.0",
       "distribution": "store"
     },
     "development": {
@@ -22,6 +22,13 @@
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
+        "image": "macos-tahoe-26.6-xcode-27.1"
+      }
+    },
+    "development-simulator": {
+      "extends": "development",
+      "ios": {
+        "simulator": true,
         "image": "macos-tahoe-26.6-xcode-27.1"
       }
     },

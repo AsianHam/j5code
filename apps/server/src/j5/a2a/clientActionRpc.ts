@@ -123,54 +123,47 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
         ),
       ),
     [METHODS.stopCrew]: (input: CrewStopRequest) =>
-      forCaptainOf({ kind: "crew", crewInstanceId: input.crewInstanceId })
-        .pipe(Effect.andThen(actions.stopCrew(input)))
-        .pipe(
-          Effect.catch(
-            failAsJ5ActionError({
-              refusals: ["CrewStopNotFoundError", "CrewStopRequestError"],
-              failed: "Stopping the crew failed.",
-            }),
-          ),
+      forCaptainOf({ kind: "crew", crewInstanceId: input.crewInstanceId }).pipe(
+        Effect.andThen(actions.stopCrew(input)),
+        Effect.catch(
+          failAsJ5ActionError({
+            refusals: ["CrewStopNotFoundError", "CrewStopRequestError"],
+            failed: "Stopping the crew failed.",
+          }),
         ),
+      ),
     [METHODS.archiveCrew]: (input: CrewArchiveRequest) =>
-      services(requireOwner(session))
-        .pipe(Effect.andThen(actions.archiveCrew(input)))
-        .pipe(
-          Effect.catch((error) =>
-            error._tag === "ArchiveCrewPartialFailureError"
-              ? failAsJ5ActionError({
-                  refusals: [],
-                  failed:
-                    "Archiving the crew stopped partway; the seats already retired stay retired. Try again.",
-                })(error)
-              : failAsJ5ActionError({ failed: "Archiving the crew failed." })(error),
-          ),
+      services(requireOwner(session)).pipe(
+        Effect.andThen(actions.archiveCrew(input)),
+        Effect.catch((error) =>
+          error._tag === "ArchiveCrewPartialFailureError"
+            ? failAsJ5ActionError({
+                refusals: [],
+                failed:
+                  "Archiving the crew stopped partway; the seats already retired stay retired. Try again.",
+              })(error)
+            : failAsJ5ActionError({ failed: "Archiving the crew failed." })(error),
         ),
+      ),
     [METHODS.respondCrewRuntimeRequest]: (input: CrewRuntimeRequestRespondRequest) =>
       // A seat's own prompt is answered by whoever writes to the seat's thread, which includes
       // everyone who writes to its Captain's.
-      services(requireWrites(session, Effect.succeed(input.threadId)))
-        .pipe(
-          Effect.andThen(people.sessionReach(session).pipe(Effect.orElseSucceed(() => null))),
-          Effect.flatMap((reach) => {
-            const personId = reach === null ? null : reachPersonId(reach);
-            return actions.respondCrewRuntimeRequest(
-              input,
-              personId === null
-                ? undefined
-                : (answer) => conversation.claimAnswer(personId, answer),
-            );
+      services(requireWrites(session, Effect.succeed(input.threadId))).pipe(
+        Effect.andThen(people.sessionReach(session).pipe(Effect.orElseSucceed(() => null))),
+        Effect.flatMap((reach) => {
+          const personId = reach === null ? null : reachPersonId(reach);
+          return actions.respondCrewRuntimeRequest(
+            input,
+            personId === null ? undefined : (answer) => conversation.claimAnswer(personId, answer),
+          );
+        }),
+        Effect.catch(
+          failAsJ5ActionError({
+            refusals: ["CrewRuntimeRequestNotFoundError", "CrewRuntimeRequestConflictError"],
+            failed: "Answering the request failed.",
           }),
-        )
-        .pipe(
-          Effect.catch(
-            failAsJ5ActionError({
-              refusals: ["CrewRuntimeRequestNotFoundError", "CrewRuntimeRequestConflictError"],
-              failed: "Answering the request failed.",
-            }),
-          ),
         ),
+      ),
     [METHODS.answerHumanExchange]: (input: AnswerHumanExchangeRequest) =>
       personOf.pipe(
         Effect.flatMap((personId) =>

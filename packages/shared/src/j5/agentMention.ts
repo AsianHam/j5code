@@ -10,7 +10,7 @@ export const agentMentionReplacement = (personaId: string) =>
 
 /**
  * The J5 token-level hook both composer trigger detectors call before bare-`@` file search. It
- * serves `@persona:` and `@playbook:`; the playbook mention rides #314's `"slash-playbook"` kind.
+ * serves `@persona:` and `@playbook:`; the playbook mention rides the `"slash-playbook"` kind.
  */
 export function detectAgentMention(token: string, start: number, end: number) {
   return (

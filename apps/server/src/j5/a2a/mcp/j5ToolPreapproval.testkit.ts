@@ -40,7 +40,7 @@ export const J5_APPROVAL_POLICY_MATRIX: ReadonlyArray<{
 /**
  * t3-code tools outside the J5 set that J5 never adds to any harness's pre-approval, in any mode.
  * The harness's own verdict stands, with one upstream exception: Claude pre-approves every
- * `mcp__t3-code__*` tool in non-read-only sessions (`claudeMcpQueryOverrides`, upstream #3862).
+ * `mcp__t3-code__*` tool in non-read-only sessions (`claudeMcpQueryOverrides`).
  */
 export const J5_NEVER_PREAPPROVED_TOOLS: ReadonlyArray<string> = [
   "archive_agent",

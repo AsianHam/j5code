@@ -31,11 +31,9 @@ function findForkFile(): string | undefined {
 }
 
 /**
- * Parses FORK.md's `Released pin:` line, which describes the latest stable
- * release rather than `j5/main`:
- *   Released pin: `<sha>`, from `<branch>` (in J5 Code <version>, frozen <date>).
- * Returns undefined unless the whole line parses, so a half-edited line shows
- * nothing rather than a mix of old and new facts.
+ * FORK.md's `Released pin:` line describes the latest stable release, not
+ * `j5/main`. Returns undefined unless the whole line parses, so a half-edited
+ * line shows nothing rather than a mix of old and new facts.
  */
 export function parseReleasedPin(text: string): ForkFacts | undefined {
   const line =

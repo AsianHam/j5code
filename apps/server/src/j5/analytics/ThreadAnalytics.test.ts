@@ -164,6 +164,7 @@ const testLayer = (recorded: Ref.Ref<ReadonlyArray<Readonly<Record<string, unkno
           record: (event, properties = {}) =>
             Ref.update(recorded, (events) => [...events, { event, ...properties }]),
           flush: Effect.void,
+          recordOwners: () => Effect.void,
         }),
       ),
     ),

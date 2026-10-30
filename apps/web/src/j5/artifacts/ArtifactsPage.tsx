@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 
 import ChatMarkdown from "../../components/ChatMarkdown";
 import { DiffFilePathCopyButton } from "../../components/DiffFilePathCopyButton";
@@ -36,6 +36,7 @@ import { listArtifacts, readArtifact, deleteArtifact, deleteAllArtifacts } from 
 import { artifactPreviewRevision } from "./artifactPreview.logic";
 import { nextArtifactRefreshGeneration } from "./artifactRefresh";
 
+const isJ5ActionError = Schema.is(J5ActionError);
 const MARKDOWN_EXTENSIONS = new Set(["md", "markdown", "mdx"]);
 const IMAGE_MEDIA_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -110,10 +111,8 @@ export function ArtifactsPage({
 }: ArtifactsPageProps) {
   const projects = useProjects();
   const { environments } = useEnvironments();
-  const environmentLabels = useMemo(
-    () =>
-      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
-    [environments],
+  const environmentLabels = new Map(
+    environments.map((environment) => [environment.environmentId, environment.label]),
   );
   const initialKey =
     initialEnvironmentId && initialProjectId ? `${initialEnvironmentId}:${initialProjectId}` : null;
@@ -143,12 +142,12 @@ export function ArtifactsPage({
     ? ARTIFACT_EMBEDDED_FILE_PANE_MAX_WIDTH
     : ARTIFACT_FILE_PANE_MAX_WIDTH;
 
-  const selectedProject = useMemo(
-    () =>
-      projects.find((project) => projectKey(project) === selectedProjectKey) ??
-      (embedded ? null : (projects.at(0) ?? null)),
-    [embedded, projects, selectedProjectKey],
-  );
+  const selectedProject =
+    projects.find((project) => projectKey(project) === selectedProjectKey) ??
+    (embedded ? null : (projects.at(0) ?? null));
+  if (!embedded && selectedProject !== null && selectedProjectKey !== projectKey(selectedProject)) {
+    setSelectedProjectKey(projectKey(selectedProject));
+  }
   const selectedEnvironmentId = selectedProject?.environmentId ?? null;
   const canDelete = useAtomValue(
     j5Environment.deleteArtifact.permissionAtom(selectedEnvironmentId),
@@ -159,11 +158,9 @@ export function ArtifactsPage({
   const selectedProjectId = selectedProject?.id ?? null;
   const selectedWorkspaceRoot = selectedProject?.workspaceRoot;
   const selectedKey = selectedProject === null ? null : projectKey(selectedProject);
-  // The artifact client reads the environment's prepared connection from an atom that only holds
-  // a value while something subscribes to it. Inside a thread the chat surface keeps it mounted;
-  // on the standalone route this page is the only subscriber, so it must hold the subscription
-  // itself. The list is read over the socket, which comes up after the prepared connection, so
-  // the page waits for both before fetching, or the read fails as "not connected".
+  // The prepared-connection atom only holds a value while subscribed, and on the standalone route
+  // this page is the only subscriber. The socket comes up after the prepared connection, so the
+  // page waits for both before fetching, or the read fails as "not connected".
   const prepared = Option.isSome(usePreparedConnection(selectedEnvironmentId));
   const connected =
     prepared &&
@@ -180,30 +177,35 @@ export function ArtifactsPage({
       : null,
   );
 
-  useEffect(() => {
-    if (embedded) return;
-    if (selectedProject !== null && selectedProjectKey !== projectKey(selectedProject)) {
-      setSelectedProjectKey(projectKey(selectedProject));
-    }
-  }, [embedded, selectedProject, selectedProjectKey]);
-
-  useEffect(() => {
+  // Each new read resets the list's status in the render that asks for it; the effect below
+  // only runs the read.
+  const listInputs = JSON.stringify([
+    selectedEnvironmentId,
+    selectedProjectId,
+    connected,
+    listGeneration,
+    manualRefreshes,
+  ]);
+  const [resetListInputs, setResetListInputs] = useState<string | null>(null);
+  if (resetListInputs !== listInputs) {
+    setResetListInputs(listInputs);
     setOversizedProjectKey(null);
     if (selectedEnvironmentId === null || selectedProjectId === null) {
       setEntries([]);
       setSelectedPath(null);
       setListedProjectKey(null);
       setListState("ready");
-      return;
-    }
-    if (!connected) {
+    } else {
       setListState("loading");
       setError(null);
-      return;
     }
+  }
+  // Names the read, so a refresh that changes nothing else still reads again.
+  const listRead = connected ? listInputs : null;
+  // oxlint-disable-next-line t3code/react-effect-budget -- lists the selected project's artifacts from the server, and drops a stale answer when the selection changes.
+  useEffect(() => {
+    if (listRead === null || selectedEnvironmentId === null || selectedProjectId === null) return;
     let current = true;
-    setListState("loading");
-    setError(null);
     void listArtifacts({
       environmentId: selectedEnvironmentId,
       projectId: selectedProjectId,
@@ -224,7 +226,7 @@ export function ArtifactsPage({
         setEntries([]);
         setSelectedPath(null);
         setError(cause instanceof Error ? cause.message : "Artifacts could not be loaded.");
-        if (Schema.is(J5ActionError)(cause) && cause.code === "ArtifactListTooLargeError") {
+        if (isJ5ActionError(cause) && cause.code === "ArtifactListTooLargeError") {
           setOversizedProjectKey(`${selectedEnvironmentId}:${selectedProjectId}`);
         }
         setListState("error");
@@ -233,34 +235,53 @@ export function ArtifactsPage({
     return () => {
       current = false;
     };
-  }, [connected, listGeneration, manualRefreshes, selectedEnvironmentId, selectedProjectId]);
+  }, [listRead, selectedEnvironmentId, selectedProjectId]);
 
-  useEffect(() => {
+  const [seenChange, setSeenChange] = useState<typeof artifactChange.data>(null);
+  if (seenChange !== artifactChange.data) {
+    setSeenChange(artifactChange.data);
     setListGeneration((generation) =>
       nextArtifactRefreshGeneration(generation, artifactChange.data),
     );
-  }, [artifactChange.data]);
+  }
 
   // The server refuses the change feed for a project this connection can no longer read, such as
   // one a guest's grant on has ended. Reading the list again is then refused too, which clears
   // the file that was open instead of leaving it on screen.
-  useEffect(() => {
+  const [seenChangeError, setSeenChangeError] = useState<typeof artifactChange.error>(null);
+  if (seenChangeError !== artifactChange.error) {
+    setSeenChangeError(artifactChange.error);
     if (artifactChange.error !== null) setListGeneration((generation) => generation + 1);
-  }, [artifactChange.error]);
+  }
 
+  const contentRead =
+    !connected ||
+    selectedEnvironmentId === null ||
+    selectedProjectId === null ||
+    selectedPath === null
+      ? null
+      : JSON.stringify([selectedEnvironmentId, selectedProjectId, selectedPath, selectedRevision]);
+  const [resetContentRead, setResetContentRead] = useState<string | null | undefined>(undefined);
+  if (resetContentRead !== contentRead) {
+    setResetContentRead(contentRead);
+    if (contentRead === null) {
+      setContent(null);
+      setContentState("idle");
+    } else {
+      setContentState("loading");
+    }
+  }
+  // oxlint-disable-next-line t3code/react-effect-budget -- reads the selected artifact from the server, and drops a stale answer when the selection changes.
   useEffect(() => {
     if (
-      !connected ||
+      contentRead === null ||
       selectedEnvironmentId === null ||
       selectedProjectId === null ||
       selectedPath === null
     ) {
-      setContent(null);
-      setContentState("idle");
       return;
     }
     let current = true;
-    setContentState("loading");
     void readArtifact({
       environmentId: selectedEnvironmentId,
       projectId: selectedProjectId,
@@ -281,18 +302,19 @@ export function ArtifactsPage({
     return () => {
       current = false;
     };
-  }, [connected, selectedEnvironmentId, selectedPath, selectedProjectId, selectedRevision]);
+  }, [contentRead, selectedEnvironmentId, selectedPath, selectedProjectId]);
 
   const selectionKey = JSON.stringify([selectedEnvironmentId, selectedProjectId, selectedPath]);
   const currentSelection = useRef(selectionKey);
-  currentSelection.current = selectionKey;
   const currentProjectKey = useRef(selectedKey);
+  // oxlint-disable-next-line t3code/react-effect-budget -- async handlers compare against the latest selection, and render may not write refs.
   useEffect(() => {
+    currentSelection.current = selectionKey;
     currentProjectKey.current = selectedKey;
-  }, [selectedKey]);
+  }, [currentProjectKey, currentSelection, selectedKey, selectionKey]);
 
-  const refresh = useCallback(() => setManualRefreshes((count) => count + 1), []);
-  const deleteSelectedArtifact = useCallback(async () => {
+  const refresh = () => setManualRefreshes((count) => count + 1);
+  const deleteSelectedArtifact = async () => {
     if (
       selectedEnvironmentId === null ||
       selectedProjectId === null ||
@@ -313,22 +335,24 @@ export function ArtifactsPage({
 
     setDeleting(true);
     setDeleteError(null);
-    try {
-      await deleteArtifact({
-        environmentId: selectedEnvironmentId,
-        projectId: selectedProjectId,
-        path,
-      });
+    const failure = await deleteArtifact({
+      environmentId: selectedEnvironmentId,
+      projectId: selectedProjectId,
+      path,
+    }).then(
+      () => null,
+      (cause: unknown) =>
+        cause instanceof Error ? cause.message : "The artifact could not be deleted.",
+    );
+    if (failure === null) {
       // Re-read whichever project is current when the request completes. The list effect cancels
       // superseded reads, so an in-flight deletion from another project cannot write stale rows.
       setListGeneration((generation) => generation + 1);
-    } catch (cause) {
-      if (currentSelection.current !== requestSelection) return;
-      setDeleteError(cause instanceof Error ? cause.message : "The artifact could not be deleted.");
-    } finally {
-      setDeleting(false);
+    } else if (currentSelection.current === requestSelection) {
+      setDeleteError(failure);
     }
-  }, [selectedEnvironmentId, selectedPath, selectedProjectId, deleting, selectionKey]);
+    setDeleting(false);
+  };
   const canDeleteProjectArtifacts =
     selectedProject !== null &&
     connected &&
@@ -336,7 +360,7 @@ export function ArtifactsPage({
     !deleting &&
     ((listState === "ready" && listedProjectKey === selectedKey && entries.length > 0) ||
       (listState === "error" && oversizedProjectKey === selectedKey));
-  const deleteProjectArtifacts = useCallback(async () => {
+  const deleteProjectArtifacts = async () => {
     if (selectedProject === null || !canDeleteProjectArtifacts) {
       return;
     }
@@ -351,21 +375,21 @@ export function ArtifactsPage({
 
     setDeleting(true);
     setDeleteError(null);
-    try {
-      await deleteAllArtifacts({
-        environmentId: selectedProject.environmentId,
-        projectId: selectedProject.id,
-      });
-    } catch (cause) {
-      if (currentProjectKey.current !== requestProjectKey) return;
-      const detail = cause instanceof Error ? cause.message : "Artifacts could not be deleted.";
-      setDeleteError(`${detail} Some artifacts may already have been deleted.`);
-    } finally {
-      // A failed bulk delete may have removed some files, so refresh on failure too.
-      setListGeneration((generation) => generation + 1);
-      setDeleting(false);
+    const failure = await deleteAllArtifacts({
+      environmentId: selectedProject.environmentId,
+      projectId: selectedProject.id,
+    }).then(
+      () => null,
+      (cause: unknown) =>
+        cause instanceof Error ? cause.message : "Artifacts could not be deleted.",
+    );
+    if (failure !== null && currentProjectKey.current === requestProjectKey) {
+      setDeleteError(`${failure} Some artifacts may already have been deleted.`);
     }
-  }, [selectedProject, canDeleteProjectArtifacts, selectedKey]);
+    // A failed bulk delete may have removed some files, so refresh on failure too.
+    setListGeneration((generation) => generation + 1);
+    setDeleting(false);
+  };
   const selectedExtension = selectedPath === null ? "" : extensionOf(selectedPath);
   const selectedName = selectedPath?.split("/").at(-1) ?? null;
   const image = IMAGE_MEDIA_TYPES[selectedExtension] !== undefined;

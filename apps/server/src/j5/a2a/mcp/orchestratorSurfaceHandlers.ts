@@ -15,11 +15,13 @@ const handlers = {
     delegateTask,
   ),
   // Declared as upstream declares the tool this stands in for.
-  orchestrator_capabilities: McpToolAccess.reads(() =>
+  orchestrator_capabilities: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* OrchestratorMcpService;
-      return yield* service.capabilities(scope).pipe(Effect.map(mapJ5OrchestratorCapabilities));
+      return yield* service
+        .capabilities(scope, input)
+        .pipe(Effect.map(mapJ5OrchestratorCapabilities));
     }),
   ),
 } satisfies McpToolAccess.Handlers<typeof J5OrchestratorSurface.tools>;

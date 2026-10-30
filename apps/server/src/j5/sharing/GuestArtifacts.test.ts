@@ -14,7 +14,6 @@ import { J5_CLIENT_READ_WS_METHODS } from "@t3tools/contracts/j5";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { HttpRouter, HttpServer } from "effect/http";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -30,9 +29,9 @@ import { accessLayer } from "./test-support/accessHarness.ts";
 import * as PersonAccess from "./PersonAccess.ts";
 
 /**
- * A project guest and the project's artifacts (Shared server AC9, issue #578), through the real
- * artifact routes, the real artifact folder and the real gate. Only upstream's sign-in is stood
- * in for: which session a request carries is read from a header, the way a credential would be.
+ * A project guest and the project's artifacts (Shared server AC9), through the real artifact
+ * routes, folder and gate. Only upstream's sign-in is stood in for: the session is read from a
+ * header, the way a credential would be.
  */
 
 const AT = "2026-10-12T00:00:00.000Z";
@@ -76,7 +75,7 @@ const testLayer = Layer.mergeAll(
 );
 
 const projects = Layer.mock(ProjectService.ProjectService)({
-  getById: () => Effect.succeed(Option.some({ workspaceRoot: "/workspace" } as never)),
+  getById: () => Effect.succeedSome({ workspaceRoot: "/workspace" } as never),
 });
 
 /** Both projects with one artifact each, and the two guests with their grants. */

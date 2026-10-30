@@ -37,14 +37,10 @@ const alertExchangePrefix = (crewInstanceId: string) =>
   `${CREW_ALERT_EXCHANGE_PREFIX}${encodeURIComponent(crewInstanceId)}/`;
 
 /**
- * A platform-authored ask in the Captain's inbox conversation. Replies return to the Captain.
- * Where more than one person can write to the Captain's thread it is asked of everyone here, so
- * each of them sees it and the first answer settles it (Crews AC23); elsewhere, of the first
- * owner.
- * One open alert per Crew: failures in the same Crew fold into it without losing its text, and
- * the Captain's own asks are never touched. A receipt per failed run prevents replay from
- * appending twice or reopening an alert the person already answered. This internal producer
- * does not grant agents the ability to append follow-ups to human asks.
+ * A platform-authored ask in the Captain's inbox conversation; replies return to the Captain. Where
+ * several people can write to the Captain's thread it asks them all, first answer settling it
+ * (Crews AC23), else the first owner. One open alert per Crew: failures fold into it, and a receipt
+ * per failed run stops a replay appending twice or reopening an answered alert.
  */
 export const makeCrewFailureAlert = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

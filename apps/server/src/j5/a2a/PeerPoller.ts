@@ -36,19 +36,10 @@ import {
 import { peerRosterHash, toPeerRoster } from "./peerRoster.ts";
 
 /**
- * The polling side of poll mode. This server cannot be reached by a peer, so
- * for each peer recorded with link mode `poll` it runs one loop that asks the
- * peer for the messages it stores here. Each poll acknowledges the previous
- * batch, sends this server's roster when it changed, and records each delivery
- * through the inbound service exactly as the deliver route does, one at a time
- * and in order. Messages this server sends to the peer still go directly.
- *
- * The loop is the heartbeat: the storing server answers a poll's headers as
- * soon as it arrives, so it sees this server present at least once per hold
- * while it runs, and this server stamps its own last poll when those headers
- * arrive. A roster change
- * abandons the poll in flight, so the peer learns of an archive or a rename at
- * once.
+ * The polling side of poll mode: one loop per peer in link mode `poll` asks for the messages stored
+ * for this server, acknowledging the last batch, sending the roster when it changed, and recording
+ * deliveries in order through the inbound service. The loop is the heartbeat on both sides. A
+ * roster change abandons the poll in flight, so an archive or rename reaches the peer at once.
  */
 
 /**
@@ -135,365 +126,355 @@ type PollExchange =
       readonly answeredAt: string;
     };
 
-const make = (daemon: boolean) =>
-  Effect.gen(function* () {
-    const peers = yield* PeerRegistryService;
-    const inbound = yield* PeerInboundService;
-    const worker = yield* A2ADeliveryWorker;
-    const roster = yield* RosterService;
-    const ledger = yield* A2ALedger;
-    const threadEvents = yield* EventSinkV2;
-    const httpClient = yield* HttpClient.HttpClient;
-    const states = yield* Ref.make(new Map<string, PollState>());
+const make = Effect.fn("j5.a2a.peer.poller.make")(function* (daemon: boolean) {
+  const peers = yield* PeerRegistryService;
+  const inbound = yield* PeerInboundService;
+  const worker = yield* A2ADeliveryWorker;
+  const roster = yield* RosterService;
+  const ledger = yield* A2ALedger;
+  const threadEvents = yield* EventSinkV2;
+  const httpClient = yield* HttpClient.HttpClient;
+  const states = yield* Ref.make(new Map<string, PollState>());
 
-    const stateOf = (environmentId: string) =>
-      Ref.get(states).pipe(Effect.map((map) => map.get(environmentId)));
-    const setState = (environmentId: string, state: PollState) =>
-      Ref.update(states, (map) => new Map(map).set(environmentId, state));
+  const stateOf = (environmentId: string) =>
+    Ref.get(states).pipe(Effect.map((map) => map.get(environmentId)));
+  const setState = (environmentId: string, state: PollState) =>
+    Ref.update(states, (map) => new Map(map).set(environmentId, state));
 
-    /** Each delivery is recorded as the deliver route records it; the outcome is its ack. */
-    const receiveBatch = Effect.fn("j5.a2a.peer.poller.receive")(function* (
-      environmentId: string,
-      response: PeerPollResponse,
-    ) {
-      const acks: Array<PeerPollAck> = [];
-      let unrecorded = false;
-      for (const delivery of response.deliveries) {
-        const received = yield* Effect.exit(
-          inbound.receive({ ...delivery, originEnvironmentId: environmentId }),
-        );
-        if (Exit.isSuccess(received)) {
-          acks.push({
-            messageId: delivery.messageId,
-            outcome: "received",
-            receivedSeq: received.value.receivedSeq,
-            replay: received.value.replay,
-          });
-          continue;
-        }
-        const failure = Cause.findErrorOption(received.cause);
-        const refusal = Option.isSome(failure) ? peerDeliveryRefusal(failure.value) : null;
-        if (refusal === null) {
-          // Not a refusal: leave this and every later one unacknowledged, in
-          // order, so the next poll hands them out again.
-          yield* Effect.logWarning("J5 A2A polled delivery could not be recorded", {
-            cause: received.cause,
-          });
-          unrecorded = true;
-          break;
-        }
+  /** Each delivery is recorded as the deliver route records it; the outcome is its ack. */
+  const receiveBatch = Effect.fn("j5.a2a.peer.poller.receive")(function* (
+    environmentId: string,
+    response: PeerPollResponse,
+  ) {
+    const acks: Array<PeerPollAck> = [];
+    let unrecorded = false;
+    for (const delivery of response.deliveries) {
+      const received = yield* Effect.exit(
+        inbound.receive({ ...delivery, originEnvironmentId: environmentId }),
+      );
+      if (Exit.isSuccess(received)) {
         acks.push({
           messageId: delivery.messageId,
-          outcome: "refused",
-          code: refusal.code,
-          message: refusal.message.slice(0, REFUSAL_REASON_MAX_CHARS),
+          outcome: "received",
+          receivedSeq: received.value.receivedSeq,
+          replay: received.value.replay,
         });
+        continue;
       }
-      if (acks.some((ack) => ack.outcome === "received")) yield* worker.notify;
-      return { acks, unrecorded };
-    });
-
-    /** One poll; `abandon` is given the roster hash this poll sent. */
-    const poll = (
-      environmentId: string,
-      abandon: (sentRosterHash: string) => Effect.Effect<void>,
-    ): Effect.Effect<PeerPollOutcome> =>
-      Effect.gen(function* () {
-        const peer = yield* peers.connection(environmentId);
-        if (
-          peer === null ||
-          peer.linkMode !== "poll" ||
-          peer.origin === null ||
-          peer.credential === null
-        ) {
-          return { kind: "stopped", reason: "the peer is no longer polled" } as const;
-        }
-        const stored = yield* stateOf(environmentId);
-        const state =
-          stored?.peerCreatedAt === peer.createdAt ? stored : { acks: [], heldRosterHash: null };
-        const agents = toPeerRoster(yield* roster.list());
-        const rosterHash = peerRosterHash(agents);
-        const body = {
-          acks: state.acks,
-          rosterHash,
-          label: yield* peers.selfLabel,
-          capabilities: ownPeerCapabilities,
-          ...(rosterHash === state.heldRosterHash ? {} : { roster: agents }),
-        } satisfies PeerPollRequest;
-        const request = yield* HttpClientRequest.bodyJson(
-          HttpClientRequest.post(`${peer.origin}${J5_PEER_API_PATHS.poll}`).pipe(
-            HttpClientRequest.bearerToken(peer.credential),
-            HttpClientRequest.acceptJson,
-            HttpClientRequest.setHeaders(peerProtocolHeaders),
-          ),
-          body,
-        );
-        const exchange = Effect.gen(function* () {
-          const headed = yield* httpClient
-            .execute(request)
-            .pipe(Effect.timeout(POLL_REQUEST_MARGIN), Effect.result);
-          if (headed._tag === "Failure") {
-            return { kind: "unanswered", cause: headed.failure } satisfies PollExchange;
-          }
-          const response = headed.success;
-          const mismatch = responseProtocolMismatch({
-            response,
-            peer: peer.label,
-          });
-          if (mismatch !== null || response.status !== 200) {
-            return { kind: "refused", response } satisfies PollExchange;
-          }
-          // A 200's headers answer the poll: the heartbeat. Only the body is held.
-          const answeredAt = DateTime.formatIso(yield* DateTime.now);
-          yield* peers.recordPolled(environmentId, answeredAt);
-          const body = yield* Effect.result(response.text);
-          if (body._tag === "Failure") return { kind: "cut" } satisfies PollExchange;
-          return {
-            kind: "answered",
-            response,
-            body: body.success,
-            answeredAt,
-          } satisfies PollExchange;
+      const failure = Cause.findErrorOption(received.cause);
+      const refusal = Option.isSome(failure) ? peerDeliveryRefusal(failure.value) : null;
+      if (refusal === null) {
+        // Not a refusal: leave this and every later one unacknowledged, in
+        // order, so the next poll hands them out again.
+        yield* Effect.logWarning("J5 A2A polled delivery could not be recorded", {
+          cause: received.cause,
         });
-        // One bound for the whole held request: past the hold and its margin it
-        // was lost, such as across a sleep, and the headers phase ends sooner.
-        // A roster change abandons it in either phase.
-        const exchanged = yield* exchange.pipe(
-          Effect.timeoutOption(Duration.sum(PEER_POLL_HOLD, POLL_REQUEST_MARGIN)),
-          Effect.map(Option.getOrElse((): PollExchange => ({ kind: "cut" }))),
-          Effect.raceFirst(abandon(rosterHash).pipe(Effect.as({ kind: "abandoned" } as const))),
-        );
-        if (exchanged.kind === "abandoned") return { kind: "abandoned" } as const;
-        if (exchanged.kind === "cut") {
-          return {
-            kind: "cut",
-            reason: `polls to ${peer.label} keep being cut off before their answer arrives`,
-          } as const;
-        }
-        if (exchanged.kind === "unanswered") {
-          const reason = `could not reach ${peer.label}: ${reasonOf(exchanged.cause)}`;
-          yield* peers.recordLastError(environmentId, reason);
-          return { kind: "failed", reason } as const;
-        }
-        // A stop, and a mismatch retried at the slowest backoff, are recorded as
-        // stops; everything else here is retried.
-        const recordStop = (reason: string) =>
-          peers.recordLastError(environmentId, peerPollStoppedError(reason));
-        const stop = (reason: string) =>
-          recordStop(reason).pipe(Effect.as({ kind: "stopped", reason } as const));
-        if (exchanged.kind === "refused") {
-          // The headers decide. The body only words the reason, briefly, so one
-          // that stalls cannot hold up stopping or backing off.
-          const response = exchanged.response;
-          const mismatch = responseProtocolMismatch({
-            response,
-            peer: peer.label,
-          });
-          if (mismatch !== null) {
-            return yield* recordStop(mismatch).pipe(
-              Effect.as({ kind: "mismatched", reason: mismatch } as const),
-            );
-          }
-          if (response.status === 401) {
-            return yield* stop(peerCredentialRejectedReason(peer.label));
-          }
-          const message = yield* response.json.pipe(
-            Effect.map((json) =>
-              typeof json === "object" && json !== null && "message" in json
-                ? String(json.message).slice(0, REFUSAL_REASON_MAX_CHARS)
-                : null,
-            ),
-            Effect.timeoutOption(REFUSAL_REASON_TIMEOUT),
-            Effect.map(Option.getOrNull),
-            Effect.orElseSucceed(() => null),
-          );
-          if (response.status === 403 || response.status === 409) {
-            return yield* stop(
-              message ?? `${peer.label} refused the poll (HTTP ${String(response.status)})`,
-            );
-          }
-          const reason = `${peer.label} answered the poll with HTTP ${String(response.status)}${message === null ? "" : `: ${message}`}`;
-          yield* peers.recordLastError(environmentId, reason);
-          return { kind: "failed", reason } as const;
-        }
-        const { response } = exchanged;
-        // A body that arrived whole but is not an answer is an error, not a cut.
-        const json = yield* Effect.result(decodeJson(exchanged.body));
-        if (json._tag === "Failure") {
-          const reason = `${peer.label} answered the poll with a body that is not JSON: ${reasonOf(json.failure)}`;
-          yield* peers.recordLastError(environmentId, reason);
-          return { kind: "failed", reason } as const;
-        }
-        const decoded = yield* Effect.result(decodePollResponse(json.success));
-        if (decoded._tag === "Failure") {
-          const reason = `${peer.label} answered the poll with an unexpected shape: ${reasonOf(decoded.failure)}`;
-          yield* peers.recordLastError(environmentId, reason);
-          return { kind: "failed", reason } as const;
-        }
-        const polled = decoded.success;
-        // The storing server's own name and capabilities, under the poll's stamp.
-        yield* peers.recordPoll({
-          environmentId,
-          receivedAt: exchanged.answeredAt,
-          protocolVersion: Number(statedPeerProtocol(response.headers) ?? "1"),
-          label: polled.label,
-          capabilities: polled.capabilities,
-          roster: undefined,
-        });
-        const { acks, unrecorded } = yield* receiveBatch(environmentId, polled);
-        yield* setState(environmentId, {
-          peerCreatedAt: peer.createdAt,
-          acks,
-          heldRosterHash: polled.rosterHash,
-        });
-        if (unrecorded) {
-          // The storing server hands the rest straight back, so back off
-          // rather than ask for them again at once.
-          const reason = `a message from ${peer.label} could not be recorded on this server; it is asked for again`;
-          yield* peers.recordLastError(environmentId, reason);
-          return { kind: "failed", reason } as const;
-        }
-        return { kind: "polled", received: polled.deliveries.length, more: polled.more } as const;
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("J5 A2A peer poll failed", { cause }).pipe(
-            Effect.as({ kind: "failed", reason: "the poll failed on this server" } as const),
-          ),
-        ),
-        Effect.withSpan("j5.a2a.peer.poller.pollOnce"),
-      );
-
-    const pollOnce: PeerPollerShape["pollOnce"] = (environmentId, abandon = Effect.never) =>
-      poll(environmentId, () => abandon);
-
-    /**
-     * The next change to the roster this server sends, once the poll that sent
-     * `sentRosterHash` is held. The roster changes when an agent joins, leaves
-     * or is archived, a ledger fact, or when its thread is renamed, a thread
-     * metadata update. Either only prompts a fresh reading of the roster, so an
-     * update that leaves it as sent, such as a branch change, is not a change.
-     * Both sources are listened to from before the roster is read: the ledger
-     * subscription is held from here, and thread updates replay from the
-     * sequence read here. Renaming a project also changes the roster, but it
-     * writes no event, so the new name goes out with the next poll, within
-     * the hold.
-     */
-    const nextRosterChange = Effect.gen(function* () {
-      const committed = yield* ledger.subscribeCommitted;
-      const afterSequence = yield* Effect.option(threadEvents.latestSequence());
-      const renames = Option.match(afterSequence, {
-        onNone: () => Stream.empty,
-        onSome: (sequence) =>
-          threadEvents.stream({ afterSequence: sequence, eventType: "thread.metadata-updated" }),
+        unrecorded = true;
+        break;
+      }
+      acks.push({
+        messageId: delivery.messageId,
+        outcome: "refused",
+        code: refusal.code,
+        message: refusal.message.slice(0, REFUSAL_REASON_MAX_CHARS),
       });
-      const prompts = Stream.merge(
-        committed.pipe(Stream.filter((event) => event.kind.startsWith("participant."))),
-        renames,
-      );
-      return (sentRosterHash: string) =>
-        prompts.pipe(
-          Stream.mapEffect(() =>
-            roster.list().pipe(Effect.map((entries) => peerRosterHash(toPeerRoster(entries)))),
-          ),
-          Stream.filter((rosterHash) => rosterHash !== sentRosterHash),
-          Stream.runHead,
-          // A source that fails leaves the poll to answer within the hold.
-          Effect.catchCause(() => Effect.never),
-          Effect.asVoid,
-        );
-    });
-
-    /** One peer's loop, until polling stops. */
-    const pollLoop = (environmentId: string) =>
-      Effect.gen(function* () {
-        let backoff = BACKOFF_START;
-        let cuts = 0;
-        while (true) {
-          // Each poll listens for a roster change only while it is held, then lets go.
-          const outcome = yield* Effect.scoped(
-            Effect.flatMap(nextRosterChange, (rosterChange) => poll(environmentId, rosterChange)),
-          );
-          cuts = outcome.kind === "cut" ? cuts + 1 : 0;
-          switch (outcome.kind) {
-            case "stopped":
-              return;
-            case "failed":
-              yield* Effect.sleep(backoff);
-              backoff = Duration.min(Duration.times(backoff, 2), BACKOFF_CAP);
-              break;
-            case "mismatched":
-              yield* Effect.sleep(BACKOFF_CAP);
-              break;
-            case "cut":
-              // Each cut poll's headers cleared the last error, so a cut that
-              // keeps happening is written again after each one.
-              if (cuts >= CUTS_BEFORE_ERROR) {
-                yield* peers
-                  .recordLastError(environmentId, outcome.reason)
-                  .pipe(
-                    Effect.catch((cause) =>
-                      Effect.logWarning("J5 A2A cut polls could not be recorded", { cause }),
-                    ),
-                  );
-              }
-              backoff = BACKOFF_START;
-              yield* Effect.sleep(CUT_RETRY);
-              break;
-            default:
-              backoff = BACKOFF_START;
-          }
-        }
-      });
-
-    if (daemon) {
-      const scope = yield* Effect.scope;
-      // One loop per poll peer. A loop that stopped is restarted only when the
-      // peer is recorded again with a new credential, which is what fixes it, or
-      // moved to a new origin, which also ends any backoff against the old one.
-      const running = new Map<string, { readonly link: string; fiber: Fiber.Fiber<void> | null }>();
-      const reconcile = Effect.gen(function* () {
-        const read = yield* Effect.result(peers.connections());
-        if (read._tag === "Failure") {
-          // Not knowing the peers is not knowing of none: leave every loop running.
-          yield* Effect.logWarning("J5 A2A poll peers could not be read", { cause: read.failure });
-          return;
-        }
-        const polled = new Map(
-          read.success
-            .filter((peer) => peer.linkMode === "poll")
-            .map(
-              (peer) =>
-                [peer.environmentId, JSON.stringify([peer.credential, peer.origin])] as const,
-            ),
-        );
-        for (const [environmentId, entry] of running) {
-          if (polled.get(environmentId) === entry.link) continue;
-          if (entry.fiber !== null) yield* Fiber.interrupt(entry.fiber);
-          running.delete(environmentId);
-        }
-        for (const [environmentId, link] of polled) {
-          if (running.has(environmentId)) continue;
-          const entry: { readonly link: string; fiber: Fiber.Fiber<void> | null } = {
-            link,
-            fiber: null,
-          };
-          running.set(environmentId, entry);
-          entry.fiber = yield* pollLoop(environmentId).pipe(
-            Effect.ensuring(Effect.sync(() => (entry.fiber = null))),
-            Effect.forkIn(scope),
-          );
-        }
-      });
-      const changes = yield* peers.subscribeChanges;
-      yield* reconcile;
-      yield* changes.pipe(
-        Stream.runForEach(() => reconcile),
-        Effect.forkIn(scope),
-      );
     }
-
-    return PeerPoller.of({ pollOnce });
+    if (acks.some((ack) => ack.outcome === "received")) yield* worker.notify;
+    return { acks, unrecorded };
   });
+
+  /** One poll; `abandon` is given the roster hash this poll sent. */
+  const poll: (
+    environmentId: string,
+    abandon: (sentRosterHash: string) => Effect.Effect<void>,
+  ) => Effect.Effect<PeerPollOutcome> = Effect.fn("j5.a2a.peer.poller.pollOnce")(
+    function* (environmentId, abandon) {
+      const peer = yield* peers.connection(environmentId);
+      if (
+        peer === null ||
+        peer.linkMode !== "poll" ||
+        peer.origin === null ||
+        peer.credential === null
+      ) {
+        return { kind: "stopped", reason: "the peer is no longer polled" } as const;
+      }
+      const stored = yield* stateOf(environmentId);
+      const state =
+        stored?.peerCreatedAt === peer.createdAt ? stored : { acks: [], heldRosterHash: null };
+      const agents = toPeerRoster(yield* roster.list());
+      const rosterHash = peerRosterHash(agents);
+      const body = {
+        acks: state.acks,
+        rosterHash,
+        label: yield* peers.selfLabel,
+        capabilities: ownPeerCapabilities,
+        ...(rosterHash === state.heldRosterHash ? {} : { roster: agents }),
+      } satisfies PeerPollRequest;
+      const request = yield* HttpClientRequest.bodyJson(
+        HttpClientRequest.post(`${peer.origin}${J5_PEER_API_PATHS.poll}`).pipe(
+          HttpClientRequest.bearerToken(peer.credential),
+          HttpClientRequest.acceptJson,
+          HttpClientRequest.setHeaders(peerProtocolHeaders),
+        ),
+        body,
+      );
+      const exchange = Effect.gen(function* () {
+        const headed = yield* httpClient
+          .execute(request)
+          .pipe(Effect.timeout(POLL_REQUEST_MARGIN), Effect.result);
+        if (headed._tag === "Failure") {
+          return { kind: "unanswered", cause: headed.failure } satisfies PollExchange;
+        }
+        const response = headed.success;
+        const mismatch = responseProtocolMismatch({
+          response,
+          peer: peer.label,
+        });
+        if (mismatch !== null || response.status !== 200) {
+          return { kind: "refused", response } satisfies PollExchange;
+        }
+        // A 200's headers answer the poll: the heartbeat. Only the body is held.
+        const answeredAt = DateTime.formatIso(yield* DateTime.now);
+        yield* peers.recordPolled(environmentId, answeredAt);
+        const body = yield* Effect.result(response.text);
+        if (body._tag === "Failure") return { kind: "cut" } satisfies PollExchange;
+        return {
+          kind: "answered",
+          response,
+          body: body.success,
+          answeredAt,
+        } satisfies PollExchange;
+      });
+      // One bound for the whole held request: past the hold and its margin it
+      // was lost, such as across a sleep, and the headers phase ends sooner.
+      // A roster change abandons it in either phase.
+      const exchanged = yield* exchange.pipe(
+        Effect.timeoutOption(Duration.sum(PEER_POLL_HOLD, POLL_REQUEST_MARGIN)),
+        Effect.map(Option.getOrElse((): PollExchange => ({ kind: "cut" }))),
+        Effect.raceFirst(abandon(rosterHash).pipe(Effect.as({ kind: "abandoned" } as const))),
+      );
+      if (exchanged.kind === "abandoned") return { kind: "abandoned" } as const;
+      if (exchanged.kind === "cut") {
+        return {
+          kind: "cut",
+          reason: `polls to ${peer.label} keep being cut off before their answer arrives`,
+        } as const;
+      }
+      if (exchanged.kind === "unanswered") {
+        const reason = `could not reach ${peer.label}: ${reasonOf(exchanged.cause)}`;
+        yield* peers.recordLastError(environmentId, reason);
+        return { kind: "failed", reason } as const;
+      }
+      // A stop, and a mismatch retried at the slowest backoff, are recorded as
+      // stops; everything else here is retried.
+      const recordStop = (reason: string) =>
+        peers.recordLastError(environmentId, peerPollStoppedError(reason));
+      const stop = (reason: string) =>
+        recordStop(reason).pipe(Effect.as({ kind: "stopped", reason } as const));
+      if (exchanged.kind === "refused") {
+        // The headers decide. The body only words the reason, briefly, so one
+        // that stalls cannot hold up stopping or backing off.
+        const response = exchanged.response;
+        const mismatch = responseProtocolMismatch({
+          response,
+          peer: peer.label,
+        });
+        if (mismatch !== null) {
+          return yield* recordStop(mismatch).pipe(
+            Effect.as({ kind: "mismatched", reason: mismatch } as const),
+          );
+        }
+        if (response.status === 401) {
+          return yield* stop(peerCredentialRejectedReason(peer.label));
+        }
+        const message = yield* response.json.pipe(
+          Effect.map((json) =>
+            typeof json === "object" && json !== null && "message" in json
+              ? String(json.message).slice(0, REFUSAL_REASON_MAX_CHARS)
+              : null,
+          ),
+          Effect.timeoutOption(REFUSAL_REASON_TIMEOUT),
+          Effect.map(Option.getOrNull),
+          Effect.orElseSucceed(() => null),
+        );
+        if (response.status === 403 || response.status === 409) {
+          return yield* stop(
+            message ?? `${peer.label} refused the poll (HTTP ${String(response.status)})`,
+          );
+        }
+        const reason = `${peer.label} answered the poll with HTTP ${String(response.status)}${message === null ? "" : `: ${message}`}`;
+        yield* peers.recordLastError(environmentId, reason);
+        return { kind: "failed", reason } as const;
+      }
+      const { response } = exchanged;
+      // A body that arrived whole but is not an answer is an error, not a cut.
+      const json = yield* Effect.result(decodeJson(exchanged.body));
+      if (json._tag === "Failure") {
+        const reason = `${peer.label} answered the poll with a body that is not JSON: ${reasonOf(json.failure)}`;
+        yield* peers.recordLastError(environmentId, reason);
+        return { kind: "failed", reason } as const;
+      }
+      const decoded = yield* Effect.result(decodePollResponse(json.success));
+      if (decoded._tag === "Failure") {
+        const reason = `${peer.label} answered the poll with an unexpected shape: ${reasonOf(decoded.failure)}`;
+        yield* peers.recordLastError(environmentId, reason);
+        return { kind: "failed", reason } as const;
+      }
+      const polled = decoded.success;
+      // The storing server's own name and capabilities, under the poll's stamp.
+      yield* peers.recordPoll({
+        environmentId,
+        receivedAt: exchanged.answeredAt,
+        protocolVersion: Number(statedPeerProtocol(response.headers) ?? "1"),
+        label: polled.label,
+        capabilities: polled.capabilities,
+        roster: undefined,
+      });
+      const { acks, unrecorded } = yield* receiveBatch(environmentId, polled);
+      yield* setState(environmentId, {
+        peerCreatedAt: peer.createdAt,
+        acks,
+        heldRosterHash: polled.rosterHash,
+      });
+      if (unrecorded) {
+        // The storing server hands the rest straight back, so back off
+        // rather than ask for them again at once.
+        const reason = `a message from ${peer.label} could not be recorded on this server; it is asked for again`;
+        yield* peers.recordLastError(environmentId, reason);
+        return { kind: "failed", reason } as const;
+      }
+      return { kind: "polled", received: polled.deliveries.length, more: polled.more } as const;
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("J5 A2A peer poll failed", { cause }).pipe(
+        Effect.as({ kind: "failed", reason: "the poll failed on this server" } as const),
+      ),
+    ),
+  );
+
+  const pollOnce: PeerPollerShape["pollOnce"] = (environmentId, abandon = Effect.never) =>
+    poll(environmentId, () => abandon);
+
+  /**
+   * The next roster change after the poll carrying `sentRosterHash` is held: a ledger join, leave
+   * or archive, or a thread rename, each only prompting a re-read, so an unchanged roster is no
+   * change. Both are subscribed before the roster is read. A project rename writes no event, so it
+   * goes out with the next poll, within the hold.
+   */
+  const nextRosterChange = Effect.gen(function* () {
+    const committed = yield* ledger.subscribeCommitted;
+    const afterSequence = yield* Effect.option(threadEvents.latestSequence());
+    const renames = Option.match(afterSequence, {
+      onNone: () => Stream.empty,
+      onSome: (sequence) =>
+        threadEvents.stream({ afterSequence: sequence, eventType: "thread.metadata-updated" }),
+    });
+    const prompts = Stream.merge(
+      committed.pipe(Stream.filter((event) => event.kind.startsWith("participant."))),
+      renames,
+    );
+    return (sentRosterHash: string) =>
+      prompts.pipe(
+        Stream.mapEffect(() =>
+          roster.list().pipe(Effect.map((entries) => peerRosterHash(toPeerRoster(entries)))),
+        ),
+        Stream.filter((rosterHash) => rosterHash !== sentRosterHash),
+        Stream.runHead,
+        // A source that fails leaves the poll to answer within the hold.
+        Effect.catchCause(() => Effect.never),
+        Effect.asVoid,
+      );
+  });
+
+  /** One peer's loop, until polling stops. */
+  const pollLoop = Effect.fn("j5.a2a.peer.poller.pollLoop")(function* (environmentId: string) {
+    let backoff = BACKOFF_START;
+    let cuts = 0;
+    while (true) {
+      // Each poll listens for a roster change only while it is held, then lets go.
+      const outcome = yield* Effect.scoped(
+        Effect.flatMap(nextRosterChange, (rosterChange) => poll(environmentId, rosterChange)),
+      );
+      cuts = outcome.kind === "cut" ? cuts + 1 : 0;
+      switch (outcome.kind) {
+        case "stopped":
+          return;
+        case "failed":
+          yield* Effect.sleep(backoff);
+          backoff = Duration.min(Duration.times(backoff, 2), BACKOFF_CAP);
+          break;
+        case "mismatched":
+          yield* Effect.sleep(BACKOFF_CAP);
+          break;
+        case "cut":
+          // Each cut poll's headers cleared the last error, so a cut that
+          // keeps happening is written again after each one.
+          if (cuts >= CUTS_BEFORE_ERROR) {
+            yield* peers
+              .recordLastError(environmentId, outcome.reason)
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("J5 A2A cut polls could not be recorded", { cause }),
+                ),
+              );
+          }
+          backoff = BACKOFF_START;
+          yield* Effect.sleep(CUT_RETRY);
+          break;
+        default:
+          backoff = BACKOFF_START;
+      }
+    }
+  });
+
+  if (daemon) {
+    const scope = yield* Effect.scope;
+    // One loop per poll peer. A loop that stopped is restarted only when the
+    // peer is recorded again with a new credential, which is what fixes it, or
+    // moved to a new origin, which also ends any backoff against the old one.
+    const running = new Map<string, { readonly link: string; fiber: Fiber.Fiber<void> | null }>();
+    const reconcile = Effect.gen(function* () {
+      const read = yield* Effect.result(peers.connections());
+      if (read._tag === "Failure") {
+        // Not knowing the peers is not knowing of none: leave every loop running.
+        yield* Effect.logWarning("J5 A2A poll peers could not be read", { cause: read.failure });
+        return;
+      }
+      const polled = new Map(
+        read.success
+          .filter((peer) => peer.linkMode === "poll")
+          .map(
+            (peer) => [peer.environmentId, JSON.stringify([peer.credential, peer.origin])] as const,
+          ),
+      );
+      for (const [environmentId, entry] of running) {
+        if (polled.get(environmentId) === entry.link) continue;
+        if (entry.fiber !== null) yield* Fiber.interrupt(entry.fiber);
+        running.delete(environmentId);
+      }
+      for (const [environmentId, link] of polled) {
+        if (running.has(environmentId)) continue;
+        const entry: { readonly link: string; fiber: Fiber.Fiber<void> | null } = {
+          link,
+          fiber: null,
+        };
+        running.set(environmentId, entry);
+        entry.fiber = yield* pollLoop(environmentId).pipe(
+          Effect.ensuring(Effect.sync(() => (entry.fiber = null))),
+          Effect.forkIn(scope),
+        );
+      }
+    });
+    const changes = yield* peers.subscribeChanges;
+    yield* reconcile;
+    yield* changes.pipe(
+      Stream.runForEach(() => reconcile),
+      Effect.forkIn(scope),
+    );
+  }
+
+  return PeerPoller.of({ pollOnce });
+});
 
 type PeerPollerRequirements =
   | PeerRegistryService

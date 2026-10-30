@@ -198,10 +198,8 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   }
   if (input.operation === "exec") {
     const canonicalBaseDir = yield* fs.realPath(baseDir);
-    const canonicalSharedHomes = yield* Effect.all(
-      [...new Set(sharedHomes)].map((sharedHome) =>
-        fs.realPath(sharedHome).pipe(Effect.orElseSucceed(() => sharedHome)),
-      ),
+    const canonicalSharedHomes = yield* Effect.forEach([...new Set(sharedHomes)], (sharedHome) =>
+      fs.realPath(sharedHome).pipe(Effect.orElseSucceed(() => sharedHome)),
     );
     if (canonicalSharedHomes.some((sharedHome) => canonicalBaseDir === sharedHome)) {
       return yield* new SqliteStateSharedHomeMutationError();
@@ -211,8 +209,7 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   const program = Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql.unsafe("PRAGMA busy_timeout = 5000").unprepared;
-    // This connection bypasses persistence/Sqlite.ts and can checkpoint
-    // statev2.sqlite, so it needs the same F_FULLFSYNC checkpoint barrier.
+    // This connection can checkpoint statev2.sqlite, so it needs Sqlite.ts's F_FULLFSYNC barrier.
     yield* sql.unsafe("PRAGMA checkpoint_fullfsync = ON").unprepared;
 
     if (input.operation === "query") {

@@ -62,7 +62,7 @@ const billing: AgentParticipant = {
 const iosBuild = ParticipantId.make("agent:j5:a2a:thread:ios-build");
 const laptopProject = LedgerProjectId.make("project:laptop-ios");
 
-const workDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor)({
+const workDescriptor = Schema.decodeSync(ExecutionEnvironmentDescriptor)({
   environmentId: "environment-work",
   label: "Work VM",
   platform: { os: "linux", arch: "x64" },

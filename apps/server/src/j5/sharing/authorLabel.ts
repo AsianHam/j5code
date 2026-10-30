@@ -5,13 +5,10 @@ import type { WriterLevel } from "@t3tools/contracts/j5";
  * platform's notes, and on a reply they send from the inbox.
  */
 
-// The name rule already refuses brackets, line breaks and a level in parentheses
-// (`isPersonName`), so the line carries the name exactly as it is stored and two people never
-// read as one. Brackets and line breaks are taken out here as well, so that a name which reached
-// the record some other way cannot close the line early or open what looks like a second one,
-// after the name is put in its compatibility form, so that fullwidth or other look-alike brackets
-// are the plain ones this looks for. Angle brackets go as square ones do: a name sits inside the
-// platform's note, which a tag closes.
+// `isPersonName` already refuses brackets, line breaks and a parenthesized level, so two people
+// never read as one. These are stripped here too, after compatibility folding catches look-alikes,
+// for a name that reached the record another way; angle brackets go as well, since a name sits
+// inside the platform's note, which a tag would close.
 export const personNameInLine = (name: string) =>
   name
     .normalize("NFKC")
@@ -29,10 +26,8 @@ export const authorLabel = (author: {
 };
 
 /**
- * Whether a message begins with a slash: its first character that is not whitespace is `/`.
- * Upstream and the providers read a command from the start of a message (`/compact`, `/goal`, a
- * provider's own commands and skills), trimming it the same way. Such a message goes on exactly
- * as typed, with no author's line and no note, whoever sent it (AC5), so that the command is
- * still one.
+ * Whether the first non-whitespace character is `/`. Upstream and providers read commands
+ * (`/compact`, skills) from a message's start, so such a message goes on exactly as typed, with no
+ * author's line or note, whoever sent it (AC5).
  */
 export const beginsWithSlash = (text: string) => text.trimStart().startsWith("/");

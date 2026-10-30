@@ -925,7 +925,6 @@ it.effect(
         );
       }).pipe(Effect.provide(makeTestLayer(harness)));
     }),
-  10_000,
 );
 
 it.effect("bounds the whole held poll at forty seconds, though its headers came late", () =>

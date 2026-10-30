@@ -1,11 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// A machine participant is a registered non-agent sender (a cron job, a
-// watchdog, a shell script) homed in one Squadron. It sends plain messages and
-// never receives; it has no thread, so it never enters the agent-only
-// membership projection. The ledger's `participant.joined` event stays the
-// source of truth; this table is the projection the send path reads.
+// A machine participant is a registered non-agent sender (a cron job, a watchdog, a script). It
+// sends and never receives, and has no thread, so it stays out of the agent-only membership
+// projection. The ledger's `participant.joined` stays the source of truth; the send path reads
+// this projection.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

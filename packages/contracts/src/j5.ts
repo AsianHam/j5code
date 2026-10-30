@@ -581,11 +581,9 @@ export const J5_MACHINE_API_PATHS = {
 } as const;
 
 /**
- * A provider approval waiting on a live Crew seat's thread. Seats run while the person watches
- * the Captain, so their approvals reach the Inbox instead of waiting unseen in the seat's composer
- * (Crews AC9); the Captain's own requests stay inline in its thread. Read live from the thread's
- * projection, and only while the provider can still take the answer. The approval fields match
- * the composer's `ThreadPendingApproval`, so the composer's approval UI renders it.
+ * A provider approval waiting on a live Crew seat's thread, sent to the Inbox because the person
+ * watches the Captain, not the seat (Crews AC9). Read live, only while the provider can still
+ * take the answer; the fields match `ThreadPendingApproval` so the composer's approval UI renders it.
  */
 export const CrewRuntimeRequestItem = Schema.Struct({
   threadId: ThreadId,

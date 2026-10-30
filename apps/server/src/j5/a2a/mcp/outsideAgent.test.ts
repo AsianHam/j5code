@@ -55,6 +55,7 @@ import {
 import { fakeSpawnWorkspaceLayer, noRepository } from "../test-support/spawnWorkspaceFakes.ts";
 import { J5ToolkitHandlersLive } from "./handlers.ts";
 import { J5ListParticipantsResult, J5Toolkit } from "./tools.ts";
+import { noDocumentTextLayer } from "../../test-support/documentText.ts";
 
 const timestamp = "2026-10-12T12:00:00.000Z";
 const projectId = LedgerProjectId.make("project:j5:outside");
@@ -123,6 +124,7 @@ const makeLayer = (stops: Ref.Ref<ReadonlyArray<Stop>>) => {
       providerSessions: [],
     }) as unknown as OrchestrationV2ThreadProjection;
   const dependencies = Layer.mergeAll(
+    noDocumentTextLayer,
     database,
     ledger,
     send,
