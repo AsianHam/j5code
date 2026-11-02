@@ -9,16 +9,33 @@ const authors = {
   record: { shared: false, authors: [], answers: [] },
   readAt: 1,
   failed: false,
-  refresh: () => {},
+  refresh: vi.fn(),
 };
-const people = { data: { people: [] }, error: null };
+const person = (level: "owner" | "collaborator", you: boolean) => ({
+  personId: null,
+  name: null,
+  level,
+  via: [],
+  firstOwner: you,
+  you,
+});
+const onlyMe = { data: { people: [person("owner", true)] }, error: null };
+const twoWriters = {
+  data: { people: [person("owner", true), person("collaborator", false)] },
+  error: null,
+};
+const reach = { people: onlyMe };
+function setup() {
+  authors.refresh.mockClear();
+  reach.people = onlyMe;
+}
 vi.mock(import("./sharedConversation"), async (original) => ({
   ...(await original()),
   useThreadAuthors: (() => authors) as never,
 }));
 vi.mock(import("./scopeAccess"), async (original) => ({
   ...(await original()),
-  useScopePeople: (() => people) as never,
+  useScopePeople: (() => reach.people) as never,
 }));
 
 const threadRef = {
@@ -35,6 +52,7 @@ const entries = [
 
 describe("useSharedConversationEntries", () => {
   it("hands the timeline the same entries while nothing it reads has changed", async () => {
+    setup();
     const seen: Array<ReadonlyArray<unknown>> = [];
     function Probe(props: { readonly tick: number }) {
       seen.push(useSharedConversationEntries(threadRef, entries));
@@ -46,5 +64,21 @@ describe("useSharedConversationEntries", () => {
     await screen.rerender(<Probe tick={2} />);
     expect(seen.length).toBeGreaterThan(settled);
     expect(seen.at(-1)).toBe(seen[settled - 1]);
+  });
+
+  it("keeps a message on screen when the thread becomes shared, and asks about it once", async () => {
+    setup();
+    const seen: Array<ReadonlyArray<{ readonly id: string }>> = [];
+    function Probe(props: { readonly tick: number }) {
+      seen.push(useSharedConversationEntries(threadRef, entries));
+      return <span>{props.tick}</span>;
+    }
+    // The hook reads no route.
+    await using screen = await render(<Probe tick={1} />, { router: false });
+    expect(authors.refresh).not.toHaveBeenCalled();
+    reach.people = twoWriters;
+    await screen.rerender(<Probe tick={2} />);
+    expect(seen.at(-1)?.map((entry) => entry.id)).toEqual(["entry-1"]);
+    expect(authors.refresh).toHaveBeenCalledTimes(1);
   });
 });

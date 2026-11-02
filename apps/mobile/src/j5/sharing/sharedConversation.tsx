@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   authorIndex,
   isSettledPrompt,
+  mayBeSharedConversation,
   NO_SHARED_MESSAGES_SEEN,
   observeSharedMessages,
   sharedQueuedRuns,
@@ -112,6 +113,7 @@ export function useSharedConversationFeed(
   const seen = observeSharedMessages(
     stored,
     feed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
+    mayBeSharedConversation({ record, failed, people }),
     Date.now,
   );
   if (seen !== stored) setStored(seen);

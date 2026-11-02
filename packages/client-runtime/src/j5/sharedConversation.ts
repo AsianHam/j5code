@@ -157,14 +157,17 @@ export function mayBeSharedConversation(input: {
 export interface SeenSharedMessages {
   readonly firstSeen: ReadonlyMap<string, number>;
   readonly typedHere: ReadonlyMap<string, string>;
+  /** Since when this client has held the thread may be shared; null while it holds it isn't. */
+  readonly sharedSince: number | null;
 }
 
 export const NO_SHARED_MESSAGES_SEEN: SeenSharedMessages = {
   firstSeen: new Map(),
   typedHere: new Map(),
+  sharedSince: null,
 };
 
-/** `seen` itself when the entries hold nothing it lacks, so render stores a new record only then. */
+/** `seen` itself when nothing it records has changed, so render stores a new record only then. */
 export function observeSharedMessages(
   seen: SeenSharedMessages,
   messages: ReadonlyArray<{
@@ -173,10 +176,14 @@ export function observeSharedMessages(
     readonly text: string;
     readonly createdBy?: unknown;
   }>,
+  mayBeShared: boolean,
   now: () => number,
 ): SeenSharedMessages {
+  let at: number | null = null;
+  const stamp = () => (at ??= now());
   let firstSeen: Map<string, number> | null = null;
   let typedHere: Map<string, string> | null = null;
+  const sharedSince = mayBeShared ? (seen.sharedSince ?? stamp()) : null;
   for (const message of messages) {
     if (message.role !== "user") continue;
     if (message.createdBy === undefined) {
@@ -185,11 +192,54 @@ export function observeSharedMessages(
       typedHere.set(message.id, message.text);
     } else if (!(firstSeen ?? seen.firstSeen).has(message.id)) {
       firstSeen ??= new Map(seen.firstSeen);
-      firstSeen.set(message.id, now());
+      firstSeen.set(message.id, stamp());
     }
   }
-  if (firstSeen === null && typedHere === null) return seen;
-  return { firstSeen: firstSeen ?? seen.firstSeen, typedHere: typedHere ?? seen.typedHere };
+  if (firstSeen === null && typedHere === null && sharedSince === seen.sharedSince) return seen;
+  return {
+    firstSeen: firstSeen ?? seen.firstSeen,
+    typedHere: typedHere ?? seen.typedHere,
+    sharedSince,
+  };
+}
+
+/**
+ * Whether nothing more is coming about who wrote a server message, so it need not be held: the
+ * read came back after this client first saw it, or it was on screen before the thread could be
+ * shared. A row already drawn never leaves the list to wait for a read.
+ */
+export function sharedMessageAnsweredFor(input: {
+  readonly messageId: string;
+  readonly readAt: number | null;
+  readonly seen: SeenSharedMessages;
+}): boolean {
+  const firstSeenAt = input.seen.firstSeen.get(input.messageId) ?? Infinity;
+  const { sharedSince } = input.seen;
+  return (
+    readAnswersFor({ readAt: input.readAt, firstSeenAt }) ||
+    (sharedSince !== null && firstSeenAt < sharedSince)
+  );
+}
+
+/**
+ * Whether a message left on screen still wants a read: the record may yet name who wrote it, so it
+ * is asked once more, though the row stays put meanwhile.
+ */
+export function sharedMessageAwaitsRead(input: {
+  readonly messageId: string;
+  readonly readAt: number | null;
+  readonly seen: SeenSharedMessages;
+  readonly mayBeShared: boolean;
+  readonly failed: boolean;
+}): boolean {
+  return (
+    input.mayBeShared &&
+    !input.failed &&
+    !readAnswersFor({
+      readAt: input.readAt,
+      firstSeenAt: input.seen.firstSeen.get(input.messageId) ?? Infinity,
+    })
+  );
 }
 
 /**

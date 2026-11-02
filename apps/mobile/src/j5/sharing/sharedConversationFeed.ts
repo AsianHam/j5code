@@ -3,8 +3,9 @@ import {
   authorIndex,
   markSharedNote,
   mayBeSharedConversation,
-  readAnswersFor,
   type SeenSharedMessages,
+  sharedMessageAnsweredFor,
+  sharedMessageAwaitsRead,
   sharedMessageView,
 } from "@t3tools/client-runtime/j5/shared-conversation";
 import { MessageId } from "@t3tools/contracts";
@@ -61,13 +62,17 @@ export function presentSharedConversationFeed(input: {
       fromServer,
       author: authors.get(message.id),
       answeredFor:
-        !fromServer ||
-        failed ||
-        readAnswersFor({ readAt, firstSeenAt: seen.firstSeen.get(message.id) ?? Infinity }),
+        !fromServer || failed || sharedMessageAnsweredFor({ messageId: message.id, readAt, seen }),
       mayBeShared,
       typedHere: seen.typedHere.get(message.id) ?? null,
     });
-    if (view.kind === "plain") return [entry];
+    if (view.kind === "plain") {
+      const awaitsRead =
+        fromServer &&
+        sharedMessageAwaitsRead({ messageId: message.id, readAt, seen, mayBeShared, failed });
+      if (awaitsRead) pending.push(message.id);
+      return [entry];
+    }
     if (view.kind === "pending") {
       pending.push(message.id);
       return view.typed === null ? [] : [{ ...entry, message: { ...message, text: view.typed } }];

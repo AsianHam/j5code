@@ -108,6 +108,35 @@ describe("presentSharedConversationFeed", () => {
     );
   });
 
+  it("keeps a message already on screen when the thread becomes shared", () => {
+    // The owner's message hydrated after the record's last read, and was drawn while unshared.
+    const stored = message("m-5", "My words from before sharing.");
+    const owner = { level: "owner" as const, you: true, firstOwner: true };
+    const collaborator = { level: "collaborator" as const, you: false, firstOwner: false };
+    const reaching = [owner, collaborator].map((person, index) => ({
+      ...person,
+      personId: `human:${index}`,
+      name: null,
+      via: [],
+    }));
+    const shared = {
+      feed: [stored],
+      record: record({ shared: false, authors: [] }),
+      failed: false,
+      seen: { ...seenAt(["m-5"], 2), sharedSince: 3 },
+      people: reaching,
+    };
+    // It stays on screen, and the record is asked once more, since it may yet name the author.
+    expect(presentSharedConversationFeed({ ...shared, readAt: 1 })).toEqual({
+      feed: [stored],
+      pendingKey: "m-5",
+    });
+    expect(presentSharedConversationFeed({ ...shared, readAt: 4 })).toEqual({
+      feed: [stored],
+      pendingKey: "",
+    });
+  });
+
   it("leaves a thread only one person writes to as stored", () => {
     const stored = message("m-3", "Just me.");
     const { feed } = presentSharedConversationFeed({
