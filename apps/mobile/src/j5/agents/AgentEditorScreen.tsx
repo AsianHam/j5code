@@ -8,10 +8,14 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentRoutePolicyFields } from "./AgentDefinitionFields";
 import { agentPersonaEnvironment } from "./agentPersonaAtoms";
-import { PersonaFormScreen, usePersonaFormExit, usePersonaFormParams } from "./PersonaFormScreen";
+import {
+  SettingsFormScreen,
+  useSettingsFormExit,
+  useSettingsFormParams,
+} from "./SettingsFormScreen";
 
 export function AgentEditorScreen() {
-  const props = usePersonaFormParams<"SettingsPersonaEdit">();
+  const props = useSettingsFormParams<"SettingsPersonaEdit">();
   const [draft, setDraft] = useState(props.initial);
   // Instructions are not in the catalog; load them once the page opens.
   const [instructions, setInstructions] = useState<string | null>(null);
@@ -21,7 +25,7 @@ export function AgentEditorScreen() {
   const catalog = useEnvironmentQuery(
     agentPersonaEnvironment.catalog({ environmentId: props.environmentId, input: {} }),
   );
-  const exit = usePersonaFormExit({
+  const exit = useSettingsFormExit({
     hasChanges:
       instructions !== loadedInstructions ||
       JSON.stringify(draft) !== JSON.stringify(props.initial),
@@ -77,7 +81,7 @@ export function AgentEditorScreen() {
     exit.leaveAfterSave();
   }
   return (
-    <PersonaFormScreen title={"Edit persona"} guarded={exit.guarded}>
+    <SettingsFormScreen title={"Edit persona"} guarded={exit.guarded}>
       <Text className="text-sm text-foreground-muted">
         Changes apply to this imported copy and future launches. The original file and existing
         tasks stay unchanged.
@@ -147,6 +151,6 @@ export function AgentEditorScreen() {
           {saving ? "Saving…" : "Save changes"}
         </Text>
       </Pressable>
-    </PersonaFormScreen>
+    </SettingsFormScreen>
   );
 }

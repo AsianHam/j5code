@@ -5,7 +5,7 @@ import { AgentImportConflictModal } from "./AgentImportConflictModal";
 import { agentPersonaDuplicateDraft } from "@t3tools/client-runtime/j5/agent-personas";
 import { AgentDetailsModal } from "./AgentDetailsModal";
 import { AgentFolderPickerModal } from "./AgentFolderPickerModal";
-import { usePersonaFormNavigation } from "./PersonaFormScreen";
+import { useSettingsFormNavigation } from "./SettingsFormScreen";
 import { sendWhenReconnected } from "./watchEnvironmentSessions";
 import { personaRowActions } from "./personaRowActions";
 import { Menu } from "../../components/ui/Menu";
@@ -131,7 +131,7 @@ function OwnerAgentLibrarySettingsScreen() {
   } | null>(null);
   // oxlint-disable-next-line t3code/react-effect-budget -- a replaced or unmounted confirmation resolves its waiting import as cancelled.
   useEffect(() => () => confirmation?.resolve(null), [confirmation]);
-  const navigation = usePersonaFormNavigation();
+  const navigation = useSettingsFormNavigation();
   const [notification, setNotification] = useState<AgentLibraryNotification | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   const dismissNotification = useCallback(() => setNotification(null), []);

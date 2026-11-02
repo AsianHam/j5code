@@ -6,7 +6,7 @@ import {
 } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import type { AgentPersonaCreateDraft } from "@t3tools/client-runtime/j5/agent-personas";
-import type { AgentPersonaEditInput, EnvironmentId } from "@t3tools/contracts";
+import type { AgentPersonaEditInput, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useRef, type ReactNode } from "react";
 import { KeyboardAvoidingView, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,7 +17,7 @@ import { withNativeGlassHeaderItem } from "../../features/layout/native-glass-he
 import { SettingsScreen } from "../../features/settings/components/SettingsScreen";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 
-export type PersonaFormRoutes = {
+export type SettingsFormRoutes = {
   SettingsPersonaNew: {
     readonly environmentId: EnvironmentId;
     /** Prefill from an existing persona (Duplicate); the ID is treated as user-chosen. */
@@ -27,18 +27,24 @@ export type PersonaFormRoutes = {
     readonly environmentId: EnvironmentId;
     readonly initial: Omit<AgentPersonaEditInput, "instructions">;
   };
+  SettingsPlaybookConversation: {
+    readonly environmentId: EnvironmentId;
+    readonly name: string | null;
+    /** The project Settings is showing, so a project playbook's chat opens where it lives. */
+    readonly projectId: ProjectId | null;
+  };
 };
 
-export function usePersonaFormNavigation() {
-  return useNavigation<NativeStackNavigationProp<PersonaFormRoutes>>();
+export function useSettingsFormNavigation() {
+  return useNavigation<NativeStackNavigationProp<SettingsFormRoutes>>();
 }
 
-export function usePersonaFormParams<Name extends keyof PersonaFormRoutes>() {
-  return useRoute<RouteProp<PersonaFormRoutes, Name>>().params as PersonaFormRoutes[Name];
+export function useSettingsFormParams<Name extends keyof SettingsFormRoutes>() {
+  return useRoute<RouteProp<SettingsFormRoutes, Name>>().params as SettingsFormRoutes[Name];
 }
 
-/** Asks before unsaved changes are lost, and returns how to leave once they are saved. */
-export function usePersonaFormExit(options: {
+/** Asks before unsaved changes are lost, and returns how to leave once the work is done. */
+export function useSettingsFormExit(options: {
   readonly hasChanges: boolean;
   readonly saving: boolean;
 }) {
@@ -52,7 +58,7 @@ export function usePersonaFormExit(options: {
       return;
     }
     if (options.saving) {
-      Dialog.alert("Saving persona", "Wait for the persona to finish saving before leaving.");
+      Dialog.alert("Still working", "Wait for this to finish before leaving.");
       return;
     }
     Dialog.alert("Discard changes?", "Your unsaved changes will be lost.", [
@@ -66,6 +72,10 @@ export function usePersonaFormExit(options: {
   });
   return {
     guarded,
+    /** For a form that leaves by its own navigation action. */
+    allowLeaving: () => {
+      saved.current = true;
+    },
     leaveAfterSave: () => {
       saved.current = true;
       if (navigation.isFocused()) navigation.goBack();
@@ -74,7 +84,7 @@ export function usePersonaFormExit(options: {
 }
 
 /** A pushed settings page, because Android's Menu can't draw over an RN Modal or Sheet. */
-export function PersonaFormScreen(props: {
+export function SettingsFormScreen(props: {
   readonly title: string;
   readonly guarded: boolean;
   readonly children: ReactNode;

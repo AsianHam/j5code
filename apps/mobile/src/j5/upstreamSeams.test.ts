@@ -195,7 +195,7 @@ const SEAMS: ReadonlyArray<Seam> = [
     file: "Stack.tsx",
     record: "case 103: the persona forms' routes",
     from: "./j5/agents/routes",
-    reaches: ["...j5PersonaFormRoutes(SETTINGS_PAGE_OPTIONS)"],
+    reaches: ["...j5SettingsFormRoutes(SETTINGS_PAGE_OPTIONS)"],
   },
   {
     file: "Stack.tsx",

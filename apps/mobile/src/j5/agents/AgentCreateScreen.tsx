@@ -16,7 +16,11 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentRoutePolicyFields } from "./AgentDefinitionFields";
 import { agentPersonaEnvironment } from "./agentPersonaAtoms";
-import { PersonaFormScreen, usePersonaFormExit, usePersonaFormParams } from "./PersonaFormScreen";
+import {
+  SettingsFormScreen,
+  useSettingsFormExit,
+  useSettingsFormParams,
+} from "./SettingsFormScreen";
 
 type PersonaDraft = {
   displayName: string;
@@ -30,7 +34,7 @@ type PersonaDraft = {
 
 /** Author a personal agent; it is stored as an imported definition of this environment. */
 export function AgentCreateScreen() {
-  const props = usePersonaFormParams<"SettingsPersonaNew">();
+  const props = useSettingsFormParams<"SettingsPersonaNew">();
   const providers = useAtomValue(serverEnvironment.providersValueAtom(props.environmentId));
   const catalog = useEnvironmentQuery(
     agentPersonaEnvironment.catalog({ environmentId: props.environmentId, input: {} }),
@@ -56,7 +60,7 @@ export function AgentCreateScreen() {
   const [draft, setDraft] = useState(startingDraft);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const exit = usePersonaFormExit({
+  const exit = useSettingsFormExit({
     hasChanges: JSON.stringify(draft) !== JSON.stringify(startingDraft),
     saving,
   });
@@ -102,7 +106,7 @@ export function AgentCreateScreen() {
     exit.leaveAfterSave();
   }
   return (
-    <PersonaFormScreen
+    <SettingsFormScreen
       title={props.initial ? "Duplicate persona" : "Create persona"}
       guarded={exit.guarded}
     >
@@ -197,6 +201,6 @@ export function AgentCreateScreen() {
           {saving ? "Creating…" : "Create persona"}
         </Text>
       </Pressable>
-    </PersonaFormScreen>
+    </SettingsFormScreen>
   );
 }

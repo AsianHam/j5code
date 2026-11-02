@@ -6,16 +6,9 @@ import {
   playbookWorkspaces,
 } from "@t3tools/client-runtime/j5/playbooks";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import {
-  CommandId,
-  MessageId,
-  ThreadId,
-  type EnvironmentId,
-  type ProjectId,
-} from "@t3tools/contracts";
+import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { Modal, Pressable, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -25,21 +18,17 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { threadEnvironment } from "../../state/threads";
 import { agentPersonaEnvironment } from "../agents/agentPersonaAtoms";
+import {
+  SettingsFormScreen,
+  useSettingsFormExit,
+  useSettingsFormParams,
+} from "../agents/SettingsFormScreen";
 import { preparePlaybookDraft } from "./preparePlaybookDraft";
 
 /** Projects place conversations; the playbook itself belongs to the environment. */
-export function PlaybookConversationModal({
-  environmentId,
-  name,
-  projectId = null,
-  onClose,
-}: {
-  environmentId: EnvironmentId;
-  name: string | null;
-  /** The project Settings is showing, so a project playbook's chat opens where it lives. */
-  projectId?: ProjectId | null;
-  onClose: () => void;
-}) {
+export function PlaybookConversationScreen() {
+  const { environmentId, name, projectId } =
+    useSettingsFormParams<"SettingsPlaybookConversation">();
   const navigation = useNavigation();
   const projects = useAtomValue(environmentProjects.projectsAtom);
   const workspaces = playbookWorkspaces(
@@ -52,6 +41,7 @@ export function PlaybookConversationModal({
   const workspace = workspaces.find((entry) => entry.key === selected) ?? workspaces[0];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const exit = useSettingsFormExit({ hasChanges: false, saving: busy });
   const serverConfigs = useServerConfigs();
   const readCatalog = useAtomQueryRunner(agentPersonaEnvironment.catalog, {
     reportFailure: false,
@@ -75,8 +65,9 @@ export function PlaybookConversationModal({
     const opened = await settlePromise(async () => {
       if (name !== null) {
         const draftId = preparePlaybookDraft(workspace, `Start playbook ${name}`);
+        exit.allowLeaving();
         navigation.dispatch(
-          StackActions.push("Thread", {
+          StackActions.replace("Thread", {
             draft: {
               environmentId,
               projectId: workspace.projectId,
@@ -124,8 +115,9 @@ export function PlaybookConversationModal({
         const { target } = launch.current;
         const result = await startTurn(target);
         if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+        exit.allowLeaving();
         navigation.dispatch(
-          StackActions.push("Thread", { environmentId, threadId: target.input.threadId }),
+          StackActions.replace("Thread", { environmentId, threadId: target.input.threadId }),
         );
       }
     });
@@ -133,75 +125,56 @@ export function PlaybookConversationModal({
     if (opened._tag === "Failure") {
       const cause = squashAtomCommandFailure(opened);
       setError(cause instanceof Error ? cause.message : "Could not open the conversation.");
-      return;
     }
-    onClose();
   }
   return (
-    <Modal
-      visible
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={() => {
-        if (!busy) onClose();
-      }}
+    <SettingsFormScreen
+      title={name === null ? "Create playbook" : "Prepare chat"}
+      guarded={exit.guarded}
     >
-      {/* SafeAreaView takes no className, so the theme surface and flex go on a View. */}
-      <View className="flex-1 bg-sheet">
-        <SafeAreaView style={{ flex: 1 }}>
-          <View className="gap-4 p-4">
-            <Text className="text-xl font-semibold text-foreground">
-              {name === null ? "Create playbook" : "Prepare chat"}
-            </Text>
-            <Text className="text-foreground-muted">
-              {name === null
-                ? "Choose a project for the conversation. New playbooks are saved to the environment library."
-                : "Choose the project to run the playbook in."}
-            </Text>
-            {workspace ? (
-              <Menu
-                actions={workspaces.map((entry) => ({
-                  id: entry.key,
-                  title: entry.title,
-                  state: entry.key === workspace.key ? "on" : "off",
-                }))}
-                onPressAction={({ nativeEvent }) => setSelected(nativeEvent.event)}
-              >
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={busy}
-                  className="rounded-lg border border-border p-3"
-                >
-                  <Text>{workspace.title}</Text>
-                </Pressable>
-              </Menu>
-            ) : (
-              <Text>
-                Add a project to open a conversation. You can import playbooks without one.
-              </Text>
-            )}
-            {error ? (
-              <Text accessibilityRole="alert" className="text-danger-foreground">
-                {error}
-              </Text>
-            ) : null}
-            <View className="flex-row justify-end gap-4">
-              <Pressable accessibilityRole="button" disabled={busy} onPress={onClose}>
-                <Text>Cancel</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                disabled={busy || !workspace}
-                onPress={() => void submit()}
-              >
-                <Text className="text-primary">
-                  {name === null ? "Open Playbook Author" : "Prepare chat"}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        </SafeAreaView>
-      </View>
-    </Modal>
+      <Text className="text-foreground-muted">
+        {name === null
+          ? "Choose a project for the conversation. New playbooks are saved to the environment library."
+          : "Choose the project to run the playbook in."}
+      </Text>
+      {workspace ? (
+        <View pointerEvents={busy ? "none" : "auto"}>
+          <Menu
+            actions={workspaces.map((entry) => ({
+              id: entry.key,
+              title: entry.title,
+              state: entry.key === workspace.key ? "on" : "off",
+            }))}
+            onPressAction={({ nativeEvent }) => setSelected(nativeEvent.event)}
+          >
+            <Pressable
+              accessibilityRole="button"
+              disabled={busy}
+              className="rounded-lg border border-border p-3"
+            >
+              <Text>{workspace.title}</Text>
+            </Pressable>
+          </Menu>
+        </View>
+      ) : (
+        <Text>Add a project to open a conversation. You can import playbooks without one.</Text>
+      )}
+      {error ? (
+        <Text accessibilityRole="alert" className="text-danger-foreground">
+          {error}
+        </Text>
+      ) : null}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ disabled: busy || !workspace }}
+        disabled={busy || !workspace}
+        className="items-center rounded-xl bg-primary px-4 py-3 disabled:opacity-40"
+        onPress={() => void submit()}
+      >
+        <Text className="font-t3-semibold text-primary-foreground">
+          {name === null ? "Open Playbook Author" : "Prepare chat"}
+        </Text>
+      </Pressable>
+    </SettingsFormScreen>
   );
 }
