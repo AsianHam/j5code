@@ -48,6 +48,7 @@ import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardi
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { j5ThreadArtifactRoutes } from "./j5/artifacts/routes";
+import { j5PersonaFormRoutes } from "./j5/agents/routes";
 import { j5InboxRoutes } from "./j5/inbox/routes";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import { selectedPullRequestKey } from "./features/pull-requests/pullRequestSelection";
@@ -354,6 +355,7 @@ const SETTINGS_SCREENS = {
       title: "Personas",
     },
   }),
+  ...j5PersonaFormRoutes(SETTINGS_PAGE_OPTIONS),
   SettingsProjectGrouping: createNativeStackScreen({
     screen: SettingsProjectGroupingRouteScreen,
     linking: "settings/project-grouping",

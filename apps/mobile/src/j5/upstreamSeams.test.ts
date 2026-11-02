@@ -193,6 +193,12 @@ const SEAMS: ReadonlyArray<Seam> = [
   },
   {
     file: "Stack.tsx",
+    record: "case 103: the persona forms' routes",
+    from: "./j5/agents/routes",
+    reaches: ["...j5PersonaFormRoutes(SETTINGS_PAGE_OPTIONS)"],
+  },
+  {
+    file: "Stack.tsx",
     record: "case 101: the Inbox route",
     from: "./j5/inbox/routes",
     reaches: ["...j5InboxRoutes(GLASS_HEADER_OPTIONS)"],

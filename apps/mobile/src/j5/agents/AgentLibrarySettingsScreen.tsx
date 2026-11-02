@@ -2,14 +2,10 @@ import { LIBRARY_FOR_OWNERS } from "@t3tools/client-runtime/j5/sharing";
 import { useOwnedEnvironmentIds, useOwnerSomewhere } from "../sharing/guestAccess";
 import { AgentLibraryToast, type AgentLibraryNotification } from "./AgentLibraryToast";
 import { AgentImportConflictModal } from "./AgentImportConflictModal";
-import { AgentCreateModal } from "./AgentCreateModal";
-import {
-  agentPersonaDuplicateDraft,
-  type AgentPersonaCreateDraft,
-} from "@t3tools/client-runtime/j5/agent-personas";
+import { agentPersonaDuplicateDraft } from "@t3tools/client-runtime/j5/agent-personas";
 import { AgentDetailsModal } from "./AgentDetailsModal";
-import { AgentEditorModal } from "./AgentEditorModal";
 import { AgentFolderPickerModal } from "./AgentFolderPickerModal";
+import { usePersonaFormNavigation } from "./PersonaFormScreen";
 import { sendWhenReconnected } from "./watchEnvironmentSessions";
 import { personaRowActions } from "./personaRowActions";
 import { Menu } from "../../components/ui/Menu";
@@ -23,7 +19,6 @@ import {
   importAgentPersonasWithConfirmation,
 } from "@t3tools/client-runtime/j5/agent-personas";
 import {
-  type AgentPersonaEditInput,
   type AgentPersonaImportConflict,
   type AgentPersonaImportConflictError,
   type AgentPersonaLibraryFolder,
@@ -136,12 +131,8 @@ function OwnerAgentLibrarySettingsScreen() {
   } | null>(null);
   // oxlint-disable-next-line t3code/react-effect-budget -- a replaced or unmounted confirmation resolves its waiting import as cancelled.
   useEffect(() => () => confirmation?.resolve(null), [confirmation]);
-  const [editing, setEditing] = useState<{
-    environmentId: EnvironmentId;
-    initial: Omit<AgentPersonaEditInput, "instructions">;
-  } | null>(null);
+  const navigation = usePersonaFormNavigation();
   const [notification, setNotification] = useState<AgentLibraryNotification | null>(null);
-  const [creating, setCreating] = useState<{ initial?: AgentPersonaCreateDraft } | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   const dismissNotification = useCallback(() => setNotification(null), []);
   const importAgents = useAtomCommand(agentPersonaEnvironment.importAgentPersonas, {
@@ -284,7 +275,11 @@ function OwnerAgentLibrarySettingsScreen() {
       setNotification(failureNotice("Persona action failed", read));
       return;
     }
-    setCreating({ initial: agentPersonaDuplicateDraft(read.value.definition) });
+    if (effectiveEnvironmentId === null) return;
+    navigation.navigate("SettingsPersonaNew", {
+      environmentId: effectiveEnvironmentId,
+      initial: agentPersonaDuplicateDraft(read.value.definition),
+    });
   }
   async function exportPersona(personaId: string) {
     if (busy) return;
@@ -331,7 +326,10 @@ function OwnerAgentLibrarySettingsScreen() {
           accessibilityLabel: "Create persona",
           icon: "plus",
           disabled: locked || effectiveEnvironmentId === null,
-          onPress: () => setCreating({}),
+          onPress: () => {
+            if (effectiveEnvironmentId !== null)
+              navigation.navigate("SettingsPersonaNew", { environmentId: effectiveEnvironmentId });
+          },
         },
       ]}
     >
@@ -439,7 +437,7 @@ function OwnerAgentLibrarySettingsScreen() {
                   persona.edit && effectiveEnvironmentId && canOperate
                     ? () => {
                         if (persona.edit && effectiveEnvironmentId)
-                          setEditing({
+                          navigation.navigate("SettingsPersonaEdit", {
                             environmentId: effectiveEnvironmentId,
                             initial: persona.edit,
                           });
@@ -535,18 +533,6 @@ function OwnerAgentLibrarySettingsScreen() {
           }}
         />
       ) : null}
-      {creating && effectiveEnvironmentId ? (
-        <AgentCreateModal
-          environmentId={effectiveEnvironmentId}
-          {...(creating.initial ? { initial: creating.initial } : {})}
-          onClose={() => setCreating(null)}
-          onCreated={(displayName) => {
-            setCreating(null);
-            setNotification({ type: "success", title: `Created ${displayName}` });
-            catalog.refresh();
-          }}
-        />
-      ) : null}
       {viewedPersona && effectiveEnvironmentId ? (
         <AgentDetailsModal
           key={`${effectiveEnvironmentId}:${viewedPersona.personaId}`}
@@ -557,20 +543,6 @@ function OwnerAgentLibrarySettingsScreen() {
             return entry === undefined ? null : presentAgentPersonaUsage(entry).line;
           })()}
           onClose={() => setViewing(null)}
-        />
-      ) : null}
-      {editing ? (
-        <AgentEditorModal
-          key={`${editing.environmentId}:${editing.initial.personaId}`}
-          {...editing}
-          onClose={() => {
-            setEditing(null);
-            catalog.refresh();
-          }}
-          onSaved={() => {
-            setEditing(null);
-            catalog.refresh();
-          }}
         />
       ) : null}
     </SettingsScreen>

@@ -12,8 +12,7 @@ import type {
   AgentPersonaModelTarget,
   EnvironmentId,
 } from "@t3tools/contracts";
-import { useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
@@ -24,64 +23,6 @@ import { agentPersonaEnvironment } from "./agentPersonaAtoms";
 export interface AgentRoutePolicyValue {
   readonly authorityPolicy: AgentPersonaAuthorityPolicy;
   readonly modelRoute: readonly [AgentPersonaModelTarget, AgentPersonaModelTarget];
-}
-
-export function EditorChoice(props: {
-  label: string;
-  accessibilityLabel?: string;
-  value: string;
-  disabled: boolean;
-  choices: ReadonlyArray<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <View className="gap-2">
-      <Text className="text-sm font-t3-medium">{props.label}</Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={props.accessibilityLabel ?? props.label}
-        accessibilityState={{ expanded, disabled: props.disabled }}
-        disabled={props.disabled}
-        className="rounded-xl border border-border px-3 py-3"
-        onPress={() => setExpanded(!expanded)}
-      >
-        <Text>
-          {props.choices.find(({ value }) => value === props.value)?.label ?? props.value}
-        </Text>
-      </Pressable>
-      {expanded ? (
-        <ScrollView
-          nestedScrollEnabled
-          keyboardShouldPersistTaps="handled"
-          style={{ maxHeight: 200 }}
-          className="rounded-xl border border-border"
-        >
-          {props.choices.map((choice) => (
-            <Pressable
-              key={choice.value}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: props.value === choice.value }}
-              disabled={props.disabled}
-              className="border-b border-border-subtle px-3 py-3"
-              onPress={() => {
-                props.onChange(choice.value);
-                setExpanded(false);
-              }}
-            >
-              <Text
-                className={
-                  props.value === choice.value ? "font-t3-semibold text-primary" : "text-foreground"
-                }
-              >
-                {choice.label}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      ) : null}
-    </View>
-  );
 }
 
 /** Runtime policy plus primary/fallback route pickers, shared by the create and edit modals. */
@@ -109,22 +50,44 @@ export function AgentRoutePolicyFields(props: {
   );
   return (
     <>
-      <EditorChoice
-        label="Runtime policy"
-        value={value.authorityPolicy}
-        disabled={disabled}
-        choices={AGENT_PERSONA_POLICY_OPTIONS}
-        onChange={(next) => {
-          const policy = AGENT_PERSONA_POLICY_OPTIONS.find((item) => item.value === next);
-          if (policy) props.onChange({ ...value, authorityPolicy: policy.value });
-        }}
-      />
+      <View className="gap-2">
+        <Text className="text-sm font-t3-medium">Runtime policy</Text>
+        <View pointerEvents={disabled ? "none" : "auto"}>
+          <Menu
+            actions={AGENT_PERSONA_POLICY_OPTIONS.map((policy) => ({
+              id: policy.value,
+              title: policy.label,
+              state: policy.value === value.authorityPolicy ? "on" : "off",
+            }))}
+            onPressAction={({ nativeEvent }) => {
+              const policy = AGENT_PERSONA_POLICY_OPTIONS.find(
+                (item) => item.value === nativeEvent.event,
+              );
+              if (policy) props.onChange({ ...value, authorityPolicy: policy.value });
+            }}
+          >
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Runtime policy"
+              accessibilityState={{ disabled }}
+              disabled={disabled}
+              className="rounded-xl border border-border px-3 py-3"
+            >
+              <Text numberOfLines={1}>
+                {AGENT_PERSONA_POLICY_OPTIONS.find((item) => item.value === value.authorityPolicy)
+                  ?.label ?? value.authorityPolicy}
+              </Text>
+            </Pressable>
+          </Menu>
+        </View>
+      </View>
       {policyNote === null ? null : (
         <Text className="text-xs text-foreground-muted">{policyNote}</Text>
       )}
       {value.modelRoute.map((target, index) => {
         const label = index === 0 ? "Primary model" : "Fallback model";
         const selected = choices.find(({ id }) => id === agentPersonaModelChoiceId(target));
+        const reasoningDisabled = disabled || !selected?.efforts.length;
         const updateTarget = (next: AgentPersonaModelTarget) =>
           props.onChange({
             ...value,
@@ -172,17 +135,31 @@ export function AgentRoutePolicyFields(props: {
                 </Menu>
               </View>
               <View className="w-28">
-                <EditorChoice
-                  label="Reasoning"
-                  accessibilityLabel={`${label} reasoning`}
-                  value={target.reasoningEffort}
-                  disabled={disabled || !selected?.efforts.length}
-                  choices={(selected?.efforts ?? []).map((effort) => ({
-                    value: effort,
-                    label: effort,
-                  }))}
-                  onChange={(reasoningEffort) => updateTarget({ ...target, reasoningEffort })}
-                />
+                <View className="gap-2">
+                  <Text className="text-sm font-t3-medium">Reasoning</Text>
+                  <View pointerEvents={reasoningDisabled ? "none" : "auto"}>
+                    <Menu
+                      actions={(selected?.efforts ?? []).map((effort) => ({
+                        id: effort,
+                        title: effort,
+                        state: effort === target.reasoningEffort ? "on" : "off",
+                      }))}
+                      onPressAction={({ nativeEvent }) =>
+                        updateTarget({ ...target, reasoningEffort: nativeEvent.event })
+                      }
+                    >
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`${label} reasoning`}
+                        accessibilityState={{ disabled: reasoningDisabled }}
+                        disabled={reasoningDisabled}
+                        className="rounded-xl border border-border px-3 py-3"
+                      >
+                        <Text numberOfLines={1}>{target.reasoningEffort}</Text>
+                      </Pressable>
+                    </Menu>
+                  </View>
+                </View>
               </View>
             </View>
           </View>
