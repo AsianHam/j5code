@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createSharingEnvironmentAtoms } from "@t3tools/client-runtime/j5/sharing";
+import {
+  createSharingEnvironmentAtoms,
+  createSharingOwnershipAtoms,
+} from "@t3tools/client-runtime/j5/sharing";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -10,8 +13,12 @@ import { Atom } from "effect/reactivity";
 import { environmentCatalog } from "../../connection/catalog";
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { useEnvironmentScope } from "../../state/session";
+import { j5Environment } from "../state";
 
-export const j5Sharing = createSharingEnvironmentAtoms(connectionAtomRuntime);
+/** What this device's connection is on each server; read again when people or levels change. */
+export const j5Sharing = createSharingEnvironmentAtoms(connectionAtomRuntime, {
+  rereadOn: j5Environment.rereadOn("sharing"),
+});
 
 const NOTHING_WITHHELD = Atom.make(true);
 
@@ -32,30 +39,26 @@ export function useCanOperateThread(
   return permitted && shared;
 }
 
-/** The connected servers this person is a guest on, by environment id. */
-const guestEnvironmentIdsAtom = Atom.make((get) => {
-  const ids = new Set<EnvironmentId>();
-  for (const id of get(environmentCatalog.catalogValueAtom).entries.keys()) {
-    if (get(j5Sharing.isNarrow(id))) ids.add(id);
-  }
-  return ids as ReadonlySet<EnvironmentId>;
+const ownership = createSharingOwnershipAtoms({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  sharing: j5Sharing,
 });
 
 /**
- * The servers whose Personas and Playbooks are not this person's to see or use (Shared server
- * AC24). J5's own pages leave these servers out, and say so when there is no other server.
+ * The connected servers this person owns, which are the ones Settings, Personas and Playbooks
+ * manage (People and access AC27). One that has not answered yet is counted, so an Owner's page
+ * does not flicker.
  */
-export function useGuestEnvironmentIds(): ReadonlySet<EnvironmentId> {
-  return useAtomValue(guestEnvironmentIdsAtom);
+export function useOwnedEnvironmentIds(): ReadonlySet<EnvironmentId> {
+  return useAtomValue(ownership.ownedEnvironmentIds);
 }
 
-/** What J5's Personas and Playbooks pages say when every connected server is a guest one. */
-export const GUEST_LIBRARY_UNAVAILABLE =
-  "Personas and Playbooks are not available on a server you are a guest on.";
+/** Whether the person owns a connected server, or `"loading"`; see `ownerSomewhereState`. */
+export function useOwnerSomewhere(): boolean | "loading" {
+  return useAtomValue(ownership.ownerSomewhere);
+}
 
-/** Whether there is at least one server and this person is a guest on all of them. */
-export function useIsGuestEverywhere(): boolean {
-  const guests = useAtomValue(guestEnvironmentIdsAtom);
-  const total = useAtomValue(environmentCatalog.catalogValueAtom).entries.size;
-  return total > 0 && guests.size === total;
+/** Whether the person can write to anything on a connected server, so has an agent to ask. */
+export function useWritesSomewhere(): boolean {
+  return useAtomValue(ownership.writesSomewhere);
 }

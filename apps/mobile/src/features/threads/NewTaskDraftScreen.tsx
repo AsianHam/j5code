@@ -1,3 +1,4 @@
+import { composerModelSelectionForThread } from "@t3tools/client-runtime/j5/agent-personas";
 import { expandPlaybookPrompt } from "@t3tools/client-runtime/j5/playbooks";
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
@@ -30,7 +31,6 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { KeyboardController } from "react-native-keyboard-controller";
 
 import {
-  AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -95,8 +95,8 @@ import { selectIncomingShareAttachmentsForServer } from "../sharing/incoming-sha
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { AgentDraftPicker } from "../../j5/agents/AgentDraftPicker";
+import { readCanStartTaskIn, useCanStartTaskIn } from "../../j5/sharing/startAccess";
+import { DraftAgentRow } from "../../j5/agents/DraftAgentRow";
 import { clearDraftAgent } from "../../j5/agents/agentDraftState";
 import { useDraftAgentAssignment } from "../../j5/agents/useDraftAgentAssignment";
 
@@ -188,9 +188,10 @@ export function NewTaskDraftScreen(props: {
     selectedProject?.environmentId ?? null,
   );
   const environmentConnected = connectionState === "connected";
-  const canOperate = useEnvironmentScope(
+  // J5: starting needs the person's level over the project too (FORK.md case 90).
+  const canOperate = useCanStartTaskIn(
     selectedProject?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
+    selectedProject?.id ?? null,
   );
   const projectCloneState = useProjectClone(
     selectedProject
@@ -800,18 +801,22 @@ export function NewTaskDraftScreen(props: {
     }
     if (
       environmentConnected &&
-      !readEnvironmentScope(selectedProject.environmentId, AuthOrchestrationOperateScope)
+      !readCanStartTaskIn(selectedProject.environmentId, selectedProject.id)
     ) {
       return null;
     }
     const draft = getComposerDraftSnapshot(draftKey);
     if (appAtomRegistry.get(composerContextImportsAtom)[draftKey]) return null;
-    const modelSelection =
+    const draftModelSelection =
       resolveSelectableModelSelection(
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
         selectedProject.id,
       ) ?? flow.selectedModel;
+    // J5: a saved agent launches on its own route, so that is the model to check.
+    const modelSelection =
+      draftModelSelection &&
+      composerModelSelectionForThread(draftAgent.assignment, draftModelSelection);
     const workspaceSelection = flow.resolveWorkspaceSelection(draft.workspaceSelection);
     const workspaceMode = workspaceSelection.mode;
     const selectedBranchName = workspaceSelection.branch;
@@ -1111,7 +1116,8 @@ export function NewTaskDraftScreen(props: {
       environmentId: selectedProject.environmentId,
       projectId: selectedProject.id,
       threadId: ThreadId.make(creationMetadata.threadId),
-      modelSelection: flow.selectedModel,
+      // J5: a saved agent's route drives slash commands, skills, limits and modes.
+      modelSelection: composerModelSelectionForThread(draftAgent.assignment, flow.selectedModel),
       runtimeMode: flow.runtimeMode,
       interactionMode: flow.interactionMode,
       branch: flow.selectedBranchName,
@@ -1157,14 +1163,12 @@ export function NewTaskDraftScreen(props: {
                 </View>
               ) : null}
               {flow.canChooseWorkspace ? workspaceControls : null}
-              {draftAgent.personaId === null && flow.draftKey ? (
-                <View className="flex-row px-2 pt-1">
-                  <AgentDraftPicker
-                    environmentId={selectedProject.environmentId}
-                    draftKey={flow.draftKey}
-                    disabled={isComposerInteractionLocked}
-                  />
-                </View>
+              {flow.draftKey ? (
+                <DraftAgentRow
+                  environmentId={selectedProject.environmentId}
+                  draftKey={flow.draftKey}
+                  disabled={isComposerInteractionLocked}
+                />
               ) : null}
             </View>
           ),

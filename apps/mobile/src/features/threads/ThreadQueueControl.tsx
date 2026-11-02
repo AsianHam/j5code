@@ -27,6 +27,8 @@ import { ScreenContent } from "../../components/ui/ScreenContent";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { useJ5QueuedDeliveryLabel } from "../../j5/a2a/queuedDelivery";
+import { useSharedQueuedRuns } from "../../j5/sharing/sharedConversation";
 import { useAssetUrl } from "../../state/assets";
 import { assetImageSource } from "../../lib/assetImageSource";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
@@ -93,7 +95,17 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const rowLayouts = useRef(new Map<RunId, { y: number; height: number }>());
   const drag = useRef<QueueDrag | null>(null);
   const [translation] = useState(() => new Animated.Value(0));
-  const queuedRuns = workflow?.queuedRuns ?? [];
+  // J5 (case 99): a shared conversation's queued messages read as their authors typed them.
+  const queuedRuns = useSharedQueuedRuns(
+    target.environmentId,
+    target.threadId,
+    workflow?.queuedRuns ?? [],
+  );
+  // J5 (case 97): a queued delivery reads as who sent it and its first line.
+  const queuedDeliveryLabel = useJ5QueuedDeliveryLabel(
+    target.environmentId,
+    queuedRuns.map(({ text }) => text),
+  );
   const order = queuedRuns.map(({ run }) => run.id).join(",");
   // A queue that changed under the drag (delivery, another client) ends it:
   // the gesture handlers ignore it from then on and its preview disappears.
@@ -250,7 +262,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           text,
         });
         const title =
-          controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
+          queuedDeliveryLabel(text) ??
+          (controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message"));
         return (
           <QueueShiftedRow
             key={run.id}

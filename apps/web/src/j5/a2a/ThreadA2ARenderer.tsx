@@ -1,12 +1,14 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  j5MessageAuthorName,
+  j5SenderThreadRef,
+} from "@t3tools/client-runtime/j5/participant-identity";
 import {
   isJ5DeliveryMessage,
-  parseJ5AgentEnvelope,
   participantIdsForJ5UserMessage,
   presentJ5UserMessage,
   resolveJ5UserMessagePresentation,
 } from "@t3tools/client-runtime/j5/user-message";
-import { ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { BotIcon } from "lucide-react";
 import { use, type ReactNode } from "react";
@@ -25,9 +27,12 @@ import {
   renderSharedConversationNote,
   SharedMessageAuthorLine,
 } from "../sharing/SharedConversationCards";
-import { presentParticipantIdentity } from "./ParticipantIdentity";
 
 export { J5_A2A_DELIVERY_MESSAGE_PREFIX } from "@t3tools/client-runtime/j5/user-message";
+export {
+  formatJ5QueuedDelivery as formatThreadA2AQueuedDelivery,
+  participantIdsForJ5Envelope as participantIdsForThreadA2AEnvelope,
+} from "@t3tools/client-runtime/j5/participant-identity";
 
 export interface ThreadA2ADeliveryCompositionInput {
   readonly message: ChatMessage;
@@ -45,28 +50,6 @@ export interface ThreadA2ADeliveryCompositionInput {
 
 export function participantIdsForThreadA2ADelivery(message: ChatMessage): ReadonlyArray<string> {
   return participantIdsForJ5UserMessage(message);
-}
-
-export function formatThreadA2AQueuedDelivery(
-  text: string,
-  participantLabels: ReadonlyMap<string, string>,
-): { readonly label: string; readonly tooltipParticipantId: string | null } | null {
-  const envelope = parseJ5AgentEnvelope(text);
-  if (envelope === null) return null;
-  const sender = presentParticipantIdentity({
-    participantId: envelope.senderId,
-    participantLabels,
-  });
-  const firstLine = envelope.letter.split("\n")[0]?.trim() ?? "";
-  return {
-    label: `From ${sender.label}: ${firstLine || "Message content unavailable"}`,
-    tooltipParticipantId: sender.tooltipParticipantId,
-  };
-}
-
-export function participantIdsForThreadA2AEnvelope(text: string): ReadonlyArray<string> {
-  const envelope = parseJ5AgentEnvelope(text);
-  return envelope === null ? [] : [envelope.senderId];
 }
 
 function RawEnvelopeExpander({ rawEnvelope }: { readonly rawEnvelope: string }) {
@@ -136,24 +119,20 @@ export function useJ5UserMessagePresentation(message: ChatMessage) {
     viewerParticipantId: access?.kind === "person" ? access.personId : null,
   });
   const j5 = presentation.j5;
-  const senderId = j5?.group === "participant" || j5?.group === "other-person" ? j5.senderId : null;
-  const localThreadId =
-    message.senderThreadId ?? (j5?.group === "participant" ? j5.senderThreadId : null);
-  const senderThreadRef =
-    (senderId === null ? undefined : ctx.participantThreads.get(senderId)) ??
-    (localThreadId
-      ? scopeThreadRef(ctx.activeThreadEnvironmentId, ThreadId.make(localThreadId))
-      : null);
+  const senderThreadRef = j5SenderThreadRef({
+    environmentId: ctx.activeThreadEnvironmentId,
+    presentation: j5,
+    messageSenderThreadId: message.senderThreadId,
+    participantThreads: ctx.participantThreads,
+  });
   // A peer's thread opens only from a client connected to that peer, and only if the person can
   // see it there; the client's own thread list answers both.
   const senderThread = useQuietThreadShell(j5?.group === "participant" ? senderThreadRef : null);
-  const label = senderId === null ? undefined : ctx.participantLabels.get(senderId);
-  const authorName =
-    j5?.group === "participant"
-      ? label || senderThread?.title.trim() || "Agent"
-      : j5?.group === "other-person"
-        ? (j5.senderName ?? label ?? "Someone without a name")
-        : null;
+  const authorName = j5MessageAuthorName({
+    presentation: j5,
+    participantLabels: ctx.participantLabels,
+    senderThreadTitle: senderThread?.title,
+  });
   const literalContext = j5?.unwrapped ? literalUserMessageContext(presentation.text) : null;
   return {
     ...presentation,

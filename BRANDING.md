@@ -127,7 +127,9 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   `Linking.createURL` in `SubscriptionUsageCoordinator.tsx`, so it follows the app's scheme.
   The mobile header's `components/CompactBrandTitle.tsx` draws `J5Wordmark` and labels itself
   "J5 Code, …" (as do `WorkspaceRootScreen.tsx` and `PullRequestToolbar.android.tsx`), and
-  `ThreadFeed.tsx` says "Sent by J5 Code".
+  `ThreadFeed.tsx` says "Sent by J5 Code". Settings › Legal opens j5.codes
+  (`src/features/settings/lib/legal-document-url.ts`), whose allowlist keeps only the legal and
+  privacy pages: J5 has no terms of service or security policy page.
 - Mobile developer tooling: `scripts/mobile-native-client.ts` (development bundle id, the
   prebuilt iOS project/scheme/app name, the built iOS artifact's name and the dev-client deep
   link's scheme), `scripts/mobile-showcase.ts` (production app id, scheme
@@ -229,7 +231,7 @@ multiple J5 checkouts can coexist. Production remains exactly `codes.jackson.j5c
   since upstream added it at the 2026-10-24 advance, until
   [#494](https://github.com/Jacksondr5/j5code/issues/494) settles whether J5 edits upstream's user docs.
 - "T3 Connect" and "T3 Account": upstream's hosted relay and sign-in, named as upstream names
-  them wherever they appear, along with `infra/relay` and the mobile legal links to `t3.codes`.
+  them wherever they appear, along with `infra/relay`.
 - The `t3-code` MCP server key, its `T3 Code` MCP server `name` (`McpHttpServer.ts`), the Codex
   client info ("T3 Code", `CODEX_CLIENT_NAME` in `apps/server/src/provider/CodexProvider.ts`),
   and the Muse client info (`t3_code` / "T3 Code", `packages/provider-muse`): protocol identity

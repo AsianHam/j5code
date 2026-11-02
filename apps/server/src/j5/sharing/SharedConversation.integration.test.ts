@@ -7,7 +7,9 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ThreadLaunchInput,
   ProviderDriverKind,
+  ProjectId,
   ProviderSessionId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -259,16 +261,21 @@ it.effect(
           attachments: [],
         },
       } as const satisfies OrchestrationV2ThreadLaunchInput;
-      const admitted = yield* conversation.admitLaunch(owner, launch);
-      yield* launches.launch({
-        ...launch,
-        initialMessage: { ...launch.initialMessage, text: admitted.initialMessage!.text },
-        createdBy: "user",
-        creationSource: "web",
-      });
+      yield* conversation.launch(owner, launch, (admitted) =>
+        launches.launch({
+          ...launch,
+          initialMessage: { ...launch.initialMessage, text: admitted.initialMessage!.text },
+          createdBy: "user",
+          creationSource: "web",
+        }),
+      );
       const first = yield* storedText(on, launch.initialMessage.messageId);
       assert.include(first, "Who can write: Jackson (owner), Priya (collaborator).");
       assert.isTrue(first?.endsWith("\n[Message from Jackson (owner)]\n\nLet us review the plan."));
+      const recorded = (yield* conversation.threadAuthors(owner, on)).authors.find(
+        (author) => author.messageId === launch.initialMessage.messageId,
+      )!;
+      assert.strictEqual(first, `${recorded.storedPrefix}Let us review the plan.`);
 
       // Her `/compact` goes on as typed, so upstream takes it for the command it is (AC5).
       const compact = message("/compact", on);
@@ -561,4 +568,209 @@ it.effect("a person's approval feedback, written by upstream, is recorded as the
     assert.deepStrictEqual(yield* named(owner), [[written.id, "Priya", false]]);
     assert.deepStrictEqual(yield* named(priya.personId), [[written.id, "Priya", true]]);
   }).pipe(Effect.provide(Layer.provideMerge(ProjectionStore.layer, layerFor(harness))));
+});
+
+/** The author record J5 keeps for a message, or none. */
+const authorRecord = (messageId: string) =>
+  SqlClient.SqlClient.use(
+    (sql) => sql<{ readonly display_name: string | null; readonly stored_prefix: string }>`
+      SELECT display_name, stored_prefix FROM j5_a2a_message_author
+      WHERE message_id = ${messageId}
+    `,
+  ).pipe(Effect.map((rows) => rows[0] ?? null));
+
+it.effect(
+  "a new message upstream refuses leaves no author record, and its retry is recorded",
+  () => {
+    const harness = makeHarness();
+    const on = ThreadId.make("thread:shared-refused-message");
+    return Effect.gen(function* () {
+      const people = yield* PersonAccess.PersonAccess;
+      const threads = yield* ThreadManagementService;
+      yield* threads.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("command:refused-message:create"),
+        threadId: on,
+        projectId,
+        title: "Shared",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const owner = (yield* people.firstOwner).personId;
+      yield* people.setName({ personId: owner, displayName: "Jackson" });
+      const priya = yield* people.createPerson({ displayName: "Priya" });
+      yield* people.setLevel({
+        personId: priya.personId,
+        scope: { kind: "thread", threadId: on },
+        level: "collaborator",
+      });
+
+      // Upstream refuses to continue a run the thread never had, so nothing is stored.
+      const typed = "Pick up where you left off.";
+      const refused = {
+        ...message(typed, on),
+        manualContinuationOfRunId: RunId.make("run:never-ran"),
+      } satisfies OrchestrationV2Command;
+      const refusal = yield* send(priya.personId, refused).pipe(Effect.flip);
+      assert.strictEqual(refusal._tag, "OrchestratorDispatchError");
+      assert.isUndefined(yield* storedText(on, refused.messageId));
+      assert.isNull(yield* authorRecord(refused.messageId));
+
+      // She is renamed, then sends it again under the same id: it is recorded as now sent.
+      yield* people.setName({ personId: priya.personId, displayName: "Priya Shah" });
+      const retried = { ...message(typed, on), messageId: refused.messageId };
+      yield* send(priya.personId, retried);
+      const record = (yield* authorRecord(refused.messageId))!;
+      assert.strictEqual(record.display_name, "Priya Shah");
+      assert.include(record.stored_prefix, "[Message from Priya Shah (collaborator)]");
+      assert.strictEqual(
+        yield* storedText(on, refused.messageId),
+        `${record.stored_prefix}${typed}`,
+      );
+    }).pipe(Effect.provide(layerFor(harness)));
+  },
+);
+
+it.effect(
+  "a message's id is held from admission, and its record kept once upstream stored it",
+  () => {
+    const harness = makeHarness();
+    const on = ThreadId.make("thread:shared-held-id");
+    return Effect.gen(function* () {
+      const people = yield* PersonAccess.PersonAccess;
+      const conversation = yield* SharedConversation.SharedConversation;
+      const threads = yield* ThreadManagementService;
+      yield* threads.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("command:held-id:create"),
+        threadId: on,
+        projectId,
+        title: "Shared",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const owner = (yield* people.firstOwner).personId;
+      yield* people.setName({ personId: owner, displayName: "Jackson" });
+      const scope = { kind: "thread" as const, threadId: on };
+      const priya = (yield* people.createPerson({ displayName: "Priya" })).personId;
+      const sam = (yield* people.createPerson({ displayName: "Sam" })).personId;
+      yield* people.setLevel({ personId: priya, scope, level: "collaborator" });
+      yield* people.setLevel({ personId: sam, scope, level: "collaborator" });
+
+      // Sam sends under her id while hers is still on its way to upstream: his is refused.
+      const hers = message("Ship Friday.", on);
+      const samsRefusal = yield* conversation.dispatch(priya, hers, (admitted) =>
+        send(sam, { ...message("Ship Monday.", on), messageId: hers.messageId }).pipe(
+          Effect.flip,
+          Effect.tap(() => threads.dispatch(admitted)),
+        ),
+      );
+      assert.strictEqual(samsRefusal.message, "This message was already sent.");
+      const record = (yield* authorRecord(hers.messageId))!;
+      assert.strictEqual(record.display_name, "Priya");
+      assert.strictEqual(
+        yield* storedText(on, hers.messageId),
+        `${record.stored_prefix}Ship Friday.`,
+      );
+
+      // Upstream stores her next message, then the request fails: the message keeps its record.
+      const late = message("Keep the migration step.", on);
+      yield* conversation
+        .dispatch(priya, late, (admitted) =>
+          threads.dispatch(admitted).pipe(Effect.andThen(Effect.fail("lost after commit"))),
+        )
+        .pipe(Effect.flip);
+      const kept = (yield* authorRecord(late.messageId))!;
+      assert.strictEqual(kept.display_name, "Priya");
+      assert.strictEqual(
+        yield* storedText(on, late.messageId),
+        `${kept.stored_prefix}Keep the migration step.`,
+      );
+
+      // Her client retries a send still on its way to upstream, and the retry fails first: it
+      // releases nothing, so the first attempt's record stands once upstream takes it.
+      const pending = message("Ship it.", on);
+      yield* conversation.dispatch(priya, pending, (admitted) =>
+        conversation
+          .dispatch(priya, pending, () => Effect.fail("retry refused"))
+          .pipe(Effect.flip, Effect.andThen(threads.dispatch(admitted))),
+      );
+      const survived = (yield* authorRecord(pending.messageId))!;
+      assert.strictEqual(survived.display_name, "Priya");
+      assert.strictEqual(
+        yield* storedText(on, pending.messageId),
+        `${survived.stored_prefix}Ship it.`,
+      );
+    }).pipe(Effect.provide(layerFor(harness)));
+  },
+);
+
+it.effect("a launch upstream refuses leaves no author record for its first message", () => {
+  const harness = makeHarness();
+  const on = ThreadId.make("thread:shared-refused-launch");
+  const gone = ProjectId.make("project:gone");
+  return Effect.gen(function* () {
+    const people = yield* PersonAccess.PersonAccess;
+    const conversation = yield* SharedConversation.SharedConversation;
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const owner = (yield* people.firstOwner).personId;
+    yield* people.setName({ personId: owner, displayName: "Jackson" });
+    const priya = yield* people.createPerson({ displayName: "Priya" });
+    for (const scoped of [projectId, gone]) {
+      yield* people.setLevel({
+        personId: priya.personId,
+        scope: { kind: "project", projectId: scoped },
+        level: "collaborator",
+      });
+    }
+    const launch = (into: ProjectId, commandId: string) => {
+      const input = {
+        commandId: CommandId.make(commandId),
+        threadId: on,
+        projectId: into,
+        title: "Review the plan",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        initialMessage: {
+          messageId: MessageId.make("message:refused-launch"),
+          text: "Let us review the plan.",
+          attachments: [],
+        },
+      } as const satisfies OrchestrationV2ThreadLaunchInput;
+      return conversation.launch(owner, input, (admitted) =>
+        launches.launch({
+          ...input,
+          initialMessage: { ...input.initialMessage, text: admitted.initialMessage!.text },
+          createdBy: "user",
+          creationSource: "web",
+        }),
+      );
+    };
+
+    // Upstream refuses a launch into a project it does not have.
+    const refusal = yield* launch(gone, "command:refused-launch").pipe(Effect.flip);
+    assert.strictEqual(refusal._tag, "ThreadLaunchError");
+    assert.isNull(yield* authorRecord("message:refused-launch"));
+
+    yield* people.setName({ personId: owner, displayName: "Jackson Miller" });
+    yield* launch(projectId, "command:accepted-launch");
+    const record = (yield* authorRecord("message:refused-launch"))!;
+    assert.include(record.stored_prefix, "[Message from Jackson Miller (owner)]");
+    assert.strictEqual(
+      yield* storedText(on, "message:refused-launch"),
+      `${record.stored_prefix}Let us review the plan.`,
+    );
+  }).pipe(Effect.provide(layerFor(harness)));
 });

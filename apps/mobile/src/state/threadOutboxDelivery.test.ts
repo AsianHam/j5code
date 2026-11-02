@@ -143,6 +143,7 @@ import { pendingThreadCreationOutcomesAtom } from "./pending-thread-creation";
 import { clearThreadComposerError, threadComposerErrorsAtom } from "./thread-composer-error";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import * as composerDrafts from "./use-composer-drafts";
+import { restoredNewTaskDraftKey } from "./new-task-draft-key";
 import { recoverFailedThreadDraft } from "./recover-failed-thread-draft";
 import { clearDraftAgent, readDraftAgentPersonaId } from "../j5/agents/agentDraftState";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
@@ -722,6 +723,38 @@ describe("thread outbox recovery rollback", () => {
       expect(readDraftAgentPersonaId(draftKey)).toBe("critic");
     } finally {
       clearDraftAgent(draftKey);
+    }
+  });
+
+  // L-ios-2: "Edit task" on the failed card must open the original task, not an empty draft.
+  it("opens a rejected saved-agent task from Edit task with its text, project and agent", async () => {
+    const message: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "message-edit-task", text: "review the release" }),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" },
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+        agentPersonaId: "luna-helper",
+      },
+    };
+    // The key the failed card's Edit task opens (ThreadRouteScreen).
+    const editTaskKey = restoredNewTaskDraftKey(message.messageId);
+    await harness.manager.enqueue(message);
+    try {
+      await expect(
+        restoreRejectedQueuedMessage(message, "Model turned off for this project"),
+      ).resolves.toBe("restored");
+      await recoverFailedThreadDraft(message);
+
+      expect(composerDrafts.getComposerDraftSnapshot(editTaskKey)).toMatchObject({
+        text: "review the release",
+        project: { environmentId: message.environmentId, projectId: message.creation!.projectId },
+      });
+      expect(readDraftAgentPersonaId(editTaskKey)).toBe("luna-helper");
+    } finally {
+      clearDraftAgent(editTaskKey);
     }
   });
 

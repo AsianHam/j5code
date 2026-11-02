@@ -1,9 +1,9 @@
+import { permissionNoticeApplies } from "@t3tools/client-runtime/j5/sharing";
 import { type EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../../connection/catalog";
 import { j5Sharing } from "../state";
-import { permissionNoticeApplies } from "./upstreamNotices.logic";
 
 /**
  * The servers upstream's "Permissions have changed" notice is for: those whose connection is no

@@ -30,6 +30,7 @@ const state = vi.hoisted(() => ({
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
+  archiveConfirmed: true,
 }));
 
 vi.mock("react", () => ({
@@ -50,6 +51,9 @@ vi.mock("../../components/ui/Dialog", () => ({
   alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
     state.alerts.push({ title, buttons }),
   confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
+}));
+vi.mock("../../j5/archive/confirmArchive", () => ({
+  confirmJ5Archive: async () => state.archiveConfirmed,
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: (environmentId: string) => {
@@ -189,6 +193,7 @@ beforeEach(() => {
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.archiveConfirmed = true;
 });
 
 afterEach(() => {
@@ -461,6 +466,13 @@ describe("thread action undo", () => {
 });
 
 describe("thread archive guard", () => {
+  it("keeps the thread when J5's archive warning is declined", async () => {
+    state.archiveConfirmed = false;
+    expect(await useThreadListActions().archiveThread(makeThread())).toBe(false);
+    expect(state.requests).toEqual([]);
+    expect(state.archivedRefreshes).toEqual([]);
+  });
+
   it("keeps active provider runs out of the archive", async () => {
     const thread = makeThread({
       runtime: {

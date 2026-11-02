@@ -12,21 +12,6 @@ export const PAGES_FOR_EVERYONE: ReadonlySet<string> = new Set([
 
 export const LICENSES_PATH = "/settings/open-source-licenses";
 
-/**
- * Whether the person owns a connected server, or `"loading"` until a server says so or all have
- * answered. An empty catalog is a client still starting (its own server is added after the first
- * read). While loading, Settings lists what it lists anyone.
- */
-export function ownerSomewhereState(input: {
-  readonly catalogReady: boolean;
-  /** Each server's answer; `null` for one still being asked. */
-  readonly answers: ReadonlyArray<"owner" | "other" | null>;
-}): boolean | "loading" {
-  if (!input.catalogReady || input.answers.length === 0) return "loading";
-  if (input.answers.includes("owner")) return true;
-  return input.answers.includes(null) ? "loading" : false;
-}
-
 /** Whether Settings shows a page, by its path. */
 export const settingsPageShown = (input: {
   readonly path: string;
@@ -58,21 +43,4 @@ export function settingsNavGroups<Path extends string>(
       .filter((group) => group.paths.length > 0),
     { heading: null, paths: [licenses] },
   ];
-}
-
-/**
- * What an Owner-only Settings page says, in its place, to someone who reaches it by a link or its
- * address and owns no connected server. Someone who writes nowhere has no agent to ask.
- */
-export function ownerOnlySettingsNotice(input: {
-  readonly serverName: string | null;
-  readonly writesSomewhere: boolean;
-}): { readonly title: string; readonly body: string } {
-  const server = input.serverName ?? "this server";
-  return {
-    title: "Coming soon",
-    body: input.writesSomewhere
-      ? `Only an Owner of ${server} can change this here for now. Ask an Owner, or ask an agent on a thread you can write to.`
-      : `Only an Owner of ${server} can change this here for now. Ask an Owner.`,
-  };
 }

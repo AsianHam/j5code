@@ -104,7 +104,13 @@ vi.mock("./threads", async () => {
   };
 });
 vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.checkout } }));
-vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
+vi.mock("../lib/modelOptions", () => ({
+  isModelSelectionUnavailable: state.modelUnavailable,
+  describeUnavailableModelSelection: () => ({
+    title: "Model turned off for this project",
+    detail: "Turn it back on from web or desktop, or choose another model.",
+  }),
+}));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));
 vi.mock("./thread-outbox", async () => {
@@ -495,4 +501,31 @@ describe("queued task operation access", () => {
       expect(remaining()).toEqual([queued]);
     },
   );
+});
+
+describe("queued saved-agent task", () => {
+  it("launches on the agent's route when the draft's earlier model is turned off", async () => {
+    setOperateGrant("secondary", true);
+    state.modelUnavailable.mockReturnValue(true);
+    await state.manager.enqueue(
+      message({
+        threadId: ThreadId.make("agent-thread"),
+        modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "opus" },
+        creation: {
+          projectId: ProjectId.make("project"),
+          projectCwd: "/repo",
+          workspaceMode: "local",
+          branch: null,
+          worktreePath: null,
+          agentPersonaId: "luna-helper",
+        },
+      }),
+    );
+    await runDrain();
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[0].input.bootstrap.createThread).toMatchObject({
+      agentPersona: { personaId: "luna-helper" },
+    });
+    expect(remaining()).toEqual([]);
+  });
 });

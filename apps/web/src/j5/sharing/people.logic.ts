@@ -9,18 +9,14 @@ import type {
   ScopeReach,
 } from "@t3tools/contracts/j5";
 import { LEVEL_PERMISSIONS, levelReaches } from "@t3tools/contracts/j5";
+import { levelLabel } from "@t3tools/client-runtime/j5/sharing";
 import { AUTH_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 
 import { lifetimeLeft } from "./shareLink.logic";
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-const LEVEL_LABELS: Record<PersonLevel, string> = {
-  viewer: "Viewer",
-  collaborator: "Collaborator",
-  owner: "Owner",
-};
-export const levelLabel = (level: PersonLevel) => LEVEL_LABELS[level];
+export { levelLabel };
 
 /** The levels offered at a scope: Owner only at server scope (AC8). */
 export const levelsAt = (scope: PersonScope): ReadonlyArray<PersonLevel> =>

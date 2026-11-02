@@ -60,6 +60,7 @@ import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { J5Wordmark } from "../../j5/branding/J5Wordmark";
+import { PromptAnswerTail } from "../../j5/sharing/sharedConversation";
 import { BrowserAppIcon } from "./BrowserAppIcon";
 import { useAppActive, useReduceMotionEnabled } from "../../lib/appState";
 import { cn } from "../../lib/cn";
@@ -974,8 +975,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     call && shownItem.type === "command_execution" && shownItem.exitCode
       ? shownItem.exitCode
       : null;
+  // J5 (case 99): an answered question reads as its question and answer, not as its raw item.
   const fullDetail =
-    expanded && !reasoning && !call
+    expanded && !reasoning && !call && !row.workEntry.questionAnswer
       ? fetchedItem && !isRead
         ? formatItemFullDetail(row.projectedItem, fetchedItem)
         : row.getFullDetail()
@@ -1008,6 +1010,8 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const answerPreview = row.workEntry.questionAnswer
     ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
     : null;
+  const answered =
+    row.workEntry.questionAnswer !== undefined && hasQuestionAnswer(row.workEntry.questionAnswer);
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
   const displayText = row.groupStandIn?.label ?? workEntryRowLabel(row.workEntry, expanded);
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
@@ -1096,18 +1100,16 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               tone={isUsageLimit ? "warning" : iconIsDestructive ? "danger" : "default"}
             >
               {displayText}
-              {answerPreview ? (
-                <Text
-                  className={
-                    !expanded &&
-                    row.workEntry.questionAnswer &&
-                    hasQuestionAnswer(row.workEntry.questionAnswer)
-                      ? "text-foreground"
-                      : "text-foreground-subtle"
-                  }
-                >{`  ${answerPreview}`}</Text>
+              {answerPreview && !answered ? (
+                <Text className="text-foreground-subtle">{`  ${answerPreview}`}</Text>
               ) : null}
             </WorkLogLabel>
+            {/* J5 (case 99): the answer and who gave it, outside the label so the question truncates first. */}
+            <PromptAnswerTail
+              environmentId={props.environmentId}
+              item={row.projectedItem.item}
+              answer={answered && !expanded ? answerPreview : null}
+            />
           </>
         )}
 

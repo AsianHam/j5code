@@ -19,7 +19,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
 import { j5Environment } from "../state";
 import { usePlaybookRefresh } from "./usePlaybookRefresh";
-import { useGuestEnvironmentIds } from "../sharing/guestAccess";
 
 export function PlaybookComposerControl(props: {
   environmentId: EnvironmentId;
@@ -28,10 +27,9 @@ export function PlaybookComposerControl(props: {
   const focused = useIsFocused();
   const runtime = useRemoteEnvironmentRuntime(props.environmentId);
   const thread = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
-  // A guest is shown none of a server's Playbooks (Shared server AC24), so none is read.
-  const guest = useGuestEnvironmentIds().has(props.environmentId);
+  // A thread's Playbook runs are part of the thread, so anyone who reads it reads them.
   const serverConfig = useEnvironmentServerConfig(props.environmentId);
-  const supported = !guest && j5LedgerSupported(serverConfig) !== false;
+  const supported = j5LedgerSupported(serverConfig) !== false;
   const query = useEnvironmentQuery(
     supported
       ? j5Environment.playbooks({

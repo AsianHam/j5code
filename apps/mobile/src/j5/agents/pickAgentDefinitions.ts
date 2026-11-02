@@ -9,9 +9,15 @@ export async function pickAgentDefinitions(kind: "folder" | "agent") {
   try {
     const { File, Directory } = await import("expo-file-system");
     if (kind === "agent") {
-      const selection = await File.pickFileAsync({ mimeTypes: ["*/*"] });
-      if (selection.canceled) return null;
-      return await prepareAgentPersonaImport([selection.result]);
+      const { getDocumentAsync } = await import("expo-document-picker");
+      // Android names a picked document by its id in the URI; the picker's asset keeps the file name.
+      const selection = await getDocumentAsync({ copyToCacheDirectory: true });
+      const asset = selection.canceled ? undefined : selection.assets[0];
+      if (asset === undefined) return null;
+      const file = new File(asset.uri);
+      return await prepareAgentPersonaImport([
+        { name: asset.name, size: asset.size ?? file.size, text: () => file.text() },
+      ]);
     }
     const root = await Directory.pickDirectoryAsync();
     const pending = [{ directory: root, prefix: root.name }];

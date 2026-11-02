@@ -7,7 +7,7 @@ import type { ChatMessage } from "~/types";
 import {
   presentParticipantIdentity,
   type ParticipantIdentityPresentation,
-} from "./ParticipantIdentity";
+} from "@t3tools/client-runtime/j5/participant-identity";
 
 /** A Peer Agent's first message, for the "Spawned by" divider at the top of its thread. */
 export function presentSpawnBrief(message: ChatMessage) {

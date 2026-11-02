@@ -9,6 +9,7 @@ import type { SearchBarCommands } from "react-native-screens";
 
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { InboxBell } from "../../j5/inbox/InboxBell";
 import {
   NativePrimaryColumnContext,
   NativeWorkspaceTabActivityContext,
@@ -189,6 +190,12 @@ export function WorkspaceToolbar(props: {
       {workspace.settingsOpen && !foldedSearch ? null : (
         <Toolbar placement="right">
           {searchButton}
+          {/* J5: the Inbox bell on the thread list, iPhone and iPad alike (case 102). */}
+          {selectedTab === "threads" ? (
+            <Toolbar.Custom>
+              <InboxBell />
+            </Toolbar.Custom>
+          ) : null}
           {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
           {composeButton}
           {selectedTab !== "threads" ||

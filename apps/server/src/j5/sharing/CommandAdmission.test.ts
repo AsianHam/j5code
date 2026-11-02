@@ -153,10 +153,15 @@ it.layer(conversationLayer)("CommandAdmission", (it) => {
       ]);
       const admission = yield* makeCommandAdmission(() => Effect.void, projectOnly);
       const launch = (projectId: string) =>
-        admission.admitLaunch({ projectId } as unknown as OrchestrationV2ThreadLaunchInput).pipe(
-          Effect.as("admitted"),
-          Effect.orElseSucceed(() => "refused"),
-        );
+        admission
+          .launchThread(
+            { projectId } as unknown as OrchestrationV2ThreadLaunchInput,
+            Effect.succeed,
+          )
+          .pipe(
+            Effect.as("admitted"),
+            Effect.orElseSucceed(() => "refused"),
+          );
       assert.strictEqual(yield* launch(PROJECT), "admitted");
       assert.strictEqual(yield* launch(OTHER_PROJECT), "refused");
     }),

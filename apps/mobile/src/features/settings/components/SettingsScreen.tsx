@@ -9,6 +9,7 @@ import { useWorkspaceTabs } from "../../workspace/WorkspaceTabsContext";
 import { useWorkspaceSurface } from "../../workspace/useWorkspaceSurface";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { useCompactWorkspaceTabs } from "../../workspace/useSystemWorkspaceTabBar";
+import { useOwnerOnlySettingsPage } from "../../../j5/sharing/settingsAccess";
 import {
   ScreenScrollViewBottomInset,
   ScreenScrollViewSurface,
@@ -30,6 +31,8 @@ export function SettingsScreen(
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
   const cover = deviceType === "duo-folded";
+  // J5: an Owner's page shows a notice to someone who owns no server (FORK.md case 72).
+  const children = useOwnerOnlySettingsPage(route.name, props.children);
   // Android opens Settings as a workspace tab; its root page has nothing to go back to.
   const workspaceRoot =
     props.workspaceRoot ||
@@ -52,11 +55,7 @@ export function SettingsScreen(
       />
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>
         <ScreenScrollViewSurface value={surfaceClassName}>
-          {props.formSheet ? (
-            props.children
-          ) : (
-            <SettingsScreenContent>{props.children}</SettingsScreenContent>
-          )}
+          {props.formSheet ? children : <SettingsScreenContent>{children}</SettingsScreenContent>}
         </ScreenScrollViewSurface>
       </ScreenScrollViewBottomInset>
     </View>

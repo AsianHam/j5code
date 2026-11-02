@@ -70,11 +70,14 @@ menu.
 
 A server asks "What should people and agents on <server> call you?" before a device it cannot place
 uses it, and before the first owner's first device does. Pick yourself from the list, or name
-someone new.
+someone new. On the mobile app you can also choose **Remove this server** to forget it on that
+phone, and a phone the server does not know can choose **Not now**, which asks again the next time
+the app opens; until then that server shows nothing.
 
 ## What changes for people who are not Owners
 
 Settings shows only Appearance, SnapShots, Open-source licenses and People to someone who owns no
-connected server. A device reconnects once when its person's level changes. A phone running the mobile app is
-paired again by hand instead, with a new link from an Owner, even when the level was raised. Someone who has lost everything they were given sees "Nothing is shared with you" until an
+connected server. On the mobile app it shows the pages about the phone itself: its look and input,
+its servers, notifications and About. A New thread, a fork or a new project is offered only where
+the person may start one. A device reconnects once when its person's level changes. Someone who has lost everything they were given sees "Nothing is shared with you" until an
 Owner shares something again.

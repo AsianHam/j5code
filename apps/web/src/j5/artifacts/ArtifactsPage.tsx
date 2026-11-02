@@ -33,21 +33,17 @@ import { usePreparedConnection } from "../../state/session";
 import { artifactEnvironment } from "./artifactChanges";
 import { j5Environment } from "../state";
 import { listArtifacts, readArtifact, deleteArtifact, deleteAllArtifacts } from "./artifactClient";
-import { artifactPreviewRevision } from "./artifactPreview.logic";
+import {
+  ARTIFACT_IMAGE_MEDIA_TYPES,
+  ARTIFACT_MARKDOWN_EXTENSIONS,
+  artifactDataUrl,
+  artifactExtension,
+  artifactPreviewKind,
+  artifactPreviewRevision,
+} from "@t3tools/client-runtime/j5/artifacts";
 import { nextArtifactRefreshGeneration } from "./artifactRefresh";
 
 const isJ5ActionError = Schema.is(J5ActionError);
-const MARKDOWN_EXTENSIONS = new Set(["md", "markdown", "mdx"]);
-const IMAGE_MEDIA_TYPES: Readonly<Record<string, string>> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-  svg: "image/svg+xml",
-};
-
-const extensionOf = (path: string) => path.split(".").at(-1)?.toLowerCase() ?? "";
 const projectKey = (project: Pick<EnvironmentProject, "environmentId" | "id">) =>
   `${project.environmentId}:${project.id}`;
 
@@ -84,16 +80,10 @@ function ArtifactFilePaneResizeHandle(props: {
 }
 
 function artifactIcon(path: string) {
-  const extension = extensionOf(path);
-  if (MARKDOWN_EXTENSIONS.has(extension)) return FileTextIcon;
-  if (IMAGE_MEDIA_TYPES[extension] !== undefined) return FileImageIcon;
+  const extension = artifactExtension(path);
+  if (ARTIFACT_MARKDOWN_EXTENSIONS.has(extension)) return FileTextIcon;
+  if (ARTIFACT_IMAGE_MEDIA_TYPES[extension] !== undefined) return FileImageIcon;
   return FileIcon;
-}
-
-function binaryDataUrl(content: ArtifactContent) {
-  const mediaType = IMAGE_MEDIA_TYPES[extensionOf(content.path)] ?? "application/octet-stream";
-  if (content.encoding === "base64") return `data:${mediaType};base64,${content.content}`;
-  return `data:${mediaType};charset=utf-8,${encodeURIComponent(content.content)}`;
 }
 
 export interface ArtifactsPageProps {
@@ -390,11 +380,8 @@ export function ArtifactsPage({
     setListGeneration((generation) => generation + 1);
     setDeleting(false);
   };
-  const selectedExtension = selectedPath === null ? "" : extensionOf(selectedPath);
   const selectedName = selectedPath?.split("/").at(-1) ?? null;
-  const image = IMAGE_MEDIA_TYPES[selectedExtension] !== undefined;
-  const markdown = MARKDOWN_EXTENSIONS.has(selectedExtension);
-  const html = selectedExtension === "html" || selectedExtension === "htm";
+  const previewKind = content === null ? null : artifactPreviewKind(content);
 
   return (
     <SidebarInset
@@ -602,13 +589,13 @@ export function ArtifactsPage({
                     <FolderArchiveIcon className="mb-3 size-8" />
                     <p className="text-sm">Select an artifact to preview it.</p>
                   </div>
-                ) : image ? (
+                ) : previewKind === "image" ? (
                   <img
                     alt={content.path}
                     className="mx-auto max-h-[calc(100dvh-8rem)] max-w-full rounded-md border border-border object-contain"
-                    src={binaryDataUrl(content)}
+                    src={artifactDataUrl(content)}
                   />
-                ) : html && content.encoding === "utf8" ? (
+                ) : previewKind === "html" ? (
                   <iframe
                     className="h-[calc(100dvh-8rem)] min-h-96 w-full border-0 bg-transparent"
                     referrerPolicy="no-referrer"
@@ -616,13 +603,13 @@ export function ArtifactsPage({
                     srcDoc={content.content}
                     title={`Artifact preview: ${content.path}`}
                   />
-                ) : markdown && content.encoding === "utf8" ? (
+                ) : previewKind === "markdown" ? (
                   <ChatMarkdown
                     className="mx-auto max-w-4xl"
                     cwd={selectedWorkspaceRoot}
                     text={content.content}
                   />
-                ) : content.encoding === "utf8" ? (
+                ) : previewKind === "text" ? (
                   <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-sm">
                     {content.content}
                   </pre>

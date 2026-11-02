@@ -145,9 +145,11 @@ export interface CommandAdmission {
     command: OrchestrationV2Command,
     dispatch: (command: OrchestrationV2Command) => Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | EnvironmentAuthorizationError | OrchestrationV2DispatchCommandError, R>;
-  readonly admitLaunch: (
+  /** A person's launch of a thread, admitted and then handed to upstream's launch (FORK.md case 78). */
+  readonly launchThread: <A, E, R>(
     input: OrchestrationV2ThreadLaunchInput,
-  ) => Effect.Effect<OrchestrationV2ThreadLaunchInput, EnvironmentAuthorizationError>;
+    launch: (input: OrchestrationV2ThreadLaunchInput) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | EnvironmentAuthorizationError, R>;
   /**
    * A person's save of a scheduled task, with who scheduled it recorded: whoever creates it, and
    * whoever changes its prompt (`scheduledRuns`). `ws.ts` wraps upstream's upsert with this
@@ -294,16 +296,19 @@ export const makeCommandAdmission = Effect.fn("j5.sharing.commandAdmission.makeC
         Effect.withSpan("j5.sharing.commandAdmission.dispatchCommand"),
       );
 
-    const admitLaunch: CommandAdmission["admitLaunch"] = Effect.fn(
-      "j5.sharing.commandAdmission.admitLaunch",
-    )(function* (input) {
+    const launchThread: CommandAdmission["launchThread"] = Effect.fn(
+      "j5.sharing.commandAdmission.launchThread",
+    )(function* <A, E, R>(
+      input: OrchestrationV2ThreadLaunchInput,
+      launch: (input: OrchestrationV2ThreadLaunchInput) => Effect.Effect<A, E, R>,
+    ) {
       // Launching into a thread that exists writes to it; otherwise it starts one in a project.
       const scope: CommandScope =
         input.reuseExistingThread === true && input.threadId !== undefined
           ? { kind: "thread", threadId: input.threadId }
           : { kind: "project", projectId: input.projectId };
       yield* requireLevel(scope, "collaborator");
-      return yield* conversation.admitLaunch(person, input);
+      return yield* conversation.launch(person, input, launch);
     });
 
     const upsertScheduledTask: CommandAdmission["upsertScheduledTask"] = (input, upsert) => {
@@ -342,6 +347,6 @@ export const makeCommandAdmission = Effect.fn("j5.sharing.commandAdmission.makeC
       });
     };
 
-    return { dispatchCommand, admitLaunch, upsertScheduledTask };
+    return { dispatchCommand, launchThread, upsertScheduledTask };
   },
 );

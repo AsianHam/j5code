@@ -5,6 +5,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useMemo, useState } from "react";
 
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useOwnedSettingsTargets } from "../../j5/sharing/settingsAccess";
 import { useArchivedThreadListActions } from "../home/useThreadListActions";
 import {
   ArchivedThreadsScreen,
@@ -21,7 +22,7 @@ export function ArchivedThreadsRouteScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
   const [sortOrder, setSortOrder] = useState<ArchivedThreadSortOrder>("newest");
-  const environments = useMemo<ReadonlyArray<ArchivedThreadsHeaderEnvironment>>(
+  const savedEnvironments = useMemo<ReadonlyArray<ArchivedThreadsHeaderEnvironment>>(
     () =>
       Arr.sort(
         Object.values(savedConnectionsById).map((connection) => ({
@@ -34,6 +35,8 @@ export function ArchivedThreadsRouteScreen() {
       ),
     [savedConnectionsById],
   );
+  // J5: Archive manages only the servers the person owns (FORK.md case 72).
+  const environments = useOwnedSettingsTargets(savedEnvironments);
   const environmentIds = useMemo(
     () => environments.map((environment) => environment.environmentId),
     [environments],

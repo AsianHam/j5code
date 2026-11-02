@@ -773,13 +773,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const modelControl = (
     <View className="min-w-0 shrink">
       {agentPersonaAssignment ? (
-        <AgentPersonaAssignmentControls
-          assignment={agentPersonaAssignment}
-          environmentId={props.environmentId}
-          {...(props.isDraft
-            ? { draftKey: composerDraftKey }
-            : { threadId: props.selectedThread.id })}
-        />
+        // J5: a draft shows its saved agent in its own row under the checkout row (DraftAgentRow).
+        props.isDraft ? null : (
+          <AgentPersonaAssignmentControls
+            assignment={agentPersonaAssignment}
+            environmentId={props.environmentId}
+            compact={!compactEditor.isExpanded}
+            threadId={props.selectedThread.id}
+          />
+        )
       ) : (
         <ComposerModelControl
           size={hasSidebarTabBar ? "large" : "regular"}
@@ -826,15 +828,18 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         (composerMenu.items.length > 0 ||
           composerMenu.trigger.kind === "pull-request" ||
           composerMenu.trigger.kind === "slash-playbook") ? (
-          <ComposerPopoverAnchor>
-            <ComposerCommandPopover
-              items={composerMenu.items}
-              triggerKind={composerMenu.trigger.kind}
-              isLoading={composerMenu.isLoading}
-              error={composerMenu.error}
-              onSelect={composerMenu.onSelect}
-            />
-          </ComposerPopoverAnchor>
+          // J5: anchored below the draft controls, so the menu covers them instead of opening above.
+          <View className="relative">
+            <ComposerPopoverAnchor>
+              <ComposerCommandPopover
+                items={composerMenu.items}
+                triggerKind={composerMenu.trigger.kind}
+                isLoading={composerMenu.isLoading}
+                error={composerMenu.error}
+                onSelect={composerMenu.onSelect}
+              />
+            </ComposerPopoverAnchor>
+          </View>
         ) : null}
 
         {selectedProviderStatus?.compatibilityAdvisory?.message &&

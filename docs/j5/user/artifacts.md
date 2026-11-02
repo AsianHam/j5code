@@ -22,6 +22,10 @@ scoped to the current project workspace, so planning documents remain beside the
 you work. Artifact file references in chat use a distinct **Artifact** chip; choose one to open that
 document directly in the Artifacts panel.
 
+On mobile, tap an `artifacts/…` link in a thread to read that artifact. **All artifacts** lists the
+project's other artifacts. Mobile shows Markdown, text and images, shows HTML as its source, and
+cannot delete artifacts. Pull down to refresh.
+
 While the Artifacts page is open, its file list and the selected preview update automatically when
 an agent creates, edits, or removes a project artifact.
 

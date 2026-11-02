@@ -8,6 +8,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironmentPresentation } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
+import { permissionNoticeEnvironmentIdsAtom } from "../../j5/sharing/upstreamNotices";
 
 const storageKey = "t3code.permission-update.v1";
 
@@ -17,7 +18,9 @@ const legacyPermissionEnvironmentsAtom = Atom.make((get) =>
       const session = get(environmentSession.sessionStateAtom(environmentId));
       return session._tag === "Success" &&
         !session.waiting &&
-        sessionHasLegacyPermissions(session.value)
+        sessionHasLegacyPermissions(session.value) &&
+        // J5 (case 73): not for a connection J5 places as a person, which renews its permissions.
+        get(permissionNoticeEnvironmentIdsAtom).has(environmentId)
         ? [projectEnvironmentPresentation(environmentId, presentation)]
         : [];
     },

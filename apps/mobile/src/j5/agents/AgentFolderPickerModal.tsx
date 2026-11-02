@@ -64,79 +64,85 @@ export function AgentFolderPickerModal(props: {
       presentationStyle="pageSheet"
       onRequestClose={props.onClose}
     >
-      <SafeAreaView className="flex-1 bg-sheet">
-        <KeyboardAvoidingView
-          className="flex-1"
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-          <View className="flex-row items-center justify-between px-5 py-3">
-            <Text className="text-xl font-t3-semibold">Choose a library folder</Text>
-            <Pressable accessibilityRole="button" onPress={props.onClose} className="px-3 py-2">
-              <Text>Cancel</Text>
-            </Pressable>
-          </View>
-          <View className="gap-3 px-5 pb-3">
-            <Text className="text-sm text-foreground-muted">
-              Folders on {props.environmentLabel}. Open a folder to browse into it, then choose it.
-            </Text>
-            <TextInput
-              accessibilityLabel="Folder path"
-              autoCapitalize="none"
-              autoCorrect={false}
-              value={pathInput}
-              onChangeText={setPathInput}
-            />
-          </View>
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            className="flex-1"
-            contentContainerClassName="gap-1 px-5 pb-4"
+      {/* SafeAreaView takes no className, so the theme surface and flex go on a View. */}
+      <View className="flex-1 bg-sheet">
+        <SafeAreaView style={{ flex: 1 }}>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
           >
-            {browsePath.canBrowseUp && browsePath.parentPath ? (
-              <FolderRow
-                label=".."
-                symbol="arrow.turn.left.up"
-                onPress={() => setPathInput(browsePath.parentPath!)}
+            <View className="flex-row items-center justify-between px-5 py-3">
+              <Text className="text-xl font-t3-semibold">Choose a library folder</Text>
+              <Pressable accessibilityRole="button" onPress={props.onClose} className="px-3 py-2">
+                <Text>Cancel</Text>
+              </Pressable>
+            </View>
+            <View className="gap-3 px-5 pb-3">
+              <Text className="text-sm text-foreground-muted">
+                Folders on {props.environmentLabel}. Open a folder to browse into it, then choose
+                it.
+              </Text>
+              <TextInput
+                accessibilityLabel="Folder path"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={pathInput}
+                onChangeText={setPathInput}
               />
-            ) : null}
-            {browseState.error ? (
-              <Text className="px-2 py-2 text-sm text-danger-foreground">{browseState.error}</Text>
-            ) : browseState.isPending && browseState.data === null ? (
-              <View className="items-center py-5">
-                <ActivityIndicator />
-              </View>
-            ) : visibleEntries.length === 0 ? (
-              <Text className="px-2 py-2 text-sm text-foreground-muted">No subfolders.</Text>
-            ) : (
-              visibleEntries.map((entry) => (
-                <FolderRow
-                  key={entry.fullPath}
-                  label={entry.name}
-                  symbol="folder"
-                  selected={entry.fullPath === selection}
-                  onPress={() =>
-                    setPathInput(appendBrowsePathSegment(browsePath.directoryPath, entry.name))
-                  }
-                />
-              ))
-            )}
-          </ScrollView>
-          <View className="gap-2 px-5 pb-4">
-            <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-              {selection ?? "Enter a folder path to browse."}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: selection === null }}
-              disabled={selection === null}
-              className="items-center rounded-xl bg-primary px-4 py-3 disabled:opacity-40"
-              onPress={() => selection && props.onSelect(selection)}
+            </View>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              className="flex-1"
+              contentContainerClassName="gap-1 px-5 pb-4"
             >
-              <Text className="font-t3-semibold text-primary-foreground">Choose folder</Text>
-            </Pressable>
-          </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+              {browsePath.canBrowseUp && browsePath.parentPath ? (
+                <FolderRow
+                  label=".."
+                  symbol="arrow.turn.left.up"
+                  onPress={() => setPathInput(browsePath.parentPath!)}
+                />
+              ) : null}
+              {browseState.error ? (
+                <Text className="px-2 py-2 text-sm text-danger-foreground">
+                  {browseState.error}
+                </Text>
+              ) : browseState.isPending && browseState.data === null ? (
+                <View className="items-center py-5">
+                  <ActivityIndicator />
+                </View>
+              ) : visibleEntries.length === 0 ? (
+                <Text className="px-2 py-2 text-sm text-foreground-muted">No subfolders.</Text>
+              ) : (
+                visibleEntries.map((entry) => (
+                  <FolderRow
+                    key={entry.fullPath}
+                    label={entry.name}
+                    symbol="folder"
+                    selected={entry.fullPath === selection}
+                    onPress={() =>
+                      setPathInput(appendBrowsePathSegment(browsePath.directoryPath, entry.name))
+                    }
+                  />
+                ))
+              )}
+            </ScrollView>
+            <View className="gap-2 px-5 pb-4">
+              <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                {selection ?? "Enter a folder path to browse."}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: selection === null }}
+                disabled={selection === null}
+                className="items-center rounded-xl bg-primary px-4 py-3 disabled:opacity-40"
+                onPress={() => selection && props.onSelect(selection)}
+              >
+                <Text className="font-t3-semibold text-primary-foreground">Choose folder</Text>
+              </Pressable>
+            </View>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </View>
     </Modal>
   );
 }

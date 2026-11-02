@@ -31,6 +31,7 @@ import {
 } from "../threads/threadOrder";
 import { getThreadListV2OrderedSection } from "../threads/threadListV2";
 import { threadCanArchive } from "./threadArchive";
+import { confirmJ5Archive } from "../../j5/archive/confirmArchive";
 import { resolveThreadTitleRename } from "../threads/thread-title-rename";
 
 /** Older servers default the settlement capability to false; never send them settle/unsettle. */
@@ -157,6 +158,7 @@ function useThreadActionExecutor(
         );
         return false;
       }
+      if (action === "archive" && !(await confirmJ5Archive(thread))) return false;
       if (action === "unsettle") ThreadUndo.invalidate("settle", key);
       if (action === "archive" || action === "delete") {
         for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);

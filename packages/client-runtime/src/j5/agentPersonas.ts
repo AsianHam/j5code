@@ -27,6 +27,7 @@ import type {
   ProviderDriverKind,
   ServerProvider,
   AgentPersonaId,
+  ModelSelection,
   OrchestrationV2AgentPersonaAssignment,
   OrchestrationV2AgentPersonaCatalog,
 } from "@t3tools/contracts";
@@ -598,6 +599,16 @@ export function draftAgentAssignmentPreview(
     resolvedModelSelection: persona.availability.resolvedModelSelection,
   };
 }
+
+/**
+ * The model a composer presents and sends for a thread or draft. A saved agent always runs on its
+ * route: the server rejects a model change on a persona thread ("has an immutable model route")
+ * and launches a persona draft on the route whatever the draft remembered.
+ */
+export const composerModelSelectionForThread = (
+  assignment: OrchestrationV2AgentPersonaAssignment | null | undefined,
+  fallback: ModelSelection,
+): ModelSelection => assignment?.resolvedModelSelection ?? fallback;
 
 export interface AgentHandoffPresentation {
   readonly label: string;

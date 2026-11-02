@@ -1,4 +1,5 @@
 import { Connection } from "@t3tools/client-runtime/connection";
+import * as J5SessionRenewal from "@t3tools/client-runtime/j5/session-renewal";
 import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
 import { PullRequestDiffLoader } from "@t3tools/client-runtime/state/pull-requests";
 import {
@@ -48,6 +49,8 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
 );
 
 const layerConnection = BackgroundActivity.layerReporter.pipe(
+  // J5: a saved server's session ended for a change of level renews (FORK.md case 70).
+  Layer.provideMerge(J5SessionRenewal.layer),
   Layer.provideMerge(layerProvidedClientConnection),
 );
 

@@ -25,6 +25,7 @@ import {
   presentAgentHandoff,
   presentAgentPersonaUsage,
   draftAgentAssignmentPreview,
+  composerModelSelectionForThread,
   agentPersonaDuplicateDraft,
   agentPersonaIdError,
   agentPersonaIdFromName,
@@ -1136,5 +1137,35 @@ describe("handoff artifacts", () => {
     const missing = presentAgentHandoff({ ...base, status: "missing" } as never);
     expect(missing.tone).toBe("error");
     expect(missing.detail).toContain("incomplete");
+  });
+});
+
+describe("composerModelSelectionForThread", () => {
+  const codexHigh = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5.6-sol",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  };
+  const draftPick = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5" };
+
+  it("uses the persona's launch route regardless of what the draft remembered", () => {
+    expect(
+      composerModelSelectionForThread(
+        {
+          personaId: "navigator",
+          definitionVersion: 3,
+          authorityPolicy: "read-only",
+          resolvedRoute: "primary",
+          resolvedDriver: ProviderDriverKind.make("codex"),
+          resolvedModelSelection: codexHigh,
+        },
+        draftPick,
+      ),
+    ).toEqual(codexHigh);
+  });
+
+  it("leaves ordinary threads on the composer's pick", () => {
+    expect(composerModelSelectionForThread(undefined, draftPick)).toBe(draftPick);
+    expect(composerModelSelectionForThread(null, draftPick)).toBe(draftPick);
   });
 });

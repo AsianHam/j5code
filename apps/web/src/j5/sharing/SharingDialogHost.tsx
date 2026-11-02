@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { serverToAskNameFor } from "@t3tools/client-runtime/j5/sharing";
 import { Atom } from "effect/reactivity";
 import { useSyncExternalStore } from "react";
 
@@ -7,7 +8,6 @@ import { j5Sharing } from "./access";
 import { LeftOnNothingRedirect } from "./LeftOnNothingRedirect";
 import { LeaveDialog } from "./LeaveDialog";
 import { NameDialog } from "./NameDialog";
-import { serverToAskNameFor } from "./nameDialog.logic";
 import { RenameDialog } from "./RenameDialog";
 import { RetiredLinksNotice } from "./RetiredLinksNotice";
 import { SessionRenewalWatcher } from "./SessionRenewalWatcher";

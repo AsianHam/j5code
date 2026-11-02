@@ -26,6 +26,8 @@ const pickers = vi.hoisted(() => {
   return { File, Directory };
 });
 vi.mock("expo-file-system", () => pickers);
+const documents = vi.hoisted(() => ({ getDocumentAsync: vi.fn() }));
+vi.mock("expo-document-picker", () => documents);
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -47,17 +49,30 @@ describe("native agent definition selection", () => {
       "team/scout/agent.yaml",
     ]);
     expect(isForegroundHandoffActive()).toBe(false);
-    expect(pickers.File.pickFileAsync).not.toHaveBeenCalled();
+    expect(documents.getDocumentAsync).not.toHaveBeenCalled();
   });
 
   it("reads only the single chosen file", async () => {
-    pickers.File.pickFileAsync.mockResolvedValue({
+    documents.getDocumentAsync.mockResolvedValue({
       canceled: false,
-      result: new pickers.File("agent.yaml"),
+      assets: [{ name: "agent.yaml", size: 2, uri: "file:///cache/agent.yaml" }],
     });
     expect(await pickAgentDefinitions("agent")).toEqual([{ name: "agent.yaml", content: "{}" }]);
     expect(pickers.Directory.pickDirectoryAsync).not.toHaveBeenCalled();
     expect(isForegroundHandoffActive()).toBe(false);
+  });
+
+  it("names a chosen Android document by its file name, not the id in its URI", async () => {
+    // A Downloads pick's URI is content://…/document/msf%3A28; only the picker knows the name.
+    pickers.File.pickFileAsync.mockResolvedValue({
+      canceled: false,
+      result: new pickers.File("msf%3A28"),
+    });
+    documents.getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ name: "scout.yaml", size: 2, uri: "file:///cache/DocumentPicker/msf%3A28" }],
+    });
+    expect(await pickAgentDefinitions("agent")).toEqual([{ name: "scout.yaml", content: "{}" }]);
   });
 
   it("treats native picker cancellation as no selection and ends the handoff", async () => {
@@ -68,7 +83,7 @@ describe("native agent definition selection", () => {
       expect(await pickAgentDefinitions("folder")).toBeNull();
       expect(isForegroundHandoffActive()).toBe(false);
     }
-    pickers.File.pickFileAsync.mockResolvedValue({ canceled: true, result: null });
+    documents.getDocumentAsync.mockResolvedValue({ canceled: true, assets: null });
     expect(await pickAgentDefinitions("agent")).toBeNull();
     expect(isForegroundHandoffActive()).toBe(false);
   });

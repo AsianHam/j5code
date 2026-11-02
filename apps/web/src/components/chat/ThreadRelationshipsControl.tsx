@@ -69,6 +69,7 @@ import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { AgentRowIdentity } from "../../j5/agents/AgentIdentityChip";
+import { useCanMergeBack } from "../../j5/sharing/access";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -256,6 +257,8 @@ export function ThreadRelationshipsPanel(props: {
   const canOperateWorkflow = useAtomValue(
     orchestrationEnvironment.stopWorkflow.permissionAtom(props.environmentId),
   );
+  // J5: the fork's project level and "Operate tasks", which the server needs (case 90).
+  const canMergeInProject = useCanMergeBack(props.environmentId, props.threadId);
   const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
   // Derive graphs after hooks to preserve their compiler cache.
@@ -312,7 +315,7 @@ export function ThreadRelationshipsPanel(props: {
       ? row
       : { ...row, edge: { ...row.edge, status: workflowGroup.workflow.status } };
   });
-  const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
+  const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null && canMergeInProject;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
 
   const {

@@ -1,9 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off globalTimers:off - part of the standalone live-test CLI.
 /**
- * `setup-agent-live-test.ts --mobile ios|android`: the live-test server plus what a device needs
- * to reach it. Metro on a port of this worktree's own, an SSH tunnel to the iOS host, and one
- * device slot claimed from a fixed pool. The Device panel boots the device; `mobile-open`
- * installs the dev client, opens it against Metro and pairs it as the home's owner.
+ * `setup-agent-live-test.ts --mobile ios|android|phone`: the test server, Metro on this worktree's
+ * own port, one device claimed from a pool (and a tunnel to an iOS host over SSH), as this
+ * machine's settings say (live-test-mobile-config.ts). `mobile-open` installs and pairs the app.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
@@ -13,6 +12,7 @@ import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import { J5_BRANDING, mobileNativeProjectName } from "../lib/j5-branding.ts";
+import { expandHome, mobileRigConfig, type IosHost } from "./live-test-mobile-config.ts";
 import {
   LiveTestRefusal,
   cwdOf,
@@ -20,11 +20,11 @@ import {
   listenerOn,
   liveTestEnvironment,
   mintPairingUrl,
-  printRunning,
   processGroupOf,
   readManifest,
   readServerLog,
   selfCommand,
+  type ServerLogFacts,
   startServer,
   startTimeOf,
   stopGroup,
@@ -33,22 +33,15 @@ import {
 
 export const MOBILE_PLATFORMS = ["ios", "android"] as const;
 export type MobilePlatform = (typeof MOBILE_PLATFORMS)[number];
+/** A device the rig provides, or the developer's own phone, which reaches this machine over the network. */
+export type MobileTarget = MobilePlatform | "phone";
 
-/** The tailnet ACL's dev range (decision D3), so a phone on the tailnet can reach both ports later. */
-export const MOBILE_PORT_RANGE = { first: 5774, last: 8733 } as const;
-/** Simulators the iOS host's device hub already lists. The hub fixes its list when it starts, so new ones stay invisible until then. */
-const IOS_POOL_NAME = /^j5-tester-\d+$/;
-/**
- * Booted Simulators the iOS host takes at once. The 16 GB MacBook is also in daily use, and with
- * two booted it swapped until agent-device timed out. A dedicated host can raise this.
- */
-const IOS_BOOTED_CAP = 1;
-/** One AVD per slot: two emulators cannot share an AVD while the Device panel opens it read-write. */
-export const ANDROID_SLOTS = ["j5-tester-1", "j5-tester-2", "j5-tester-3"] as const;
+/** One AVD per slot, made and deleted by the rig: two emulators cannot share an AVD while the Device panel opens it read-write. */
+export const androidSlots = (count: number) =>
+  Array.from({ length: count }, (_, index) => `j5-tester-${index + 1}`);
 const ANDROID_DEVICE_PROFILE = "pixel_8";
 /** How each device reaches this machine's loopback: through the tunnel on iOS, the emulator's alias on Android. */
 const DEVICE_LOOPBACK: Record<MobilePlatform, string> = { ios: "127.0.0.1", android: "10.0.2.2" };
-export const IOS_SSH_HOST = process.env.J5_MOBILE_IOS_SSH_HOST?.trim() || "macbook";
 const BUNDLE_TIMEOUT_MS = 120_000;
 const TUNNEL_TIMEOUT_MS = 20_000;
 const EMULATOR_EXIT_TIMEOUT_MS = 30_000;
@@ -64,61 +57,71 @@ interface ProcessRecord {
 
 /** What `mobile.json` in the live-test root says. Written as soon as a slot is claimed, so `stop` can release it. */
 export interface MobileRecord {
-  readonly platform: MobilePlatform;
+  readonly platform: MobileTarget;
+  /** Phone only: the address the phone reaches the backend and Metro by. */
+  readonly host?: string;
   /** The Simulator's or the AVD's name. */
   readonly slot: string;
-  /** iOS only: the claimed Simulator. */
+  /** iOS only: the claimed Simulator, and the host it is on, kept so `stop` acts on that host whatever the settings say later. */
   readonly udid?: string;
+  readonly iosHost?: IosHost;
   readonly serverPort: number;
   readonly metroPort: number;
   readonly metro?: ProcessRecord;
   readonly tunnel?: ProcessRecord;
   /** Android only: the emulator this script booted, and its console port (serial `emulator-<port>`). */
   readonly emulator?: ProcessRecord & { readonly port: number };
+  /** Set by a fresh claim until the first boot closes the sessions a gone holder left on the device. */
+  readonly sessionCleanupPending?: true;
 }
 
-const mobileFiles = (paths: LiveTestPaths) => ({
+const mobileFiles = (paths: Pick<LiveTestPaths, "root">) => ({
   record: NodePath.join(paths.root, "mobile.json"),
   metroLog: NodePath.join(paths.root, "metro.log"),
   tunnelLog: NodePath.join(paths.root, "tunnel.log"),
   emulatorLog: NodePath.join(paths.root, "emulator.log"),
 });
 
-export function readMobileRecord(paths: LiveTestPaths): MobileRecord | undefined {
+export function readMobileRecord(paths: Pick<LiveTestPaths, "root">): MobileRecord | undefined {
   const file = mobileFiles(paths).record;
   return NodeFS.existsSync(file)
     ? (JSON.parse(NodeFS.readFileSync(file, "utf8")) as MobileRecord)
     : undefined;
 }
 
-function writeMobileRecord(paths: LiveTestPaths, record: MobileRecord): void {
+function writeMobileRecord(paths: Pick<LiveTestPaths, "root">, record: MobileRecord): void {
   NodeFS.mkdirSync(paths.root, { recursive: true });
   NodeFS.writeFileSync(mobileFiles(paths).record, `${JSON.stringify(record, null, 2)}\n`);
 }
 
 /**
- * The backend and Metro ports for `worktree`: a pair inside the D3 range, starting from a point
+ * The backend and Metro ports for `worktree`: a pair inside `range`, starting from a point
  * the worktree path picks so that each worktree keeps its own pair across restarts.
  */
 export function chooseMobilePorts(input: {
   readonly worktree: string;
+  readonly range: { readonly first: number; readonly last: number };
   /** Ports already taken by this server, such as the dev runner's web port. */
   readonly avoid: ReadonlyArray<number>;
   readonly isFree: (port: number) => boolean;
 }): { readonly serverPort: number; readonly metroPort: number } {
-  const pairs = Math.floor((MOBILE_PORT_RANGE.last - MOBILE_PORT_RANGE.first + 1) / 2);
+  const pairs = Math.floor((input.range.last - input.range.first + 1) / 2);
   const start =
     NodeCrypto.createHash("sha256").update(input.worktree).digest().readUInt32BE(0) % pairs;
   for (let step = 0; step < pairs; step += 1) {
-    const serverPort = MOBILE_PORT_RANGE.first + 2 * ((start + step) % pairs);
+    const serverPort = input.range.first + 2 * ((start + step) % pairs);
     const metroPort = serverPort + 1;
     const usable = (port: number) => !input.avoid.includes(port) && input.isFree(port);
     if (usable(serverPort) && usable(metroPort)) return { serverPort, metroPort };
   }
   throw new LiveTestRefusal(
-    `No free pair of ports is left in ${MOBILE_PORT_RANGE.first}-${MOBILE_PORT_RANGE.last}.`,
+    `No free pair of ports is left in ${input.range.first}-${input.range.last}.`,
   );
 }
+
+/** The address a device reaches this machine by. */
+const deviceHost = (record: MobileRecord) =>
+  record.platform === "phone" ? record.host! : DEVICE_LOOPBACK[record.platform];
 
 /** Where claims live: shared by every worktree on this machine, so it is outside all of them. */
 export const claimsDirectory = (home: string) =>
@@ -139,11 +142,13 @@ const ownerOf = (claim: string): string | undefined => {
 export function claimSlot(input: {
   readonly directory: string;
   readonly platform: MobilePlatform;
+  /** The machine the devices are on, for iOS: names repeat across hosts. */
+  readonly host?: string;
   readonly slots: ReadonlyArray<string>;
   readonly worktree: string;
 }): string {
   NodeFS.mkdirSync(input.directory, { recursive: true });
-  const claimOf = (slot: string) => NodePath.join(input.directory, `${input.platform}-${slot}`);
+  const claimOf = (slot: string) => NodePath.join(input.directory, claimName(input, slot));
   const held = input.slots.find((slot) => ownerOf(claimOf(slot)) === input.worktree);
   if (held !== undefined) return held;
   for (const slot of input.slots) {
@@ -166,14 +171,25 @@ export function claimSlot(input: {
   );
 }
 
+/** A claim's directory name: platform, host for iOS, and device. */
+const claimName = (
+  input: { readonly platform: MobilePlatform; readonly host?: string },
+  slot: string,
+) =>
+  [input.platform, ...(input.host === undefined ? [] : [input.host]), slot]
+    // Hosts and Simulator names come from the settings: one path segment, whatever they hold.
+    .map((part) => part.replaceAll(/[^\w.-]/g, "_"))
+    .join("-");
+
 /** Releases a claim this worktree holds. Someone else's claim is left alone. */
 export function releaseSlot(input: {
   readonly directory: string;
   readonly platform: MobilePlatform;
+  readonly host?: string;
   readonly slot: string;
   readonly worktree: string;
 }): void {
-  const claim = NodePath.join(input.directory, `${input.platform}-${input.slot}`);
+  const claim = NodePath.join(input.directory, claimName(input, input.slot));
   if (ownerOf(claim) === input.worktree) NodeFS.rmSync(claim, { recursive: true, force: true });
 }
 
@@ -197,10 +213,17 @@ export function simulatorsFromSimctl(json: string): ReadonlyArray<Simulator> {
     .map((device) => ({ name: device.name, udid: device.udid, booted: device.state === "Booted" }));
 }
 
-/** The test pool: Simulators named `j5-tester-<n>`, in name order. */
-export const iosPool = (simulators: ReadonlyArray<Simulator>) =>
+/** The test pool, in name order: the Simulators the settings name, or those with their prefix. */
+export const iosPool = (
+  simulators: ReadonlyArray<Simulator>,
+  spec: { readonly names: ReadonlyArray<string> } | { readonly prefix: string },
+) =>
   simulators
-    .filter((simulator) => IOS_POOL_NAME.test(simulator.name))
+    .filter((simulator) =>
+      "names" in spec
+        ? spec.names.includes(simulator.name)
+        : simulator.name.startsWith(spec.prefix),
+    )
     .toSorted((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }));
 
 /**
@@ -209,10 +232,11 @@ export const iosPool = (simulators: ReadonlyArray<Simulator>) =>
  */
 export function iosBusy(input: {
   readonly simulators: ReadonlyArray<Simulator>;
+  readonly pool: ReadonlyArray<Simulator>;
   readonly mine: string;
   readonly claimed: (name: string) => boolean;
 }): ReadonlyArray<string> {
-  const pool = new Set(iosPool(input.simulators).map((simulator) => simulator.udid));
+  const pool = new Set(input.pool.map((simulator) => simulator.udid));
   return input.simulators
     .filter(
       (simulator) =>
@@ -228,9 +252,9 @@ export function iosBusy(input: {
 export const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
 /** The URL that opens the dev client against Metro without the launcher's onboarding and overlays. */
-export function devClientUrl(platform: MobilePlatform, metroPort: number): string {
+export function devClientUrl(host: string, metroPort: number): string {
   const query = new URLSearchParams({
-    url: `http://${DEVICE_LOOPBACK[platform]}:${metroPort}`,
+    url: `http://${host}:${metroPort}`,
     disableOnboarding: "1",
     disableAutoLaunch: "1",
     disableFab: "1",
@@ -243,13 +267,13 @@ export function devClientUrl(platform: MobilePlatform, metroPort: number): strin
  * backend origin the device reaches, as `buildPairingUrl` in apps/server/src/startupAccess.ts does.
  */
 export function pairingDeepLink(input: {
-  readonly platform: MobilePlatform;
+  readonly host: string;
   readonly serverPort: number;
   readonly pairingUrl: string;
 }): string {
   const token = new URLSearchParams(new URL(input.pairingUrl).hash.slice(1)).get("token");
   if (token === null) throw new LiveTestRefusal(`No token in the pairing URL ${input.pairingUrl}.`);
-  const pairing = new URL(`http://${DEVICE_LOOPBACK[input.platform]}:${input.serverPort}/pair`);
+  const pairing = new URL(`http://${input.host}:${input.serverPort}/pair`);
   pairing.hash = new URLSearchParams([["token", token]]).toString();
   const query = new URLSearchParams({ pairingUrl: pairing.toString(), autoConnect: "1" });
   return `${J5_BRANDING.mobile.development.scheme}://connections/new?${query}`;
@@ -282,7 +306,17 @@ export const FINGERPRINT_ENV = {
 export const cachedClientPath = (platform: MobilePlatform, fingerprint: string) =>
   platform === "ios"
     ? `.cache/t3code/native-clients/artifacts/ios/development/${fingerprint}/${mobileNativeProjectName(J5_BRANDING.mobile.development.appName)}.app`
-    : `.cache/t3code/native-clients/artifacts/android/development-x86_64/${fingerprint}/app-debug.apk`;
+    : `.cache/t3code/native-clients/artifacts/android/development-${androidAbi()}/${fingerprint}/app-debug.apk`;
+
+/** The emulator ABI this machine runs natively, as Android and `mobile:install --abi` name it. */
+// oxlint-disable-next-line t3code/no-global-process-runtime -- a standalone CLI with no Effect runtime.
+export function androidAbi(arch: string = process.arch): "x86_64" | "arm64-v8a" {
+  if (arch === "x64") return "x86_64";
+  if (arch === "arm64") return "arm64-v8a";
+  throw new LiveTestRefusal(
+    `The Android emulator needs an x86_64 or arm64 machine; this one is ${arch}.`,
+  );
+}
 
 export function nativeFingerprint(paths: LiveTestPaths, platform: MobilePlatform): string {
   const run = NodeChildProcess.spawnSync(process.execPath, ["--eval", FINGERPRINT_EVAL, platform], {
@@ -324,56 +358,78 @@ function activePairingLabels(paths: LiveTestPaths): ReadonlyArray<string> {
   );
 }
 
-/** Whether a command on the iOS host succeeds. */
-export const iosHostSucceeds = (command: string) =>
-  NodeChildProcess.spawnSync(
-    "ssh",
-    ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", IOS_SSH_HOST, command],
-    { timeout: 30_000 },
-  ).status === 0;
+export const describeIosHost = (host: IosHost) =>
+  host.kind === "local" ? "this Mac" : `the iOS host (ssh ${host.ssh})`;
 
-/** A command over SSH on the iOS host. Its stdout, or a refusal naming what failed. */
-function onIosHost(command: string, timeoutMs = 60_000): string {
-  const run = NodeChildProcess.spawnSync(
-    "ssh",
-    ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", IOS_SSH_HOST, command],
-    { encoding: "utf8", timeout: timeoutMs },
-  );
+/** A shell command on the iOS host: here, or over SSH. */
+export function runOnIosHost(host: IosHost, command: string, timeoutMs = 60_000) {
+  return host.kind === "local"
+    ? NodeChildProcess.spawnSync("sh", ["-c", command], { encoding: "utf8", timeout: timeoutMs })
+    : NodeChildProcess.spawnSync(
+        "ssh",
+        ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host.ssh, command],
+        { encoding: "utf8", timeout: timeoutMs },
+      );
+}
+
+/** Whether a command on the iOS host succeeds. */
+export const iosHostSucceeds = (host: IosHost, command: string) =>
+  runOnIosHost(host, command, 30_000).status === 0;
+
+/** A command on the iOS host. Its stdout, or a refusal naming what failed. */
+function onIosHost(host: IosHost, command: string, timeoutMs = 60_000): string {
+  const run = runOnIosHost(host, command, timeoutMs);
   if (run.status !== 0) {
     throw new LiveTestRefusal(
-      `On the iOS host (${IOS_SSH_HOST}), \`${command}\` failed: ${(run.stderr || String(run.error ?? "")).trim() || `exit ${run.status}`}`,
+      `On ${describeIosHost(host)}, \`${command}\` failed: ${(run.stderr || String(run.error ?? "")).trim() || `exit ${run.status}`}`,
     );
   }
   return run.stdout;
 }
 
-export function assertIosHostOnline(): void {
-  const probe = NodeChildProcess.spawnSync(
-    "ssh",
-    ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", IOS_SSH_HOST, "xcrun simctl help"],
-    { encoding: "utf8", timeout: 15_000 },
-  );
-  if (probe.status !== 0) {
+/** The configured iOS host, checked to answer, or a refusal saying what to set. */
+export function reachableIosHost(): IosHost {
+  const config = mobileRigConfig();
+  const host = config.ios.host;
+  if (host === undefined) {
     throw new LiveTestRefusal(
-      `iOS host offline; Android is available (--mobile android).\n\`ssh ${IOS_SSH_HOST}\` said: ${(probe.stderr || String(probe.error ?? "")).trim() || `exit ${probe.status}`}`,
+      `No iOS host is set up: iOS Simulators need macOS. Set ios.host.ssh in ${config.path} to use a Mac over SSH.`,
     );
   }
+  const probe = runOnIosHost(host, "xcrun simctl help", 15_000);
+  if (probe.status !== 0) {
+    const said = (probe.stderr || String(probe.error ?? "")).trim() || `exit ${probe.status}`;
+    throw new LiveTestRefusal(
+      host.kind === "local"
+        ? `iOS Simulators need Xcode on this Mac: \`xcrun simctl\` said: ${said}`
+        : `iOS host offline; Android is available (--mobile android).\n\`ssh ${host.ssh}\` said: ${said}`,
+    );
+  }
+  return host;
 }
 
-const iosSimulators = () => simulatorsFromSimctl(onIosHost("xcrun simctl list devices --json"));
+const iosSimulators = (host: IosHost) =>
+  simulatorsFromSimctl(onIosHost(host, "xcrun simctl list devices --json"));
 
 /** The Android SDK's tools, or a refusal naming what is missing. */
 export function androidSdk() {
   const home = NodeOS.homedir();
+  const config = mobileRigConfig();
+  const configured =
+    config.android.sdk === undefined ? undefined : expandHome(config.android.sdk, home);
   const root = [
+    configured,
     process.env.ANDROID_HOME,
     process.env.ANDROID_SDK_ROOT,
     NodePath.join(home, "Android", "Sdk"),
     NodePath.join(home, "Android", "sdk"),
+    NodePath.join(home, "Library", "Android", "sdk"),
   ].find((candidate) => candidate && NodeFS.existsSync(NodePath.join(candidate, "platform-tools")));
   if (root === undefined) {
     throw new LiveTestRefusal(
-      "No Android SDK found: set ANDROID_HOME, or install it in ~/Android/Sdk.",
+      configured === undefined
+        ? `No Android SDK found: set ANDROID_HOME, or android.sdk in ${config.path}.`
+        : `${config.path} names the Android SDK ${configured}, which has no platform-tools.`,
     );
   }
   const tools = {
@@ -388,22 +444,26 @@ export function androidSdk() {
   return tools;
 }
 
-/** The first x86_64 system image installed, as avdmanager names a package. */
+/** The newest system image installed for this machine's ABI, as avdmanager names a package. */
 function androidSystemImage(root: string): string {
+  const abi = androidAbi();
   const images = NodePath.join(root, "system-images");
   for (const api of NodeFS.existsSync(images)
     ? NodeFS.readdirSync(images).toSorted().toReversed()
     : []) {
     for (const tag of NodeFS.readdirSync(NodePath.join(images, api))) {
-      if (NodeFS.existsSync(NodePath.join(images, api, tag, "x86_64"))) {
-        return `system-images;${api};${tag};x86_64`;
+      if (NodeFS.existsSync(NodePath.join(images, api, tag, abi))) {
+        return `system-images;${api};${tag};${abi}`;
       }
     }
   }
-  throw new LiveTestRefusal(`No x86_64 system image is installed under ${images}.`);
+  throw new LiveTestRefusal(`No ${abi} system image is installed under ${images}.`);
 }
 
+/** On Linux the emulator needs KVM; macOS uses its own hypervisor. */
 function assertKvm(): void {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- a standalone CLI with no Effect runtime.
+  if (process.platform !== "linux") return;
   try {
     NodeFS.accessSync("/dev/kvm", NodeFS.constants.R_OK | NodeFS.constants.W_OK);
   } catch {
@@ -480,24 +540,55 @@ function avdRunner(avd: string): number | undefined {
 function emulatorSerial(avd: string): string | undefined {
   const { adb } = androidSdk();
   const devices = NodeChildProcess.spawnSync(adb, ["devices"], { encoding: "utf8" }).stdout ?? "";
-  for (const serial of emulatorSerials(devices)) {
-    const name = NodeChildProcess.spawnSync(adb, ["-s", serial, "emu", "avd", "name"], {
-      encoding: "utf8",
-      timeout: 10_000,
-    }).stdout;
-    if (name?.split(/\r?\n/)[0]?.trim() === avd) return serial;
-  }
-  return undefined;
+  return serialRunningAvd(
+    avd,
+    devices,
+    (serial) =>
+      NodeChildProcess.spawnSync(adb, ["-s", serial, "emu", "avd", "name"], {
+        encoding: "utf8",
+        timeout: 10_000,
+      }).stdout,
+  );
+}
+
+/** The emulator serial whose AVD is `avd`; a serial names a port, not an emulator. */
+export function serialRunningAvd(
+  avd: string,
+  devices: string,
+  avdNameOf: (serial: string) => string | undefined,
+): string | undefined {
+  return emulatorSerials(devices).find(
+    (serial) => avdNameOf(serial)?.split(/\r?\n/)[0]?.trim() === avd,
+  );
+}
+
+/** Whether anything listens on `port`, even a process of another user's whose pid is hidden. */
+function portInUse(port: number): boolean {
+  const listing =
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- a standalone CLI with no Effect runtime.
+    process.platform === "darwin"
+      ? NodeChildProcess.spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN"], {
+          encoding: "utf8",
+        })
+      : NodeChildProcess.spawnSync("ss", ["-H", "-ltn", `sport = :${port}`], { encoding: "utf8" });
+  return (listing.stdout ?? "").trim() !== "";
 }
 
 /**
- * Emulator console ports: even, each with its adb port above it. 5554 is left out: the Device
- * panel boots every AVD there, so an AVD it boots can never land on a rig emulator's port.
+ * The console port of slot `j5-tester-<n>`'s emulator: 5554 + 2n, so it comes with the slot's
+ * atomic claim and two setups can never pick the same one. Its adb port is the one above. 5554
+ * stays free: the Device panel boots every AVD there.
  */
-const EMULATOR_PORTS = Array.from({ length: 15 }, (_, index) => 5556 + 2 * index);
+export function emulatorPortForSlot(slot: string): number {
+  const number = Number(/^j5-tester-(\d+)$/.exec(slot)?.[1]);
+  if (!Number.isInteger(number) || number < 1) {
+    throw new LiveTestRefusal(`${slot} is not an Android slot the rig made.`);
+  }
+  return 5554 + 2 * number;
+}
 
 /**
- * Boots the slot's AVD here, on a free console port, headless. The Device panel attaches to a
+ * Boots the slot's AVD here, on the slot's own console port, headless. The Device panel attaches to a
  * running emulator by its serial; asked to boot an AVD while another emulator runs, it opens
  * the running one instead.
  */
@@ -507,11 +598,18 @@ async function startEmulator(
   deadline: number,
 ): Promise<void> {
   const sdk = androidSdk();
-  if (isOurs(paths, record.emulator)) return waitForBoot(sdk.adb, record.emulator!, deadline);
-  const port = EMULATOR_PORTS.find(
-    (candidate) => listenerOn(candidate) === undefined && listenerOn(candidate + 1) === undefined,
-  );
-  if (port === undefined) throw new LiveTestRefusal("No emulator console port is free.");
+  const again = selfCommand(paths, "--mobile android");
+  if (isOurs(paths, record.emulator)) {
+    return bootedAsSlot(sdk.adb, record.emulator!, record.slot, deadline, again);
+  }
+  const port = emulatorPortForSlot(record.slot);
+  for (const taken of [port, port + 1]) {
+    if (!portInUse(taken)) continue;
+    const holder = listenerOn(taken);
+    throw new LiveTestRefusal(
+      `Port ${taken}, which ${record.slot}'s emulator uses, is already taken${holder === undefined ? "" : ` by process ${holder}`}, not by this script.`,
+    );
+  }
   const log = mobileFiles(paths).emulatorLog;
   const emulator = {
     ...spawnRecorded(
@@ -537,7 +635,37 @@ async function startEmulator(
     port,
   };
   writeMobileRecord(paths, { ...readMobileRecord(paths)!, emulator });
-  await waitForBoot(sdk.adb, emulator, deadline, log);
+  await bootedAsSlot(sdk.adb, emulator, record.slot, deadline, again, log);
+}
+
+/**
+ * Waits for the emulator to boot, then makes sure the one behind its serial runs `slot`'s AVD:
+ * the serial names a port, not an emulator.
+ */
+async function bootedAsSlot(
+  adb: string,
+  emulator: ProcessRecord & { readonly port: number },
+  slot: string,
+  deadline: number,
+  again: string,
+  log?: string,
+): Promise<void> {
+  await waitForBoot(adb, emulator, deadline, again, log);
+  const avd = NodeChildProcess.spawnSync(
+    adb,
+    ["-s", `emulator-${emulator.port}`, "emu", "avd", "name"],
+    {
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  )
+    .stdout?.split(/\r?\n/)[0]
+    ?.trim();
+  if (avd !== slot) {
+    throw new LiveTestRefusal(
+      `emulator-${emulator.port} runs the AVD ${avd ?? "(unknown)"}, not ${slot}. Do not open it; run stop, then set up again.`,
+    );
+  }
 }
 
 const emulatorBooted = (adb: string, port: number) =>
@@ -555,6 +683,8 @@ async function waitForBoot(
   adb: string,
   emulator: ProcessRecord & { readonly port: number },
   deadline: number,
+  /** The setup command that resumes the wait without touching the emulator. */
+  again: string,
   log?: string,
 ): Promise<void> {
   const serial = `emulator-${emulator.port}`;
@@ -567,7 +697,7 @@ async function waitForBoot(
     }
     if (Date.now() > deadline) {
       throw new LiveTestRefusal(
-        `The emulator ${serial} is still booting; it has been left running. Do not call device_open yet: run the same command again, which waits for it and then prints the device to open.`,
+        `The emulator ${serial} is still booting; it has been left running. Do not call device_open yet: run ${again}, which waits for it and then prints the device to open. Not rebuild: that deletes the emulator.`,
       );
     }
     await NodeTimersPromises.setTimeout(1_000);
@@ -633,7 +763,10 @@ async function startMetro(
             ...liveTestEnvironment(process.env, paths.worktree),
             APP_VARIANT: "development",
             // The host the manifest's bundle URL names, as the device reaches Metro.
-            REACT_NATIVE_PACKAGER_HOSTNAME: DEVICE_LOOPBACK[record.platform],
+            REACT_NATIVE_PACKAGER_HOSTNAME: deviceHost(record),
+            // One bundle, as a release build has. A lazy chunk that fails to load at launch can fail
+            // every `import("expo-file-system")`, which then reads as a storage error.
+            EXPO_NO_METRO_LAZY: "1",
             BROWSER: "none",
           },
           log: metroLog,
@@ -650,7 +783,7 @@ async function startMetro(
     }
     if (Date.now() > deadline) {
       throw new LiveTestRefusal(
-        `Metro was not listening on ${record.metroPort} in time; it has been left running. See ${metroLog}, then run the same command again.`,
+        `Metro was not listening on ${record.metroPort} in time; it has been left running. See ${metroLog}, then run ${selfCommand(paths, `--mobile ${record.platform}`)}.`,
       );
     }
     await NodeTimersPromises.setTimeout(250);
@@ -658,7 +791,11 @@ async function startMetro(
 }
 
 /** Opens the reverse tunnel that puts the backend and Metro on the iOS host's loopback, which the Simulator shares. */
-async function startTunnel(paths: LiveTestPaths, record: MobileRecord): Promise<ProcessRecord> {
+async function startTunnel(
+  paths: LiveTestPaths,
+  record: MobileRecord,
+  host: IosHost & { readonly kind: "ssh" },
+): Promise<ProcessRecord> {
   const { tunnelLog } = mobileFiles(paths);
   const forward = (port: number) => ["-R", `127.0.0.1:${port}:127.0.0.1:${port}`];
   const tunnel = isOurs(paths, record.tunnel)
@@ -675,7 +812,7 @@ async function startTunnel(paths: LiveTestPaths, record: MobileRecord): Promise<
           "ServerAliveInterval=15",
           ...forward(record.serverPort),
           ...forward(record.metroPort),
-          IOS_SSH_HOST,
+          host.ssh,
         ],
         { cwd: paths.worktree, env: process.env, log: tunnelLog },
       );
@@ -684,13 +821,9 @@ async function startTunnel(paths: LiveTestPaths, record: MobileRecord): Promise<
   const until = Date.now() + TUNNEL_TIMEOUT_MS;
   for (;;) {
     if (startTimeOf(tunnel.pid) !== tunnel.startTime) {
-      throw new LiveTestRefusal(`The SSH tunnel to ${IOS_SSH_HOST} exited:\n${tail(tunnelLog)}`);
+      throw new LiveTestRefusal(`The SSH tunnel to ${host.ssh} exited:\n${tail(tunnelLog)}`);
     }
-    const probe = NodeChildProcess.spawnSync(
-      "ssh",
-      ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", IOS_SSH_HOST, check],
-      { encoding: "utf8", timeout: 15_000 },
-    );
+    const probe = runOnIosHost(host, check, 15_000);
     if (probe.status === 0) return tunnel;
     if (Date.now() > until) {
       throw new LiveTestRefusal(
@@ -734,7 +867,11 @@ function devRunnerWebPort(paths: LiveTestPaths): number {
 }
 
 /** Claims a device slot, recording it before anything else so `stop` can release it. */
-function claim(paths: LiveTestPaths, platform: MobilePlatform): MobileRecord {
+function claim(
+  paths: LiveTestPaths,
+  platform: MobilePlatform,
+  iosHost: IosHost | undefined,
+): MobileRecord {
   const existing = readMobileRecord(paths);
   if (existing !== undefined) {
     if (existing.platform !== platform) {
@@ -744,8 +881,10 @@ function claim(paths: LiveTestPaths, platform: MobilePlatform): MobileRecord {
     }
     return existing;
   }
+  const config = mobileRigConfig();
   const { serverPort, metroPort } = chooseMobilePorts({
     worktree: paths.worktree,
+    range: config.ports,
     avoid: [devRunnerWebPort(paths)],
     isFree: (port) => listenerOn(port) === undefined,
   });
@@ -753,45 +892,97 @@ function claim(paths: LiveTestPaths, platform: MobilePlatform): MobileRecord {
   const directory = claimsDirectory(NodeOS.homedir());
   let slot: string;
   let udid: string | undefined;
-  const simulators = platform === "ios" ? iosSimulators() : [];
   if (platform === "ios") {
-    const pool = iosPool(simulators);
+    const host = iosHost!;
+    const hostKey = host.kind === "local" ? "local" : host.ssh;
+    const simulators = iosSimulators(host);
+    const pool = iosPool(simulators, config.ios.simulators);
     if (pool.length === 0) {
+      const wanted =
+        "names" in config.ios.simulators
+          ? `named ${config.ios.simulators.names.join(", ")}`
+          : `whose names start with "${config.ios.simulators.prefix}"`;
       throw new LiveTestRefusal(
-        `The iOS host has no Simulators named j5-tester-<n>, the test pool. See the Mobile section of the j5-live-test skill.`,
+        `${describeIosHost(host)} has no Simulators ${wanted}, the test pool the rig may claim and erase. Create them in Xcode, or list yours as ios.simulators in ${config.path}.`,
       );
     }
     slot = claimSlot({
       directory,
       platform,
+      host: hostKey,
       slots: pool.map((s) => s.name),
       worktree: paths.worktree,
     });
     const mine = pool.find((simulator) => simulator.name === slot)!;
     const busy = iosBusy({
       simulators,
+      pool,
       mine: mine.udid,
-      claimed: (name) => ownerOf(NodePath.join(directory, `ios-${name}`)) !== undefined,
+      claimed: (name) =>
+        ownerOf(NodePath.join(directory, claimName({ platform, host: hostKey }, name))) !==
+        undefined,
     });
-    if (busy.length >= IOS_BOOTED_CAP) {
-      releaseSlot({ directory, platform, slot, worktree: paths.worktree });
+    if (busy.length >= config.ios.maxBooted) {
+      releaseSlot({ directory, platform, host: hostKey, slot, worktree: paths.worktree });
       throw new LiveTestRefusal(
-        `The iOS host already runs or has promised ${busy.length} Simulators (${busy.join(", ")}), its limit. Try again when one is free.`,
+        `${describeIosHost(host)} already runs or has promised ${busy.length} Simulators (${busy.join(", ")}), its limit of ${config.ios.maxBooted} (ios.maxBooted). Try again when one is free.`,
       );
     }
     udid = mine.udid;
   } else {
-    slot = claimSlot({ directory, platform, slots: ANDROID_SLOTS, worktree: paths.worktree });
+    slot = claimSlot({
+      directory,
+      platform,
+      slots: androidSlots(config.android.slots),
+      worktree: paths.worktree,
+    });
   }
   const record: MobileRecord = {
     platform,
     slot,
-    ...(udid === undefined ? {} : { udid }),
+    ...(udid === undefined ? {} : { udid, iosHost: iosHost! }),
     serverPort,
     metroPort,
+    sessionCleanupPending: true,
   };
   writeMobileRecord(paths, record);
   return record;
+}
+
+/**
+ * Refuses a mobile start that cannot run (settings, iOS host, Android SDK or KVM, phone address)
+ * before anything is built or started. A setup already recorded keeps the host it was made with.
+ */
+export function checkMobileCanStart(paths: LiveTestPaths, platform: MobileTarget): void {
+  mobileRigConfig();
+  const recorded = readMobileRecord(paths);
+  if (platform === "ios") {
+    if (recorded?.iosHost === undefined) reachableIosHost();
+  } else if (platform === "android") {
+    androidSdk();
+    androidAbi();
+    assertKvm();
+  } else if (recorded === undefined) {
+    phoneAddress();
+  }
+}
+
+/**
+ * What a mobile test needs to know about the test server. The browser's pairing link and the
+ * web port are left out: the device reaches the backend by the address in the Mobile block.
+ */
+function formatMobileServer(paths: LiveTestPaths, facts: ServerLogFacts): string {
+  const manifest = readManifest(paths);
+  const owner = "ownerName" in manifest ? manifest.ownerName : undefined;
+  return `J5 Code live-test server: RUNNING
+  Home          ${paths.home}
+  Log           ${paths.log}${owner === undefined ? "" : `\n  Owner         ${owner}`}${
+    "project" in manifest
+      ? `\n  Project       "${manifest.project.title}", ${paths.testRepo}\n  New threads   ${manifest.defaultModel}`
+      : ""
+  }
+  Browser       optional: http://localhost:${facts.webPort}, paired with ${selfCommand(paths, "status")}'s link
+`;
 }
 
 /**
@@ -800,7 +991,7 @@ function claim(paths: LiveTestPaths, platform: MobilePlatform): MobileRecord {
  */
 export async function startMobile(
   paths: LiveTestPaths,
-  platform: MobilePlatform,
+  platform: MobileTarget,
   deadline: number,
 ): Promise<void> {
   if (readMobileRecord(paths) === undefined && currentServerState(paths).kind !== "stopped") {
@@ -808,12 +999,20 @@ export async function startMobile(
       `A live-test server is already running here without --mobile. Stop it first: ${selfCommand(paths, "stop")}`,
     );
   }
-  if (platform === "ios") assertIosHostOnline();
+  if (platform === "phone") return startPhone(paths, deadline);
+  const recorded = readMobileRecord(paths);
+  if (recorded?.platform === "ios" && recorded.iosHost === undefined) {
+    throw new LiveTestRefusal(
+      `This mobile setup was made before the rig recorded its iOS host. Stop it with the build that made it, or reset ${recorded.slot} by hand and delete ${mobileFiles(paths).record}, then set up again.`,
+    );
+  }
+  let iosHost: IosHost | undefined;
+  if (platform === "ios") iosHost = recorded?.iosHost ?? reachableIosHost();
   else {
     androidSdk();
     assertKvm();
   }
-  const record = claim(paths, platform);
+  const record = claim(paths, platform, iosHost);
   const stopHint = `\nTo undo what was set up: ${selfCommand(paths, "stop")}`;
   try {
     console.log(`Starting the dev server, Metro and the ${platform} device slot ${record.slot}...`);
@@ -829,8 +1028,9 @@ export async function startMobile(
     await startMetro(paths, record, deadline);
     const facts = await backend;
     await avd;
-    if (platform === "ios") await startTunnel(paths, readMobileRecord(paths)!);
-    printRunning(paths, facts, undefined);
+    finishSessionCleanup(paths, closeAgentDeviceSessions);
+    if (iosHost?.kind === "ssh") await startTunnel(paths, readMobileRecord(paths)!, iosHost);
+    console.log(formatMobileServer(paths, facts));
     console.log(formatMobile(paths, readMobileRecord(paths)!));
   } catch (cause) {
     if (cause instanceof LiveTestRefusal) throw new LiveTestRefusal(`${cause.message}${stopHint}`);
@@ -839,6 +1039,7 @@ export async function startMobile(
 }
 
 export function formatMobile(paths: LiveTestPaths, record: MobileRecord): string {
+  if (record.platform === "phone") return formatPhone(paths, record);
   const host = DEVICE_LOOPBACK[record.platform];
   const setupAgain = selfCommand(paths, "--mobile android");
   // The Device panel lists an emulator only once it has booted, so until then nothing says to open it.
@@ -852,7 +1053,7 @@ export function formatMobile(paths: LiveTestPaths, record: MobileRecord): string
           : "booting";
   const device =
     record.platform === "ios"
-      ? `hostId: the MacBook host in device_list; deviceId "${record.udid}" (${record.slot})`
+      ? `${record.iosHost?.kind === "ssh" ? `hostId: the device host for "${record.iosHost.ssh}" in device_list` : `hostId "local"`}; deviceId "${record.udid}" (${record.slot})`
       : emulator === "stopped"
         ? `${record.slot}: its emulator is not running`
         : emulator === "booting"
@@ -870,7 +1071,9 @@ export function formatMobile(paths: LiveTestPaths, record: MobileRecord): string
   Backend       http://${host}:${record.serverPort} from the device
   Metro         http://${host}:${record.metroPort} from the device, log ${mobileFiles(paths).metroLog}${
     record.platform === "ios"
-      ? `\n  Tunnel        ssh ${IOS_SSH_HOST}, log ${mobileFiles(paths).tunnelLog}`
+      ? record.iosHost?.kind === "ssh"
+        ? `\n  Tunnel        ssh ${record.iosHost.ssh}, log ${mobileFiles(paths).tunnelLog}`
+        : ""
       : ""
   }
 
@@ -886,7 +1089,7 @@ export async function mobileOpen(paths: LiveTestPaths): Promise<void> {
   const record = readMobileRecord(paths);
   if (record === undefined) {
     throw new LiveTestRefusal(
-      `No mobile live test is set up here. Start one: ${selfCommand(paths, "--mobile ios|android")}`,
+      `No mobile live test is set up here. Start one: ${selfCommand(paths, "--mobile ios|android|phone")}`,
     );
   }
   const server = currentServerState(paths);
@@ -895,11 +1098,17 @@ export async function mobileOpen(paths: LiveTestPaths): Promise<void> {
       `The backend or Metro is not running. Check with ${selfCommand(paths, "status")}, or start again with ${selfCommand(paths, `--mobile ${record.platform}`)}`,
     );
   }
-  if (record.platform === "ios" && !isOurs(paths, record.tunnel)) {
+  if (record.platform === "ios" && record.iosHost === undefined) {
+    throw new LiveTestRefusal(
+      `This mobile setup was made before the rig recorded its iOS host. Stop it with the build that made it, or delete ${mobileFiles(paths).record}, then set up again.`,
+    );
+  }
+  if (record.iosHost?.kind === "ssh" && !isOurs(paths, record.tunnel)) {
     throw new LiveTestRefusal(
       `The SSH tunnel is down. Start it again with ${selfCommand(paths, "--mobile ios")}`,
     );
   }
+  if (record.platform === "phone") return printPhoneLinks(paths, record);
   const openHint = `Open it first: device_open with the ids \`${selfCommand(paths, "status")}\` prints.`;
 
   const fingerprint = nativeFingerprint(paths, record.platform);
@@ -907,27 +1116,29 @@ export async function mobileOpen(paths: LiveTestPaths): Promise<void> {
   let openUrl: (url: string) => void;
   if (record.platform === "ios") {
     const udid = record.udid!;
-    const simulator = iosSimulators().find((s) => s.udid === udid);
+    const host = record.iosHost!;
+    const simulator = iosSimulators(host).find((s) => s.udid === udid);
     if (simulator?.booted !== true)
       throw new LiveTestRefusal(`${record.slot} is not booted. ${openHint}`);
     const remoteClient = `"$HOME"/${shellQuote(client)}`;
-    if (!iosHostSucceeds(`test -d ${remoteClient}`)) {
+    if (!iosHostSucceeds(host, `test -d ${remoteClient}`)) {
       throw new LiveTestRefusal(
         `The iOS host has no dev client for this checkout's native fingerprint ${fingerprint}. Build it (6-15 minutes; run it in the background): ${selfCommand(paths, "mobile-build ios")}`,
       );
     }
     console.log(`Installing the dev client on ${record.slot}...`);
-    onIosHost(`xcrun simctl install ${udid} ${remoteClient}`, 120_000);
+    onIosHost(host, `xcrun simctl install ${udid} ${remoteClient}`, 120_000);
     // Without this, iOS asks "Open in J5 Code Dev?" for every link simctl opens. The device
     // hub's serve-sim writes the same approval before it opens a URL.
     const { scheme, appId } = J5_BRANDING.mobile.development;
     onIosHost(
+      host,
       `xcrun simctl spawn ${udid} defaults write com.apple.launchservices.schemeapproval ${shellQuote(`com.apple.CoreSimulator.CoreSimulatorBridge-->${scheme}`)} -string ${appId}`,
     );
     // openurl gives a launch 10 seconds. An app's first launch on a freshly erased Simulator,
     // with another booted beside it, can take longer; simctl launch waits for it.
-    onIosHost(`xcrun simctl launch ${udid} ${appId}`, 120_000);
-    openUrl = (url) => void onIosHost(`xcrun simctl openurl ${udid} ${shellQuote(url)}`);
+    onIosHost(host, `xcrun simctl launch ${udid} ${appId}`, 120_000);
+    openUrl = (url) => void onIosHost(host, `xcrun simctl openurl ${udid} ${shellQuote(url)}`);
   } else {
     if (!isOurs(paths, record.emulator)) {
       throw new LiveTestRefusal(
@@ -970,7 +1181,7 @@ export async function mobileOpen(paths: LiveTestPaths): Promise<void> {
   const { metroLog } = mobileFiles(paths);
   const before = metroBundles(NodeFS.readFileSync(metroLog, "utf8"));
   console.log("Opening the dev client against Metro (the first bundle takes about 30 seconds)...");
-  openUrl(devClientUrl(record.platform, record.metroPort));
+  openUrl(devClientUrl(deviceHost(record), record.metroPort));
   const until = Date.now() + BUNDLE_TIMEOUT_MS;
   for (;;) {
     const now = metroBundles(NodeFS.readFileSync(metroLog, "utf8"));
@@ -994,7 +1205,7 @@ export async function mobileOpen(paths: LiveTestPaths): Promise<void> {
   const pairingUrl = mintPairingUrl(paths, owner, label);
   if (pairingUrl === undefined) throw new LiveTestRefusal("Minting a pairing link failed.");
   const link = pairingDeepLink({
-    platform: record.platform,
+    host: deviceHost(record),
     serverPort: record.serverPort,
     pairingUrl,
   });
@@ -1024,6 +1235,86 @@ If it does not, run mobile-open again.${
   }`);
 }
 
+/** The names of the agent-device sessions on `deviceId`, from `agent-device session list` output. */
+export function sessionsOnDevice(listJson: string, deviceId: string): ReadonlyArray<string> {
+  const { sessions } = JSON.parse(listJson) as {
+    readonly sessions?: ReadonlyArray<{ readonly name: string; readonly id?: string }>;
+  };
+  return (sessions ?? [])
+    .filter((session) => session.id === deviceId)
+    .map((session) => session.name);
+}
+
+/**
+ * Ends the agent-device sessions that J5 Code's device host holds on this slot's device. `device_close`
+ * leaves them open, and a session left open refuses the next holder with DEVICE_IN_USE. The sessions
+ * live with the J5 Code the agent runs in; without its device tools there is nothing to close.
+ */
+/**
+ * A fresh claim is exclusive, so a session already on the device belongs to a holder who is gone.
+ * Runs once the device is up (so the emulator is proven the slot's), and only once: a later setup
+ * rejoining the claim keeps the tester's own session.
+ */
+export function finishSessionCleanup(
+  paths: Pick<LiveTestPaths, "root">,
+  close: (record: MobileRecord) => void,
+): void {
+  const record = readMobileRecord(paths);
+  if (record?.sessionCleanupPending !== true) return;
+  close(record);
+  const { sessionCleanupPending: _done, ...rest } = record;
+  writeMobileRecord(paths, rest);
+}
+
+function closeAgentDeviceSessions(record: MobileRecord): void {
+  const deviceId =
+    record.platform === "ios"
+      ? record.udid
+      : record.platform === "android"
+        ? emulatorSerial(record.slot)
+        : undefined;
+  if (deviceId === undefined) return;
+  const deviceHome = NodePath.join(
+    process.env.J5CODE_HOME?.trim() || NodePath.join(NodeOS.homedir(), ".j5code"),
+    "userdata",
+    "device",
+  );
+  const agentDevice = NodePath.join(deviceHome, "bin", "agent-device");
+  // Only the local device host's config can be named without the database (`agentDeviceConfigPath`
+  // in apps/server/src/device/AgentDeviceTarget.ts). An SSH host's id is in the database, so its
+  // sessions are left to device_close.
+  if (record.platform === "ios" && record.iosHost?.kind === "ssh") {
+    return console.log(
+      `agent-device sessions on ${record.slot} (host "${record.iosHost.ssh}"): not closed here; close yours with agent-device close (device_open's flags), then device_close`,
+    );
+  }
+  const config = NodePath.join(
+    deviceHome,
+    "hosts",
+    `${NodeCrypto.createHash("sha256").update("local").digest("hex").slice(0, 24)}.json`,
+  );
+  if (!NodeFS.existsSync(agentDevice) || !NodeFS.existsSync(config)) return;
+  // The CLI wants a session flag on every call; listing ignores which one.
+  const list = NodeChildProcess.spawnSync(
+    agentDevice,
+    ["session", "list", "--config", config, "--session", "j5-live-test"],
+    { encoding: "utf8", timeout: 15_000 },
+  );
+  if (list.status !== 0) return;
+  for (const session of sessionsOnDevice(list.stdout, deviceId)) {
+    const closed = NodeChildProcess.spawnSync(
+      agentDevice,
+      ["close", "--config", config, "--session", session],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    console.log(
+      closed.status === 0
+        ? `agent-device session ${session} on ${record.slot}: CLOSED`
+        : `agent-device session ${session} on ${record.slot} could not be closed: ${(closed.stderr || closed.stdout).trim()}`,
+    );
+  }
+}
+
 /**
  * Takes down everything `startMobile` recorded: Metro, the tunnel, the device (reset for the next
  * tester) and the claim. A step that fails keeps the record, so running `stop` again finishes it.
@@ -1039,23 +1330,20 @@ export async function stopMobile(paths: LiveTestPaths): Promise<void> {
     await stopGroup(process_!.pid);
     console.log(`${name}: STOPPED`);
   }
+  if (record.platform === "phone") return NodeFS.rmSync(mobileFiles(paths).record, { force: true });
+  closeAgentDeviceSessions(record);
   if (record.platform === "ios") {
     const udid = record.udid!;
+    const host = record.iosHost;
+    if (host === undefined) {
+      throw new LiveTestRefusal(
+        `This mobile setup was made before the rig recorded its iOS host, so it cannot tell which machine ${record.slot} is on. Stop it with the build that made it, or reset that Simulator by hand and delete ${mobileFiles(paths).record}.`,
+      );
+    }
     // Shutting down a Simulator that is already shut down is an error simctl reports; erase is not.
-    NodeChildProcess.spawnSync(
-      "ssh",
-      [
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=5",
-        IOS_SSH_HOST,
-        `xcrun simctl shutdown ${udid}`,
-      ],
-      { timeout: 60_000 },
-    );
+    runOnIosHost(host, `xcrun simctl shutdown ${udid}`);
     try {
-      onIosHost(`xcrun simctl erase ${udid}`);
+      onIosHost(host, `xcrun simctl erase ${udid}`);
     } catch (cause) {
       const { metro: _metro, tunnel: _tunnel, ...rest } = record;
       writeMobileRecord(paths, rest);
@@ -1099,6 +1387,9 @@ export async function stopMobile(paths: LiveTestPaths): Promise<void> {
   releaseSlot({
     directory: claimsDirectory(NodeOS.homedir()),
     platform: record.platform,
+    ...(record.iosHost === undefined
+      ? {}
+      : { host: record.iosHost.kind === "local" ? "local" : record.iosHost.ssh }),
     slot: record.slot,
     worktree: paths.worktree,
   });
@@ -1111,8 +1402,106 @@ export function mobileStatus(paths: LiveTestPaths): string | undefined {
   const state = (running: boolean) => (running ? "RUNNING" : "STOPPED");
   return `${formatMobile(paths, record)}
   Metro: ${state(isOurs(paths, record.metro))}${
-    record.platform === "ios"
+    record.iosHost?.kind === "ssh"
       ? `   Tunnel: ${state(isOurs(paths, record.tunnel))}`
-      : `   Emulator: ${state(isOurs(paths, record.emulator))}`
+      : record.platform === "android"
+        ? `   Emulator: ${state(isOurs(paths, record.emulator))}`
+        : ""
   }`;
+}
+
+/** The address the developer's phone reaches this machine by: as set, or its tailnet address. */
+function phoneAddress(): string {
+  const config = mobileRigConfig();
+  if (config.phone.host !== "tailscale") return config.phone.host;
+  const ip = NodeChildProcess.spawnSync("tailscale", ["ip", "-4"], {
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  const address = ip.stdout?.split("\n")[0]?.trim();
+  if (ip.status !== 0 || !address) {
+    throw new LiveTestRefusal(
+      `This machine has no tailnet address, so a phone cannot reach it (${ip.stderr || String(ip.error ?? "")}). Set phone.host in ${config.path} to an address the phone reaches.`,
+    );
+  }
+  return address;
+}
+
+/**
+ * The developer's own phone: the backend listens on every interface (the dev runner binds loopback
+ * or all of them) on a port in the configured range, and Metro names the address the phone reaches.
+ */
+async function startPhone(paths: LiveTestPaths, deadline: number): Promise<void> {
+  const existing = readMobileRecord(paths);
+  if (existing !== undefined && existing.platform !== "phone") {
+    throw new LiveTestRefusal(
+      `This worktree's live test is set up for ${existing.platform}. Stop it first: ${selfCommand(paths, "stop")}`,
+    );
+  }
+  const record: MobileRecord =
+    existing ??
+    (() => {
+      const host = phoneAddress();
+      const ports = chooseMobilePorts({
+        worktree: paths.worktree,
+        range: mobileRigConfig().ports,
+        avoid: [devRunnerWebPort(paths)],
+        isFree: (port) => listenerOn(port) === undefined,
+      });
+      const created: MobileRecord = { platform: "phone", slot: "phone", host, ...ports };
+      writeMobileRecord(paths, created);
+      return created;
+    })();
+  console.log("Starting the dev server and Metro for the developer's phone...");
+  const backend = startServer(paths, "dev", {}, deadline, [
+    "--port",
+    String(record.serverPort),
+    "--host",
+    "0.0.0.0",
+  ]);
+  backend.catch(() => undefined);
+  await startMetro(paths, record, deadline);
+  console.log(formatMobileServer(paths, await backend));
+  console.log(formatPhone(paths, record));
+}
+
+function formatPhone(paths: LiveTestPaths, record: MobileRecord): string {
+  return `Mobile (phone), for the developer's own phone:
+  Backend       http://${record.host}:${record.serverPort}
+  Metro         http://${record.host}:${record.metroPort}, log ${mobileFiles(paths).metroLog}
+  Both listen on every interface of this machine, its LAN and Docker networks included, not
+  only the address above. The test server is isolated and admits only a device with a pairing link.
+
+Next:
+  ${selfCommand(paths, "mobile-open")}
+     prints the two links to send the developer: one opens J5 Code Dev against this Metro,
+     the other pairs it with this server as the home's owner.
+When you finish: ${selfCommand(paths, "stop")}
+`;
+}
+
+/** The phone is the developer's, so nothing here can open the links on it: they are printed to send. */
+function printPhoneLinks(paths: LiveTestPaths, record: MobileRecord): void {
+  const manifest = readManifest(paths);
+  const owner = "ownerName" in manifest ? manifest.ownerName : undefined;
+  if (owner === undefined)
+    throw new LiveTestRefusal("The test home's owner has no name to pair as.");
+  // The developer may open it a while after it is sent; `pair` defaults to five minutes.
+  const pairingUrl = mintPairingUrl(paths, owner, `mobile-open phone ${Date.now()}`, "60m");
+  if (pairingUrl === undefined) throw new LiveTestRefusal("Minting a pairing link failed.");
+  const host = record.host!;
+  const fingerprint = nativeFingerprint(paths, "ios");
+  console.log(`Send the developer these two links, to open on the phone in this order:
+
+1. Open J5 Code Dev against this branch's Metro:
+   ${devClientUrl(host, record.metroPort)}
+
+2. Then pair it with this test server, as ${owner} (works once, within an hour):
+   ${pairingDeepLink({ host, serverPort: record.serverPort, pairingUrl })}
+
+The phone must reach ${host}, and needs J5 Code Dev built for this checkout's iOS native fingerprint:
+   ${fingerprint}
+If the app on the phone was built for another fingerprint, rebuild it first: a mismatched client
+can fail in ways that look like a bug in the branch.
+If iOS asks to allow "Local Network" for J5 Code Dev, the developer allows it.`);
 }

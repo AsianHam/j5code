@@ -41,11 +41,15 @@ import {
   type RenderFailureProps,
 } from "./components/RenderErrorBoundary";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
+import { ownerOnlySettingsRoute } from "./j5/sharing/ownerOnlySettingsRoute";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
+import { j5ThreadArtifactRoutes } from "./j5/artifacts/routes";
+import { j5SettingsFormRoutes } from "./j5/agents/routes";
+import { j5InboxRoutes } from "./j5/inbox/routes";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import { selectedPullRequestKey } from "./features/pull-requests/pullRequestSelection";
 import {
@@ -322,7 +326,8 @@ const SETTINGS_SCREENS = {
     },
   }),
   SettingsArchive: createNativeStackScreen({
-    screen: ArchivedThreadsRouteScreen,
+    // J5: Archive is an Owner's page (FORK.md case 72).
+    screen: ownerOnlySettingsRoute(ArchivedThreadsRouteScreen, "Archive"),
     linking: "settings/archive",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
@@ -350,6 +355,7 @@ const SETTINGS_SCREENS = {
       title: "Personas",
     },
   }),
+  ...j5SettingsFormRoutes(SETTINGS_PAGE_OPTIONS),
   SettingsProjectGrouping: createNativeStackScreen({
     screen: SettingsProjectGroupingRouteScreen,
     linking: "settings/project-grouping",
@@ -871,6 +877,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
       options: GLASS_HEADER_OPTIONS,
     }),
+    ...j5ThreadArtifactRoutes(THREAD_LINKING_PREFIX, GLASS_HEADER_OPTIONS),
     ThreadMcpApp: createNativeStackScreen({
       screen: McpAppFullscreenScreen,
       linking: `${THREAD_LINKING_PREFIX}/apps/:itemId`,
@@ -973,6 +980,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         sheetGrabberVisible: true,
       },
     }),
+    ...j5InboxRoutes(GLASS_HEADER_OPTIONS),
     ...SETTINGS_SCREENS,
     SettingsLegal: createNativeStackScreen({
       screen: SettingsLegalRouteScreen,

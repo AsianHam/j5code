@@ -1,12 +1,18 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ProjectId, ThreadId, type EnvironmentId } from "@t3tools/contracts";
-import { scopedInboxItemKey, type ScopedHumanInboxItem } from "@t3tools/contracts/j5";
+import { scopedInboxItemKey } from "@t3tools/contracts/j5";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  answeredByLine,
+  closedLine,
   compareInboxItems,
+  type HumanInboxAnswerAttempt,
   j5SourceNotice,
+  keepForPersonScopes,
   mergeHumanInboxSources,
+  nextKeptItems,
   type PresentedHumanInboxItem as HumanInboxItem,
+  submitHumanInboxAnswer,
 } from "@t3tools/client-runtime/j5/inbox";
 import { spansMultipleEnvironments } from "@t3tools/client-runtime/j5/readSources";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
@@ -39,7 +45,7 @@ import { RelativeTime } from "../../components/RelativeTime";
 import { RelativeAge } from "../RelativeAge";
 import { answerHumanExchange } from "./humanInboxClient";
 import { useScopedParticipantLabels } from "./ParticipantIdentitiesClient";
-import { presentParticipantIdentity } from "./ParticipantIdentity";
+import { presentParticipantIdentity } from "@t3tools/client-runtime/j5/participant-identity";
 import { CrewProposalCard } from "../crew/CrewProposalCard";
 import { CrewRuntimeRequestsSection } from "../crew/CrewRuntimeRequestsSection";
 import type { ScopedCrewRuntimeRequest } from "../crew/crewRuntimeRequests.logic";
@@ -71,13 +77,7 @@ import {
 import { useLogicalProjects } from "../logicalProjects";
 import { createVisibleRefreshHook } from "../useVisibleRefresh";
 import { notifyHumanInboxChanged } from "./humanInboxRefresh";
-import { answeredByLine, closedLine, nextKeptItems } from "./inboxKept.logic";
 import { useConnectionAccess } from "../sharing/access";
-
-interface HumanInboxAnswerAttempt {
-  readonly message: string;
-  readonly clientRequestId: string;
-}
 
 type HumanInboxAnswers = Readonly<Record<string, string>>;
 type SenderLabels = ReadonlyMap<EnvironmentId, ReadonlyMap<string, string>>;
@@ -142,61 +142,6 @@ export function captureHumanInboxAnswer(
     ...current,
     [exchangeId]: value,
   }));
-}
-
-export async function submitHumanInboxAnswer(input: {
-  readonly item: ScopedHumanInboxItem;
-  readonly message: string;
-  readonly attempts: Map<string, HumanInboxAnswerAttempt>;
-  readonly randomUUID: () => string;
-  readonly send: (
-    environmentId: EnvironmentId,
-    request: {
-      readonly exchangeId: string;
-      readonly message: string;
-      readonly clientRequestId: string;
-    },
-  ) => Promise<unknown>;
-  readonly refresh: (environmentId: EnvironmentId, personId: string) => Promise<void>;
-  readonly notifyChanged: (environmentId: EnvironmentId) => void;
-  readonly onAccepted: () => void;
-  readonly setPendingExchangeId: (exchangeId: string | null) => void;
-  readonly setError: (message: string | null) => void;
-}) {
-  const itemKey = scopedInboxItemKey(input.item);
-  input.setPendingExchangeId(itemKey);
-  input.setError(null);
-  try {
-    try {
-      const previousAttempt = input.attempts.get(itemKey);
-      const attempt =
-        previousAttempt?.message === input.message
-          ? previousAttempt
-          : { message: input.message, clientRequestId: input.randomUUID() };
-      input.attempts.set(itemKey, attempt);
-      // The server answers as the connection's own person; the request names no one.
-      await input.send(input.item.environmentId, {
-        exchangeId: input.item.exchangeId,
-        message: input.message,
-        clientRequestId: attempt.clientRequestId,
-      });
-    } catch (cause) {
-      input.setError(cause instanceof Error ? cause.message : "Could not deliver the answer.");
-      return;
-    }
-    input.attempts.delete(itemKey);
-    input.notifyChanged(input.item.environmentId);
-    input.onAccepted();
-    try {
-      await input.refresh(input.item.environmentId, input.item.personId);
-    } catch {
-      input.setError(
-        "Answer delivered, but the inbox could not be refreshed. The list may be stale.",
-      );
-    }
-  } finally {
-    input.setPendingExchangeId(null);
-  }
 }
 
 function OpenThreadButton({
@@ -460,18 +405,6 @@ async function refreshHumanInboxes(environmentId?: EnvironmentId, force = false)
   ]);
   const failed = results.flat().find((result) => result._tag === "Failure");
   if (failed?._tag === "Failure") throw Cause.squash(failed.cause);
-}
-
-/** A draft answer survives only while its environment still reads the inbox as the same person. */
-function keepForPersonScopes(personScopes: string) {
-  const people = new Map(JSON.parse(personScopes) as Array<[string, string | null]>);
-  return (key: string) => {
-    const [environmentId, personId] = JSON.parse(key) as [string, string];
-    return (
-      people.has(environmentId) &&
-      (people.get(environmentId) === null || people.get(environmentId) === personId)
-    );
-  };
 }
 
 /** Resolves outside the component: the React Compiler cannot compile `throw` inside `try`. */

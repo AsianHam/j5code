@@ -1,25 +1,29 @@
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { MessageAuthor, PromptAnswer } from "@t3tools/contracts/j5";
-import { levelReaches } from "@t3tools/contracts/j5";
 import { useEffect, useState } from "react";
 
 import {
   authorIndex,
+  mayBeSharedConversation,
+  answersWithoutPrefix,
+  NO_SHARED_MESSAGES_SEEN,
+  observeSharedMessages,
+  sharedQueuedRuns,
+  isSharedNote,
+  markSharedNote,
+  recallableMessages,
+  type SharedMessageView,
+  sharedMessageAnsweredFor,
+  sharedMessageAwaitsRead,
+  sharedMessageView,
+  typedText,
+} from "@t3tools/client-runtime/j5/shared-conversation";
+import {
   readThreadAuthors,
   useThreadAuthors,
   useThreadAuthorsResult,
   useThreadAuthorsValue,
 } from "./sharedConversation";
-import {
-  answersWithoutPrefix,
-  isSharedNote,
-  markSharedNote,
-  readAnswersFor,
-  recallableMessages,
-  type SharedMessageView,
-  sharedMessageView,
-  typedText,
-} from "./sharedTimeline.logic";
 import { useScopePeople } from "./scopeAccess";
 
 interface MessageEntry {
@@ -110,49 +114,7 @@ export function sharedPromptHistoryMessages<
 export function useSharedQueuedRuns<
   Queued extends { readonly run: { readonly userMessageId: string }; readonly text: string },
 >(environmentId: EnvironmentId, threadId: ThreadId, queued: ReadonlyArray<Queued>) {
-  const { record, failed } = useThreadAuthorsResult(environmentId, threadId);
-  const { authors } = authorIndex(record);
-  const held = record === null && !failed;
-  return held
-    ? []
-    : authors.size === 0
-      ? queued
-      : queued.map((item) => {
-          const author = authors.get(item.run.userMessageId);
-          return author === undefined ? item : { ...item, text: typedText(item.text, author) };
-        });
-}
-
-/**
- * When this client first saw each server copy of a person's message, and what its person typed for
- * the messages they sent from here, which are first drawn from what they typed.
- */
-interface SeenMessages {
-  readonly firstSeen: ReadonlyMap<string, number>;
-  readonly typedHere: ReadonlyMap<string, string>;
-}
-
-const noneSeen: SeenMessages = { firstSeen: new Map(), typedHere: new Map() };
-
-/** `seen` itself when the entries hold nothing it lacks, so render stores a new record only then. */
-function observeMessages(seen: SeenMessages, entries: ReadonlyArray<MessageEntry>): SeenMessages {
-  let firstSeen: Map<string, number> | null = null;
-  let typedHere: Map<string, string> | null = null;
-  const now = Date.now();
-  for (const entry of entries) {
-    const message = entry.message;
-    if (message === undefined || message.role !== "user") continue;
-    if (message.createdBy === undefined) {
-      if ((typedHere ?? seen.typedHere).get(message.id) === message.text) continue;
-      typedHere ??= new Map(seen.typedHere);
-      typedHere.set(message.id, message.text);
-    } else if (!(firstSeen ?? seen.firstSeen).has(message.id)) {
-      firstSeen ??= new Map(seen.firstSeen);
-      firstSeen.set(message.id, now);
-    }
-  }
-  if (firstSeen === null && typedHere === null) return seen;
-  return { firstSeen: firstSeen ?? seen.firstSeen, typedHere: typedHere ?? seen.typedHere };
+  return sharedQueuedRuns(useThreadAuthorsResult(environmentId, threadId), queued);
 }
 
 /**
@@ -173,18 +135,21 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
     threadRef === null ? null : { kind: "thread" as const, threadId: threadRef.threadId };
   // The header's pill already reads who reaches the thread; this is the same read.
   const people = useScopePeople(threadRef?.environmentId ?? null, threadScope);
-  const reaching = people.data?.people ?? [];
-  const writers = reaching.filter((person) => levelReaches(person.level, "collaborator")).length;
-  // To anyone but the first owner, a message no one is recorded for may be the first owner's,
-  // which the next read says; their own view draws it as theirs.
-  const readsOthers = reaching.length > 1 && !reaching.some((p) => p.you && p.firstOwner);
-  // Until the first read answers or fails, any thread may be shared, so nothing is drawn plain
-  // that may carry lines for the agent.
-  const mayBeShared =
-    record?.shared === true || writers > 1 || readsOthers || (record === null && !failed);
 
-  const [stored, setStored] = useState(noneSeen);
-  const seen = observeMessages(stored, entries);
+  const [stored, setStored] = useState(NO_SHARED_MESSAGES_SEEN);
+  // After the state hook: computed before it, the call stops the compiler memoizing the entries,
+  // and ConversationTimeline re-renders forever on entries that change each render.
+  const mayBeShared = mayBeSharedConversation({
+    record,
+    failed,
+    people: people.data?.people ?? null,
+  });
+  const seen = observeSharedMessages(
+    stored,
+    entries.flatMap((entry) => (entry.message === undefined ? [] : [entry.message])),
+    mayBeShared,
+    Date.now,
+  );
   if (seen !== stored) setStored(seen);
 
   const shown = (() => {
@@ -218,12 +183,18 @@ export function useSharedConversationEntries<Entry extends MessageEntry>(
         answeredFor:
           !fromServer ||
           failed ||
-          readAnswersFor({ readAt, firstSeenAt: seen.firstSeen.get(message.id) ?? Infinity }),
+          sharedMessageAnsweredFor({ messageId: message.id, readAt, seen }),
         mayBeShared,
         typedHere: seen.typedHere.get(message.id) ?? null,
       });
       views.set(message, view);
-      if (view.kind === "plain") return [entry];
+      if (view.kind === "plain") {
+        const awaitsRead =
+          fromServer &&
+          sharedMessageAwaitsRead({ messageId: message.id, readAt, seen, mayBeShared, failed });
+        if (awaitsRead) pending.push(message.id);
+        return [entry];
+      }
       if (view.kind === "pending") {
         pending.push(message.id);
         return view.typed === null ? [] : [{ ...entry, message: { ...message, text: view.typed } }];

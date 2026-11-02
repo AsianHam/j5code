@@ -1,8 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  createSharingOwnershipAtoms,
   isOwnerAccess,
-  reachesServer,
   sharingAllowsOperate,
   sharingAllowsStart,
   threadLevelInProject,
@@ -15,7 +15,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { levelReaches, type PersonLevel } from "@t3tools/contracts/j5";
+import type { PersonLevel } from "@t3tools/contracts/j5";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -25,7 +25,6 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readThreadShell, useThreadShell } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { j5Sharing } from "../state";
-import { ownerSomewhereState } from "./settingsAccess.logic";
 import { provideSharingMenuAccess } from "./sharingMenu";
 import { provideSharingStart } from "./startAccess";
 import { provideSharingThreadOperability } from "./threadOperability";
@@ -189,6 +188,19 @@ export function useCanForkThread(
   return environmentId !== null && sharingAllowsStart(access, projectId);
 }
 
+/**
+ * Whether this connection may merge a fork back: upstream's server-wide "Operate tasks", which the
+ * command's dispatch needs and upstream's Merge back button does not ask, and the fork's project
+ * level, by which the server admits it as it does a fork.
+ */
+export function useCanMergeBack(
+  environmentId: EnvironmentId | null,
+  forkThreadId: ThreadId | null,
+): boolean {
+  const permitted = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  return useCanForkThread(environmentId, forkThreadId) && permitted;
+}
+
 // `threadOperability.ts` and `sharingMenu.ts` hold none of this module's imports, so it provides
 // their reads; the open thread's view already holds the level, so these ask nothing. Same rule as
 // `useCanOperateThread`, so the composer, details panel and menu agree on a thread that was a
@@ -230,23 +242,10 @@ provideSharingMenuAccess((thread) => {
   };
 });
 
-const environmentIdsWhere = (label: string, test: (access: KnownConnectionAccess) => boolean) =>
-  Atom.make((get) => {
-    const ids = new Set<EnvironmentId>();
-    for (const id of get(environmentCatalog.catalogValueAtom).entries.keys()) {
-      if (test(get(j5Sharing.connectionAccess(id)))) ids.add(id);
-    }
-    return ids as ReadonlySet<EnvironmentId>;
-  }).pipe(Atom.withLabel(label));
-
-// Known to reach less than the whole server: nothing is left out before a server has answered.
-const narrowEnvironmentIdsAtom = environmentIdsWhere(
-  "j5:access:narrow-environments",
-  (access) => access !== null && !reachesServer(access),
-);
-
-// Owned, or not yet answered: a server is not taken away from its Owner while it answers.
-const ownedEnvironmentIdsAtom = environmentIdsWhere("j5:access:owned-environments", isOwnerAccess);
+const ownership = createSharingOwnershipAtoms({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  sharing: j5Sharing,
+});
 
 /**
  * The servers whose own pages (the Fleet page, Personas, Playbooks, skills) are not this person's
@@ -254,12 +253,12 @@ const ownedEnvironmentIdsAtom = environmentIdsWhere("j5:access:owned-environment
  * leave these servers out, and say so when there is no other server.
  */
 export function useNarrowEnvironmentIds(): ReadonlySet<EnvironmentId> {
-  return useAtomValue(narrowEnvironmentIdsAtom);
+  return useAtomValue(ownership.narrowEnvironmentIds);
 }
 
 /** Whether there is at least one server and this person reaches less than the whole of each. */
 export function useIsNarrowEverywhere(): boolean {
-  const narrow = useAtomValue(narrowEnvironmentIdsAtom);
+  const narrow = useAtomValue(ownership.narrowEnvironmentIds);
   const total = useAtomValue(environmentCatalog.catalogValueAtom).entries.size;
   return total > 0 && narrow.size === total;
 }
@@ -270,47 +269,17 @@ export function useIsNarrowEverywhere(): boolean {
  * does not flicker; one whose answer says otherwise drops out when it arrives.
  */
 export function useOwnedEnvironmentIds(): ReadonlySet<EnvironmentId> {
-  return useAtomValue(ownedEnvironmentIdsAtom);
+  return useAtomValue(ownership.ownedEnvironmentIds);
 }
-
-const ownerSomewhereAtom = Atom.make((get) => {
-  const catalog = get(environmentCatalog.catalogValueAtom);
-  return ownerSomewhereState({
-    catalogReady: catalog.isReady,
-    // A server that cannot answer, one from before people, settles with no answer and holds
-    // this client to nothing, as `isOwnerAccess` does; only one still being asked is unknown.
-    answers: [...catalog.entries.keys()].map((environmentId) => {
-      const result = get(j5Sharing.connectionAccessQuery({ environmentId, input: {} }));
-      if (result._tag === "Initial") return null;
-      return isOwnerAccess(Option.getOrNull(AsyncResult.value(result))) ? "owner" : "other";
-    }),
-  });
-}).pipe(Atom.withLabel("j5:access:owner-somewhere"));
-
-// Writes to something: a Collaborator's or Owner's level anywhere, or a session that is no
-// person's. Before a server has answered nothing is assumed.
-const writesSomewhereAtom = Atom.make((get) => {
-  for (const id of get(environmentCatalog.catalogValueAtom).entries.keys()) {
-    const access = get(j5Sharing.connectionAccess(id));
-    if (access?.kind === "service") return true;
-    if (
-      access?.kind === "person" &&
-      access.levels.some((held) => levelReaches(held.level, "collaborator"))
-    ) {
-      return true;
-    }
-  }
-  return false;
-}).pipe(Atom.withLabel("j5:access:writes-somewhere"));
 
 /** Whether the person can write to anything on a connected server, so has an agent to ask. */
 export function useWritesSomewhere(): boolean {
-  return useAtomValue(writesSomewhereAtom);
+  return useAtomValue(ownership.writesSomewhere);
 }
 
 /** Whether the person owns a connected server, or `"loading"`; see `ownerSomewhereState`. */
 export function useOwnerSomewhere(): boolean | "loading" {
-  return useAtomValue(ownerSomewhereAtom);
+  return useAtomValue(ownership.ownerSomewhere);
 }
 
 /**
@@ -323,6 +292,3 @@ export function useIsOwnerSomewhere(): boolean {
 
 /** What J5's Skills page says to someone who owns no connected server. */
 export const SKILLS_FOR_OWNERS = "Skills are managed by a server's Owners.";
-
-/** What J5's Personas and Playbooks pages say to someone who owns no connected server. */
-export const LIBRARY_FOR_OWNERS = "Personas and Playbooks are managed by a server's Owners.";

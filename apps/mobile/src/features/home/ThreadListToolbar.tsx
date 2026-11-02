@@ -18,6 +18,7 @@ import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands
 import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
 import { useWorkspaceConnectionState } from "../../state/workspace";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
+import { InboxBell } from "../../j5/inbox/InboxBell";
 
 export function ThreadListToolbar(props: {
   readonly searchQuery: string;
@@ -113,7 +114,13 @@ export function ThreadListToolbar(props: {
         searchAccessibilityLabel="Search threads"
         titleAccessibilityLabel="J5 Code, Threads"
         onOpenEnvironments={props.onOpenEnvironments}
-        filter={filterButton}
+        // J5: the Inbox bell beside the filter (FORK.md case 102).
+        filter={
+          <>
+            {filterButton}
+            {connectionState.hasConnections ? <InboxBell /> : null}
+          </>
+        }
       />
     </View>
   );

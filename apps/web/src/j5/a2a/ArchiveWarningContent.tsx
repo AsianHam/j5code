@@ -3,69 +3,23 @@ import { InboxIcon, SendIcon } from "lucide-react";
 
 import { RelativeAge } from "../RelativeAge";
 import { Badge } from "../../components/ui/badge";
-
-export type ArchiveWarningUrgency = "blocking" | "soon" | "fyi" | null;
-
-export interface ArchiveWarningParticipant {
-  readonly displayName: string;
-  /** Present only for the tooltip on an honest unknown-identity fallback. */
-  readonly tooltipParticipantId: string | null;
-}
-
-export interface ArchiveWarningRow {
-  readonly direction: "inbound" | "outbound";
-  readonly participant: ArchiveWarningParticipant;
-  readonly urgency: ArchiveWarningUrgency;
-  readonly intent: string;
-  readonly openedAt: string;
-}
-
-export type ArchiveWarningPlacement =
-  | { readonly state: "none" }
-  | { readonly state: "unknown" }
-  | { readonly state: "known"; readonly participants: ReadonlyArray<ArchiveWarningParticipant> };
-
-export interface ArchiveWarningCrewSeat {
-  readonly seat: string;
-  readonly participant: ArchiveWarningParticipant;
-  readonly runningTurn: boolean;
-  readonly openAsks: number;
-}
-
-/** One live Crew the agent commands; it retires as a unit, seat by seat, before the agent does. */
-export interface ArchiveWarningCrew {
-  readonly crewInstanceId: string;
-  readonly crewName: string;
-  readonly seats: ReadonlyArray<ArchiveWarningCrewSeat>;
-}
-
-export type ArchiveWarningCrews =
-  | { readonly state: "unknown" }
-  | { readonly state: "known"; readonly crews: ReadonlyArray<ArchiveWarningCrew> };
-
-export interface ArchiveWarningPayload {
-  readonly threadTitle: string;
-  readonly factsUnavailable: boolean;
-  readonly placement: ArchiveWarningPlacement;
-  readonly openAsks: ReadonlyArray<ArchiveWarningRow>;
-  /** Live Crews the agent commands; absent when the caller has no Crew facts to show. */
-  readonly crews?: ArchiveWarningCrews;
-}
-
-const seatConsequences = (seat: ArchiveWarningCrewSeat) =>
-  [
-    seat.runningTurn ? "running turn" : null,
-    seat.openAsks > 0 ? `${seat.openAsks} open ask${seat.openAsks === 1 ? "" : "s"}` : null,
-  ]
-    .filter((part) => part !== null)
-    .join(", ");
+import {
+  ARCHIVE_WARNING_WORKSPACE_NOTE,
+  archiveWarningAskHeader,
+  archiveWarningSeatConsequences,
+  sentenceEnd,
+  type ArchiveWarningCrew,
+  type ArchiveWarningParticipant,
+  type ArchiveWarningPayload,
+  type ArchiveWarningRow,
+} from "@t3tools/client-runtime/j5/archive-flow";
 
 /** The seats of one Crew with what ends for each; shared by the Captain's dialog and the Fleet page. */
 export function ArchiveWarningCrewSeats({ crew }: { readonly crew: ArchiveWarningCrew }) {
   return (
     <ul className="mt-1 space-y-1">
       {crew.seats.map((seat) => {
-        const consequences = seatConsequences(seat);
+        const consequences = archiveWarningSeatConsequences(seat);
         return (
           <li key={seat.seat} className="flex items-baseline gap-2 text-sm">
             <span className="shrink-0 text-xs uppercase tracking-wide text-muted-foreground">
@@ -88,9 +42,6 @@ const urgencyPresentation = {
   fyi: { label: "FYI", variant: "secondary" as const },
   none: { label: "No urgency", variant: "secondary" as const },
 };
-
-/** Agent names can be a whole brief, so one may already end its own sentence. */
-export const sentenceEnd = (lastWords: string) => (/[.!?…]$/.test(lastWords.trimEnd()) ? "" : ".");
 
 function ArchiveWarningParticipantName({
   participant,
@@ -145,9 +96,7 @@ function ArchiveWarningRowView({ row }: { readonly row: ArchiveWarningRow }) {
 export function ArchiveWarningContent({ payload }: { readonly payload: ArchiveWarningPayload }) {
   const askCount = payload.openAsks.length;
   const crews = payload.crews?.state === "known" ? payload.crews.crews : [];
-  const askHeader = `${askCount} open ask${askCount === 1 ? "" : "s"} will be terminated (${
-    askCount === 1 ? "counterparty is" : "counterparties are"
-  } notified)`;
+  const askHeader = archiveWarningAskHeader(askCount);
   return (
     <div className="space-y-3 text-left">
       {payload.factsUnavailable ? <p>Couldn't check open asks or the placement subtree.</p> : null}
@@ -209,7 +158,7 @@ export function ArchiveWarningContent({ payload }: { readonly payload: ArchiveWa
         </section>
       ) : null}
       <p className="border-t border-border/60 pt-3 text-muted-foreground">
-        Worktrees, branches, and pull requests remain. Cleanup is a separate action.
+        {ARCHIVE_WARNING_WORKSPACE_NOTE}
       </p>
     </div>
   );

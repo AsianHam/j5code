@@ -1,14 +1,9 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { ParticipantIdentities } from "@t3tools/client-runtime/j5/participant-identity";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import { useConnectedEnvironmentIds } from "../../state/environments";
 import { readParticipantIdentities, readParticipantLabels } from "./archiveFlowClient";
-
-export interface ParticipantIdentities {
-  readonly labels: ReadonlyMap<string, string>;
-  /** Each agent's thread, on whichever server it is: this one or a peer. */
-  readonly threads: ReadonlyMap<string, ScopedThreadRef>;
-}
 
 const NO_IDENTITIES: ParticipantIdentities = { labels: new Map(), threads: new Map() };
 

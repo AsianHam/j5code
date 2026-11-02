@@ -201,7 +201,7 @@ import {
 } from "./chat/ChatMarkdownMedia";
 import { MarkdownExternalLinkContent } from "./chat/MarkdownExternalLink";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
-import { artifactPathFromWorkspaceRelativePath } from "../j5/artifacts/artifactPath";
+import { artifactPathFromWorkspaceRelativePath } from "@t3tools/client-runtime/j5/artifacts";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
 import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
 import { rehypeTextDirection } from "./chat/markdownTextDirection";

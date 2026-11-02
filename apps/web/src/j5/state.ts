@@ -1,4 +1,5 @@
 import { createJ5EnvironmentAtoms } from "@t3tools/client-runtime/j5/state";
+import { writesNowhere } from "@t3tools/client-runtime/j5/inbox";
 import {
   createJ5ReadSourcesAtom,
   type J5ReadSources,
@@ -33,16 +34,10 @@ const sourcesInput = {
 
 // A person's inbox and the Crew requests in it hold asks from the threads they can write to, at
 // any scope; a Viewer, who can answer none, has none (Inbox AC14).
-const writesNowhere = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make((get) => {
-    const access = get(j5Sharing.connectionAccess(environmentId));
-    return (
-      access?.kind === "unknown" ||
-      (access?.kind === "person" && access.levels.every((held) => held.level === "viewer"))
-    );
-  }),
+const writesNowhereAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => writesNowhere(get(j5Sharing.connectionAccess(environmentId)))),
 );
-const inboxSourcesInput = { ...sourcesInput, guestAtom: writesNowhere };
+const inboxSourcesInput = { ...sourcesInput, guestAtom: writesNowhereAtom };
 
 export const openInboxQueryAtom = (environmentId: EnvironmentId) =>
   j5Environment.inbox({ environmentId, input: { status: "open" } });

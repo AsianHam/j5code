@@ -3,10 +3,8 @@ import { applyAgentMentionSelection } from "@t3tools/client-runtime/j5/agent-men
 import { playbookSelectionText } from "@t3tools/client-runtime/j5/playbooks";
 import { AgentPersonaAssignmentControl } from "../../j5/agents/AgentPersonaAssignmentControl";
 import { AgentDraftPicker } from "../../j5/agents/AgentDraftPicker";
-import {
-  composerModelSelectionForThread,
-  composerProviderCandidates,
-} from "../../j5/agents/personaComposerSelection";
+import { composerModelSelectionForThread } from "@t3tools/client-runtime/j5/agent-personas";
+import { composerProviderCandidates } from "../../j5/agents/personaComposerSelection";
 import { useDraftAgentAssignment } from "../../j5/agents/useDraftAgentAssignment";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";

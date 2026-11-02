@@ -1,6 +1,6 @@
 import { SCHEDULED_TASK_MESSAGE_ID_PREFIX } from "@t3tools/contracts";
 import type { ChatMessage } from "../../types";
-import { isSharedNote } from "../sharing/sharedTimeline.logic";
+import { isSharedNote } from "@t3tools/client-runtime/j5/shared-conversation";
 
 /**
  * Automated user-role messages (A2A deliveries, scheduled task fires, delegated-task completions,

@@ -1,17 +1,10 @@
+import { presentPersonAvatar } from "@t3tools/client-runtime/j5/person-avatar";
+
 import { PROJECT_ICON_COLORS } from "../../projectIconColors";
-import { initialsOf } from "./shareLink.logic";
 
-// The project icon's swatches, gray aside, so a person's colour sits with the rest of the app.
-const SWATCHES = PROJECT_ICON_COLORS.filter((color) => color.value !== "gray").map(
-  (color) => color.swatchClassName,
+const SWATCH_BY_COLOR = new Map(
+  PROJECT_ICON_COLORS.map((color) => [color.value, color.swatchClassName] as const),
 );
-
-/** The same name is always the same colour, on every client. */
-function avatarSwatch(name: string): string {
-  let hash = 0;
-  for (const char of name.trim().toLowerCase()) hash = (hash * 31 + char.codePointAt(0)!) | 0;
-  return SWATCHES[Math.abs(hash) % SWATCHES.length]!;
-}
 
 const SIZES = {
   xs: "size-5 text-4xs",
@@ -30,12 +23,13 @@ export function PersonAvatar({
   readonly name: string | null;
   readonly size: keyof typeof SIZES;
 }) {
+  const avatar = presentPersonAvatar(name);
   return (
     <span
       aria-hidden
-      className={`flex shrink-0 items-center justify-center rounded-full font-semibold text-white ${SIZES[size]} ${name === null ? "bg-muted" : avatarSwatch(name)}`}
+      className={`flex shrink-0 items-center justify-center rounded-full font-semibold text-white ${SIZES[size]} ${avatar === null ? "bg-muted" : SWATCH_BY_COLOR.get(avatar.color)}`}
     >
-      {name === null ? "" : initialsOf(name)}
+      {avatar?.initials ?? ""}
     </span>
   );
 }

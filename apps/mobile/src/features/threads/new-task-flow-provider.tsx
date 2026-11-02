@@ -94,6 +94,7 @@ import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import { readDraftAgentPersonaId } from "../../j5/agents/agentDraftState";
+import { useStartableProjects } from "../../j5/sharing/startAccess";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -203,6 +204,9 @@ export function NewTaskFlowProvider(
   }>,
 ) {
   const projects = useProjects();
+  // J5: the picker and a fresh default offer only the projects the person may start a thread in;
+  // an explicit or stamped selection still resolves against every project, read-only (case 90).
+  const startableProjects = useStartableProjects(projects);
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
@@ -210,7 +214,7 @@ export function NewTaskFlowProvider(
 
   const projectScopes = sortHomeProjectScopes({
     scopes: buildHomeProjectScopes({
-      projects,
+      projects: startableProjects,
       environmentId: null,
       projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
     }),
@@ -226,7 +230,7 @@ export function NewTaskFlowProvider(
     selectedEnvironmentIdOverride !== null &&
     projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
       ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
+      : (startableProjects[0]?.environmentId ?? null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -249,7 +253,7 @@ export function NewTaskFlowProvider(
     projectsForEnvironment.find(
       (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
     ) ??
-    projectsForEnvironment[0] ??
+    startableProjects.find((project) => project.environmentId === selectedEnvironmentId) ??
     null;
 
   const projectDefaults = useNewTaskProjectDefaults(selectedProject);
@@ -298,7 +302,7 @@ export function NewTaskFlowProvider(
         (selectedProjectTitle !== null && project.title === selectedProjectTitle)
       );
     };
-    for (const project of projects) {
+    for (const project of startableProjects) {
       if (!hostsSelectedRepository(project)) {
         continue;
       }
@@ -566,7 +570,7 @@ export function NewTaskFlowProvider(
 
   const selectEnvironment = (environmentId: EnvironmentId) => {
     const match = resolveEnvironmentProjectMatch(
-      projects.filter((project) => project.environmentId === environmentId),
+      startableProjects.filter((project) => project.environmentId === environmentId),
       selectedProject,
     );
     if (match) {

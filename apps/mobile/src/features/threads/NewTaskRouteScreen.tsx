@@ -38,6 +38,7 @@ import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { filterProjectScopes, getProjectScopeSelectionTarget } from "./new-task-project-selection";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { noStartableProjectState } from "../../j5/sharing/startAccess";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
@@ -172,7 +173,12 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         : `Choose a project for the ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "images" : "files"} you shared`
     : null;
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
-  const projectEmptyState = deriveProjectEmptyState(catalogState);
+  // J5: projects the person may not start a thread in are left out (FORK.md case 90).
+  const projectEmptyState =
+    noStartableProjectState({
+      projectCount: projects.length,
+      startableScopeCount: projectScopes.length,
+    }) ?? deriveProjectEmptyState(catalogState);
   const serverConfigs = useServerConfigs();
   const listScopes = projectScopes.filter(
     (scope) =>

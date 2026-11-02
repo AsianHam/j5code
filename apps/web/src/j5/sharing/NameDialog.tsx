@@ -19,10 +19,13 @@ import { useEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PersonAvatar } from "./PersonAvatar";
-import { offeredLevel } from "./nameDialog.logic";
-import { levelLabel } from "./people.logic";
-import { NAME_NOT_USABLE } from "./shareLink.logic";
-import { nameIsInUse, refreshSharing, refusalMessage, sharingManage } from "./sharingManage";
+import { refreshSharing, refusalMessage, sharingManage } from "./sharingManage";
+import {
+  NAME_NOT_USABLE,
+  levelLabel,
+  nameIsInUse,
+  offeredLevel,
+} from "@t3tools/client-runtime/j5/sharing";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 const SOMEONE_NEW = "new";

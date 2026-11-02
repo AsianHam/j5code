@@ -7,11 +7,16 @@ import * as NodePath from "node:path";
 import {
   FINGERPRINT_ENV,
   FINGERPRINT_EVAL,
-  MOBILE_PORT_RANGE,
+  androidAbi,
   chooseMobilePorts,
   claimSlot,
   devClientUrl,
+  emulatorPortForSlot,
   emulatorSerials,
+  finishSessionCleanup,
+  readMobileRecord,
+  serialRunningAvd,
+  sessionsOnDevice,
   iosBusy,
   iosPool,
   metroBundles,
@@ -48,6 +53,11 @@ describe("parseCommand --mobile", () => {
       mode: "default",
       mobile: "android",
     });
+    assert.deepEqual(parseCommand(["--mobile", "phone"]), {
+      command: "start",
+      mode: "default",
+      mobile: "phone",
+    });
     assert.deepEqual(parseCommand(["mobile-open"]), { command: "mobile-open", mode: "default" });
   });
 
@@ -67,24 +77,30 @@ describe("parseCommand --mobile", () => {
 });
 
 describe("chooseMobilePorts", () => {
-  it("keeps one worktree's pair across runs, inside the tailnet's dev range", () => {
-    const first = chooseMobilePorts({ worktree: "/w/a", avoid: [], isFree: () => true });
-    assert.deepEqual(chooseMobilePorts({ worktree: "/w/a", avoid: [], isFree: () => true }), first);
+  const range = { first: 7000, last: 7099 };
+  it("keeps one worktree's pair across runs, inside the configured range", () => {
+    const first = chooseMobilePorts({ worktree: "/w/a", range, avoid: [], isFree: () => true });
+    assert.deepEqual(
+      chooseMobilePorts({ worktree: "/w/a", range, avoid: [], isFree: () => true }),
+      first,
+    );
     assert.strictEqual(first.metroPort, first.serverPort + 1);
-    assert.isAtLeast(first.serverPort, MOBILE_PORT_RANGE.first);
-    assert.isAtMost(first.metroPort, MOBILE_PORT_RANGE.last);
+    assert.isAtLeast(first.serverPort, range.first);
+    assert.isAtMost(first.metroPort, range.last);
   });
 
   it("moves past a pair with a busy or avoided port", () => {
-    const first = chooseMobilePorts({ worktree: "/w/a", avoid: [], isFree: () => true });
+    const first = chooseMobilePorts({ worktree: "/w/a", range, avoid: [], isFree: () => true });
     const busy = chooseMobilePorts({
       worktree: "/w/a",
+      range,
       avoid: [],
       isFree: (port) => port !== first.metroPort,
     });
     assert.notStrictEqual(busy.serverPort, first.serverPort);
     const avoided = chooseMobilePorts({
       worktree: "/w/a",
+      range,
       avoid: [first.serverPort],
       isFree: () => true,
     });
@@ -93,7 +109,7 @@ describe("chooseMobilePorts", () => {
 
   it("refuses when the range is full", () => {
     assert.throws(
-      () => chooseMobilePorts({ worktree: "/w/a", avoid: [], isFree: () => false }),
+      () => chooseMobilePorts({ worktree: "/w/a", range, avoid: [], isFree: () => false }),
       LiveTestRefusal,
     );
   });
@@ -124,6 +140,24 @@ describe("claimSlot", () => {
     assert.strictEqual(claimSlot({ ...input, worktree: b! }), "j5-tester-1");
   });
 
+  it("keeps each claim one directory inside the claims folder, whatever the names hold", () => {
+    using fixture = claimsFixture();
+    const worktree = fixture.worktree("a");
+    for (const slot of ["QA/iPhone", "../escape"]) {
+      claimSlot({
+        directory: fixture.directory,
+        platform: "ios",
+        host: "user@mac",
+        slots: [slot],
+        worktree,
+      });
+    }
+    assert.deepEqual(NodeFS.readdirSync(fixture.directory).toSorted(), [
+      "ios-user_mac-.._escape",
+      "ios-user_mac-QA_iPhone",
+    ]);
+  });
+
   it("says how to clear a claim whose worktree is gone", () => {
     using fixture = claimsFixture();
     const input = { directory: fixture.directory, platform: "android", slots: ["s"] } as const;
@@ -138,7 +172,7 @@ describe("claimSlot", () => {
 });
 
 describe("iosPool", () => {
-  it("takes the available j5-tester Simulators in number order, with their state", () => {
+  it("takes the available Simulators with the pool's prefix in number order, with their state", () => {
     const simulators = simulatorsFromSimctl(
       JSON.stringify({
         devices: {
@@ -152,11 +186,15 @@ describe("iosPool", () => {
       }),
     );
     assert.deepEqual(
-      iosPool(simulators).map((s) => [s.name, s.booted]),
+      iosPool(simulators, { prefix: "j5-tester-" }).map((s) => [s.name, s.booted]),
       [
         ["j5-tester-2", true],
         ["j5-tester-10", false],
       ],
+    );
+    assert.deepEqual(
+      iosPool(simulators, { names: ["iPhone 17 Pro", "j5-tester-3"] }).map((s) => s.name),
+      ["iPhone 17 Pro"],
     );
   });
 });
@@ -168,16 +206,100 @@ describe("iosBusy", () => {
     { name: "iPhone 17 Pro", udid: "P", booted: true },
     { name: "iPad", udid: "I", booted: false },
   ];
+  const pool = simulators.slice(0, 2);
 
   it("counts another worktree's claimed Simulator before it boots, and booted ones outside the pool", () => {
     assert.deepEqual(
-      iosBusy({ simulators, mine: "U1", claimed: (name) => name === "j5-tester-2" }),
+      iosBusy({ simulators, pool, mine: "U1", claimed: (name) => name === "j5-tester-2" }),
       ["j5-tester-2", "iPhone 17 Pro"],
     );
   });
 
   it("does not count this worktree's own Simulator or a free, shut down one", () => {
-    assert.deepEqual(iosBusy({ simulators, mine: "U1", claimed: () => false }), ["iPhone 17 Pro"]);
+    assert.deepEqual(iosBusy({ simulators, pool, mine: "U1", claimed: () => false }), [
+      "iPhone 17 Pro",
+    ]);
+  });
+});
+
+describe("androidAbi", () => {
+  it("runs the emulator image this machine runs natively, and refuses others", () => {
+    assert.strictEqual(androidAbi("x64"), "x86_64");
+    assert.strictEqual(androidAbi("arm64"), "arm64-v8a");
+    assert.throws(() => androidAbi("ia32"), LiveTestRefusal);
+  });
+});
+
+describe("emulatorPortForSlot", () => {
+  it("gives two setups claiming at once different slots, and so different ports", () => {
+    using fixture = claimsFixture();
+    const slots = ["j5-tester-1", "j5-tester-2"];
+    const input = { directory: fixture.directory, platform: "android", slots } as const;
+    const first = claimSlot({ ...input, worktree: fixture.worktree("a") });
+    const second = claimSlot({ ...input, worktree: fixture.worktree("b") });
+    assert.deepEqual([first, second].map(emulatorPortForSlot), [5556, 5558]);
+  });
+
+  it("refuses a name that is not one of the rig's slots", () => {
+    assert.throws(() => emulatorPortForSlot("Pixel_8"), LiveTestRefusal);
+    assert.throws(() => emulatorPortForSlot("j5-tester-0"), LiveTestRefusal);
+  });
+});
+
+describe("sessionsOnDevice", () => {
+  it("names only the sessions on this device, so stop and setup leave other devices' alone", () => {
+    const list = JSON.stringify({
+      sessions: [
+        { name: "t3-a", id: "emulator-5558", device: "j5-tester-2" },
+        { name: "t3-b", id: "emulator-5556", device: "j5-tester-1" },
+        { name: "t3-c", id: "emulator-5558", device: "j5-tester-2" },
+      ],
+    });
+    assert.deepEqual(sessionsOnDevice(list, "emulator-5558"), ["t3-a", "t3-c"]);
+    assert.deepEqual(sessionsOnDevice(JSON.stringify({ sessions: [] }), "emulator-5558"), []);
+  });
+});
+
+describe("finishSessionCleanup", () => {
+  const withRecord = (record: object) => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j5-mobile-record-"));
+    NodeFS.writeFileSync(NodePath.join(root, "mobile.json"), JSON.stringify(record));
+    return { root };
+  };
+  const base = { platform: "android", slot: "j5-tester-2", serverPort: 6000, metroPort: 6001 };
+
+  it("closes a fresh claim's leftovers on the first boot that finishes, even after a timed-out one", () => {
+    const paths = withRecord({ ...base, sessionCleanupPending: true });
+    const closed: Array<string> = [];
+    finishSessionCleanup(paths, (record) => closed.push(record.slot));
+    assert.deepEqual(closed, ["j5-tester-2"]);
+    finishSessionCleanup(paths, (record) => closed.push(record.slot));
+    assert.deepEqual(closed, ["j5-tester-2"]);
+    assert.strictEqual(readMobileRecord(paths)?.sessionCleanupPending, undefined);
+  });
+
+  it("leaves a record without the marker alone, so the tester's own session survives", () => {
+    const closed: Array<string> = [];
+    finishSessionCleanup(withRecord(base), (record) => closed.push(record.slot));
+    assert.deepEqual(closed, []);
+  });
+});
+
+describe("serialRunningAvd", () => {
+  it("finds the slot's emulator by its AVD, so a foreign emulator on the slot's port is left alone", () => {
+    const devices = "List of devices attached\nemulator-5556\tdevice\nemulator-5558\tdevice\n";
+    const avds: Record<string, string> = {
+      "emulator-5556": "j5-tester-2\r\nOK",
+      "emulator-5558": "Pixel_8\r\nOK",
+    };
+    assert.strictEqual(
+      serialRunningAvd("j5-tester-2", devices, (serial) => avds[serial]),
+      "emulator-5556",
+    );
+    assert.strictEqual(
+      serialRunningAvd("j5-tester-1", devices, (serial) => avds[serial]),
+      undefined,
+    );
   });
 });
 
@@ -190,20 +312,16 @@ describe("emulatorSerials", () => {
 });
 
 describe("links", () => {
-  it("opens the dev client on the address each device reaches this machine by", () => {
-    const ios = new URL(devClientUrl("ios", 7001));
-    assert.strictEqual(ios.protocol, "j5code-dev:");
-    assert.strictEqual(ios.searchParams.get("url"), "http://127.0.0.1:7001");
-    assert.strictEqual(
-      new URL(devClientUrl("android", 7001)).searchParams.get("url"),
-      "http://10.0.2.2:7001",
-    );
+  it("opens the dev client against Metro on the address the device reaches this machine by", () => {
+    const link = new URL(devClientUrl("100.64.0.1", 7001));
+    assert.strictEqual(link.protocol, "j5code-dev:");
+    assert.strictEqual(link.searchParams.get("url"), "http://100.64.0.1:7001");
   });
 
   it("moves the pairing token onto the backend origin the device reaches", () => {
     const link = new URL(
       pairingDeepLink({
-        platform: "android",
+        host: "10.0.2.2",
         serverPort: 7000,
         pairingUrl: "http://localhost:6741/pair#token=ABC123",
       }),

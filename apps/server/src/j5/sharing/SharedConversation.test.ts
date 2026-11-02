@@ -647,7 +647,7 @@ it.effect("a thread started in a project already shared is shared from its first
         attachments: [],
       },
     } as unknown as OrchestrationV2ThreadLaunchInput;
-    const admitted = yield* conversation.admitLaunch(owner, launch);
+    const admitted = yield* conversation.launch(owner, launch, Effect.succeed);
     const text = admitted.initialMessage!.text;
     assert.include(text, "Who can write: Jackson (owner), Priya (collaborator).");
     // A new thread has no messages from before.
@@ -659,7 +659,7 @@ it.effect("a thread started in a project already shared is shared from its first
       threadId: "thread:alone",
       projectId: ProjectId.make("project:other"),
     } as OrchestrationV2ThreadLaunchInput;
-    assert.strictEqual(yield* conversation.admitLaunch(owner, elsewhere), elsewhere);
+    assert.strictEqual(yield* conversation.launch(owner, elsewhere, Effect.succeed), elsewhere);
   }).pipe(Effect.provide(conversationLayer)),
 );
 
@@ -1185,11 +1185,15 @@ it.effect(
         { scope: { kind: "project", projectId: PROJECT }, level: "collaborator" },
       ]);
       const conversation = yield* SharedConversation;
-      yield* conversation.admitLaunch(owner, {
-        commandId: CommandId.make("command:empty-launch"),
-        threadId: "thread:empty-launch" as ThreadId,
-        projectId: PROJECT,
-      } as unknown as OrchestrationV2ThreadLaunchInput);
+      yield* conversation.launch(
+        owner,
+        {
+          commandId: CommandId.make("command:empty-launch"),
+          threadId: "thread:empty-launch" as ThreadId,
+          projectId: PROJECT,
+        } as unknown as OrchestrationV2ThreadLaunchInput,
+        Effect.succeed,
+      );
       yield* conversation.dispatch(
         owner,
         {

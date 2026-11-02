@@ -3330,9 +3330,7 @@ export const layerWsRpc = (
             handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand],
           ),
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input: OrchestrationV2ThreadLaunchInput) =>
-          j5Commands
-            .admitLaunch(input)
-            .pipe(Effect.flatMap(handlers[ORCHESTRATION_V2_WS_METHODS.launchThread])),
+          j5Commands.launchThread(input, handlers[ORCHESTRATION_V2_WS_METHODS.launchThread]),
         [WS_METHODS.scheduledTasksUpsert]: (input: ScheduledTaskUpsertInput) =>
           j5Commands.upsertScheduledTask(input, handlers[WS_METHODS.scheduledTasksUpsert]),
       };

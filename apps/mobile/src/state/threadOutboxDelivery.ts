@@ -940,7 +940,12 @@ export function createThreadOutboxDelivery(): {
       },
       serverConfig.providers,
     );
-    if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, creation.projectId)) {
+    // J5: a saved agent launches on its own route, which the server resolves and validates.
+    const checksDraftModel = creation.agentPersonaId === undefined;
+    if (
+      checksDraftModel &&
+      isModelSelectionUnavailable(serverConfig, settings.modelSelection, creation.projectId)
+    ) {
       const { title, detail } = describeUnavailableModelSelection(
         serverConfig,
         settings.modelSelection,
@@ -984,7 +989,10 @@ export function createThreadOutboxDelivery(): {
       serverEnvironment.configValueAtom(queuedMessage.environmentId),
     );
     if (!currentConfig) return false;
-    if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, creation.projectId)) {
+    if (
+      checksDraftModel &&
+      isModelSelectionUnavailable(currentConfig, settings.modelSelection, creation.projectId)
+    ) {
       const { title, detail } = describeUnavailableModelSelection(
         currentConfig,
         settings.modelSelection,

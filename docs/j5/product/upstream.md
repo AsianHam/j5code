@@ -138,7 +138,7 @@ Letter codes in the Decided lines (SC2, QS1, AR3, and so on) are rulings recorde
 
 **Upstream:** archiving asks for confirmation only if the person turned that setting on, and the confirmation is generic.
 
-**J5:** when archiving would strand something, such as open asks, running work or Crews, the web dialog lists it, whatever that setting says. A failed read says "Couldn't check". A Crew seat can't be archived on its own from any door.
+**J5:** when archiving would strand something, such as open asks, running work or Crews, the archive dialog lists it on web and mobile, whatever that setting says. A failed read says "Couldn't check". A Crew seat can't be archived on its own from any door.
 
 **Why:** archiving is where obligations get stranded, and cleanup that happens silently is how a fleet loses track of itself. The platform's job is to put the facts in front of whoever decides. Crews archive as a unit: a member's failure is usually recoverable by messaging it again, and a member that can't be recovered has probably contaminated its crewmates.
 
@@ -207,6 +207,18 @@ Letter codes in the Decided lines (SC2, QS1, AR3, and so on) are rulings recorde
 **Consequences:** the `@` menu and the controls row are edits to upstream's composer, one small addition per client. Each advance checks upstream's mention ordering and its composer controls, and personas route only to Codex and Claude.
 
 **Decided:** the persona picker is Bryant's request (2026-09-08) and fix (2026-09-14). The persona model lock comes from Bryant's persona stack, whose scope was approved on 2026-09-08. The ordering against threads arrived in the 2026-09-24 advance (PR #262). Jackson approved it on 2026-09-28. Recorded in FORK.md's saved-agent mentions section and its PR #75–#86 table.
+
+#### D41. On mobile, a draft's persona has its own row, and the slash menu covers the draft rows
+
+**Upstream:** the mobile new-task composer shows the model in its input row and opens the slash menu above everything stacked over the input, including the checkout row.
+
+**J5:** a persona chosen for a new-task draft shows in its own row under the checkout row, with its route and remove action, instead of in the input row. The slash menu opens over the checkout and persona rows instead of above them. A started thread's composer is unchanged.
+
+**Why:** in the input row, the agent's chip crowded the editor and was truncated past reading, and the slash menu was squeezed into the space left above the stacked rows (Jackson, Checkpoint 1 on his iPhone).
+
+**Consequences:** two small edits in upstream's mobile composer files, `NewTaskDraftScreen.tsx` and `ThreadComposer.tsx`, carried at each advance (FORK.md case 100). The menu's anchor is drawn outside its zero-height parent, so check after each advance that a menu item drawn over the draft rows still takes a tap, on iOS and Android.
+
+**Decided:** Jackson, 2026-11-01, at Checkpoint 1 ([#866](https://github.com/Jacksondr5/j5code/issues/866)). Recorded in FORK.md case 100.
 
 ### Storage, install, and identity
 
@@ -371,7 +383,7 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths and n
   - every HTTP route and WebSocket request is refused unless J5 has listed it;
   - a listed request is checked against the scope;
   - feeds that carry many threads are filtered where they are produced;
-  - a new thread or a fork is offered only where the person may start a thread in the project, a new project only to a level at server scope, and a change to a thread's branch only to someone who may write to the thread; upstream offers new-thread and fork drafts to every connection, a read-only one included, and decides the other two by a permission the device holds at its person's highest level anywhere;
+  - a new thread, a fork or a merge back is offered only where the person may start a thread in the project, a new project only to a level at server scope, and a change to a thread's branch only to someone who may write to the thread; upstream offers new-thread and fork drafts, and merge back, to every connection, a read-only one included, and decides the other two by a permission the device holds at its person's highest level anywhere;
   - the configuration, the lifecycle welcome and the sidebar are given in a reduced form that names nothing of the host;
   - requests keyed by a folder the client names are refused to a Viewer;
   - for now a Viewer is listed a thread's preview tabs and does not watch them, since upstream's preview events cover the whole server ([#540](https://github.com/Jacksondr5/j5code/issues/540)).
@@ -406,7 +418,7 @@ Each advance checks for new upstream reads of `T3CODE_HOME` or `.t3` paths and n
   - whether every route still signs in through the functions J5 wraps;
   - whether upstream reshaped its permissions, since the level mapping follows them;
   - whether upstream's pairing gained a path that issues a session without J5 seeing it.
-- **Sharing is not supported on mobile.** The mobile client has no way to share or to leave, and draws a shared conversation's platform text as plain text (Jackson, 2026-10-13).
+- **Sharing is managed only from web and desktop.** The mobile client has no way to share or to leave (Jackson, 2026-10-13). It reads a shared conversation as web does: each person's message as they typed it, under their name and avatar, with who answered each prompt; and it holds another person's message until its author is known.
 - **The alternatives:**
   - **Follow upstream,** which means one person per server.
   - **Run a server per person,** which gives up the shared conversation.
@@ -476,7 +488,7 @@ Recorded in `FORK.md` cases 69 to 73, 78 and 80.
 
 **Decided:** proposed by Abraham, 2026-10-21; accepted by Jackson, 2026-10-24. Recorded in FORK.md case 87.
 
-#### D41. Device-local notification volume
+#### D42. Device-local notification volume
 
 **Upstream:** web and desktop play notification audio at its bundled level, without an app volume control.
 
@@ -484,7 +496,7 @@ Recorded in `FORK.md` cases 69 to 73, 78 and 80.
 
 **Why:** Abraham requested a volume control because macOS lacks native per-app volume controls and configuring a third-party mixer for a coding app is unnecessary work. Following upstream or leaving volume unsupported would require changing system volume instead.
 
-**Consequences:** one audio-routing hook plus settings mount and search entries are carried in FORK.md case 97. Check these against upstream audio changes on each advance. No server settings or contract changes; mobile push sounds retain operating-system volume controls. The setting does not sync between devices and clearing local site data restores 100%.
+**Consequences:** one audio-routing hook plus settings mount and search entries are carried in FORK.md case 104. Check these against upstream audio changes on each advance. No server settings or contract changes; mobile push sounds retain operating-system volume controls. The setting does not sync between devices and clearing local site data restores 100%.
 
 **Decided:** Abraham, 2026-10-30, approved implementation and a PR in the notification-volume conversation.
 
@@ -627,3 +639,6 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-27 — `j5/main`'s changes merged into the 2026-10-24 advance: the completion-sound decision, added as D38 on `j5/main`, is D39, because the advance took D38; D4 records that upstream now refuses a steer to a stopping run, so a J5 peer steer to GPT 6 or Claude joins the queue instead.
 - 2026-10-27 — the 2026-10-24 advance moved forward to upstream's stable v0.1.3: D40 added, upstream's guest links hidden because they need T3 Connect (Jackson, 2026-10-25; [#725](https://github.com/Jacksondr5/j5code/issues/725)); D1 takes upstream's shorter instructions and relaxed settings rule; D2 takes upstream's merged action tools (82 tools) and admits `t3_background_wait` (Jackson, 2026-10-27); D4 and D6 re-checked, with upstream's new steer default for a person's follow-ups leaving agent deliveries alone; D27's dev servers follow upstream's opt-in.
 - 2026-10-31 — D33: the preview stream closes when its session is revoked, replaced or expires, as the RPC socket already did, so a lowered level stops a preview at once ([#798](https://github.com/Jacksondr5/j5code/issues/798)).
+- 2026-10-31 — D33: "Merge back" is disabled for someone who can't start a thread in the fork's project, which the server already refused (Jackson's 2026-10-31 approval; [#730](https://github.com/Jacksondr5/j5code/issues/730)).
+- 2026-11-01 — D33: the mobile client reads shared conversations as web does, with each message's author and avatar, who answered each prompt, and another person's message held until its author is known; sharing itself stays on web and desktop (the mobile catch-up; [#832](https://github.com/Jacksondr5/j5code/issues/832), [#871](https://github.com/Jacksondr5/j5code/issues/871), [#869](https://github.com/Jacksondr5/j5code/issues/869)).
+- 2026-11-01 — D41 added: on mobile, a draft's persona has its own row under the checkout row, and the slash menu covers the draft rows (Jackson, Checkpoint 1; [#866](https://github.com/Jacksondr5/j5code/issues/866)).

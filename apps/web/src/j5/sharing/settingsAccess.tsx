@@ -1,3 +1,4 @@
+import { ownerOnlySettingsNotice } from "@t3tools/client-runtime/j5/sharing";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useLocation } from "@tanstack/react-router";
 import { type ReactNode } from "react";
@@ -10,7 +11,6 @@ import { useOwnedEnvironmentIds, useOwnerSomewhere, useWritesSomewhere } from ".
 import {
   LICENSES_PATH,
   PAGES_FOR_EVERYONE,
-  ownerOnlySettingsNotice,
   settingsNavGroups,
   settingsPageShown,
   type SettingsNavGroup,

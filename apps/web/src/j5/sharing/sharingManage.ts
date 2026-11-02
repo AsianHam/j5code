@@ -1,16 +1,15 @@
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
-  createEnvironmentRpcSubscriptionAtomFamily,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { J5_ACCESS_WS_METHODS, J5_PEOPLE_WS_METHODS } from "@t3tools/contracts/j5";
+import { NAME_IN_USE, nameIsInUse } from "@t3tools/client-runtime/j5/sharing";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { j5Environment, j5Sharing } from "../state";
-import { NAME_IN_USE } from "./shareLink.logic";
 
 const command = <Tag extends Parameters<typeof createEnvironmentRpcCommand>[1]["tag"]>(tag: Tag) =>
   createEnvironmentRpcCommand(connectionAtomRuntime, { label: `environment-data:${tag}`, tag });
@@ -38,15 +37,8 @@ export const sharingManage = {
     refreshTrigger: j5Environment.rereadOn("sharing"),
   }),
   /** Who reaches one thread or project, for anyone who reaches it (AC26). */
-  scopePeople: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
-    label: "environment-data:j5-people:scope",
-    tag: J5_PEOPLE_WS_METHODS.listScopePeople,
-    staleTimeMs: 0,
-  }),
-  scopePeopleChanges: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
-    label: "environment-data:j5-people:scope-changes",
-    tag: J5_PEOPLE_WS_METHODS.subscribeScopePeopleChanges,
-  }),
+  scopePeople: j5Sharing.scopePeople,
+  scopePeopleChanges: j5Sharing.scopePeopleChanges,
   /** For a device the server cannot place: everyone it could be (AC5). */
   claimablePeople: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:j5-access:claimable",
@@ -90,11 +82,3 @@ export function refusalMessage(result: Parameters<typeof squashAtomCommandFailur
     ? error.message
     : "The server did not say why.";
 }
-
-const refusalCode = (error: unknown) => {
-  const code = (error as { readonly code?: unknown } | null)?.code;
-  return typeof code === "string" ? code : null;
-};
-
-/** Whether a refusal is the server's "that name is someone else's", by the refusal's stable name. */
-export const nameIsInUse = (error: unknown) => refusalCode(error) === "PersonNameTakenError";

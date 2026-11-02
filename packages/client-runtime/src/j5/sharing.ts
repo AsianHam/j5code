@@ -1,7 +1,10 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   type ConnectionAccess,
+  type HeldPersonLevel,
   J5_ACCESS_WS_METHODS,
+  J5_PEOPLE_WS_METHODS,
+  J5_SHARED_CONVERSATION_WS_METHODS,
   type PersonLevel,
   higherLevel,
   highestLevel,
@@ -18,6 +21,7 @@ import { request } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   createEnvironmentQueryAtomFamily,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "../state/runtime.ts";
 
@@ -126,6 +130,63 @@ export const sharingAllowsStart = (
           ? "owner"
           : serverLevelOf(access),
   });
+
+/**
+ * Which server, if any, is asked "What should people and agents on <server> call you?" now:
+ * a device the server cannot place (People and access AC5), or the first owner with no name yet
+ * (AC6). One server at a time, in the order they are listed. Neither can be put off: each is
+ * asked before the device uses that server.
+ */
+export function serverToAskNameFor<Id>(
+  servers: ReadonlyArray<{ readonly id: Id; readonly access: KnownConnectionAccess }>,
+): { readonly id: Id; readonly kind: "claim" | "first-owner" } | null {
+  for (const server of servers) {
+    if (server.access?.kind === "unknown") return { id: server.id, kind: "claim" };
+    if (
+      server.access?.kind === "person" &&
+      server.access.firstOwner &&
+      server.access.name === null
+    ) {
+      return { id: server.id, kind: "first-owner" };
+    }
+  }
+  return null;
+}
+
+/** The level a person is offered by, in the list of people a device could be: their highest. */
+export const offeredLevel = (levels: ReadonlyArray<HeldPersonLevel>): PersonLevel | null =>
+  highestLevel(levels.map((held) => held.level));
+
+const LEVEL_LABELS: Record<PersonLevel, string> = {
+  viewer: "Viewer",
+  collaborator: "Collaborator",
+  owner: "Owner",
+};
+export const levelLabel = (level: PersonLevel) => LEVEL_LABELS[level];
+
+/** What a person is told when a name is not one the server will take, before it is sent. */
+export const NAME_NOT_USABLE =
+  "Use a name of one line, up to 80 characters, with no invisible characters, no square or angle brackets, and no level in parentheses such as (owner).";
+/** What a person is told when the name they chose is someone else's on this server. */
+export const NAME_IN_USE = "That name is already in use on this server. Choose another.";
+
+/** Whether a refusal is the server's "that name is someone else's", by the refusal's stable name. */
+export const nameIsInUse = (error: unknown) =>
+  (error as { readonly code?: unknown } | null)?.code === "PersonNameTakenError";
+
+/**
+ * Whether upstream's "Permissions have changed / pair again" notice is for a connection. One J5
+ * places as a person, or as a device it will ask about, has its permissions renewed when that
+ * person's level changes, so pairing again never applies to it. The notice is held back until the
+ * server answers; a server that cannot answer (from before people) keeps upstream's notice.
+ */
+export function permissionNoticeApplies(
+  answer: AsyncResult.AsyncResult<KnownConnectionAccess, unknown>,
+): boolean {
+  if (answer._tag === "Initial") return false;
+  const access = Option.getOrNull(AsyncResult.value(answer));
+  return access?.kind !== "person" && access?.kind !== "unknown";
+}
 
 const asksThreadLevel = (access: KnownConnectionAccess) =>
   access?.kind === "person" && !access.wide;
@@ -251,6 +312,27 @@ export function createSharingEnvironmentAtoms<R, E>(
     ).pipe(Atom.withLabel(`j5:access:thread-operable:${key}`));
   });
 
+  /** Who sent each message of a thread and who answered each prompt (Shared conversations). */
+  const threadAuthors = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:j5-shared-conversation:authors",
+    tag: J5_SHARED_CONVERSATION_WS_METHODS.listThreadAuthors,
+    staleTimeMs: 0,
+  });
+  const threadAuthorsChanges = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:j5-shared-conversation:authors-changes",
+    tag: J5_SHARED_CONVERSATION_WS_METHODS.subscribeThreadAuthorsChanges,
+  });
+  /** Who reaches one thread or project, for anyone who reaches it (People and access AC26). */
+  const scopePeople = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:j5-people:scope",
+    tag: J5_PEOPLE_WS_METHODS.listScopePeople,
+    staleTimeMs: 0,
+  });
+  const scopePeopleChanges = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:j5-people:scope-changes",
+    tag: J5_PEOPLE_WS_METHODS.subscribeScopePeopleChanges,
+  });
+
   /**
    * Whether the connection is known to reach less than the whole server; false until the server
    * has said. Mobile's screens still call such a person a guest.
@@ -265,6 +347,10 @@ export function createSharingEnvironmentAtoms<R, E>(
     connectionAccessQuery,
     connectionAccess,
     isNarrow,
+    threadAuthors,
+    threadAuthorsChanges,
+    scopePeople,
+    scopePeopleChanges,
     /** Reads the connection's access again, after this client changed it (claim, leave, rename). */
     refreshConnectionAccess: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
       registry.refresh(connectionAccessQuery({ environmentId, input: {} })),
@@ -289,5 +375,106 @@ export function createSharingEnvironmentAtoms<R, E>(
     /** Whether the connection's level lets it write to the thread; upstream's permission is separate. */
     threadOperable: (environmentId: EnvironmentId, threadId: ThreadId | null) =>
       threadOperable(threadKey(environmentId, threadId)),
+  };
+}
+
+/**
+ * Whether the person owns a connected server, or `"loading"` until a server says so or all have
+ * answered. An empty catalog is a client still starting (its own server is added after the first
+ * read). While loading, Settings lists what it lists anyone.
+ */
+export function ownerSomewhereState(input: {
+  readonly catalogReady: boolean;
+  /** Each server's answer; `null` for one still being asked. */
+  readonly answers: ReadonlyArray<"owner" | "other" | null>;
+}): boolean | "loading" {
+  if (!input.catalogReady || input.answers.length === 0) return "loading";
+  if (input.answers.includes("owner")) return true;
+  return input.answers.includes(null) ? "loading" : false;
+}
+
+/**
+ * What an Owner-only Settings page says, in its place, to someone who reaches it by a link or its
+ * address and owns no connected server. Someone who writes nowhere has no agent to ask.
+ */
+export function ownerOnlySettingsNotice(input: {
+  readonly serverName: string | null;
+  readonly writesSomewhere: boolean;
+}): { readonly title: string; readonly body: string } {
+  const server = input.serverName ?? "this server";
+  return {
+    title: "Coming soon",
+    body: input.writesSomewhere
+      ? `Only an Owner of ${server} can change this here for now. Ask an Owner, or ask an agent on a thread you can write to.`
+      : `Only an Owner of ${server} can change this here for now. Ask an Owner.`,
+  };
+}
+
+/** What J5's Personas and Playbooks pages say to someone who owns no connected server. */
+export const LIBRARY_FOR_OWNERS = "Personas and Playbooks are managed by a server's Owners.";
+
+/**
+ * What this person is across every connected server, for the pages that list servers (People and
+ * access AC23, AC27): web and mobile each build one from their catalog and sharing atoms.
+ */
+export function createSharingOwnershipAtoms(input: {
+  readonly catalogValueAtom: Atom.Atom<{
+    readonly isReady: boolean;
+    readonly entries: ReadonlyMap<EnvironmentId, unknown>;
+  }>;
+  readonly sharing: Pick<
+    ReturnType<typeof createSharingEnvironmentAtoms>,
+    "connectionAccess" | "connectionAccessQuery"
+  >;
+}) {
+  const { catalogValueAtom, sharing } = input;
+  const environmentIdsWhere = (label: string, test: (access: KnownConnectionAccess) => boolean) =>
+    Atom.make((get) => {
+      const ids = new Set<EnvironmentId>();
+      for (const id of get(catalogValueAtom).entries.keys()) {
+        if (test(get(sharing.connectionAccess(id)))) ids.add(id);
+      }
+      return ids as ReadonlySet<EnvironmentId>;
+    }).pipe(Atom.withLabel(label));
+
+  return {
+    /** Known to reach less than the whole server: nothing is left out before a server answers. */
+    narrowEnvironmentIds: environmentIdsWhere(
+      "j5:access:narrow-environments",
+      (access) => access !== null && !reachesServer(access),
+    ),
+    /** Owned, or not yet answered: a server is not taken from its Owner while it answers. */
+    ownedEnvironmentIds: environmentIdsWhere("j5:access:owned-environments", isOwnerAccess),
+    /** Whether the person owns a connected server, or `"loading"`; see `ownerSomewhereState`. */
+    ownerSomewhere: Atom.make((get) => {
+      const catalog = get(catalogValueAtom);
+      return ownerSomewhereState({
+        catalogReady: catalog.isReady,
+        // A server that cannot answer, one from before people, settles with no answer and holds
+        // this client to nothing, as `isOwnerAccess` does; only one still being asked is unknown.
+        answers: [...catalog.entries.keys()].map((environmentId) => {
+          const result = get(sharing.connectionAccessQuery({ environmentId, input: {} }));
+          if (result._tag === "Initial") return null;
+          return isOwnerAccess(Option.getOrNull(AsyncResult.value(result))) ? "owner" : "other";
+        }),
+      });
+    }).pipe(Atom.withLabel("j5:access:owner-somewhere")),
+    /**
+     * Writes to something: a Collaborator's or Owner's level anywhere, or a session that is no
+     * person's, so has an agent to ask. Before a server has answered nothing is assumed.
+     */
+    writesSomewhere: Atom.make((get) => {
+      for (const id of get(catalogValueAtom).entries.keys()) {
+        const access = get(sharing.connectionAccess(id));
+        if (access?.kind === "service") return true;
+        if (
+          access?.kind === "person" &&
+          access.levels.some((held) => levelReaches(held.level, "collaborator"))
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }).pipe(Atom.withLabel("j5:access:writes-somewhere")),
   };
 }

@@ -27,8 +27,12 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   createSharingEnvironmentAtoms,
+  ownerOnlySettingsNotice,
+  ownerSomewhereState,
   projectLevelFor,
+  permissionNoticeApplies,
   reachesServer,
+  serverToAskNameFor,
   sharingAllowsOperate,
   sharingAllowsStart,
   threadLevelFor,
@@ -469,4 +473,110 @@ describe("an Owner's connection", () => {
       expect(registry.get(operable)).toBe(true);
     }),
   );
+});
+
+const firstOwner = (name: string | null): ConnectionAccess => ({
+  kind: "person",
+  personId: "human:owner",
+  name,
+  firstOwner: true,
+  levels: [{ scope: { kind: "server" }, level: "owner" }],
+  wide: true,
+  owner: true,
+  retiredLinks: null,
+});
+
+describe("which server asks a person their name", () => {
+  it("asks a device the server cannot place to say whose it is", () => {
+    expect(serverToAskNameFor([{ id: "a", access: { kind: "unknown" } }])).toEqual({
+      id: "a",
+      kind: "claim",
+    });
+  });
+
+  it("asks the first owner for a name until they have one", () => {
+    expect(serverToAskNameFor([{ id: "a", access: firstOwner(null) }])).toEqual({
+      id: "a",
+      kind: "first-owner",
+    });
+    expect(serverToAskNameFor([{ id: "a", access: firstOwner("Jackson") }])).toBeNull();
+  });
+
+  it("waits for a server that has not answered, and asks the next one that needs it", () => {
+    expect(
+      serverToAskNameFor([
+        { id: "a", access: null },
+        { id: "b", access: firstOwner("Jackson") },
+        { id: "c", access: { kind: "unknown" } },
+      ]),
+    ).toEqual({ id: "c", kind: "claim" });
+  });
+});
+
+const noticePerson = {
+  kind: "person" as const,
+  personId: "human:priya",
+  name: "Priya",
+  firstOwner: false,
+  levels: [{ scope: { kind: "server" as const }, level: "viewer" as const }],
+  wide: false,
+  owner: false,
+  retiredLinks: null,
+};
+
+describe("upstream's notice to pair again", () => {
+  it("is not shown to a person, whose permissions follow their level", () => {
+    expect(permissionNoticeApplies(AsyncResult.success(noticePerson))).toBe(false);
+  });
+
+  it("is not shown to a device the server will ask about", () => {
+    expect(permissionNoticeApplies(AsyncResult.success({ kind: "unknown" as const }))).toBe(false);
+  });
+
+  it("waits for the server's answer", () => {
+    expect(permissionNoticeApplies(AsyncResult.initial())).toBe(false);
+  });
+
+  it("stays upstream's for a server from before people and for a session that is no person's", () => {
+    expect(permissionNoticeApplies(AsyncResult.success(null))).toBe(true);
+    expect(permissionNoticeApplies(AsyncResult.success({ kind: "service" as const }))).toBe(true);
+  });
+});
+
+describe("whether the person owns a connected server", () => {
+  it("is not known until the catalog is read and a server has answered", () => {
+    expect(ownerSomewhereState({ catalogReady: false, answers: [] })).toBe("loading");
+    expect(ownerSomewhereState({ catalogReady: true, answers: [null] })).toBe("loading");
+    expect(ownerSomewhereState({ catalogReady: true, answers: ["other", null] })).toBe("loading");
+  });
+
+  it("is settled by one server that says so, whatever the others have answered", () => {
+    expect(ownerSomewhereState({ catalogReady: true, answers: [null, "owner"] })).toBe(true);
+    expect(ownerSomewhereState({ catalogReady: true, answers: ["other", "other"] })).toBe(false);
+  });
+
+  it("waits while the catalog lists no server yet, as it does before the client's own is added", () => {
+    expect(ownerSomewhereState({ catalogReady: true, answers: [] })).toBe("loading");
+  });
+});
+
+describe("an Owner's Settings page, reached by someone who owns no server", () => {
+  it("names the server and says who to ask", () => {
+    expect(ownerOnlySettingsNotice({ serverName: "openclaw", writesSomewhere: true })).toEqual({
+      title: "Coming soon",
+      body: "Only an Owner of openclaw can change this here for now. Ask an Owner, or ask an agent on a thread you can write to.",
+    });
+  });
+
+  it("does not send someone who writes nowhere to an agent", () => {
+    expect(ownerOnlySettingsNotice({ serverName: "openclaw", writesSomewhere: false }).body).toBe(
+      "Only an Owner of openclaw can change this here for now. Ask an Owner.",
+    );
+  });
+
+  it("says this server when the server has no name to show", () => {
+    expect(ownerOnlySettingsNotice({ serverName: null, writesSomewhere: false }).body).toBe(
+      "Only an Owner of this server can change this here for now. Ask an Owner.",
+    );
+  });
 });

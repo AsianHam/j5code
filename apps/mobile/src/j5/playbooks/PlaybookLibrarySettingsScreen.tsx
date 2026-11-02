@@ -14,9 +14,9 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { AgentFolderPickerModal } from "../agents/AgentFolderPickerModal";
-import { useGuestEnvironmentIds } from "../sharing/guestAccess";
+import { useOwnedEnvironmentIds } from "../sharing/guestAccess";
 import { j5Environment } from "../state";
-import { PlaybookConversationModal } from "./PlaybookConversationModal";
+import { useSettingsFormNavigation } from "../agents/SettingsFormScreen";
 
 export function PlaybookLibrarySettingsSection({
   environmentId,
@@ -24,8 +24,9 @@ export function PlaybookLibrarySettingsSection({
   environmentId: EnvironmentId | null;
 }) {
   const { connectedEnvironments } = useRemoteConnectionStatus();
-  const guests = useGuestEnvironmentIds();
-  const environments = connectedEnvironments.filter((entry) => !guests.has(entry.environmentId));
+  // Playbooks are managed on the servers the person owns (People and access AC27).
+  const owned = useOwnedEnvironmentIds();
+  const environments = connectedEnvironments.filter((entry) => owned.has(entry.environmentId));
   const environment = environments.find((entry) => entry.environmentId === environmentId);
   return environment ? (
     <PlaybookLibrary
@@ -38,7 +39,7 @@ export function PlaybookLibrarySettingsSection({
       }))}
     />
   ) : (
-    <Text className="p-4 text-muted-foreground">No environment connected.</Text>
+    <Text className="p-4 text-foreground-muted">No environment connected.</Text>
   );
 }
 
@@ -72,7 +73,13 @@ function PlaybookLibrary({
   const [yaml, setYaml] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [conversation, setConversation] = useState<{ name: string | null } | null>(null);
+  const navigation = useSettingsFormNavigation();
+  const openConversation = (playbook: string | null) =>
+    navigation.navigate("SettingsPlaybookConversation", {
+      environmentId,
+      name: playbook,
+      projectId: project?.id ?? null,
+    });
   const [details, setDetails] = useState<string | null>(null);
   const [copyTarget, setCopyTarget] = useState<{
     name: string;
@@ -151,7 +158,7 @@ function PlaybookLibrary({
             </Pressable>
           </Menu>
         ) : (
-          <Text className="flex-1 text-sm text-muted-foreground">Available in every project.</Text>
+          <Text className="flex-1 text-sm text-foreground-muted">Available in every project.</Text>
         )}
         <Menu
           actions={[
@@ -170,7 +177,7 @@ function PlaybookLibrary({
           ]}
           onPressAction={({ nativeEvent }) => {
             const action = nativeEvent.event;
-            if (action === "create") setConversation({ name: null });
+            if (action === "create") openConversation(null);
             else if (action === "import") {
               setError(null);
               setImporting(true);
@@ -187,13 +194,13 @@ function PlaybookLibrary({
         </Menu>
       </View>
       {project ? (
-        <Text className="px-4 pb-3 text-xs text-muted-foreground">
+        <Text className="px-4 pb-3 text-xs text-foreground-muted">
           Includes {project.title}'s .j5/playbooks folder. Those override a library playbook with
           the same name in that project.
         </Text>
       ) : null}
       {error || sources.error || query.error ? (
-        <Text accessibilityRole="alert" className="px-4 pb-3 text-destructive">
+        <Text accessibilityRole="alert" className="px-4 pb-3 text-danger-foreground">
           {error ?? sources.error ?? query.error}
         </Text>
       ) : null}
@@ -201,7 +208,7 @@ function PlaybookLibrary({
       {query.data?.playbooks.length === 0 ? (
         <View className="gap-1 p-4">
           <Text className="text-foreground">No playbooks yet</Text>
-          <Text className="text-sm text-muted-foreground">
+          <Text className="text-sm text-foreground-muted">
             Create a repeatable workflow with your agent, or import YAML.
           </Text>
         </View>
@@ -259,7 +266,7 @@ function PlaybookLibrary({
                 ]}
                 onPressAction={({ nativeEvent }) => {
                   const action = nativeEvent.event;
-                  if (action === "chat") setConversation({ name: playbook.name });
+                  if (action === "chat") openConversation(playbook.name);
                   else if (action === "steps") setDetails(playbook.name);
                   else if (action.startsWith("copy:")) {
                     const destination = environments.find(
@@ -311,19 +318,19 @@ function PlaybookLibrary({
                   accessibilityRole="button"
                   accessibilityLabel={`More actions for ${playbook.title}`}
                 >
-                  <Text className="text-muted-foreground">•••</Text>
+                  <Text className="text-foreground-muted">•••</Text>
                 </Pressable>
               </Menu>
             </View>
-            <Text className="text-sm text-muted-foreground">{playbook.description}</Text>
-            <Text className="text-xs text-muted-foreground">
+            <Text className="text-sm text-foreground-muted">{playbook.description}</Text>
+            <Text className="text-xs text-foreground-muted">
               {playbook.stepCount} {playbook.stepCount === 1 ? "step" : "steps"}
               {source.kind === "folder" ? " · From source folder" : ""}
               {source.kind === "workspace" ? ` · From ${project?.title ?? "project"}` : ""}
               {playbook.overridesLibrary ? " · Overrides library copy" : ""}
             </Text>
             {playbook.issue ? (
-              <Text accessibilityRole="alert" className="text-destructive">
+              <Text accessibilityRole="alert" className="text-danger-foreground">
                 {playbook.issue.message}
               </Text>
             ) : null}
@@ -343,11 +350,11 @@ function PlaybookLibrary({
         .filter((entry) => entry.source.kind === "folder" || entry.issue)
         .map((entry) => (
           <View key={entry.path} className="gap-2 border-t border-border p-4">
-            <Text className="text-sm text-muted-foreground">
+            <Text className="text-sm text-foreground-muted">
               {entry.source.kind === "folder" ? entry.path : "Environment library"}
             </Text>
             {entry.issue ? (
-              <Text accessibilityRole="alert" className="text-destructive">
+              <Text accessibilityRole="alert" className="text-danger-foreground">
                 {entry.issue.message}
               </Text>
             ) : null}
@@ -381,14 +388,6 @@ function PlaybookLibrary({
           }}
         />
       ) : null}
-      {conversation ? (
-        <PlaybookConversationModal
-          environmentId={environmentId}
-          name={conversation.name}
-          projectId={project?.id ?? null}
-          onClose={() => setConversation(null)}
-        />
-      ) : null}
       {detail ? (
         <Modal
           visible
@@ -396,18 +395,21 @@ function PlaybookLibrary({
           presentationStyle="pageSheet"
           onRequestClose={() => setDetails(null)}
         >
-          <SafeAreaView className="flex-1 bg-background">
-            <ScrollView contentContainerClassName="gap-3 p-4">
-              <Text className="text-xl font-semibold text-foreground">{detail.title}</Text>
-              <Text className="text-muted-foreground">{detail.description}</Text>
-              {detail.steps.map((step, index) => (
-                <Text key={step.id}>{playbookStepLabel(step, index)}</Text>
-              ))}
-              <Pressable accessibilityRole="button" onPress={() => setDetails(null)}>
-                <Text className="text-primary">Close</Text>
-              </Pressable>
-            </ScrollView>
-          </SafeAreaView>
+          {/* SafeAreaView takes no className, so the theme surface and flex go on a View. */}
+          <View className="flex-1 bg-sheet">
+            <SafeAreaView style={{ flex: 1 }}>
+              <ScrollView contentContainerClassName="gap-3 p-4">
+                <Text className="text-xl font-semibold text-foreground">{detail.title}</Text>
+                <Text className="text-foreground-muted">{detail.description}</Text>
+                {detail.steps.map((step, index) => (
+                  <Text key={step.id}>{playbookStepLabel(step, index)}</Text>
+                ))}
+                <Pressable accessibilityRole="button" onPress={() => setDetails(null)}>
+                  <Text className="text-primary">Close</Text>
+                </Pressable>
+              </ScrollView>
+            </SafeAreaView>
+          </View>
         </Modal>
       ) : null}
       {importing || copyTarget || renameTarget ? (
@@ -417,97 +419,102 @@ function PlaybookLibrary({
           presentationStyle="pageSheet"
           onRequestClose={closeEditor}
         >
-          <SafeAreaView className="flex-1 bg-background">
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="gap-4 p-4">
-              <Text className="text-xl font-semibold text-foreground">
-                {renameTarget
-                  ? "Rename playbook"
-                  : copyTarget
-                    ? "Copy playbook"
-                    : "Import playbook"}
-              </Text>
-              <Text className="text-muted-foreground">
-                Available in every project on the environment.
-              </Text>
-              <TextInput
-                accessibilityLabel={renameTarget ? "Playbook title" : "Playbook name"}
-                placeholder={renameTarget ? "Title" : "release-review"}
-                value={renameTarget ? renameTarget.title : name}
-                onChangeText={(value) =>
-                  renameTarget ? setRenameTarget({ ...renameTarget, title: value }) : setName(value)
-                }
-                editable={!busy}
-                autoCapitalize="none"
-                className="rounded-lg border border-border p-3 text-foreground"
-              />
-              {importing ? (
-                <TextInput
-                  accessibilityLabel="Playbook YAML"
-                  placeholder="Paste YAML"
-                  value={yaml}
-                  onChangeText={setYaml}
-                  editable={!busy}
-                  multiline
-                  className="min-h-48 rounded-lg border border-border p-3 text-foreground"
-                />
-              ) : null}
-              {error ? (
-                <Text accessibilityRole="alert" className="text-destructive">
-                  {error}
+          {/* SafeAreaView takes no className, so the theme surface and flex go on a View. */}
+          <View className="flex-1 bg-sheet">
+            <SafeAreaView style={{ flex: 1 }}>
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="gap-4 p-4">
+                <Text className="text-xl font-semibold text-foreground">
+                  {renameTarget
+                    ? "Rename playbook"
+                    : copyTarget
+                      ? "Copy playbook"
+                      : "Import playbook"}
                 </Text>
-              ) : null}
-              <View className="flex-row justify-end gap-4">
-                <Pressable accessibilityRole="button" disabled={busy} onPress={closeEditor}>
-                  <Text>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={
-                    busy ||
-                    !canSaveDestination ||
-                    (renameTarget
-                      ? !renameTarget.title.trim()
-                      : !name.trim() || (importing && !yaml.trim()))
+                <Text className="text-foreground-muted">
+                  Available in every project on the environment.
+                </Text>
+                <TextInput
+                  accessibilityLabel={renameTarget ? "Playbook title" : "Playbook name"}
+                  placeholder={renameTarget ? "Title" : "release-review"}
+                  value={renameTarget ? renameTarget.title : name}
+                  onChangeText={(value) =>
+                    renameTarget
+                      ? setRenameTarget({ ...renameTarget, title: value })
+                      : setName(value)
                   }
-                  onPress={() =>
-                    void act(async () => {
-                      if (renameTarget) {
-                        const result = await rename({
-                          environmentId,
-                          input: { ...scope, ...renameTarget, title: renameTarget.title.trim() },
-                        });
-                        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-                        setRenameTarget(null);
-                      } else {
-                        let text = yaml;
-                        if (copyTarget) {
-                          const result = await exportDefinition({
+                  editable={!busy}
+                  autoCapitalize="none"
+                  className="rounded-lg border border-border p-3 text-foreground"
+                />
+                {importing ? (
+                  <TextInput
+                    accessibilityLabel="Playbook YAML"
+                    placeholder="Paste YAML"
+                    value={yaml}
+                    onChangeText={setYaml}
+                    editable={!busy}
+                    multiline
+                    className="min-h-48 rounded-lg border border-border p-3 text-foreground"
+                  />
+                ) : null}
+                {error ? (
+                  <Text accessibilityRole="alert" className="text-danger-foreground">
+                    {error}
+                  </Text>
+                ) : null}
+                <View className="flex-row justify-end gap-4">
+                  <Pressable accessibilityRole="button" disabled={busy} onPress={closeEditor}>
+                    <Text>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={
+                      busy ||
+                      !canSaveDestination ||
+                      (renameTarget
+                        ? !renameTarget.title.trim()
+                        : !name.trim() || (importing && !yaml.trim()))
+                    }
+                    onPress={() =>
+                      void act(async () => {
+                        if (renameTarget) {
+                          const result = await rename({
                             environmentId,
-                            input: { ...scope, name: copyTarget.name, source: copyTarget.source },
+                            input: { ...scope, ...renameTarget, title: renameTarget.title.trim() },
                           });
                           if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-                          text = result.value.yaml;
+                          setRenameTarget(null);
+                        } else {
+                          let text = yaml;
+                          if (copyTarget) {
+                            const result = await exportDefinition({
+                              environmentId,
+                              input: { ...scope, name: copyTarget.name, source: copyTarget.source },
+                            });
+                            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                            text = result.value.yaml;
+                          }
+                          const result = await save({
+                            environmentId: copyTarget?.destination ?? environmentId,
+                            input: { name, yaml: text },
+                          });
+                          if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                          setImporting(false);
+                          setCopyTarget(null);
+                          setName("");
+                          setYaml("");
                         }
-                        const result = await save({
-                          environmentId: copyTarget?.destination ?? environmentId,
-                          input: { name, yaml: text },
-                        });
-                        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-                        setImporting(false);
-                        setCopyTarget(null);
-                        setName("");
-                        setYaml("");
-                      }
-                    })
-                  }
-                >
-                  <Text className="text-primary">
-                    {renameTarget ? "Save" : copyTarget ? "Copy" : "Import"}
-                  </Text>
-                </Pressable>
-              </View>
-            </ScrollView>
-          </SafeAreaView>
+                      })
+                    }
+                  >
+                    <Text className="text-primary">
+                      {renameTarget ? "Save" : copyTarget ? "Copy" : "Import"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </ScrollView>
+            </SafeAreaView>
+          </View>
         </Modal>
       ) : null}
     </>

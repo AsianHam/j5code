@@ -94,6 +94,7 @@ import {
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
+import { useCanAddProject } from "../../j5/sharing/startAccess";
 import {
   createNewTaskDraft,
   setComposerDraftText,
@@ -517,10 +518,7 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
     selectedEnvironment?.environmentId ?? null,
     AuthSourceControlWriteScope,
   );
-  const canCreateProject = useEnvironmentScope(
-    selectedEnvironment?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
-  );
+  const canCreateProject = useCanAddProject(selectedEnvironment?.environmentId ?? null);
   const isConnected = canCreateProjectInEnvironment(selectedEnvironment?.connectionState);
   const canCloneProject = isConnected && canWriteSourceControl && canCreateProject;
   const discoveryState = useEnvironmentQuery(
@@ -588,7 +586,7 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
               <ListRow
                 title="New project"
                 subtitle="Start a new Git repository from a name"
-                disabled={!isConnected}
+                disabled={!isConnected || !canCreateProject}
                 icon={
                   <SymbolView
                     name="plus"
@@ -993,6 +991,8 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   );
   const environment = resolveAddProjectEnvironment(environmentOptions, selectedEnvironmentId);
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
+  // J5: adding a project needs a server-scope level (FORK.md case 90).
+  const canCreateProject = useCanAddProject(environment?.environmentId ?? null);
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
   });
@@ -1057,7 +1057,8 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   // State lags a render behind, so a double tap could start a second create.
   const submittingRef = useRef(false);
   const submit = async () => {
-    if (!environment || trimmedName.length === 0 || submittingRef.current) return;
+    if (!environment || !canCreateProject || trimmedName.length === 0 || submittingRef.current)
+      return;
     const originRoute = getActiveRoute(navigation);
     submittingRef.current = true;
     setError(null);
@@ -1204,7 +1205,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           ) : null}
           <PrimaryActionButton
             label="Create project"
-            disabled={isSubmitting || trimmedName.length === 0}
+            disabled={isSubmitting || !canCreateProject || trimmedName.length === 0}
             onPress={() => void submit()}
             loading={isSubmitting}
           />
@@ -1240,10 +1241,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
 
 export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
   const environment = useEnvironmentFromParam(props.environmentId);
-  const canCreateProject = useEnvironmentScope(
-    environment?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
-  );
+  const canCreateProject = useCanAddProject(environment?.environmentId ?? null);
   const createProject = useCreateProject(environment);
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
     useBrowsePathInput(environment);
@@ -1320,10 +1318,7 @@ export function AddProjectDestinationScreen(props: {
     environment?.environmentId ?? null,
     AuthSourceControlWriteScope,
   );
-  const canCreateProject = useEnvironmentScope(
-    environment?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
-  );
+  const canCreateProject = useCanAddProject(environment?.environmentId ?? null);
   const canCloneProject = canWriteSourceControl && canCreateProject;
   const createProject = useCreateProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);

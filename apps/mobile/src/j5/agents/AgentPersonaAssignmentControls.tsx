@@ -10,6 +10,8 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
+import { View } from "react-native";
+
 import { ComposerInlineControl } from "../../components/ComposerToolbar";
 import { useEnvironmentQuery } from "../../state/query";
 import { clearDraftAgent } from "./agentDraftState";
@@ -24,6 +26,8 @@ export function AgentPersonaAssignmentControls(props: {
   readonly draftKey?: string;
   /** The server thread this control belongs to; enables the handoff artifact status. */
   readonly threadId?: ThreadId;
+  /** The one-line composer: only the persona and its remove action, as upstream shows only the model icon. */
+  readonly compact?: boolean;
 }) {
   const presentation = presentAgentPersonaAssignment(props.assignment);
   const handoffs = useEnvironmentQuery(
@@ -41,22 +45,32 @@ export function AgentPersonaAssignmentControls(props: {
   );
   const drift = agentPersonaDrift(props.assignment, catalog.data);
   const draftKey = props.draftKey;
+  const compact = props.compact === true;
   return (
-    <>
-      <ComposerInlineControl
-        accessibilityLabel={`Persona: ${presentation.personaLabel}`}
-        emphasized
-        icon="person.crop.circle"
-        label={presentation.personaLabel}
-        maxWidth={152}
-        static
-      />
-      <ComposerInlineControl
-        accessibilityLabel={`Assigned model: ${presentation.routeLabel}`}
-        label={presentation.routeLabel}
-        maxWidth={200}
-        static
-      />
+    // A row that shrinks: the composer gives the model slot what is left beside Send.
+    <View className="min-w-0 shrink flex-row items-center">
+      <View className="min-w-0 shrink">
+        <ComposerInlineControl
+          accessibilityLabel={`Persona: ${presentation.personaLabel}, ${presentation.routeLabel}`}
+          emphasized
+          icon="person.crop.circle"
+          label={presentation.personaLabel}
+          maxWidth={152}
+          showChevron={false}
+          static
+        />
+      </View>
+      {compact ? null : (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityLabel={`Assigned model: ${presentation.routeLabel}`}
+            label={presentation.routeLabel}
+            maxWidth={200}
+            showChevron={false}
+            static
+          />
+        </View>
+      )}
       {draftKey !== undefined ? (
         <ComposerInlineControl
           accessibilityLabel="Remove persona"
@@ -64,29 +78,32 @@ export function AgentPersonaAssignmentControls(props: {
           icon="xmark"
           label=""
           maxWidth={44}
+          showChevron={false}
           onPress={() => clearDraftAgent(draftKey)}
         />
       ) : null}
-      {handoffPresentation ? (
+      {!compact && handoffPresentation ? (
         <ComposerInlineControl
           accessibilityLabel={`Handoff artifact: ${handoffPresentation.label}`}
           accessibilityHint={handoffPresentation.detail}
           icon={handoffPresentation.tone === "success" ? "doc.text" : "exclamationmark.triangle"}
           label={handoffPresentation.label}
           maxWidth={200}
+          showChevron={false}
           static
         />
       ) : null}
-      {drift === "changed" ? (
+      {!compact && drift === "changed" ? (
         <ComposerInlineControl
           accessibilityLabel="Persona definition changed since launch"
           accessibilityHint={AGENT_PERSONA_DRIFT_MESSAGE}
           icon="exclamationmark.triangle"
           label="Changed"
           maxWidth={120}
+          showChevron={false}
           static
         />
       ) : null}
-    </>
+    </View>
   );
 }

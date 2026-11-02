@@ -19,7 +19,7 @@ class CrewSeatArchivedAloneError extends Data.TaggedError("CrewSeatArchivedAlone
   readonly crewInstanceId: string;
 }> {
   override get message(): string {
-    return `This thread is seat ${this.seatName} of Crew ${this.crewName}. Crew members are never ${this.action === "archive" ? "archived" : "deleted"} one by one; retire the whole Crew with Archive crew on the Fleet page, or message the member instead.`;
+    return `This thread is seat ${this.seatName} of Crew ${this.crewName}. Crew members are never ${this.action === "archive" ? "archived" : "deleted"} one by one; retire the whole Crew with Archive crew on the Fleet page in J5 on web or desktop, or message the member instead.`;
   }
 }
 

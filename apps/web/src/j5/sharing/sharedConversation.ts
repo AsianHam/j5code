@@ -1,24 +1,19 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
-  createEnvironmentRpcQueryAtomFamily,
-  createEnvironmentRpcSubscriptionAtomFamily,
-} from "@t3tools/client-runtime/state/runtime";
+  authorIndex,
+  type ThreadAuthorIndex,
+} from "@t3tools/client-runtime/j5/shared-conversation";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
-import {
-  J5_SHARED_CONVERSATION_WS_METHODS,
-  type MessageAuthor,
-  type PromptAnswer,
-  type ThreadAuthors,
-} from "@t3tools/contracts/j5";
+import type { ThreadAuthors } from "@t3tools/contracts/j5";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useRef } from "react";
 
-import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
+import { j5Sharing } from "../state";
 
 /**
  * Reads a thread's atoms again when the thread comes to be listed. A draft keeps the id its thread
@@ -46,15 +41,7 @@ export function useRereadWhenListed(
   }, [listed, read, changes]);
 }
 
-const threadAuthors = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
-  label: "environment-data:j5-shared-conversation:authors",
-  tag: J5_SHARED_CONVERSATION_WS_METHODS.listThreadAuthors,
-  staleTimeMs: 0,
-});
-const threadAuthorsChanges = createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
-  label: "environment-data:j5-shared-conversation:authors-changes",
-  tag: J5_SHARED_CONVERSATION_WS_METHODS.subscribeThreadAuthorsChanges,
-});
+const { threadAuthors, threadAuthorsChanges } = j5Sharing;
 
 /**
  * Who sent each message of a thread and who answered each of the agent's prompts, from the
@@ -118,26 +105,6 @@ export function useThreadAuthorsResult(
     record: Option.getOrNull(AsyncResult.value(result)),
     failed: AsyncResult.isFailure(result),
   };
-}
-
-/** A thread's record by message and by prompt, built once per answer the server gives. */
-export interface ThreadAuthorIndex {
-  readonly authors: ReadonlyMap<string, MessageAuthor>;
-  readonly answers: ReadonlyMap<string, PromptAnswer>;
-}
-const EMPTY_INDEX: ThreadAuthorIndex = { authors: new Map(), answers: new Map() };
-const indexes = new WeakMap<ThreadAuthors, ThreadAuthorIndex>();
-
-export function authorIndex(record: ThreadAuthors | null): ThreadAuthorIndex {
-  if (record === null) return EMPTY_INDEX;
-  const known = indexes.get(record);
-  if (known !== undefined) return known;
-  const index = {
-    authors: new Map(record.authors.map((author) => [author.messageId, author])),
-    answers: new Map(record.answers.map((answer) => [answer.requestId, answer])),
-  };
-  indexes.set(record, index);
-  return index;
 }
 
 /**

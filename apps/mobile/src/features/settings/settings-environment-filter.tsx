@@ -16,6 +16,7 @@ import { useEnvironments, type EnvironmentPresentation } from "../../state/envir
 import { useProjects } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { toggleSettingsEnvironment } from "./settings-environment-filter.logic";
+import { useOwnedSettingsTargets } from "../../j5/sharing/settingsAccess";
 
 export type SettingsTarget = EnvironmentPresentation & {
   readonly serverConfig: NonNullable<EnvironmentPresentation["serverConfig"]>;
@@ -120,7 +121,8 @@ export function useSettingsEnvironmentFilter() {
   const groupingSettings = useMobileProjectGroupingSettings();
   const groupingMode = groupingSettings.sidebarProjectGroupingMode;
   const projectGroups = settingsProjectGroups(projects, groupingMode);
-  const availableTargets = connectedSettingsTargets(environments);
+  // J5: Settings manages only the servers the person owns (FORK.md case 72).
+  const availableTargets = useOwnedSettingsTargets(connectedSettingsTargets(environments));
   const selectedTargets = useMemo(
     () =>
       availableTargets.filter(

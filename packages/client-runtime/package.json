@@ -331,6 +331,22 @@
       "types": "./src/state/threadUndo.ts",
       "default": "./src/state/threadUndo.ts"
     },
+    "./j5/person-avatar": {
+      "types": "./src/j5/personAvatar.ts",
+      "default": "./src/j5/personAvatar.ts"
+    },
+    "./j5/participant-identity": {
+      "types": "./src/j5/participantIdentity.ts",
+      "default": "./src/j5/participantIdentity.ts"
+    },
+    "./j5/archive-flow": {
+      "types": "./src/j5/archiveFlow.ts",
+      "default": "./src/j5/archiveFlow.ts"
+    },
+    "./j5/artifacts": {
+      "types": "./src/j5/artifacts.ts",
+      "default": "./src/j5/artifacts.ts"
+    },
     "./j5/agent-personas": {
       "types": "./src/j5/agentPersonas.ts",
       "default": "./src/j5/agentPersonas.ts"
@@ -450,6 +466,10 @@
     "./j5/user-message": {
       "types": "./src/j5/userMessagePresentation.ts",
       "default": "./src/j5/userMessagePresentation.ts"
+    },
+    "./j5/shared-conversation": {
+      "types": "./src/j5/sharedConversation.ts",
+      "default": "./src/j5/sharedConversation.ts"
     },
     "./j5/crew-notices": {
       "types": "./src/j5/crewNotices.ts",

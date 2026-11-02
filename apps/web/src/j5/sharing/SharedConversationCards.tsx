@@ -2,7 +2,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
 import { PersonAvatar } from "./PersonAvatar";
-import { isSettledPrompt } from "./sharedTimeline.logic";
+import { isSettledPrompt } from "@t3tools/client-runtime/j5/shared-conversation";
 import { isSharedNote, useAnySharedMessageAuthor, usePromptAnswer } from "./sharedTimeline";
 
 /**

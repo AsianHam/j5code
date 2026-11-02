@@ -230,7 +230,7 @@ export const makeMessageStamps = Effect.fn("j5.sharing.sharedConversation.makeMe
         return yield* refused("This message was already sent.");
       }
       const createdAt = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
+      const inserted = yield* sql`
         INSERT INTO j5_a2a_message_author (
           thread_id, message_id, person_id, display_name, level, note, told_json, stored_prefix,
           created_at
@@ -239,8 +239,11 @@ export const makeMessageStamps = Effect.fn("j5.sharing.sharedConversation.makeMe
           ${carried.note}, ${carried.told}, ${storedPrefix}, ${createdAt}
         )
         ON CONFLICT (thread_id, message_id) DO NOTHING
+        RETURNING message_id
       `;
       yield* touch(threadId);
+      // Whether this call wrote the record, rather than finding an earlier attempt's.
+      return inserted.length > 0;
     });
 
     return { writerLabel, authorOn, announce, recordAuthor };

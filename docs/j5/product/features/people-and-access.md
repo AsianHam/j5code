@@ -121,7 +121,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 
 - Settings worked through page by page for Collaborators and Viewers, and with it archiving and deleting for those who are not Owners ([#630](https://github.com/Jacksondr5/j5code/issues/630)).
 - An authoritative identity: a sign-in, such as a company's, that proves who a person is ([#632](https://github.com/Jacksondr5/j5code/issues/632)).
-- Sharing on mobile, including a phone taking its new session when its person's level changes ([#609](https://github.com/Jacksondr5/j5code/issues/609)).
+- Sharing, leaving and renaming from the mobile app ([#609](https://github.com/Jacksondr5/j5code/issues/609)).
 - A Viewer watching a thread's preview tabs ([#540](https://github.com/Jacksondr5/j5code/issues/540)).
 - Leaving one thread inside a project or server one holds as a whole, and the rest of the set-aside list ([#542](https://github.com/Jacksondr5/j5code/issues/542)).
 
@@ -151,7 +151,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 14. A Collaborator can do within their scope everything an Owner can, except configure the server, share it, for now archive or delete a thread, and, at thread scope, start a thread, fork one or merge one back.
 15. An Owner configures the server and shares it.
 16. Each level's upstream permissions are listed by name in one place, and a device holds exactly its person's highest level's set: a Viewer "View environment"; a Collaborator "View environment", "Operate tasks", "Control previews", "View diagnostics and usage", "View terminals", "Use terminals", "Change source control", "Read files", "Write files" and "View relay"; an Owner every permission upstream lets a client be given. J5 never gives upstream more permissions for a request than its device holds.
-17. When a person's level changes, each device paired as them is given a new session holding the new level's permissions in place of the old one, and reconnects once. A lowered level takes effect at once, on open connections too. A device that is offline gets its new session when it next connects, while its old one is within its lifetime; after that it is paired again by hand. For now, a device on the mobile app is paired again by hand after any change of its person's level.
+17. When a person's level changes, each device paired as them is given a new session holding the new level's permissions in place of the old one, and reconnects once. A lowered level takes effect at once, on open connections too. A device that is offline gets its new session when it next connects, while its old one is within its lifetime; after that it is paired again by hand.
 18. A device paired from upstream's Connections settings with permissions chosen there keeps, in any new session, only the chosen permissions its person's level allows.
 19. A Collaborator at server scope adds projects; a Collaborator at project scope or wider renames and removes a project; editing a project's scripts follows upstream's permission for environment settings, so only an Owner does it.
 20. Installing a skill from a catalog is for Owners; seeing and using skills, Personas and scheduled tasks follows the scope they belong to, and changing a Persona is an Owner's, as any setting is. Playbooks are the server's: anyone who holds Collaborator at any scope sees them and has an agent run one on a thread they write to, and only an Owner saves, renames, deletes or chooses the folders of one in the app. A Collaborator's agent can still save a Playbook through its own tool, as it can change files.
@@ -168,7 +168,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 ### Settings and the first screen
 
 27. An Owner sees all of Settings for each server they own. Settings lists only the servers where the person is an Owner, with a picker to choose among them. The People page lists them too, and for a server where the person is not an Owner it shows only their own row and, read only, who reaches each project they reach (AC26).
-28. For now, someone who is an Owner of no connected server is shown only the Settings pages about their own device, Appearance, Snap-shot and Open-source licenses, and the People page with their own row and the projects they reach on each server. Settings search finds only the pages a person is shown.
+28. For now, someone who is an Owner of no connected server is shown only the Settings pages about their own device (on web, Appearance, Snap-shot and Open-source licenses; on the mobile app, its look and input, its saved servers, notifications and About), and the People page with their own row and the projects they reach on each server. Settings search finds only the pages a person is shown.
 29. A Settings page is shown to someone who is not an Owner only if it is one of those listed; any other page, including one upstream adds later, is shown to Owners only.
 30. The setup wizard is offered only to an Owner of the server the client opened first, decided by that server's answer. Someone whose scope covers nothing, because they left or lost the last thing they reached, sees "Nothing is shared with you".
 
@@ -227,3 +227,5 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 - 2026-10-19 — changing a Persona is an Owner's, as any setting is, and a Collaborator's agent can still save a Playbook through its own tool, since sharing is trust (AC20; Jackson).
 - 2026-10-27 — an Owner widens someone already on the server to a project or the whole server from their row on the People page, at their highest level (AC35; Jackson).
 - 2026-10-27 — a link for one person always names who it is for, so the Share dialog and the People page can say who each unused link is for (AC31, AC32; Jackson).
+- 2026-10-31 — the mobile app asks whose device it is, takes its new session when its person's level changes, and keeps Settings an Owner's, as web does, with its own list of the device's pages; managing sharing stays on web and desktop (AC5, AC6, AC17, AC28; Jackson, [#831](https://github.com/Jacksondr5/j5code/issues/831)).
+- 2026-11-01 — on the mobile app the name question has a way out that touches only that server: Remove this server, and for a device the server cannot place, Not now until the app next opens; the first owner, who already holds the server, gets no Not now (AC5, AC6; Jackson at Checkpoint 1, [#870](https://github.com/Jacksondr5/j5code/issues/870)).

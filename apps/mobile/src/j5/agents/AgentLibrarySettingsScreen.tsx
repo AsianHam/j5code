@@ -1,17 +1,13 @@
-import {
-  GUEST_LIBRARY_UNAVAILABLE,
-  useGuestEnvironmentIds,
-  useIsGuestEverywhere,
-} from "../sharing/guestAccess";
+import { LIBRARY_FOR_OWNERS } from "@t3tools/client-runtime/j5/sharing";
+import { useOwnedEnvironmentIds, useOwnerSomewhere } from "../sharing/guestAccess";
 import { AgentLibraryToast, type AgentLibraryNotification } from "./AgentLibraryToast";
 import { AgentImportConflictModal } from "./AgentImportConflictModal";
-import { AgentCreateModal } from "./AgentCreateModal";
-import {
-  agentPersonaDuplicateDraft,
-  type AgentPersonaCreateDraft,
-} from "@t3tools/client-runtime/j5/agent-personas";
-import { AgentEditorModal } from "./AgentEditorModal";
+import { agentPersonaDuplicateDraft } from "@t3tools/client-runtime/j5/agent-personas";
+import { AgentDetailsModal } from "./AgentDetailsModal";
 import { AgentFolderPickerModal } from "./AgentFolderPickerModal";
+import { useSettingsFormNavigation } from "./SettingsFormScreen";
+import { sendWhenReconnected } from "./watchEnvironmentSessions";
+import { personaRowActions } from "./personaRowActions";
 import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import {
@@ -23,13 +19,12 @@ import {
   importAgentPersonasWithConfirmation,
 } from "@t3tools/client-runtime/j5/agent-personas";
 import {
-  type AgentPersonaEditInput,
   type AgentPersonaImportConflict,
   type AgentPersonaImportConflictError,
+  type AgentPersonaLibraryFolder,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { useNavigation } from "@react-navigation/native";
-import { Platform, Pressable, ScrollView, Share, Switch, View } from "react-native";
+import { Platform, Pressable, Share, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
@@ -38,35 +33,41 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { pickAgentDefinitions } from "./pickAgentDefinitions";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppText as Text } from "../../components/ui/AppText";
+import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { cn } from "../../lib/cn";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { agentPersonaEnvironment } from "./agentPersonaAtoms";
 import { useEnvironmentQuery } from "../../state/query";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { SettingsSection } from "../../features/settings/components/SettingsSection";
+import { SettingsScreen } from "../../features/settings/components/SettingsScreen";
+import { SettingsActionRow } from "../../features/settings/components/SettingsActionRow";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { PlaybookLibrarySettingsSection } from "../playbooks/PlaybookLibrarySettingsScreen";
 
 export function AgentLibrarySettingsScreen() {
-  // A guest is not offered a server's Personas or Playbooks (Shared server AC24).
-  return useIsGuestEverywhere() ? (
-    <View className="p-4">
-      <AgentMessage title={GUEST_LIBRARY_UNAVAILABLE} />
-    </View>
+  // Personas and Playbooks are managed by a server's Owners (People and access AC27).
+  return useOwnerSomewhere() === false ? (
+    <SettingsScreen title="Personas">
+      <ScreenScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerClassName="px-5 pt-4"
+      >
+        <Text className="text-base text-foreground-muted">{LIBRARY_FOR_OWNERS}</Text>
+      </ScreenScrollView>
+    </SettingsScreen>
   ) : (
-    <MemberAgentLibrarySettingsScreen />
+    <OwnerAgentLibrarySettingsScreen />
   );
 }
 
-function MemberAgentLibrarySettingsScreen() {
-  const navigation = useNavigation();
+function OwnerAgentLibrarySettingsScreen() {
   const insets = useSafeAreaInsets();
   const { connectedEnvironments: connected } = useRemoteConnectionStatus();
-  const guestEnvironmentIds = useGuestEnvironmentIds();
+  const ownedEnvironmentIds = useOwnedEnvironmentIds();
   const connectedEnvironments = useMemo(
-    () => connected.filter((environment) => !guestEnvironmentIds.has(environment.environmentId)),
-    [connected, guestEnvironmentIds],
+    () => connected.filter((environment) => ownedEnvironmentIds.has(environment.environmentId)),
+    [connected, ownedEnvironmentIds],
   );
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
   const effectiveEnvironmentId = connectedEnvironments.some(
@@ -130,12 +131,9 @@ function MemberAgentLibrarySettingsScreen() {
   } | null>(null);
   // oxlint-disable-next-line t3code/react-effect-budget -- a replaced or unmounted confirmation resolves its waiting import as cancelled.
   useEffect(() => () => confirmation?.resolve(null), [confirmation]);
-  const [editing, setEditing] = useState<{
-    environmentId: EnvironmentId;
-    initial: Omit<AgentPersonaEditInput, "instructions">;
-  } | null>(null);
+  const navigation = useSettingsFormNavigation();
   const [notification, setNotification] = useState<AgentLibraryNotification | null>(null);
-  const [creating, setCreating] = useState<{ initial?: AgentPersonaCreateDraft } | null>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
   const dismissNotification = useCallback(() => setNotification(null), []);
   const importAgents = useAtomCommand(agentPersonaEnvironment.importAgentPersonas, {
     reportFailure: false,
@@ -207,11 +205,12 @@ function MemberAgentLibrarySettingsScreen() {
       if (files === null) return;
       const result = await importAgentPersonasWithConfirmation(
         files,
-        async (input) => {
-          const response = await importAgents({ environmentId, input });
-          if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-          return response.value;
-        },
+        (input) =>
+          sendWhenReconnected(environmentId, async () => {
+            const response = await importAgents({ environmentId, input });
+            if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+            return response.value;
+          }),
         confirmReplacement,
       );
       if (result === null) return;
@@ -276,7 +275,11 @@ function MemberAgentLibrarySettingsScreen() {
       setNotification(failureNotice("Persona action failed", read));
       return;
     }
-    setCreating({ initial: agentPersonaDuplicateDraft(read.value.definition) });
+    if (effectiveEnvironmentId === null) return;
+    navigation.navigate("SettingsPersonaNew", {
+      environmentId: effectiveEnvironmentId,
+      initial: agentPersonaDuplicateDraft(read.value.definition),
+    });
   }
   async function exportPersona(personaId: string) {
     if (busy) return;
@@ -308,8 +311,28 @@ function MemberAgentLibrarySettingsScreen() {
       ? []
       : presentAgentPersonaCatalog(catalog.data);
 
+  const viewedPersona = personas.find((persona) => persona.personaId === viewing);
+  const folders = librarySources.data?.folders ?? [];
+  const environmentLabel =
+    connectedEnvironments.find(
+      (environment) => environment.environmentId === effectiveEnvironmentId,
+    )?.environmentLabel ?? "this environment";
+
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
+    <SettingsScreen
+      title="Personas"
+      actions={[
+        {
+          accessibilityLabel: "Create persona",
+          icon: "plus",
+          disabled: locked || effectiveEnvironmentId === null,
+          onPress: () => {
+            if (effectiveEnvironmentId !== null)
+              navigation.navigate("SettingsPersonaNew", { environmentId: effectiveEnvironmentId });
+          },
+        },
+      ]}
+    >
       {confirmation ? (
         <AgentImportConflictModal
           key={JSON.stringify(confirmation.error.conflicts)}
@@ -320,496 +343,209 @@ function MemberAgentLibrarySettingsScreen() {
           }}
         />
       ) : null}
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Personas" onBack={() => navigation.goBack()} />
-        </>
-      ) : null}
-      <ScrollView
+      <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         className="flex-1"
-        contentContainerClassName="gap-6 px-5 pt-4"
+        contentContainerClassName="gap-5 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        {catalog.data?.diagnostics?.map((diagnostic) => (
-          <AgentMessage
-            key={diagnostic.path}
-            title={`Invalid persona file: ${diagnostic.path}: ${diagnostic.message}`}
-          />
-        ))}
-        <SettingsSection title="Persona library">
-          <View className="rounded-2xl bg-card px-4 py-3">
-            <Text className="text-base text-foreground">
-              In a Codex or Claude conversation, type @persona:id, or @ and the start of a persona’s
-              name, to run a persona as a subagent. Edit imported personas here.
-            </Text>
-          </View>
-        </SettingsSection>
-
-        {connectedEnvironments.length > 1 ? (
-          <SettingsSection title="Environment">
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View className="flex-row gap-2">
-                {connectedEnvironments.map((environment) => {
-                  const selected = environment.environmentId === effectiveEnvironmentId;
-                  return (
-                    <Pressable
-                      key={environment.environmentId}
-                      accessibilityLabel={environment.environmentLabel}
-                      accessibilityRole="radio"
-                      accessibilityState={{ checked: selected }}
-                      className={cn(
-                        "rounded-full border px-4 py-2",
-                        selected ? "border-primary bg-primary/10" : "border-border bg-card",
-                      )}
-                      disabled={busy}
-                      onPress={() => setSelectedEnvironmentId(environment.environmentId)}
-                    >
-                      <Text className="text-sm font-t3-medium text-foreground">
-                        {environment.environmentLabel}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </ScrollView>
+        {catalog.data?.diagnostics?.length ? (
+          <SettingsSection title="Library errors">
+            {catalog.data.diagnostics.map((diagnostic, index) => (
+              <InfoRow
+                key={diagnostic.path}
+                borderTop={index > 0}
+                tone="danger"
+                text={`Invalid persona file: ${diagnostic.path}: ${diagnostic.message}`}
+              />
+            ))}
           </SettingsSection>
         ) : null}
 
-        <View className="flex-row flex-wrap items-center justify-between gap-3 px-2">
-          <Text className="text-sm font-t3-medium text-foreground-muted">Scoped personas</Text>
-          <View className="flex-row flex-wrap items-center gap-2">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Create persona"
-              accessibilityState={{ disabled: locked }}
-              disabled={locked}
-              className="flex-row items-center gap-2 rounded-lg border border-border px-4 py-3 disabled:opacity-40"
-              onPress={() => setCreating({})}
-            >
-              <SymbolView
-                name="plus"
-                size={14}
-                tintColorClassName="accent-icon"
-                type="monochrome"
-              />
-              <Text className="text-sm text-foreground">Create</Text>
-            </Pressable>
-            {Platform.OS === "web" ? (
-              <Text className="text-sm text-foreground-muted">
-                Use Settings → Personas in the web app to import files.
-              </Text>
-            ) : (
-              <View className="self-start" pointerEvents={locked ? "none" : "auto"}>
-                <Menu
-                  actions={[
-                    {
-                      id: "agent",
-                      title: "Persona file",
-                      attributes: { disabled: locked },
-                    },
-                    {
-                      id: "folder",
-                      title: "Folder",
-                      attributes: { disabled: locked },
-                    },
-                  ]}
-                  onPressAction={({ nativeEvent }) => {
-                    if (nativeEvent.event === "agent" || nativeEvent.event === "folder")
-                      void importSelection(nativeEvent.event);
-                  }}
-                >
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Import personas"
-                    accessibilityState={{ disabled: locked }}
-                    disabled={locked}
-                    className="flex-row items-center gap-2 rounded-lg border border-border px-4 py-3 disabled:opacity-40"
-                  >
-                    <Text className="text-sm text-foreground">Import</Text>
-                    <SymbolView
-                      name="chevron.down"
-                      size={14}
-                      tintColorClassName="accent-icon"
-                      type="monochrome"
-                    />
-                  </Pressable>
-                </Menu>
-              </View>
-            )}
-          </View>
-        </View>
-        <SettingsSection>
-          <View className="gap-2">
-            {effectiveEnvironmentId === null ? (
-              <AgentMessage title="No connected environments" />
-            ) : catalog.isPending ? (
-              <AgentMessage title="Loading personas" />
-            ) : catalog.error ? (
-              <AgentMessage title={catalog.error} />
-            ) : personas.length === 0 ? (
-              <AgentMessage title="No personas in this library" />
-            ) : (
-              personas.map((persona) => {
-                const available = persona.availability === "available";
-                return (
-                  <View key={persona.personaId} className="gap-2 rounded-2xl bg-card px-4 py-3">
-                    <View className="flex-row items-center gap-3">
-                      <View className="min-w-0 flex-1 flex-row flex-wrap items-center gap-2">
-                        <Text className="shrink text-lg font-t3-semibold text-foreground">
-                          {persona.displayName}
-                        </Text>
-                        <View
-                          className={cn(
-                            "rounded-full border px-2 py-0.5",
-                            available ? "border-primary/30 bg-primary/10" : "border-border",
-                          )}
-                        >
-                          <Text className="text-xs font-t3-medium text-foreground-muted">
-                            {persona.availabilityLabel}
-                          </Text>
-                        </View>
-                        {persona.unsandboxed ? (
-                          <View className="rounded-full border border-warning-border bg-warning px-2 py-0.5">
-                            <Text className="text-xs font-t3-medium text-warning-foreground">
-                              Full access
-                            </Text>
-                          </View>
-                        ) : null}
-                        {persona.originLabel ? (
-                          <View className="rounded-full border border-border px-2 py-0.5">
-                            <Text className="text-xs font-t3-medium text-foreground-muted">
-                              {persona.originLabel}
-                            </Text>
-                          </View>
-                        ) : null}
-                      </View>
-                      <View className="flex-row items-center gap-2">
-                        {persona.removed ? (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`Restore ${persona.displayName}`}
-                            accessibilityState={{ disabled: locked }}
-                            disabled={locked}
-                            className="h-11 flex-row items-center gap-2 rounded-lg border border-border px-3 disabled:opacity-40"
-                            onPress={() => void restorePersona(persona.personaId)}
-                          >
-                            <SymbolView
-                              name="arrow.uturn.backward"
-                              size={16}
-                              tintColorClassName="accent-icon"
-                              type="monochrome"
-                            />
-                            <Text className="text-sm text-foreground">Restore</Text>
-                          </Pressable>
-                        ) : (
-                          <>
-                            <Switch
-                              value={persona.enabled}
-                              disabled={locked}
-                              accessibilityLabel={`Enable ${persona.displayName}`}
-                              onValueChange={(enabled) =>
-                                void toggleAgent(persona.personaId, enabled)
-                              }
-                            />
-                            <Pressable
-                              accessibilityRole="button"
-                              accessibilityLabel={`Edit ${persona.displayName}`}
-                              accessibilityHint={
-                                persona.edit
-                                  ? "Edit this imported copy"
-                                  : "Duplicate this persona to edit a copy"
-                              }
-                              accessibilityState={{ disabled: locked || persona.edit === null }}
-                              disabled={locked || persona.edit === null}
-                              className="size-11 items-center justify-center rounded-lg disabled:opacity-40"
-                              onPress={() => {
-                                if (persona.edit && effectiveEnvironmentId)
-                                  setEditing({
-                                    environmentId: effectiveEnvironmentId,
-                                    initial: persona.edit,
-                                  });
-                              }}
-                            >
-                              <SymbolView
-                                name="pencil"
-                                size={18}
-                                tintColorClassName="accent-icon"
-                                type="monochrome"
-                              />
-                            </Pressable>
-                          </>
-                        )}
-                        <Menu
-                          actions={[
-                            {
-                              id: "duplicate",
-                              title: "Duplicate as personal persona",
-                              attributes: {
-                                disabled: locked || persona.availability === "unsupported",
-                              },
-                            },
-                            { id: "export", title: "Export YAML", attributes: { disabled: busy } },
-                            ...(otherEnvironments.length === 0
-                              ? []
-                              : [
-                                  {
-                                    id: "copy",
-                                    title: "Copy to environment",
-                                    attributes: { disabled: busy },
-                                    subactions: otherEnvironments.map((environment) => ({
-                                      id: `copy:${environment.environmentId}`,
-                                      title: environment.environmentLabel,
-                                    })),
-                                  },
-                                ]),
-                          ]}
-                          onPressAction={({ nativeEvent }) => {
-                            if (nativeEvent.event === "duplicate")
-                              void duplicatePersona(persona.personaId);
-                            else if (nativeEvent.event === "export")
-                              void exportPersona(persona.personaId);
-                            else if (nativeEvent.event.startsWith("copy:")) {
-                              const target = otherEnvironments.find(
-                                (environment) =>
-                                  `copy:${environment.environmentId}` === nativeEvent.event,
-                              );
-                              if (target)
-                                void copyPersona(persona.personaId, {
-                                  environmentId: target.environmentId,
-                                  label: target.environmentLabel,
-                                });
-                            }
-                          }}
-                        >
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`More actions for ${persona.displayName}`}
-                            accessibilityState={{ disabled: busy }}
-                            disabled={busy}
-                            className="size-11 items-center justify-center rounded-lg disabled:opacity-40"
-                          >
-                            <SymbolView
-                              name="ellipsis"
-                              size={18}
-                              tintColorClassName="accent-icon"
-                              type="monochrome"
-                            />
-                          </Pressable>
-                        </Menu>
-                        {persona.removed ? null : (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`Remove ${persona.displayName}`}
-                            accessibilityState={{ disabled: locked }}
-                            disabled={locked}
-                            className="size-11 items-center justify-center rounded-lg border border-danger-foreground/30 disabled:opacity-40"
-                            onPress={() => void removePersona(persona.personaId)}
-                          >
-                            <SymbolView
-                              name="trash"
-                              size={18}
-                              tintColorClassName="accent-danger-foreground"
-                              type="monochrome"
-                            />
-                          </Pressable>
-                        )}
-                      </View>
-                    </View>
-                    <Text className="text-sm text-foreground-muted">{persona.description}</Text>
-                    {persona.blockedReasons.map((reason) => (
-                      <Text key={reason} className="text-xs text-foreground-muted">
-                        {reason}
-                      </Text>
-                    ))}
-                    {(() => {
-                      const entry = usageById.get(persona.personaId);
-                      if (entry === undefined) return null;
-                      const summary = presentAgentPersonaUsage(entry);
-                      return (
-                        <Text
-                          className="text-xs text-foreground-muted"
-                          accessibilityHint={summary.routes.join(". ")}
-                        >
-                          {summary.line}
-                        </Text>
-                      );
-                    })()}
-                  </View>
+        {connectedEnvironments.length > 1 ? (
+          <SettingsSection title="Environment">
+            <Menu
+              actions={connectedEnvironments.map((environment) => ({
+                id: environment.environmentId,
+                title: environment.environmentLabel,
+                state:
+                  environment.environmentId === effectiveEnvironmentId
+                    ? ("on" as const)
+                    : undefined,
+              }))}
+              onPressAction={({ nativeEvent }) => {
+                const next = connectedEnvironments.find(
+                  (environment) => environment.environmentId === nativeEvent.event,
                 );
-              })
-            )}
-          </View>
+                if (next && !busy) setSelectedEnvironmentId(next.environmentId);
+              }}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Environment, ${environmentLabel}`}
+                className="min-h-14 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
+              >
+                <Text textRole="body" className="text-foreground">
+                  Environment
+                </Text>
+                <Text
+                  textRole="footnote"
+                  className="min-w-0 flex-1 text-right text-foreground-muted"
+                  numberOfLines={1}
+                >
+                  {environmentLabel}
+                </Text>
+                <SymbolView
+                  name="chevron.down"
+                  size={14}
+                  tintColorClassName="accent-chevron"
+                  type="monochrome"
+                />
+              </Pressable>
+            </Menu>
+          </SettingsSection>
+        ) : null}
+
+        <SettingsSection
+          title="Personas"
+          footer={
+            Platform.OS === "web"
+              ? "Use Settings → Personas in the web app to import files."
+              : "In a Codex or Claude conversation, type @persona:id, or @ and the start of a persona’s name, to run a persona as a subagent."
+          }
+        >
+          {effectiveEnvironmentId === null ? (
+            <InfoRow text="No connected environments" />
+          ) : catalog.isPending ? (
+            <InfoRow text="Loading personas" />
+          ) : catalog.error ? (
+            <InfoRow tone="danger" text={catalog.error} />
+          ) : personas.length === 0 ? (
+            <InfoRow text="No personas in this library" />
+          ) : (
+            personas.map((persona, index) => (
+              <PersonaRow
+                key={persona.personaId}
+                persona={persona}
+                borderTop={index > 0}
+                locked={locked}
+                busy={busy}
+                otherEnvironments={otherEnvironments}
+                onToggle={(enabled) => void toggleAgent(persona.personaId, enabled)}
+                onEdit={
+                  persona.edit && effectiveEnvironmentId && canOperate
+                    ? () => {
+                        if (persona.edit && effectiveEnvironmentId)
+                          navigation.navigate("SettingsPersonaEdit", {
+                            environmentId: effectiveEnvironmentId,
+                            initial: persona.edit,
+                          });
+                      }
+                    : null
+                }
+                onDetails={() => setViewing(persona.personaId)}
+                onDuplicate={() => void duplicatePersona(persona.personaId)}
+                onExport={() => void exportPersona(persona.personaId)}
+                onCopy={(target) => void copyPersona(persona.personaId, target)}
+                onRemove={() => void removePersona(persona.personaId)}
+                onRestore={() => void restorePersona(persona.personaId)}
+              />
+            ))
+          )}
+          {Platform.OS === "web" || effectiveEnvironmentId === null ? null : (
+            <>
+              <View className="border-t border-border-subtle" />
+              <SettingsActionRow
+                icon="doc.text"
+                label="Import persona file"
+                disabled={locked}
+                onPress={() => void importSelection("agent")}
+              />
+              <View className="border-t border-border-subtle" />
+              <SettingsActionRow
+                icon="folder"
+                label="Import a folder of personas"
+                disabled={locked}
+                onPress={() => void importSelection("folder")}
+              />
+            </>
+          )}
         </SettingsSection>
 
         {effectiveEnvironmentId !== null ? (
-          <SettingsSection title="Library sources">
-            <View className="gap-2">
-              <View className="rounded-2xl bg-card px-4 py-3">
-                <Text className="text-sm text-foreground-muted">
-                  Folders this environment reads YAML definitions from. Paths are on the
-                  environment’s machine; relative paths resolve from its state directory.
-                </Text>
-              </View>
-              {librarySources.isPending ? (
-                <AgentMessage title="Loading folders" />
-              ) : librarySources.error ? (
-                <AgentMessage title={librarySources.error} />
-              ) : librarySources.data ? (
-                <>
-                  {librarySources.data.folders.length === 0 ? (
-                    <AgentMessage title="No source folders. Only personal and imported personas are available." />
-                  ) : null}
-                  {librarySources.data.folders.map((folder) => {
-                    const nudges = agentPersonaFolderNudges(folder.git);
-                    return (
-                      <View
-                        key={folder.configuredPath}
-                        className="gap-2 rounded-2xl bg-card px-4 py-3"
-                      >
-                        <View className="flex-row items-center gap-3">
-                          <View className="min-w-0 flex-1 gap-1">
-                            <Text className="text-base font-t3-medium text-foreground">
-                              {folder.configuredPath}
-                            </Text>
-                            {folder.path !== folder.configuredPath ? (
-                              <Text className="text-xs text-foreground-muted">{folder.path}</Text>
-                            ) : null}
-                          </View>
-                          <View
-                            className={cn(
-                              "rounded-full border px-2 py-0.5",
-                              folder.exists || !librarySources.data?.configured
-                                ? "border-border"
-                                : "border-danger-foreground/30",
-                            )}
-                          >
-                            <Text
-                              className={cn(
-                                "text-xs font-t3-medium",
-                                folder.exists || !librarySources.data?.configured
-                                  ? "text-foreground-muted"
-                                  : "text-danger-foreground",
-                              )}
-                            >
-                              {agentPersonaFolderStatusLabel(
-                                folder,
-                                librarySources.data?.configured,
-                              )}
-                            </Text>
-                          </View>
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`Stop reading ${folder.configuredPath}`}
-                            accessibilityState={{ disabled: locked }}
-                            disabled={locked}
-                            className="size-11 items-center justify-center rounded-lg border border-danger-foreground/30 disabled:opacity-40"
-                            onPress={() =>
-                              void saveFolders(
-                                (librarySources.data?.folders ?? [])
-                                  .map(({ configuredPath }) => configuredPath)
-                                  .filter((candidate) => candidate !== folder.configuredPath),
-                              )
-                            }
-                          >
-                            <SymbolView
-                              name="trash"
-                              size={18}
-                              tintColorClassName="accent-danger-foreground"
-                              type="monochrome"
-                            />
-                          </Pressable>
-                        </View>
-                        {nudges.map((nudge) => (
-                          <Text key={nudge} className="text-sm text-foreground">
-                            {nudge}
-                          </Text>
-                        ))}
-                      </View>
-                    );
-                  })}
-                  <View className="gap-2 rounded-2xl bg-card px-4 py-3">
-                    <Text className="text-sm text-foreground-muted">
-                      {librarySources.data.configured
-                        ? "Files are read on every catalog request, so edits and git pulls apply without a restart."
-                        : "Bundled examples appear until a folder is configured or the default folder exists. Adding a folder writes agent-personas.json."}
-                    </Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Add folder"
-                      accessibilityState={{ disabled: locked }}
-                      disabled={locked}
-                      className="flex-row items-center gap-2 self-start rounded-lg border border-border px-4 py-3 disabled:opacity-40"
-                      onPress={() => setPickingFolder(true)}
-                    >
-                      <SymbolView
-                        name="folder"
-                        size={14}
-                        tintColorClassName="accent-icon"
-                        type="monochrome"
-                      />
-                      <Text className="text-sm text-foreground">Add folder</Text>
-                    </Pressable>
-                  </View>
-                </>
-              ) : null}
-            </View>
+          <SettingsSection
+            title="Library sources"
+            footer={
+              librarySources.data?.configured === false
+                ? "Folders this environment reads YAML definitions from, on its machine. Bundled examples appear until a folder is configured or the default folder exists. Adding a folder writes agent-personas.json."
+                : "Folders this environment reads YAML definitions from, on its machine; relative paths resolve from its state directory. Files are read on every catalog request, so edits and git pulls apply without a restart."
+            }
+          >
+            {librarySources.isPending ? (
+              <InfoRow text="Loading folders" />
+            ) : librarySources.error ? (
+              <InfoRow tone="danger" text={librarySources.error} />
+            ) : folders.length === 0 ? (
+              <InfoRow text="No source folders. Only personal and imported personas are available." />
+            ) : (
+              folders.map((folder, index) => (
+                <FolderRow
+                  key={folder.configuredPath}
+                  folder={folder}
+                  configured={librarySources.data?.configured}
+                  borderTop={index > 0}
+                  locked={locked}
+                  onRemove={() =>
+                    void saveFolders(
+                      folders
+                        .map(({ configuredPath }) => configuredPath)
+                        .filter((candidate) => candidate !== folder.configuredPath),
+                    )
+                  }
+                />
+              ))
+            )}
+            <View className="border-t border-border-subtle" />
+            <SettingsActionRow
+              icon="plus"
+              label="Add folder"
+              disabled={locked}
+              onPress={() => setPickingFolder(true)}
+            />
           </SettingsSection>
         ) : null}
         <SettingsSection title="Playbooks">
           <PlaybookLibrarySettingsSection environmentId={effectiveEnvironmentId} />
         </SettingsSection>
-      </ScrollView>
+      </ScreenScrollView>
       {notification ? (
         <AgentLibraryToast notification={notification} onDismiss={dismissNotification} />
       ) : null}
       {pickingFolder && effectiveEnvironmentId ? (
         <AgentFolderPickerModal
           environmentId={effectiveEnvironmentId}
-          environmentLabel={
-            connectedEnvironments.find(
-              (environment) => environment.environmentId === effectiveEnvironmentId,
-            )?.environmentLabel ?? "this environment"
-          }
+          environmentLabel={environmentLabel}
           onClose={() => setPickingFolder(false)}
           onSelect={(path) => {
             setPickingFolder(false);
-            void saveFolders([
-              ...(librarySources.data?.folders ?? []).map(({ configuredPath }) => configuredPath),
-              path,
-            ]);
+            void saveFolders([...folders.map(({ configuredPath }) => configuredPath), path]);
           }}
         />
       ) : null}
-      {creating && effectiveEnvironmentId ? (
-        <AgentCreateModal
+      {viewedPersona && effectiveEnvironmentId ? (
+        <AgentDetailsModal
+          key={`${effectiveEnvironmentId}:${viewedPersona.personaId}`}
           environmentId={effectiveEnvironmentId}
-          {...(creating.initial ? { initial: creating.initial } : {})}
-          onClose={() => setCreating(null)}
-          onCreated={(displayName) => {
-            setCreating(null);
-            setNotification({ type: "success", title: `Created ${displayName}` });
-            catalog.refresh();
-          }}
+          persona={viewedPersona}
+          usageLine={(() => {
+            const entry = usageById.get(viewedPersona.personaId);
+            return entry === undefined ? null : presentAgentPersonaUsage(entry).line;
+          })()}
+          onClose={() => setViewing(null)}
         />
       ) : null}
-      {editing ? (
-        <AgentEditorModal
-          key={`${editing.environmentId}:${editing.initial.personaId}`}
-          {...editing}
-          onClose={() => {
-            setEditing(null);
-            catalog.refresh();
-          }}
-          onSaved={() => {
-            setEditing(null);
-            catalog.refresh();
-          }}
-        />
-      ) : null}
-    </View>
+    </SettingsScreen>
   );
 }
 
@@ -843,10 +579,228 @@ async function shareAgentDefinition(fileName: string, yaml: string) {
   await Sharing.shareAsync(uri, { mimeType: "application/yaml", dialogTitle: fileName });
 }
 
-function AgentMessage(props: { readonly title: string }) {
+function InfoRow(props: {
+  readonly text: string;
+  readonly tone?: "danger";
+  readonly borderTop?: boolean;
+}) {
   return (
-    <View className="rounded-2xl bg-card px-4 py-4">
-      <Text className="text-base text-foreground-muted">{props.title}</Text>
+    <View className={cn("px-4 py-3", props.borderTop && "border-t border-border-subtle")}>
+      <Text
+        className={cn(
+          "text-base",
+          props.tone === "danger" ? "text-danger-foreground" : "text-foreground-muted",
+        )}
+      >
+        {props.text}
+      </Text>
+    </View>
+  );
+}
+
+type PresentedPersona = ReturnType<typeof presentAgentPersonaCatalog>[number];
+
+/** One persona as a settings row: name and status, its switch, and the rest in a menu. */
+function PersonaRow(props: {
+  readonly persona: PresentedPersona;
+  readonly borderTop: boolean;
+  readonly locked: boolean;
+  readonly busy: boolean;
+  readonly otherEnvironments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly environmentLabel: string;
+  }>;
+  readonly onToggle: (enabled: boolean) => void;
+  readonly onEdit: (() => void) | null;
+  readonly onDetails: () => void;
+  readonly onDuplicate: () => void;
+  readonly onExport: () => void;
+  readonly onCopy: (target: { environmentId: EnvironmentId; label: string }) => void;
+  readonly onRemove: () => void;
+  readonly onRestore: () => void;
+}) {
+  const { persona } = props;
+  const unavailable = !persona.removed && persona.availability !== "available";
+  const actions = personaRowActions(
+    { removed: persona.removed, editable: props.onEdit !== null },
+    props.otherEnvironments.length > 0,
+  );
+  const onEdit = actions.includes("edit") ? props.onEdit : null;
+  return (
+    <View
+      className={cn(
+        "flex-row items-center gap-2 py-2 pl-4 pr-1",
+        props.borderTop && "border-t border-border-subtle",
+      )}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          onEdit ? `Edit ${persona.displayName}` : `Details for ${persona.displayName}`
+        }
+        accessibilityHint={persona.description}
+        disabled={props.busy}
+        onPress={onEdit ?? props.onDetails}
+        className="min-w-0 flex-1 gap-0.5 py-1 active:opacity-70"
+      >
+        <Text
+          textRole="body"
+          className={
+            persona.enabled && !persona.removed ? "text-foreground" : "text-foreground-muted"
+          }
+          numberOfLines={1}
+        >
+          {persona.displayName}
+        </Text>
+        {persona.removed ? <Text className="text-sm text-foreground-muted">Removed</Text> : null}
+        {unavailable && persona.blockedReasons[0] ? (
+          <Text className="text-sm text-danger-foreground" numberOfLines={2}>
+            {persona.blockedReasons[0]}
+          </Text>
+        ) : null}
+      </Pressable>
+      {persona.removed ? null : (
+        <ThemedSwitch
+          // React Native's Switch sets alignSelf: flex-start, which ignores the row's centring.
+          style={{ alignSelf: "center" }}
+          value={persona.enabled}
+          disabled={props.locked}
+          accessibilityLabel={`Enable ${persona.displayName}`}
+          onValueChange={props.onToggle}
+        />
+      )}
+      <Menu
+        actions={actions.map((action) => {
+          switch (action) {
+            case "edit":
+              return { id: action, title: "Edit", attributes: { disabled: props.locked } };
+            case "details":
+              return { id: action, title: "Details" };
+            case "duplicate":
+              return {
+                id: action,
+                title: "Duplicate as personal persona",
+                attributes: { disabled: props.locked || persona.availability === "unsupported" },
+              };
+            case "export":
+              return { id: action, title: "Export YAML", attributes: { disabled: props.busy } };
+            case "copy":
+              return {
+                id: action,
+                title: "Copy to environment",
+                attributes: { disabled: props.busy },
+                subactions: props.otherEnvironments.map((environment) => ({
+                  id: `copy:${environment.environmentId}`,
+                  title: environment.environmentLabel,
+                })),
+              };
+            case "remove":
+              return {
+                id: action,
+                title: "Remove",
+                attributes: { destructive: true, disabled: props.locked },
+              };
+            case "restore":
+              return { id: action, title: "Restore", attributes: { disabled: props.locked } };
+          }
+        })}
+        onPressAction={({ nativeEvent }) => {
+          const action = nativeEvent.event;
+          if (action === "edit") onEdit?.();
+          else if (action === "details") props.onDetails();
+          else if (action === "duplicate") props.onDuplicate();
+          else if (action === "export") props.onExport();
+          else if (action === "remove") props.onRemove();
+          else if (action === "restore") props.onRestore();
+          else if (action.startsWith("copy:")) {
+            const target = props.otherEnvironments.find(
+              (environment) => `copy:${environment.environmentId}` === action,
+            );
+            if (target)
+              props.onCopy({ environmentId: target.environmentId, label: target.environmentLabel });
+          }
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`More actions for ${persona.displayName}`}
+          className="size-11 items-center justify-center"
+        >
+          <SymbolView
+            name="ellipsis"
+            size={18}
+            tintColorClassName="accent-icon"
+            type="monochrome"
+          />
+        </Pressable>
+      </Menu>
+    </View>
+  );
+}
+
+/** One source folder: its path on one line, its status, git nudges, and a menu to stop reading it. */
+function FolderRow(props: {
+  readonly folder: AgentPersonaLibraryFolder;
+  readonly configured: boolean | undefined;
+  readonly borderTop: boolean;
+  readonly locked: boolean;
+  readonly onRemove: () => void;
+}) {
+  const { folder } = props;
+  const nudges = agentPersonaFolderNudges(folder.git);
+  const missing = !folder.exists && props.configured !== false;
+  return (
+    <View
+      className={cn(
+        "flex-row items-center gap-2 py-2 pl-4 pr-1",
+        props.borderTop && "border-t border-border-subtle",
+      )}
+    >
+      <View className="min-w-0 flex-1 gap-0.5 py-1">
+        <Text textRole="body" className="text-foreground" numberOfLines={1} ellipsizeMode="middle">
+          {folder.configuredPath}
+        </Text>
+        {folder.path !== folder.configuredPath ? (
+          <Text className="text-sm text-foreground-muted" numberOfLines={1} ellipsizeMode="middle">
+            {folder.path}
+          </Text>
+        ) : null}
+        <Text
+          className={cn("text-sm", missing ? "text-danger-foreground" : "text-foreground-muted")}
+        >
+          {agentPersonaFolderStatusLabel(folder, props.configured)}
+        </Text>
+        {nudges.map((nudge) => (
+          <Text key={nudge} className="text-sm text-foreground">
+            {nudge}
+          </Text>
+        ))}
+      </View>
+      <Menu
+        actions={[
+          {
+            id: "remove",
+            title: "Stop reading this folder",
+            attributes: { destructive: true, disabled: props.locked },
+          },
+        ]}
+        onPressAction={({ nativeEvent }) => {
+          if (nativeEvent.event === "remove") props.onRemove();
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Actions for ${folder.configuredPath}`}
+          className="size-11 items-center justify-center"
+        >
+          <SymbolView
+            name="ellipsis"
+            size={18}
+            tintColorClassName="accent-icon"
+            type="monochrome"
+          />
+        </Pressable>
+      </Menu>
     </View>
   );
 }

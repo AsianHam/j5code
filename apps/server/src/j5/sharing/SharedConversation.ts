@@ -137,15 +137,20 @@ const MESSAGE_WRITTEN_EVENT =
 
 const QUEUED = "queued" satisfies OrchestrationV2Run["status"];
 
-/** A command as it goes on to upstream, and what is written once upstream takes it. */
-interface Admitted {
-  readonly command: OrchestrationV2Command;
+/**
+ * A command or launch as it goes on to upstream, what is written once upstream takes it, and
+ * what is undone if upstream refuses it.
+ */
+interface Admitted<C = OrchestrationV2Command> {
+  readonly command: C;
   readonly accepted: Effect.Effect<void, SqlError.SqlError>;
+  readonly refused: Effect.Effect<void, SqlError.SqlError>;
 }
 
-const admitted = (command: OrchestrationV2Command): Admitted => ({
+const admitted = <C>(command: C): Admitted<C> => ({
   command,
   accepted: Effect.void,
+  refused: Effect.void,
 });
 
 export interface SharedConversationShape {
@@ -161,15 +166,16 @@ export interface SharedConversationShape {
     dispatch: (command: OrchestrationV2Command) => Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | EnvironmentAuthorizationError, R>;
   /**
-   * A client's request to start a thread, as it goes on to upstream. A new thread's first message
-   * does not come as a command: upstream's launch sends it itself, so it is taken in here as
-   * `dispatch` takes in a message. A thread born under a scope that is already shared is a shared
-   * conversation from its first message.
+   * A client's request to start a thread, handed to upstream's launch. A new thread's first
+   * message does not come as a command: upstream's launch sends it itself, so it is taken in here
+   * as `dispatch` takes in a message. A thread born under a scope that is already shared is a
+   * shared conversation from its first message.
    */
-  readonly admitLaunch: (
+  readonly launch: <A, E, R>(
     personId: ParticipantId | null,
     input: OrchestrationV2ThreadLaunchInput,
-  ) => Effect.Effect<OrchestrationV2ThreadLaunchInput, EnvironmentAuthorizationError>;
+    launch: (input: OrchestrationV2ThreadLaunchInput) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | EnvironmentAuthorizationError, R>;
   /** Who sent each message and answered each prompt in a thread, for anyone who reads it. */
   readonly threadAuthors: (
     viewer: ParticipantId | null,
@@ -250,8 +256,9 @@ const make = Effect.gen(function* () {
   )`;
 
   /**
-   * A person's message taken in on a shared thread: recorded under its author, and returned as
-   * the agent will read it. A command goes on as typed (AC5).
+   * A person's message taken in on a shared thread: recorded under its author, which reserves its
+   * id, and returned as the agent will read it. A command goes on as typed (AC5). If upstream
+   * refuses it, the record is released, unless upstream stored a message under the id after all.
    */
   const stampMessage = Effect.fn("j5.sharing.sharedConversation.stampMessage")(function* (
     threadId: ThreadId,
@@ -260,14 +267,32 @@ const make = Effect.gen(function* () {
     author: Author,
     launchingIn: ProjectId | null,
   ) {
+    // An attempt releases only the record it wrote: an overlapping retry's holds the earlier one's.
+    const releaseIf = (reserved: boolean) =>
+      reserved
+        ? sql`
+            DELETE FROM j5_a2a_message_author
+            WHERE thread_id = ${threadId} AND message_id = ${messageId}
+              AND person_id = ${author.personId}
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_messages WHERE message_id = ${messageId}
+              )
+          `.pipe(Effect.andThen(touch(threadId)), Effect.asVoid)
+        : Effect.void;
     if (beginsWithSlash(text)) {
-      yield* recordAuthor(threadId, messageId, author, { note: null, told: null }, "");
-      return text;
+      const reserved = yield* recordAuthor(
+        threadId,
+        messageId,
+        author,
+        { note: null, told: null },
+        "",
+      );
+      return { text, release: releaseIf(reserved) };
     }
     const carried = yield* announce(threadId, launchingIn);
     const prefix = prefixOf(carried.note, authorLine(author));
-    yield* recordAuthor(threadId, messageId, author, carried, prefix);
-    return `${prefix}${text}`;
+    const reserved = yield* recordAuthor(threadId, messageId, author, carried, prefix);
+    return { text: `${prefix}${text}`, release: releaseIf(reserved) };
   });
 
   /** The message a queued run would deliver, by upstream's own record of the run. */
@@ -379,7 +404,7 @@ const make = Effect.gen(function* () {
         told_json = excluded.told_json,
         edited_by = excluded.edited_by
     `.pipe(Effect.andThen(touch(command.threadId)), Effect.asVoid);
-    return { command: { ...command, text }, accepted: record };
+    return { ...admitted({ ...command, text }), accepted: record };
   });
 
   /**
@@ -485,14 +510,14 @@ const make = Effect.gen(function* () {
         if (!(yield* shared.isShared(command.threadId))) return admitted(command);
         const author = yield* authorOn(personId, command.threadId);
         if (author === null) return admitted(command);
-        const text = yield* stampMessage(
+        const stamp = yield* stampMessage(
           command.threadId,
           command.messageId,
           command.text,
           author,
           null,
         );
-        return admitted({ ...command, text });
+        return { ...admitted({ ...command, text: stamp.text }), refused: stamp.release };
       }
       case "queued-run.edit": {
         if (!(yield* shared.isShared(command.threadId))) return admitted(command);
@@ -524,6 +549,11 @@ const make = Effect.gen(function* () {
   // Upstream has already taken the edit, so a failure to record it is logged and does not undo it.
   const notRecorded = (cause: unknown) =>
     Effect.logError("J5 shared conversation could not record a queued message's edit", { cause });
+  // A record left behind holds its old prefix and note for a retry under the same id.
+  const notReleased = (cause: unknown) =>
+    Effect.logError("J5 shared conversation could not release a refused message's record", {
+      cause,
+    });
 
   const dispatch: SharedConversationShape["dispatch"] = Effect.fn(
     "j5.sharing.sharedConversation.dispatch",
@@ -549,7 +579,9 @@ const make = Effect.gen(function* () {
       const marked = stamped.type === "runtime-request.respond" && stamped.answers !== undefined;
       yield* recordAnswer(personId, stamped, marked);
     }
-    const result = yield* dispatchUpstream(stamped);
+    const result = yield* dispatchUpstream(stamped).pipe(
+      Effect.onError(() => stamp.refused.pipe(Effect.catch(notReleased))),
+    );
     yield* stamp.accepted.pipe(Effect.catch(notRecorded));
     if (
       stamped.type === "runtime-request.respond" &&
@@ -560,9 +592,10 @@ const make = Effect.gen(function* () {
     return result;
   });
 
-  const admitLaunch: SharedConversationShape["admitLaunch"] = Effect.fn(
-    "j5.sharing.sharedConversation.admitLaunch",
-  )(function* (personId, input) {
+  const admitLaunch = Effect.fn("j5.sharing.sharedConversation.admitLaunch")(function* (
+    personId: ParticipantId | null,
+    input: OrchestrationV2ThreadLaunchInput,
+  ) {
     const first = input.initialMessage;
     if (first !== undefined && carriesPlatformRecord(first.context)) {
       return yield* refused("A message cannot carry a record of the platform's own.");
@@ -576,25 +609,41 @@ const make = Effect.gen(function* () {
       if (input.threadId !== undefined) {
         yield* shared.isShared(input.threadId, launchingIn).pipe(Effect.catch(failClosed));
       }
-      return input;
+      return admitted(input);
     }
     if (input.threadId === undefined) {
       // No thread is named, so the message cannot be recorded under one; on a project more
       // than one person writes to, that is a launch J5 cannot take in.
       const writers = yield* shared.projectWriters(input.projectId).pipe(Effect.catch(failClosed));
-      if (writers.length < 2) return input;
+      if (writers.length < 2) return admitted(input);
       return yield* refused("A thread in a shared project is started with its id.");
     }
     const threadId = input.threadId;
     return yield* Effect.gen(function* () {
-      if (!(yield* shared.isShared(threadId, launchingIn))) return input;
+      if (!(yield* shared.isShared(threadId, launchingIn))) return admitted(input);
       const author = yield* authorOn(personId, threadId, launchingIn);
-      if (author === null) return input;
+      if (author === null) return admitted(input);
       const messageId =
         first.messageId ?? MessageId.make(`message:j5:launch:${NodeCrypto.randomUUID()}`);
-      const text = yield* stampMessage(threadId, messageId, first.text, author, launchingIn);
-      return { ...input, initialMessage: { ...first, messageId, text } };
+      const stamp = yield* stampMessage(threadId, messageId, first.text, author, launchingIn);
+      return {
+        ...admitted({ ...input, initialMessage: { ...first, messageId, text: stamp.text } }),
+        refused: stamp.release,
+      };
     }).pipe(Effect.catch(failClosed));
+  });
+
+  const launch: SharedConversationShape["launch"] = Effect.fn(
+    "j5.sharing.sharedConversation.launch",
+  )(function* <A, E, R>(
+    personId: ParticipantId | null,
+    input: OrchestrationV2ThreadLaunchInput,
+    launchUpstream: (input: OrchestrationV2ThreadLaunchInput) => Effect.Effect<A, E, R>,
+  ) {
+    const stamp = yield* admitLaunch(personId, input);
+    return yield* launchUpstream(stamp.command).pipe(
+      Effect.onError(() => stamp.refused.pipe(Effect.catch(notReleased))),
+    );
   });
 
   /**
@@ -871,7 +920,7 @@ const make = Effect.gen(function* () {
 
   return SharedConversation.of({
     dispatch,
-    admitLaunch,
+    launch,
     threadAuthors,
     authorsChanges: (threadId) =>
       Stream.unwrap(

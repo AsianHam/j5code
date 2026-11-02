@@ -5,7 +5,7 @@ import { deriveTimelineMinimapItems } from "../../components/chat/timelineMinima
 import type { ChatMessage } from "../../types";
 import { isHumanAuthoredUserMessage } from "./minimapMessages";
 import { J5_A2A_DELIVERY_MESSAGE_PREFIX } from "./ThreadA2ARenderer";
-import { markSharedNote } from "../sharing/sharedTimeline.logic";
+import { markSharedNote } from "@t3tools/client-runtime/j5/shared-conversation";
 
 describe("timeline minimap items", () => {
   const message = (overrides: Omit<Partial<ChatMessage>, "id"> & { id: string }): ChatMessage => ({

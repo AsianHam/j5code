@@ -106,6 +106,10 @@ vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_environmentId: string, scope: string) => state.scopes.has(scope),
   readEnvironmentScope: (_environmentId: string, scope: string) => state.scopes.has(scope),
 }));
+// J5: a person's level is not what this tests, so adding a project needs only "Operate tasks".
+vi.mock("../../j5/sharing/startAccess", () => ({
+  useCanAddProject: () => state.scopes.has(AuthOrchestrationOperateScope),
+}));
 vi.mock("../../state/entities", () => ({
   useProjects: () => state.existingProjects,
   waitForProject: state.waitForProject,

@@ -53,6 +53,8 @@ import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { uuidv4 } from "../../lib/uuid";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useCanOperateThread } from "../../j5/sharing/guestAccess";
+import { useSharedConversationFeed } from "../../j5/sharing/sharedConversation";
+import { useStartableProjects } from "../../j5/sharing/startAccess";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
@@ -198,7 +200,8 @@ function ThreadUnavailableScreen(props: {
 /** A thread that can't load opens a new task in its environment instead of a dead end. */
 function UnavailableThreadDraftRedirect(props: { readonly environmentId: EnvironmentId }) {
   const navigation = useNavigation();
-  const projects = useProjects();
+  // J5: only a project the person may start a thread in (FORK.md case 90).
+  const projects = useStartableProjects(useProjects());
   const { layout } = useAdaptiveWorkspaceLayout();
   const openDraft = useEffectEvent(() => {
     const project = projects.find((candidate) => candidate.environmentId === props.environmentId);
@@ -356,6 +359,12 @@ function ThreadRouteContent(
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
+  // J5 (case 99): a shared conversation shows each person's message as they typed it.
+  const selectedThreadFeed = useSharedConversationFeed(
+    selectedThread?.environmentId ?? null,
+    selectedThread?.id ?? null,
+    composer.selectedThreadFeed,
+  );
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
@@ -992,7 +1001,7 @@ function ThreadRouteContent(
           environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
           feedbackSubmissions={composer.feedbackSubmissions}
           onDismissFeedback={composer.dismissFeedback}
-          selectedThreadFeed={composer.selectedThreadFeed}
+          selectedThreadFeed={selectedThreadFeed}
           pendingHandoff={composer.pendingHandoff}
           activityRun={composer.selectedThreadActivityRun}
           activeWorkStartedAt={
