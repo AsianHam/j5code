@@ -764,6 +764,9 @@ async function startMetro(
             APP_VARIANT: "development",
             // The host the manifest's bundle URL names, as the device reaches Metro.
             REACT_NATIVE_PACKAGER_HOSTNAME: deviceHost(record),
+            // One bundle, as a release build has. A lazy chunk that fails to load at launch can fail
+            // every `import("expo-file-system")`, which then reads as a storage error.
+            EXPO_NO_METRO_LAZY: "1",
             BROWSER: "none",
           },
           log: metroLog,
