@@ -1,9 +1,8 @@
 import { agentPersonaMentionItems } from "@t3tools/client-runtime/j5/agent-mentions";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 
-import { AppText as Text } from "../../components/ui/AppText";
-import { SymbolView } from "../../components/ui/AppSymbol";
+import { ComposerInlineControl } from "../../components/ComposerToolbar";
 import { Menu } from "../../components/ui/Menu";
 import { useEnvironmentQuery } from "../../state/query";
 import { selectDraftAgent } from "./agentDraftState";
@@ -34,21 +33,13 @@ export function AgentDraftPicker(props: {
             selectDraftAgent(props.draftKey, nativeEvent.event.slice("agent:".length));
         }}
       >
-        <Pressable
-          accessibilityRole="button"
+        <ComposerInlineControl
           accessibilityLabel="Start this task as a persona"
-          accessibilityState={{ disabled: props.disabled === true }}
           disabled={props.disabled}
-          className="h-9 flex-row items-center gap-1.5 rounded-full border border-border px-3 disabled:opacity-40"
-        >
-          <SymbolView
-            name="person.crop.circle"
-            size={14}
-            tintColorClassName="accent-icon"
-            type="monochrome"
-          />
-          <Text className="text-sm text-foreground">Persona</Text>
-        </Pressable>
+          icon="person.crop.circle"
+          label="Persona"
+          showChevron={false}
+        />
       </Menu>
     </View>
   );
