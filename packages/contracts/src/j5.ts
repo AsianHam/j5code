@@ -200,6 +200,7 @@ export const CrewProposal = Schema.Struct({
   captainThreadId: Schema.String,
   crewInstanceId: Schema.NullOr(Schema.String),
   kind: Schema.Literals(["roster", "addition"]),
+  approvalMode: Schema.optionalKey(Schema.Literals(["human", "automatic"])),
   status: Schema.Literals(["open", "approved", "declined"]),
   displayName: Schema.String,
   brief: Schema.String,

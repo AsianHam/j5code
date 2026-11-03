@@ -238,6 +238,7 @@ const crewProposalNextStep = (error: CrewProposalError) =>
 const projectCrewProposal = (outcome: CrewProposalOutcome) => ({
   proposal_id: outcome.proposal.id,
   status: outcome.proposal.status,
+  approval_mode: outcome.proposal.approvalMode ?? "human",
   crew_instance_id: outcome.instance?.id ?? null,
   members: (outcome.instance?.members ?? []).map((member) => ({
     seat: member.seatName,
@@ -795,7 +796,7 @@ const handlers = {
           Effect.mapError((error) =>
             stateError(
               `The persona library cannot be read: ${error.message}`,
-              "Ask the user to fix the persona library in Settings → Personas, then retry j5_list_personas.",
+              "Ask the user to fix the persona library in Settings → Agent Setup, then retry j5_list_personas.",
             ),
           ),
         );

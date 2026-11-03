@@ -247,7 +247,7 @@ describe("Playbook Author installation", () => {
             throw new Error("must not replace");
           },
         }),
-      ).rejects.toThrow("Settings → Personas");
+      ).rejects.toThrow("Settings → Agent Setup");
     },
   );
 

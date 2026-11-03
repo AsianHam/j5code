@@ -284,4 +284,15 @@ describe("crew launch report", () => {
     assert.include(text, "Your crew is running.");
     assert.notInclude(text, "seat_failed");
   });
+  it("identifies automatic approval without attributing it to a person", () => {
+    const text = crewLaunchReportText({
+      proposal: { ...proposal, approvalMode: "automatic" },
+      instance,
+      verdicts: new Map(),
+      windowMs: 60_000,
+    });
+    assert.include(text, "approval_mode: automatic");
+    assert.include(text, "decision: approved");
+    assert.notInclude(text, "decided_by:");
+  });
 });

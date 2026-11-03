@@ -54,8 +54,8 @@ it("gives custom seats direct result and concern reporting without a mandatory a
     "use j5_send_message to coordinate directly with your Captain and other members",
   );
   assert.include(text, "final result, supporting evidence, and any remaining blockers");
-  assert.include(text, "j5_request_crew_member through the user's inbox");
-  assert.include(text, "Continue already-approved work and coordination");
+  assert.include(text, "j5_request_crew_member to add the seat directly");
+  assert.include(text, "Continue your work and coordination");
   assert.include(text, "A direct result is sufficient");
   assert.include(text, `<seat_instructions>\n${crew.seatInstructions}\n</seat_instructions>`);
   assert.notInclude(text, "<seat_obligation>");

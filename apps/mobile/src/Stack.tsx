@@ -352,7 +352,7 @@ const SETTINGS_SCREENS = {
     linking: "settings/personas",
     options: {
       ...SETTINGS_PAGE_OPTIONS,
-      title: "Personas",
+      title: "Agent Setup",
     },
   }),
   ...j5SettingsFormRoutes(SETTINGS_PAGE_OPTIONS),

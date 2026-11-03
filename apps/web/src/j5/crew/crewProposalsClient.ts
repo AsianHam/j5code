@@ -60,7 +60,7 @@ export const refreshCrewProposals = (environmentId?: EnvironmentId) =>
     ...(environmentId === undefined ? {} : { environmentId }),
   });
 
-/** The bell, the inbox page, and every composer's inline gate share this one refresh on focus. */
+/** Every composer's inline gate shares this refresh on focus. */
 export const useCrewProposalsRefresh = createVisibleRefreshHook(() => {
   void refreshJ5Sources(crewProposalSourcesAtom, crewProposalsQueryAtom);
 });

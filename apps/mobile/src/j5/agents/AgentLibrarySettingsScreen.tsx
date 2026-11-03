@@ -48,7 +48,7 @@ import { PlaybookLibrarySettingsSection } from "../playbooks/PlaybookLibrarySett
 export function AgentLibrarySettingsScreen() {
   // Personas and Playbooks are managed by a server's Owners (People and access AC27).
   return useOwnerSomewhere() === false ? (
-    <SettingsScreen title="Personas">
+    <SettingsScreen title="Agent Setup">
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="px-5 pt-4"
@@ -320,7 +320,7 @@ function OwnerAgentLibrarySettingsScreen() {
 
   return (
     <SettingsScreen
-      title="Personas"
+      title="Agent Setup"
       actions={[
         {
           accessibilityLabel: "Create persona",
@@ -408,10 +408,10 @@ function OwnerAgentLibrarySettingsScreen() {
         ) : null}
 
         <SettingsSection
-          title="Personas"
+          title="Agent Setup"
           footer={
             Platform.OS === "web"
-              ? "Use Settings → Personas in the web app to import files."
+              ? "Use Settings → Agent Setup in the web app to import files."
               : "In a Codex or Claude conversation, type @persona:id, or @ and the start of a persona’s name, to run a persona as a subagent."
           }
         >

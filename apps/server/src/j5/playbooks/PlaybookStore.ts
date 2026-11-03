@@ -83,7 +83,7 @@ const stepPersonaWarnings = (
         stepId: step.id,
         persona: step.persona,
         message: unverified
-          ? `Step "${step.id}" names persona "${step.persona}", which could not be checked because some persona files are invalid. Check Settings → Personas.`
+          ? `Step "${step.id}" names persona "${step.persona}", which could not be checked because some persona files are invalid. Check Settings → Agent Setup.`
           : problem === "missing"
             ? `Step "${step.id}" names persona "${step.persona}", which is not in this environment's library.`
             : `Step "${step.id}" names persona "${step.persona}", which is turned off.`,

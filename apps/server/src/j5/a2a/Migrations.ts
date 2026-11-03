@@ -48,6 +48,7 @@ import Migration0044 from "./migrations/044_QueuedMessageEdits.ts";
 import Migration0045 from "./migrations/045_McpClientApprovers.ts";
 import Migration0046 from "./migrations/046_LocalDeliveryOrder.ts";
 import Migration0047 from "./migrations/047_RequestReplay.ts";
+import Migration0048 from "./migrations/048_CrewApprovalMode.ts";
 
 export const J5_A2A_MIGRATIONS_TABLE = "j5_a2a_migrations";
 
@@ -106,6 +107,7 @@ export const migrationEntries = [
   [45, "McpClientApprovers", Migration0045],
   [46, "LocalDeliveryOrder", Migration0046],
   [47, "RequestReplay", Migration0047],
+  [48, "CrewApprovalMode", Migration0048],
 ] as const;
 
 const makeMigrationLoader = (throughId?: number) =>

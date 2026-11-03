@@ -2355,6 +2355,7 @@ it.effect("routes crew proposals through a captain that is not itself a crew mem
       assert.deepStrictEqual(proposed.result, {
         proposal_id: `proposal:${invocation.providerSessionId}:propose-1`,
         status: "open",
+        approval_mode: "human",
         crew_instance_id: null,
         members: [],
       });

@@ -24,7 +24,7 @@ export const J5DelegateTaskInput = Schema.Struct({
   persona: Schema.optional(
     AgentPersonaId.annotate({
       description:
-        "Persona ID to run the child as, taken from an @persona:ID mention or the Settings → Personas library. The server applies its instructions, model route, reasoning, and runtime policy; omit target and runtimeMode when passing persona.",
+        "Persona ID to run the child as, taken from an @persona:ID mention or the Settings → Agent Setup library. The server applies its instructions, model route, reasoning, and runtime policy; omit target and runtimeMode when passing persona.",
     }),
   ),
 });

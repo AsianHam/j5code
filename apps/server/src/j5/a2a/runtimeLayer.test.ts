@@ -116,6 +116,7 @@ const measureNestedRuntimeBuilds = (nested: "http" | "mcp") =>
           nested === "mcp" ? mcpConsumer.pipe(Layer.provide(Layer.fresh(runtime))) : mcpConsumer,
         ).pipe(
           Layer.provide(runtime),
+          Layer.provide(ServerSettingsService.layerTest()),
           Layer.provide(quietAccessLayer),
           Layer.provide(threadManagement),
           Layer.provide(emptyEventStore),

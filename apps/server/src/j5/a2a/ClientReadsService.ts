@@ -374,6 +374,7 @@ export const layer: Layer.Layer<
           );
       }),
       crewProposals: proposals.listOpen().pipe(
+        Effect.map((items) => items.filter((proposal) => proposal.approvalMode !== "automatic")),
         Effect.flatMap((open) => Effect.forEach(open, projectProposal)),
         Effect.map((listed) => ({ proposals: listed })),
       ),

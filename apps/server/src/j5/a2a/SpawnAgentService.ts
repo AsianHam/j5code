@@ -189,7 +189,7 @@ const preflightThreadSpawner = Effect.fn("j5.a2a.mcp.preflightThreadSpawner")(fu
   scope: McpThreadInvocationScope,
 ) {
   const caller = yield* preflightSpawnCaller(scope);
-  // Only a Captain grows a Crew, and only through the human gate (Bryant, 2026-09-14): a seat
+  // Only a Captain grows a Crew: a seat
   // that wants more hands escalates to its Captain; its own helpers are subagents.
   const membership = yield* (yield* AgentCrewInstanceService.AgentCrewInstanceService)
     .findMembership(caller.participantId)

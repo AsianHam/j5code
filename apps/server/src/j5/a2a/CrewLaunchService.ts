@@ -469,9 +469,8 @@ export const layer = Layer.effect(
                     }),
                 ),
               );
-        // Every seat reaching this point was approved by a human, and that approval is the
-        // authority: explicit runtime choices override the persona sandbox while its behavior
-        // instructions remain pinned to the original snapshot.
+        // Explicit runtime choices override the persona sandbox for both human-approved and
+        // automatic launches; behavior instructions stay pinned to the original snapshot.
         const policy = translateAgentPersonaProviderPolicy(
           assignment.authorityPolicy,
           assignment.resolvedDriver,

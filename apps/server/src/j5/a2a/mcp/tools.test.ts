@@ -128,10 +128,8 @@ it("publishes the ratified single-target lifecycle contracts fail-closed", () =>
   assert.include(J5ArchiveCrewTool.description ?? "", "confirmation_token");
   assert.include(J5ArchiveCrewTool.description ?? "", "check with the user");
   assert.isTrue(Context.get(J5ArchiveCrewTool.annotations, Tool.Destructive));
-  // Proposals only file a human-gated request, and must say so: read-only Captains run with
-  // approval policy never and have refused the brief when the gate looked like a shell approval.
-  assert.isFalse(Context.get(J5ProposeCrewTool.annotations, Tool.Destructive));
-  assert.isFalse(Context.get(J5RequestCrewMemberTool.annotations, Tool.Destructive));
+  assert.isTrue(Context.get(J5ProposeCrewTool.annotations, Tool.Destructive));
+  assert.isTrue(Context.get(J5RequestCrewMemberTool.annotations, Tool.Destructive));
   assert.include(J5ProposeCrewTool.description ?? "", "including approval policy never");
   assert.include(J5RequestCrewMemberTool.description ?? "", "including approval policy never");
   // Declared handoffs are written by the seat itself with the project j5_write_artifact tool
