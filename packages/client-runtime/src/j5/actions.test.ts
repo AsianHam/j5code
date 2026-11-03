@@ -184,7 +184,6 @@ describe("J5 action commands", () => {
       for (const command of [
         atoms.resolveCrewProposal,
         atoms.stopCrew,
-        atoms.archiveCrew,
         atoms.respondCrewRuntimeRequest,
         atoms.answerHumanExchange,
         atoms.deleteArtifact,
@@ -193,10 +192,12 @@ describe("J5 action commands", () => {
         expect(command.requiredScopes()).toEqual([AuthOrchestrationOperateScope]);
         expect(registry.get(command.permissionAtom(work))).toBe(true);
       }
-      // The Playbook library is changed by Owners only, and so are an archive's kept worktrees.
+      // The Playbook library is changed by Owners only, and so are archiving a Crew and removing
+      // the worktrees its archive kept.
       for (const command of [
         atoms.deletePlaybook,
         atoms.renamePlaybook,
+        atoms.archiveCrew,
         atoms.answerCrewWorktreeCleanup,
       ]) {
         expect(command.requiredScopes()).toEqual([AuthSettingsWriteScope]);
@@ -239,7 +240,10 @@ describe("J5 action commands", () => {
           ? Effect.die(`Unknown request tag: ${method}`)
           : Effect.die("Unknown request tag: something.else"),
       );
-      registry.set(sessions(work), AsyncResult.success(granting([AuthOrchestrationOperateScope])));
+      registry.set(
+        sessions(work),
+        AsyncResult.success(granting([AuthOrchestrationOperateScope, AuthSettingsWriteScope])),
+      );
       const outdated = yield* Effect.promise(() =>
         atoms.archiveCrew.run(registry, {
           environmentId: work,

@@ -425,6 +425,7 @@ describe("J5 client action RPC scopes", () => {
                 requiredPermission: method.startsWith("j5.peers.")
                   ? AuthAccessWriteScope
                   : method.startsWith("j5.playbooks.") ||
+                      method === ACTIONS.archiveCrew ||
                       method === ACTIONS.answerCrewWorktreeCleanup
                     ? AuthSettingsWriteScope
                     : AuthOrchestrationOperateScope,
@@ -475,12 +476,13 @@ describe("J5 client action RPC handlers", () => {
         crewInstanceId: "crew:1",
         members: [],
       });
+      // Archiving a Crew and removing the worktrees it kept are an Owner's call, which the
+      // settings scope stands for.
+      const owner = yield* clientFor([...operator, AuthSettingsWriteScope]);
       assert.equal(
-        (yield* client[ACTIONS.archiveCrew]({ crewInstanceId: "crew:1" })).status,
+        (yield* owner.client[ACTIONS.archiveCrew]({ crewInstanceId: "crew:1" })).status,
         "archived",
       );
-      // Removing worktrees is an Owner's call, which the settings scope stands for.
-      const owner = yield* clientFor([...operator, AuthSettingsWriteScope]);
       assert.equal(
         (yield* owner.client[ACTIONS.answerCrewWorktreeCleanup]({
           itemId: "cleanup:1",
@@ -505,15 +507,8 @@ describe("J5 client action RPC handlers", () => {
         yield* client[J5_ARTIFACT_WS_METHODS.deleteArtifact]({ projectId, path: "plan.md" }),
         { deleted: true },
       );
-      assert.deepStrictEqual(handled, [
-        "resolve",
-        "stop",
-        "archive",
-        "respond",
-        "answer",
-        "delete artifact",
-      ]);
-      assert.deepStrictEqual(owner.handled, ["cleanup"]);
+      assert.deepStrictEqual(handled, ["resolve", "stop", "respond", "answer", "delete artifact"]);
+      assert.deepStrictEqual(owner.handled, ["archive", "cleanup"]);
     }).pipe(Effect.scoped),
   );
 
@@ -565,7 +560,11 @@ describe("J5 client action RPC handlers", () => {
 
   it.effect("tells a server-side failure in the action's general words, never its cause", () =>
     Effect.gen(function* () {
-      const { client } = yield* clientFor([...operator, AuthAccessWriteScope]);
+      const { client } = yield* clientFor([
+        ...operator,
+        AuthAccessWriteScope,
+        AuthSettingsWriteScope,
+      ]);
       assert.deepInclude(
         yield* client[ACTIONS.stopCrew]({ crewInstanceId: "crew:broken" }).pipe(Effect.flip),
         { code: "CrewStopOperationError", message: "Stopping the crew failed." },

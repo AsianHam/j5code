@@ -44,7 +44,7 @@ export const CLIENT_ACTION_RPC_SCOPES = {
   [METHODS.previewCrewProposal]: AuthOrchestrationReadScope,
   [METHODS.resolveCrewProposal]: AuthOrchestrationOperateScope,
   [METHODS.stopCrew]: AuthOrchestrationOperateScope,
-  [METHODS.archiveCrew]: AuthOrchestrationOperateScope,
+  [METHODS.archiveCrew]: AuthSettingsWriteScope,
   [METHODS.respondCrewRuntimeRequest]: AuthOrchestrationOperateScope,
   [METHODS.answerHumanExchange]: AuthOrchestrationOperateScope,
   [METHODS.answerCrewWorktreeCleanup]: AuthSettingsWriteScope,

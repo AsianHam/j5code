@@ -35,11 +35,14 @@ describe("J5 client RPC permissions", () => {
     expect(CLIENT_GUARDED_RPC_SCOPES[J5_CLIENT_ACTION_WS_METHODS.addPeer]).toBe(
       AuthAccessWriteScope,
     );
-    // The server lets only an Owner answer, and only an Owner's device holds this scope, so a
+    // The server lets only an Owner do these, and only an Owner's device holds this scope, so a
     // Collaborator's buttons read as unavailable.
-    expect(CLIENT_GUARDED_RPC_SCOPES[J5_CLIENT_ACTION_WS_METHODS.answerCrewWorktreeCleanup]).toBe(
-      AuthSettingsWriteScope,
-    );
+    for (const method of [
+      J5_CLIENT_ACTION_WS_METHODS.archiveCrew,
+      J5_CLIENT_ACTION_WS_METHODS.answerCrewWorktreeCleanup,
+    ]) {
+      expect(CLIENT_GUARDED_RPC_SCOPES[method], method).toBe(AuthSettingsWriteScope);
+    }
   });
 
   it("guard a connection's commands on its own place with read, which every device holds", () => {

@@ -340,8 +340,8 @@ function FleetNodeRows(
   const { node, seatBadge, ...rows } = props;
   const { project: ledgerProject } = rows;
   const { environmentId } = ledgerProject;
-  // Stop and Archive need the same grant; either command answers for both.
   const canOperate = useAtomValue(j5Environment.stopCrew.permissionAtom(environmentId));
+  const canArchive = useAtomValue(j5Environment.archiveCrew.permissionAtom(environmentId));
   // "What is the state of this Crew?" from the seats' measured facts, no Playbook required.
   const crewState = (members: ReadonlyArray<FleetRow>) =>
     summarizeCrewState(
@@ -483,7 +483,7 @@ function FleetNodeRows(
                       ) : null}
                       <Button
                         aria-label={`Archive crew ${crew.crewName}`}
-                        disabled={!canOperate || busy === crew.crewInstanceId}
+                        disabled={!canArchive || busy === crew.crewInstanceId}
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
