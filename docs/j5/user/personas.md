@@ -42,7 +42,7 @@ An agent can also start a persona as a peer with its own top-level task by namin
 
 ## Crews
 
-A crew is a group of agents that one agent, the Captain, runs as a unit for one piece of work. Ask the agent in your current conversation to put a crew together, using ordinary chat. For example:
+A crew is a group of agents that one agent, the Captain, runs as a unit for one piece of work. Ask the agent in your current conversation to put a crew together, using ordinary chat. Ask for a crew and you get one. If you don't ask, the agent decides from the work whether a crew fits: it uses one when the workers must respond to each other, such as a builder and reviewers going back and forth on a change, and hands independent pieces to subagents instead. For example:
 
 > Put together a crew to follow @docs/runbooks/release.md for the 2.4 release and report back when the PR is green.
 
@@ -59,7 +59,7 @@ A conversation on any harness can propose a crew. On **Codex** and **Claude**, t
 - **Cursor** proposes a crew only when the conversation runs in **Full access**. In other modes, a Cursor team admin can add the t3-code tools to the team's MCP tool allowlist.
 - An OpenCode conversation on an external server cannot propose a crew.
 
-Members can talk directly to each other and their Captain, and Captains can coordinate with other Captains. They share findings, questions, blockers, and results as messages while work continues; creating a report is not a prerequisite for communication. Active Codex GPT 6 runs can receive peer messages during work; other models and providers receive queued messages at the next safe turn boundary.
+Members can talk directly to each other and their Captain, and Captains can coordinate with other Captains. They share findings, questions, blockers, and results as messages while work continues; creating a report is not a prerequisite for communication. Active Codex GPT 6 and Claude runs take peer messages during work; other models and providers queue them for the next safe turn boundary.
 
 When a member needs help, it tells the Captain. The Captain can add another member directly, explaining the gap and assignment. No approval is needed for additions. Provider sign-in, capacity, and member configuration checks still apply; each member's access still controls its tool approvals in the Inbox. Existing addition requests from an older version can be approved or declined above their Captain's composer.
 

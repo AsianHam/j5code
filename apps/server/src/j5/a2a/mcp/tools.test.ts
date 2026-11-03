@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
+import { J5DelegateTaskTool } from "../../agents/agentDelegation.ts";
 import { A2A_SEND_TOOL_DESCRIPTION } from "../EnvelopeFormatter.ts";
 import { J5AttachmentUploadToolkit } from "./attachments.ts";
 import { J5AdaptedThreadToolkit } from "./threadTools.ts";
@@ -258,6 +259,21 @@ it("refuses a blank spawn title and stores it trimmed", () => {
   };
   assert.throws(() => decodeSpawnAgent({ ...spawn, title: "   " }));
   assert.equal(decodeSpawnAgent({ ...spawn, title: " Login fixer " }).title, "Login fixer");
+});
+
+it("says which of the two ways to get help each tool serves", () => {
+  // j5_spawn_agent serves neither: it is for a Peer Agent the user asked for.
+  assert.include(J5_SPAWN_AGENT_DESCRIPTION, "explicitly asks for a Peer Agent");
+  assert.include(
+    J5_SPAWN_AGENT_DESCRIPTION,
+    "When nobody asked for one, it is not a way to get help with your own work",
+  );
+  assert.include(J5_SPAWN_AGENT_DESCRIPTION, "create a subagent");
+  assert.include(J5_PROPOSE_CREW_DESCRIPTION, "the second of the two ways to get help");
+  assert.include(J5_PROPOSE_CREW_DESCRIPTION, "Use it when the user asks for a crew");
+  assert.notInclude(J5_PROPOSE_CREW_DESCRIPTION, "does not decide it");
+  assert.include(J5_REQUEST_CREW_MEMBER_DESCRIPTION, "the second of the two ways to get help");
+  assert.include(J5DelegateTaskTool.description, "the first of the two ways to get help");
 });
 
 it("tells a Captain proposing a crew how a playbook shapes the roster", () => {

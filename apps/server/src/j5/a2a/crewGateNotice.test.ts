@@ -282,6 +282,10 @@ describe("crew launch report", () => {
       "launch: 2 started, 0 failed, 0 not created, 0 start unconfirmed after 60s",
     );
     assert.include(text, "Your crew is running.");
+    assert.include(
+      text,
+      "resolve technical disagreements within the agreed scope yourself, and ask the user only when product intent or their judgment is needed",
+    );
     assert.notInclude(text, "seat_failed");
   });
   it("identifies automatic approval without attributing it to a person", () => {

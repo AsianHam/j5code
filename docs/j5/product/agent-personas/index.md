@@ -205,7 +205,7 @@ Settings → Agent Setup displays the selected environment's persona library, in
 
 Activation continues through the existing orchestrator launch contract. No direct persona picker or editor is added in this slice. A launched task shows its snapshotted display name and fixed route. Runtime activity for launched provider children stays in upstream's Lineage section and subagent cards, separate from the persona library.
 
-Agents can also launch a persona as a Peer Agent: `j5_spawn_agent` accepts an optional `agent` id, keeps provider, model, and reasoning required, and refuses any pick outside that persona's declared routes. The resulting thread carries the same immutable assignment as a composer launch. See [agent tools](../a2a/agent-tools.md).
+Agents can also launch a persona as a Peer Agent: `j5_spawn_agent` accepts an optional `persona` id, keeps provider, model, and reasoning required, and refuses any pick outside that persona's declared routes. The resulting thread carries the same immutable assignment as a composer launch. See [agent tools](../a2a/agent-tools.md).
 
 ## Verification and remaining work
 
