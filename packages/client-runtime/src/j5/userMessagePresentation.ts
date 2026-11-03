@@ -7,10 +7,18 @@ import type {
 
 import { resolveUserMessagePresentation } from "../userMessage.ts";
 import {
+  crewNoticeSummary,
   participantIdsForCrewNotice,
   presentCrewContext,
   presentCrewNotice,
 } from "./crewNotices.ts";
+import {
+  handoffNudgeNotice,
+  nativeQuestionPrompt,
+  parseDeliveryNotice,
+  playbookStepPrompt,
+  type PlatformNotice,
+} from "./platformMessages.ts";
 
 /**
  * How J5 shows a user-role message in a thread's timeline, grouped by who is speaking
@@ -34,13 +42,15 @@ export type J5ParticipantTag = "automation" | "outside-agent" | "brief";
 
 export type J5NoticeKind =
   | "silence"
+  | "not-delivered"
+  | "exchange-dropped"
+  | "exchange-withdrawn"
   | "crew-gate"
   | "crew-seats"
   | "crew-context"
-  | "restart-continuation"
-  | "pr-watch"
+  | "handoff-nudge"
   | "platform";
-export type J5PromptKind = "automation" | "delegated-question" | "compaction";
+export type J5PromptKind = "automation" | "playbook-step" | "native-question";
 
 export type J5UserMessagePresentation =
   | {
@@ -89,8 +99,15 @@ export type J5UserMessagePresentation =
       readonly group: "notice";
       readonly side: "left";
       readonly kind: J5NoticeKind;
-      /** One plain line, where J5 can say it; null where the notice has not been read yet. */
+      /**
+       * One plain line, where J5 can say it; null where the notice has not been read, which leaves
+       * it to upstream's row. A Crew notice's seats are `crewNoticeLines`, one line each.
+       */
       readonly summary: string | null;
+      /** What the line opens to; null when the summary says it all. */
+      readonly detail: string | null;
+      /** The ids `summary` and `detail` name, for a client to replace with labels. */
+      readonly participantIds: ReadonlyArray<string>;
       readonly text: string;
     }
   | {
@@ -98,6 +115,11 @@ export type J5UserMessagePresentation =
       readonly group: "prompt";
       readonly side: "left";
       readonly kind: J5PromptKind;
+      /** What kind of prompt it is, in the reader's words. */
+      readonly label: string;
+      /** The task or step title; an automation's task title is upstream's to look up. */
+      readonly preview: string;
+      /** What the pill opens to. */
       readonly text: string;
     };
 
@@ -140,8 +162,6 @@ const REPLY_DELIVERY_INSTRUCTION_SUFFIX =
   '", message="...") to close the exchange. Follow-ups from the asker carrying this id join the same exchange.';
 const HUMAN_DELIVERY_MARKER =
   "\n\nThis person is not watching this chat. They see only what you send back on this exchange.\n\n";
-const SILENCE_DELIVERY_SUFFIX =
-  "\n\nThis is a platform-authored delivery signal, not a peer reply.";
 const MACHINE_DELIVERY_INSTRUCTIONS = new Set(
   SEND_TOOL_NAMES.map(
     (tool) =>
@@ -279,69 +299,6 @@ function parseHumanEnvelope(text: string) {
     : { senderId, senderName, letter: content.slice(0, markerIndex) };
 }
 
-function counterpartSummary(counterpartId: string, suffix: string): string | null {
-  const counterpart = counterpartId.trim();
-  return counterpart ? `${counterpart}${suffix}` : null;
-}
-
-function parseSilenceSummary(noticeType: string, body: string): string | null {
-  if (noticeType === "turn-ended-no-reply") {
-    const neverProcessed = /^(.+?) did not start a turn for the delivered message on [^.]+\.$/.exec(
-      body,
-    );
-    if (neverProcessed)
-      return counterpartSummary(
-        neverProcessed[1]!,
-        " did not start a turn for the delivered message",
-      );
-
-    const processed =
-      /^(.+?)'s turn ended without replying on [^.]+\. The latest delivered message was processed\.$/.exec(
-        body,
-      );
-    return processed ? counterpartSummary(processed[1]!, "'s turn ended without replying") : null;
-  }
-
-  if (noticeType === "errored") {
-    const match = /^(.+?) errored without replying on .+: .+$/.exec(body);
-    return match ? counterpartSummary(match[1]!, " errored without replying") : null;
-  }
-
-  if (noticeType === "stopped/cancelled") {
-    const match =
-      /^(.+?) was (interrupted|cancelled|rolled_back) without replying on [^.]+\. .+$/.exec(body);
-    return match ? counterpartSummary(match[1]!, ` was ${match[2]} without replying`) : null;
-  }
-
-  if (noticeType === "queued-message-removed") {
-    const match = /^Your message to (.+?) was removed from its queue before it ran, /.exec(body);
-    return match
-      ? counterpartSummary(match[1]!, " never read a queued message: it was removed before it ran")
-      : null;
-  }
-
-  if (noticeType === "awaiting-human") {
-    const match = /^(.+?) is awaiting the human on .+ \(.+\)\.$/.exec(body);
-    return match ? counterpartSummary(match[1]!, " is awaiting the human") : null;
-  }
-
-  if (noticeType === "blocked-on-peer") {
-    const match = /^(.+?) is blocked on (.+?) via .+\.$/.exec(body);
-    return match ? counterpartSummary(match[1]!, ` is blocked on ${match[2]!.trim()}`) : null;
-  }
-
-  return null;
-}
-
-function parseSilenceEnvelope(text: string): string | null {
-  const header = /^\[Cross-agent messaging system notice: ([^\]\n]+)\]\n\n/.exec(text);
-  if (!header || !text.endsWith(SILENCE_DELIVERY_SUFFIX)) return null;
-  return parseSilenceSummary(
-    header[1]!,
-    text.slice(header[0].length, -SILENCE_DELIVERY_SUFFIX.length),
-  );
-}
-
 const CONTEXT_OPEN = "<j5_spawn_context>\n";
 const CONTEXT_CLOSE = "\n</j5_spawn_context>\n\n";
 const BRIEF_ONLY_PATTERN = /^<spawner_brief>\n([\s\S]*)\n<\/spawner_brief>$/;
@@ -418,16 +375,62 @@ const BADGE_BY_EXCHANGE: Record<Exchange, J5ParticipantBadge | null> = {
   plain: null,
 };
 
-// Upstream's platform messages, by the id its server gives them. An id upstream changes falls
-// through to the attribution upstream's own resolver gives the message.
-const UPSTREAM_NOTICE_IDS: ReadonlyArray<readonly [string, J5NoticeKind]> = [
-  ["message:restart-continuation:", "restart-continuation"],
-  ["message:pr-watch:", "pr-watch"],
-];
-const UPSTREAM_PROMPT_IDS: ReadonlyArray<readonly [string, J5PromptKind]> = [
-  ["message:delegated-task-question:", "delegated-question"],
-  ["idle-compact:", "compaction"],
-];
+const noticeFrom = (
+  kind: J5NoticeKind,
+  read: PlatformNotice,
+  text: string,
+): J5UserMessagePresentation => ({ group: "notice", side: "left", kind, ...read, text });
+
+/** J5's own platform messages outside A2A delivery; only the platform writes `system` messages. */
+function presentSystemMessage(message: J5UserMessageInput): J5UserMessagePresentation {
+  const text = message.text;
+  const crewMessage = { role: message.role, text, createdBy: message.createdBy };
+  const context = presentCrewContext(crewMessage);
+  if (context !== null) {
+    return {
+      group: "notice",
+      side: "left",
+      kind: "crew-context",
+      summary: context.title,
+      detail: context.text,
+      participantIds: [],
+      text,
+    };
+  }
+  const crew = presentCrewNotice(crewMessage);
+  if (crew !== null) {
+    return {
+      group: "notice",
+      side: "left",
+      kind: crew.kind === "gate" ? "crew-gate" : "crew-seats",
+      summary: crewNoticeSummary(crew),
+      detail: null,
+      participantIds: [],
+      text,
+    };
+  }
+  const id = String(message.id ?? "");
+  const step = playbookStepPrompt(text);
+  if (step !== null) return { group: "prompt", side: "left", kind: "playbook-step", ...step };
+  if (id.startsWith("message:j5:native-question:")) {
+    const question = nativeQuestionPrompt(text);
+    if (question !== null) {
+      return { group: "prompt", side: "left", kind: "native-question", ...question };
+    }
+  }
+  if (id.startsWith("agent-handoff-nudge:")) {
+    return noticeFrom("handoff-nudge", handoffNudgeNotice(text), text);
+  }
+  return {
+    group: "notice",
+    side: "left",
+    kind: "platform",
+    summary: null,
+    detail: null,
+    participantIds: [],
+    text,
+  };
+}
 
 /**
  * Classifies a user-role message by who is speaking. Null when not user-role, and for a J5
@@ -474,10 +477,10 @@ export function presentJ5UserMessage(
           };
     }
     if (message.createdBy === "system") {
-      const summary = parseSilenceEnvelope(text);
-      return summary === null
-        ? null
-        : { group: "notice", side: "left", kind: "silence", summary, text };
+      const read = parseDeliveryNotice(text);
+      if (read === null) return null;
+      const { kind, ...platform } = read;
+      return noticeFrom(kind, platform, text);
     }
     return null;
   }
@@ -499,37 +502,31 @@ export function presentJ5UserMessage(
         };
   }
 
-  const id = String(message.id ?? "");
-  const notice = UPSTREAM_NOTICE_IDS.find(([prefix]) => id.startsWith(prefix));
-  if (notice !== undefined) {
-    return { group: "notice", side: "left", kind: notice[1], summary: null, text };
-  }
-  const prompt = UPSTREAM_PROMPT_IDS.find(([prefix]) => id.startsWith(prefix));
-  if (prompt !== undefined) return { group: "prompt", side: "left", kind: prompt[1], text };
-
-  if (message.createdBy === "system") {
-    const context = presentCrewContext({ role: message.role, text, createdBy: message.createdBy });
-    if (context !== null) {
-      return { group: "notice", side: "left", kind: "crew-context", summary: context.title, text };
-    }
-    const crew = presentCrewNotice({ role: message.role, text, createdBy: message.createdBy });
-    return {
-      group: "notice",
-      side: "left",
-      kind: crew === null ? "platform" : crew.kind === "gate" ? "crew-gate" : "crew-seats",
-      summary: null,
-      text,
-    };
-  }
+  if (message.createdBy === "system") return presentSystemMessage(message);
 
   const upstream = resolveUserMessagePresentation(message);
   // A guest's message is upstream's to draw: its row names the guest and shows their own words.
   if (upstream.attribution === "guest") return null;
   if (upstream.attribution === "automation") {
-    return { group: "prompt", side: "left", kind: "automation", text: upstream.text };
+    return {
+      group: "prompt",
+      side: "left",
+      kind: "automation",
+      label: "Automation",
+      preview: firstLine(upstream.text),
+      text: upstream.text,
+    };
   }
   if (upstream.attribution === "t3code") {
-    return { group: "notice", side: "left", kind: "platform", summary: null, text };
+    return {
+      group: "notice",
+      side: "left",
+      kind: "platform",
+      summary: null,
+      detail: null,
+      participantIds: [],
+      text,
+    };
   }
   if (upstream.attribution === "agent") {
     return {
@@ -584,5 +581,6 @@ export function participantIdsForJ5UserMessage(message: J5UserMessageInput): Rea
       createdBy: "system",
     });
   }
+  if (j5?.group === "notice") return j5.participantIds;
   return [];
 }

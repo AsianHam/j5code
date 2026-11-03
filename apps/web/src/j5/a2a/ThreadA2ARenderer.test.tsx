@@ -1,5 +1,4 @@
 import { MessageId } from "@t3tools/contracts";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { presentJ5UserMessage } from "@t3tools/client-runtime/j5/user-message";
@@ -12,11 +11,11 @@ import {
   literalUserMessageContext,
   participantIdsForThreadA2ADelivery,
   participantIdsForThreadA2AEnvelope,
+  j5PromptRow,
   renderThreadA2ADelivery,
 } from "./ThreadA2ARenderer";
 
 const CREATED_AT = "2026-08-29T12:00:00.000Z";
-const TIMESTAMP_LABEL = "Today, 8:00 AM";
 const deliveryId = (suffix: string) => MessageId.make(`${J5_A2A_DELIVERY_MESSAGE_PREFIX}${suffix}`);
 
 function message(input: Partial<ChatMessage> = {}): ChatMessage {
@@ -58,6 +57,9 @@ const silenceRaw = [
   "This is a platform-authored delivery signal, not a peer reply.",
 ].join("\n");
 
+const systemNotice = (text: string, id = deliveryId("notice")) =>
+  message({ id, createdBy: "system", creationSource: "server", text });
+
 const machineRaw = [
   "[Message from automation machine:watchdog in project project-monitoring (Monitoring)]",
   "",
@@ -75,28 +77,8 @@ const outsideAgentRaw = [
 ].join("\n");
 
 describe("renderThreadA2ADelivery", () => {
-  it("draws a silence notice as a muted line with its summary and the timeline's time", () => {
-    const markup = renderToStaticMarkup(
-      renderThreadA2ADelivery({
-        message: message({ id: deliveryId("silence"), createdBy: "system", text: silenceRaw }),
-        timestampLabel: TIMESTAMP_LABEL,
-      }),
-    );
-    const summary = markup.match(/<span data-j5-a2a-silence-summary="true">(.*?)<\/span>/)?.[1];
-    expect(summary).toContain("agent:counterpart&#x27;s turn ended without replying");
-    expect(summary).toContain(TIMESTAMP_LABEL);
-    expect(summary).not.toContain("turn-ended-no-reply");
-  });
-
-  it("keeps the raw card for a platform notice it cannot read yet", () => {
-    const raw = silenceRaw.replace("turn-ended-no-reply", "future-detector-v7");
-    const markup = renderToStaticMarkup(
-      renderThreadA2ADelivery({
-        message: message({ id: deliveryId("future"), createdBy: "system", text: raw }),
-      }),
-    );
-    expect(markup).toContain('data-j5-a2a-renderer="raw"');
-    expect(markup).toContain("future-detector-v7");
+  it("draws a notice the classifier has a summary for", () => {
+    expect(renderThreadA2ADelivery({ message: systemNotice(silenceRaw) })).not.toBeNull();
   });
 
   it.each([
@@ -110,8 +92,44 @@ describe("renderThreadA2ADelivery", () => {
       "a message that is not a delivery",
       message({ id: MessageId.make("message:mcp:session:thread-send:1"), text: peerPlainRaw }),
     ],
+    [
+      "a platform notice nothing reads yet",
+      systemNotice(silenceRaw.replace("turn-ended-no-reply", "future-detector-v7")),
+    ],
+    [
+      "a system message nothing reads yet",
+      systemNotice("Future words.", MessageId.make("message:future")),
+    ],
   ])("leaves %s to upstream's row", (_name, source) => {
     expect(renderThreadA2ADelivery({ message: source })).toBeNull();
+  });
+});
+
+describe("j5PromptRow", () => {
+  it("gives upstream's Automation row J5's label, title and words, not the envelope", () => {
+    const step = [
+      "<j5_playbook_step>",
+      "step: build | Build the fix",
+      "position: 2 of 5",
+      "</j5_playbook_step>",
+      "<step_prompt>",
+      "Build it.",
+      "</step_prompt>",
+      "Do this step now.",
+    ].join("\n");
+    expect(j5PromptRow(systemNotice(step, MessageId.make("message:step")))).toMatchObject({
+      label: "Playbook step 2 of 5",
+      summary: "Build the fix",
+      text: "Build it.",
+      scheduledTaskId: undefined,
+    });
+  });
+
+  it("leaves an automation run and every other message alone", () => {
+    expect(
+      j5PromptRow(message({ id: MessageId.make("message:1"), scheduledTaskId: "t" as never })),
+    ).toBeNull();
+    expect(j5PromptRow(message({ text: peerPlainRaw }))).toBeNull();
   });
 });
 

@@ -55,6 +55,24 @@ export function presentParticipantIdentity(input: {
   };
 }
 
+/** A notice's words with each participant id replaced by its label, longest id first. */
+export function nameJ5NoticeParticipants(
+  text: string,
+  participantIds: ReadonlyArray<string>,
+  participantLabels: ReadonlyMap<string, string>,
+): string {
+  return [...participantIds]
+    .sort((left, right) => right.length - left.length)
+    .reduce(
+      (named, participantId) =>
+        named.replaceAll(
+          participantId,
+          presentParticipantIdentity({ participantId, participantLabels }).label,
+        ),
+      text,
+    );
+}
+
 /** A queued delivery's row in "Up next": `From <sender>: <first line>`. Null for anything else. */
 export function formatJ5QueuedDelivery(
   text: string,

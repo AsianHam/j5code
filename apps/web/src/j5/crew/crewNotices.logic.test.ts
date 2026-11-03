@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { presentCrewNotice } from "@t3tools/client-runtime/j5/crew-notices";
-
 import {
   crewApprovalSummary,
-  crewGateTitle,
+  crewDeclinedSummary,
   crewNoticeLines,
-  isHiddenCrewNotice,
-  withoutHiddenCrewNotices,
-} from "./crewNotices.logic";
+  presentCrewNotice,
+} from "@t3tools/client-runtime/j5/crew-notices";
+
+import { isHiddenCrewNotice, withoutHiddenCrewNotices } from "./crewNotices.logic";
 
 const approvedGate = [
   "<j5_crew_gate>",
@@ -154,8 +153,8 @@ describe("crew notices in the Captain's thread", () => {
         seat: "punchline",
         crewName: null,
         threadId: "thread:p",
-        reason:
-          "couldn't start · provider_error — API Error: Can't reach the API server | check DNS",
+        reason: "couldn't start",
+        detail: "provider_error — API Error: Can't reach the API server | check DNS",
         tone: "bad",
       },
       {
@@ -163,6 +162,7 @@ describe("crew notices in the Captain's thread", () => {
         crewName: null,
         threadId: "thread:q",
         reason: "hasn't confirmed it started",
+        detail: null,
         tone: "warn",
       },
     ]);
@@ -207,7 +207,8 @@ describe("crew notices in the Captain's thread", () => {
         seat: "punchline",
         crewName: null,
         threadId: null,
-        reason: "was never created · thread.create refused\nquota | retry later",
+        reason: "was never created",
+        detail: "thread.create refused\nquota | retry later",
         tone: "bad",
       },
     ]);
@@ -338,9 +339,9 @@ describe("crew notices in the Captain's thread", () => {
       roster: [],
       requestedSeats: [{ seat: "sitter", agentId: "sentry" }],
     });
-    // A decline keeps its card: it has no lines, and is not hidden.
+    // A decline keeps its line: it has no seat lines, and is not hidden.
     if (declined?.kind === "gate") {
-      expect(crewGateTitle(declined)).toBe("Seat declined");
+      expect(crewDeclinedSummary(declined)).toBe("Crew Invoice Export PR · seat declined");
       expect(crewNoticeLines(declined)).toEqual([]);
     }
     expect(
@@ -388,7 +389,8 @@ describe("crew notices in the Captain's thread", () => {
         seat: "critic",
         crewName: null,
         threadId: "thread:c",
-        reason: "finished · ReviewHandoff can't be read: not a regular file",
+        reason: "finished · ReviewHandoff can't be read",
+        detail: "not a regular file",
         tone: "warn",
       },
     ]);
@@ -463,7 +465,8 @@ describe("crew notices in the Captain's thread", () => {
         seat: "builder",
         crewName: null,
         threadId: "thread:b",
-        reason: "run failed · provider_error — API Error: Can't reach the API server",
+        reason: "run failed",
+        detail: "provider_error — API Error: Can't reach the API server",
         tone: "bad",
       },
     ]);
@@ -489,6 +492,7 @@ describe("crew notices in the Captain's thread", () => {
         crewName: null,
         threadId: "thread:c",
         reason: "finished · ReviewHandoff missing",
+        detail: null,
         tone: "warn",
       },
     ]);

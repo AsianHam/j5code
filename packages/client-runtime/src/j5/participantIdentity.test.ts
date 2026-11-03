@@ -5,6 +5,7 @@ import { scopeThreadRef } from "../environment/scoped.ts";
 import {
   j5MessageAuthorName,
   j5SenderThreadRef,
+  nameJ5NoticeParticipants,
   participantIdentitiesFromResponse,
 } from "./participantIdentity.ts";
 import {
@@ -158,5 +159,17 @@ describe("j5MessageAuthorName", () => {
         senderThreadTitle: undefined,
       }),
     ).toBe("Someone without a name");
+  });
+});
+
+describe("nameJ5NoticeParticipants", () => {
+  it("replaces each id, the longest first, and says when one has no name", () => {
+    expect(
+      nameJ5NoticeParticipants(
+        "agent:ab is blocked on agent:a",
+        ["agent:a", "agent:ab"],
+        new Map([["agent:ab", "Builder"]]),
+      ),
+    ).toBe("Builder is blocked on Unnamed participant");
   });
 });

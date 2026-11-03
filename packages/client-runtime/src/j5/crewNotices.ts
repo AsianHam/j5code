@@ -283,3 +283,123 @@ export const participantIdsForCrewNotice = (message: CrewNoticeMessage): Readonl
   if (notice?.kind === "seats") return notice.seats.map((seat) => seat.participantId);
   return [];
 };
+
+/** One seat a Crew notice says needs the person. */
+export interface CrewNoticeLine {
+  readonly seat: string;
+  /** Named only when one notice speaks for several Crews, where a seat name alone is ambiguous. */
+  readonly crewName: string | null;
+  /** Null when the seat's thread was never created: the line names it and doesn't link. */
+  readonly threadId: string | null;
+  readonly reason: string;
+  /** The error or fact behind the reason, for the line to open to. */
+  readonly detail: string | null;
+  readonly tone: "bad" | "warn";
+}
+
+const handoffLine = (seat: FinishedSeat, crewName: string | null): CrewNoticeLine | null => {
+  const handoff = seat.handoff;
+  if (handoff.status === "missing")
+    return {
+      seat: seat.seat,
+      crewName,
+      threadId: seat.threadId,
+      reason: `finished · ${handoff.kind} missing`,
+      detail: null,
+      tone: "warn",
+    };
+  if (handoff.status === "unavailable")
+    return {
+      seat: seat.seat,
+      crewName,
+      threadId: seat.threadId,
+      reason: `finished · ${handoff.kind} can't be read`,
+      detail: handoff.reason,
+      tone: "warn",
+    };
+  return null;
+};
+
+/**
+ * What the person would act on in a notice, one line per seat: a seat that didn't start, or a run
+ * that didn't end clean. A seat that started or finished cleanly has no line; its row on the Fleet
+ * page and the Captain's expander says so.
+ */
+export const crewNoticeLines = (notice: CrewNoticePresentation): ReadonlyArray<CrewNoticeLine> => {
+  if (notice.kind === "gate") {
+    if (notice.decision !== "approved") return [];
+    const threadOf = (seat: string) =>
+      notice.roster.find((entry) => entry.seat === seat)?.threadId ?? null;
+    return [
+      ...notice.failures.map((failure) => ({
+        seat: failure.seat,
+        crewName: null,
+        threadId: threadOf(failure.seat),
+        reason: "couldn't start",
+        detail: failure.detail,
+        tone: "bad" as const,
+      })),
+      ...notice.notCreated.map((seat) => ({
+        seat: seat.seat,
+        crewName: null,
+        threadId: null,
+        reason: "was never created",
+        detail: seat.detail,
+        tone: "bad" as const,
+      })),
+      ...notice.pendingSeats.map((seat) => ({
+        seat,
+        crewName: null,
+        threadId: threadOf(seat),
+        reason: "hasn't confirmed it started",
+        detail: null,
+        tone: "warn" as const,
+      })),
+    ];
+  }
+  // Finishes from several Crews fold into one notice when the Captain commands more than one.
+  const severalCrews = new Set(notice.seats.map((seat) => seat.crewName)).size > 1;
+  return notice.seats.flatMap((seat): ReadonlyArray<CrewNoticeLine> => {
+    const crewName = severalCrews ? seat.crewName : null;
+    if (seat.runStatus === "completed") {
+      const line = handoffLine(seat, crewName);
+      return line === null ? [] : [line];
+    }
+    const ended =
+      seat.runStatus === "failed" || seat.runStatus === "errored"
+        ? "run failed"
+        : `run ${seat.runStatus}`;
+    return [
+      {
+        seat: seat.seat,
+        crewName,
+        threadId: seat.threadId,
+        reason: ended,
+        detail: seat.failure,
+        tone: "bad",
+      },
+    ];
+  });
+};
+
+/**
+ * The stored launch report records the approved members, including ones never created. The
+ * approver is named when the notice carries one, which only a shared conversation's does.
+ */
+export const crewApprovalSummary = (notice: CrewNoticePresentation): string | null => {
+  if (notice.kind !== "gate" || notice.decision !== "approved" || notice.requestKind !== "roster")
+    return null;
+  const count = notice.roster.length + notice.notCreated.length;
+  const by = notice.decidedBy ? ` · by ${notice.decidedBy}` : "";
+  return `Crew approved · ${count} ${count === 1 ? "member" : "members"}${by}`;
+};
+
+/** A declined request's one line. */
+export const crewDeclinedSummary = (notice: Extract<CrewNoticePresentation, { kind: "gate" }>) =>
+  `Crew ${notice.crewName === null ? "" : `${notice.crewName} `}· ${notice.requestKind === "roster" ? "roster" : "seat"} declined${notice.decidedBy === null ? "" : ` by ${notice.decidedBy}`}`;
+
+/** The notice's own line, beside the lines of the seats in it; null when it has none. */
+export const crewNoticeSummary = (notice: CrewNoticePresentation): string | null =>
+  notice.kind === "gate" && notice.decision === "declined"
+    ? crewDeclinedSummary(notice)
+    : crewApprovalSummary(notice);
