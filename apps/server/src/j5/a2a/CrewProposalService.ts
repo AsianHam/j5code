@@ -45,6 +45,7 @@ import { crewSeatShapeProblem } from "./crewLimits.ts";
 import { CREW_PROPOSAL_SESSION } from "./crewSeatIds.ts";
 import { A2ALedger } from "./LedgerService.ts";
 import { lifecycleCommandId, lifecycleId } from "./spawnIds.ts";
+import type { ResolvedSpawnWorkspace, SpawnWorkspaceChoice } from "./spawnWorkspace.ts";
 import { requestDigest, requestReplayConflict } from "./RequestReplayService.ts";
 import { worktreePathKey } from "./spawnWorkspace.ts";
 import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
@@ -239,6 +240,25 @@ const memberSteps = (instance: AgentCrewInstance | null) =>
     playbookStepIds: member.playbookStepIds ?? [],
   }));
 
+const omitBaseCommit = ({
+  baseCommit: _pin,
+  ...workspace
+}: Extract<SpawnWorkspaceChoice, { readonly type: "worktree" }>) => workspace;
+
+/** The seats with each new worktree's commit saved in its choice, from the workspaces resolved for them. */
+const withBaseCommits = (
+  seats: ReadonlyArray<CrewProposalSeat>,
+  workspaces: ReadonlyArray<SpawnWorkspaceChoice | ResolvedSpawnWorkspace>,
+): ReadonlyArray<CrewProposalSeat> =>
+  seats.map((seat, index) => {
+    const resolved = workspaces[index];
+    return seat.workspace?.type === "worktree" &&
+      resolved?.type === "worktree" &&
+      resolved.baseCommit !== undefined
+      ? { ...seat, workspace: { ...seat.workspace, baseCommit: resolved.baseCommit } }
+      : seat;
+  });
+
 /** Whether the person changed a seat's workspace; `crewRosterChanges` leaves workspaces out. */
 const sameWorkspace = (a: CrewProposalSeat["workspace"], b: CrewProposalSeat["workspace"]) => {
   if (a === undefined || b === undefined) return a === b;
@@ -287,9 +307,13 @@ const proposalRequest = (proposal: ProposalRequest) => ({
   seats: proposal.requestedSeats.map(({ personaSwaps: _swaps, workspace, ...seat }) => ({
     ...seat,
     steps: seat.steps ?? [],
+    // The server saves the pin after the request; a retry never carries it.
     workspace:
       workspace?.type === "worktree"
-        ? { ...workspace, startFromOrigin: workspace.startFromOrigin ?? false }
+        ? {
+            ...omitBaseCommit(workspace),
+            startFromOrigin: workspace.startFromOrigin ?? false,
+          }
         : workspace?.type === "existing_worktree"
           ? { ...workspace, worktreePath: worktreePathKey(workspace.worktreePath) }
           : workspace,
@@ -696,14 +720,17 @@ export const layer = Layer.effect(
             false,
             definition === null ? null : { definition, existingMembers: [] },
           );
-          if (automatic)
-            yield* resolveRuntime(input.captain, withPersonaSwaps(input.seats, plan.swapsBySeat));
+          const seats = withPersonaSwaps(
+            yield* pinSeats(input.captain, input.seats),
+            plan.swapsBySeat,
+          );
+          if (automatic) yield* resolveRuntime(input.captain, seats);
           const proposal = yield* proposals
             .create({
               ...request,
               approvalMode: automatic ? "automatic" : "human",
               playbook: playbookRef,
-              requestedSeats: withPersonaSwaps(input.seats, plan.swapsBySeat),
+              requestedSeats: seats,
             })
             .pipe(Effect.mapError(operationError("recording the proposal")));
           // The stored row decides what happened: an open automatic proposal is approved here.
@@ -780,13 +807,17 @@ export const layer = Layer.effect(
             false,
             definition === null ? null : { definition, existingMembers: memberSteps(instance) },
           );
-          yield* resolveRuntime(input.captain, withPersonaSwaps([input.seat], plan.swapsBySeat));
+          const seats = withPersonaSwaps(
+            yield* pinSeats(input.captain, [input.seat]),
+            plan.swapsBySeat,
+          );
+          yield* resolveRuntime(input.captain, seats);
           const admitted = yield* proposals
             .admit(
               {
                 ...request,
                 approvalMode: "automatic",
-                requestedSeats: withPersonaSwaps([input.seat], plan.swapsBySeat),
+                requestedSeats: seats,
               },
               { maxSeats: CREW_SEAT_CAP },
             )
@@ -826,6 +857,15 @@ export const layer = Layer.effect(
 
     const resolveRuntime = (captain: CrewCaptain, seats: ReadonlyArray<CrewProposalSeat>) =>
       launcher.resolveSeats(captain, seats.map(launchSeatOf));
+
+    /** Saves each new worktree's commit on its seat before a proposal is stored; refuses a base that has none. */
+    const pinSeats = (captain: CrewCaptain, seats: ReadonlyArray<CrewProposalSeat>) =>
+      launcher.pinWorkspaces(captain, seats.map(launchSeatOf)).pipe(
+        Effect.map((workspaces) => withBaseCommits(seats, workspaces)),
+        Effect.mapError(
+          ({ detail, nextStep }) => new CrewProposalRequestError({ detail, nextStep }),
+        ),
+      );
 
     /** Preview and approval consult the same live roster and the same live playbook. */
     const validateProposalSeats = Effect.fn("j5.a2a.crewProposal.validateProposalSeats")(function* (
@@ -964,7 +1004,13 @@ export const layer = Layer.effect(
       const launched = yield* fulfil(
         proposal,
         captain,
-        withPersonaSwaps(seats, plan.swapsBySeat),
+        withPersonaSwaps(
+          withBaseCommits(
+            seats,
+            resolved.map(({ workspace }) => workspace),
+          ),
+          plan.swapsBySeat,
+        ),
         resolved,
         launchPlaybook(proposal.playbook, definition),
       ).pipe(

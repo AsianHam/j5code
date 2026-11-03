@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
+import { GitVcsDriver } from "../../../vcs/GitVcsDriver.ts";
 import { CommandReceiptStoreV2 } from "../../../orchestration-v2/CommandReceiptStore.ts";
 import {
   ThreadLaunchService,
@@ -26,7 +27,17 @@ export interface FakeCheckout {
   readonly worktrees?: ReadonlyArray<{ readonly path: string; readonly branch: string }>;
   /** Refs git can't resolve; every other ref exists. */
   readonly missingRefs?: ReadonlyArray<string>;
+  /** The commit a ref resolves to; `fakeSha` derives one for any other. */
+  readonly commits?: Readonly<Record<string, string>>;
+  /** Branches on the `origin` remote and their tips; the remote exists only when this is given. */
+  readonly origin?: Readonly<Record<string, string>>;
+  /** Branches whose fetch from `origin` fails, as a dead network or bad credentials would. */
+  readonly unreachableOriginBranches?: ReadonlyArray<string>;
 }
+
+/** A full-length id for a ref the checkout doesn't pin to a particular commit. */
+export const fakeSha = (checkout: FakeCheckout, ref: string) =>
+  checkout.commits?.[ref] ?? Buffer.from(ref).toString("hex").padEnd(40, "0").slice(0, 40);
 
 /** A project that is not a git repository; only a shared choice can resolve there. */
 export const noRepository: FakeCheckout = { isRepo: false, refName: null };
@@ -65,6 +76,8 @@ export const fakeSpawnWorkspaceLayer = (options: {
    */
   readonly liveCheckout?: Ref.Ref<FakeCheckout>;
   readonly workspaceRoot?: string;
+  /** Records the ref of each fetch from `origin`. */
+  readonly fetches?: Ref.Ref<ReadonlyArray<string>>;
   readonly launches?: Ref.Ref<ReadonlyArray<ThreadLaunchInput>>;
   readonly launch?: (input: ThreadLaunchInput) => Effect.Effect<void>;
   readonly accepted?: Effect.Effect<ReadonlyArray<CommandId>>;
@@ -100,6 +113,28 @@ export const fakeSpawnWorkspaceLayer = (options: {
           }),
           hasCommit: ({ refName }) =>
             current.pipe(Effect.map((checkout) => !(checkout.missingRefs ?? []).includes(refName))),
+          remoteExists: () => current.pipe(Effect.map((checkout) => checkout.origin !== undefined)),
+          fetchRemote: ({ refName }) =>
+            (options.fetches === undefined
+              ? Effect.void
+              : Ref.update(options.fetches, (all) => [...all, refName ?? ""])
+            ).pipe(
+              Effect.andThen(current),
+              Effect.flatMap((checkout) =>
+                (checkout.unreachableOriginBranches ?? []).includes(refName ?? "")
+                  ? Effect.fail(new Error("could not read from remote repository") as never)
+                  : Effect.void,
+              ),
+            ),
+          remoteBranchExists: ({ refName }) =>
+            current.pipe(Effect.map((checkout) => checkout.origin?.[refName] !== undefined)),
+          resolveRemoteTrackingCommit: ({ refName }) =>
+            current.pipe(
+              Effect.map((checkout) => ({
+                commitSha: checkout.origin![refName]!,
+                remoteRefName: `origin/${refName}`,
+              })),
+            ),
           // A checkout's status is cached per path until invalidated, as upstream's is, so only a
           // read that invalidates first sees a branch switched since the last one.
           invalidateLocalStatus: (cwd) => Effect.sync(() => void cachedStatus.delete(cwd)),
@@ -117,6 +152,16 @@ export const fakeSpawnWorkspaceLayer = (options: {
           }),
           listLocalBranchNames: () =>
             current.pipe(Effect.map((checkout) => fakeRefs(checkout, root).map((ref) => ref.name))),
+        }),
+        Layer.mock(GitVcsDriver)({
+          resolveCommit: ({ revision }) =>
+            current.pipe(
+              Effect.flatMap((checkout) =>
+                (checkout.missingRefs ?? []).includes(revision)
+                  ? Effect.fail(new Error(`no commit for ${revision}`) as never)
+                  : Effect.succeed({ commitSha: fakeSha(checkout, revision) }),
+              ),
+            ),
         }),
         Layer.mock(ThreadLaunchService)({
           launch: Effect.fn("j5.a2a.spawnWorkspaceFakes.launch")(function* (input) {

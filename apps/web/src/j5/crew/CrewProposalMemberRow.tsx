@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { CrewProposalSeatRuntime } from "@t3tools/contracts/j5";
+import type { CrewProposalSeatRuntime, CrewSeatWorkspace } from "@t3tools/contracts/j5";
 import { PencilIcon, Trash2Icon } from "lucide-react";
 import { type ReactNode } from "react";
 
@@ -11,6 +11,21 @@ import { serverEnvironment } from "../../state/server";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { CUSTOM_AGENT, crewProposalRowChange, type CrewProposalRow } from "./crewProposalDraft";
 import { crewSeatStopsForApprovals, describeCrewSeatWorkspace } from "./crewSeatRuntime";
+
+/** Where the member works; a new worktree's line carries the commit it starts from, in full on hover. */
+function MemberWorkspace(props: { workspace: CrewSeatWorkspace }) {
+  const { workspace } = props;
+  const line = describeCrewSeatWorkspace(workspace);
+  const className = "mt-1 break-words text-xs text-muted-foreground";
+  if (workspace.type !== "worktree" || workspace.baseCommit === undefined)
+    return <p className={className}>{line}</p>;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<p className={className} />}>{line}</TooltipTrigger>
+      <TooltipPopup>{workspace.baseCommit}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 function MemberProvider(props: {
   environmentId: EnvironmentId;
@@ -94,9 +109,7 @@ export function CrewProposalMemberRow(props: {
           {row.original?.reason ?? "Added by the user"}
         </p>
         {runtime?.workspace && runtime.workspace.type !== "shared" ? (
-          <p className="mt-1 break-words text-xs text-muted-foreground">
-            {describeCrewSeatWorkspace(runtime.workspace)}
-          </p>
+          <MemberWorkspace workspace={runtime.workspace} />
         ) : null}
         {crewSeatStopsForApprovals(seat, runtime) ? (
           <p className="mt-1 text-xs text-warning">Asks for approvals</p>

@@ -261,6 +261,32 @@ it.effect(
     }).pipe(Effect.provide(base)),
 );
 
+it.effect("a pinned worktree is prepared from its saved commit, never fetched forward", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const baseCommit = "4".repeat(40);
+    yield* f.sql`UPDATE j5_crew_seat_context SET workspace = ${JSON.stringify({
+      type: "worktree",
+      baseRef: "renamed-away",
+      baseCommit,
+      branch: "fix/pin",
+      startFromOrigin: true,
+    })}`;
+    yield* f.send(assignment("playbook", "system")).pipe(Effect.provide(f.layer));
+    const [delivered] = yield* Ref.get(f.commands);
+    if (delivered?.type !== "message.dispatch") return assert.fail("missing assignment");
+    assert.deepStrictEqual(delivered.dispatchMode, {
+      type: "defer_start",
+      workspaceStrategy: {
+        type: "worktree",
+        baseRef: baseCommit,
+        branch: "fix/pin",
+        startFromOrigin: false,
+      },
+    });
+  }).pipe(Effect.provide(base)),
+);
+
 it.effect("provider refusal keeps the introduction and roster changes owed", () =>
   Effect.gen(function* () {
     const f = yield* fixture;

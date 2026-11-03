@@ -78,7 +78,36 @@ const checkout = (
   worktrees: [{ path: "/repo-worktrees/feature", branch: "fix/login" }],
   localBranchNames: ["j5/main", "taken"],
   missingBaseRefs: [],
+  baseCommits: [],
+  unreachableBaseRefs: [],
   ...overrides,
+});
+
+it("refuses only the seats whose base could not be fetched from origin", () => {
+  const unreachable = { ref: "main", startFromOrigin: true, commit: undefined };
+  const state = checkout({
+    baseCommits: [
+      { ref: "release", startFromOrigin: false, commit: undefined, sha: "a".repeat(40) },
+    ],
+    unreachableBaseRefs: [{ ...unreachable, problem: "could not read from remote repository" }],
+  });
+  const refused = resolveSpawnWorkspace(state, {
+    type: "worktree",
+    baseRef: "main",
+    startFromOrigin: true,
+  });
+  assert.isTrue(Result.isFailure(refused));
+  const failure = Result.isFailure(refused) ? refused.failure : undefined;
+  assert.include(failure?.detail, "Base 'main' was chosen from origin");
+  assert.include(failure?.detail, "could not read from remote repository");
+  assert.include(failure?.nextStep, "local branch");
+  // The same ref locally, and another base, resolve against the same checkout.
+  assert.isTrue(
+    Result.isSuccess(resolveSpawnWorkspace(state, { type: "worktree", baseRef: "main" })),
+  );
+  assert.isTrue(
+    Result.isSuccess(resolveSpawnWorkspace(state, { type: "worktree", baseRef: "release" })),
+  );
 });
 
 it("resolves each explicit choice; only shared asks nothing of git", () => {
@@ -196,6 +225,8 @@ const spawnHarness = (input: {
   readonly scope?: McpInvocationScope;
   /** The check on a plain agent's model; every model is eligible unless a test saves a list. */
   readonly memberModels?: Layer.Layer<CrewMemberModels>;
+  /** Records the ref of each fetch from origin. */
+  readonly fetches?: Ref.Ref<ReadonlyArray<string>>;
 }) =>
   Effect.gen(function* () {
     const log = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -436,6 +467,7 @@ const spawnHarness = (input: {
       Layer.provideMerge(
         fakeSpawnWorkspaceLayer({
           checkout: input.checkout,
+          ...(input.fetches === undefined ? {} : { fetches: input.fetches }),
           ...(input.replay === undefined ? {} : { replay: input.replay }),
           ...(input.liveCheckout === undefined ? {} : { liveCheckout: input.liveCheckout }),
           launches,
@@ -1619,6 +1651,7 @@ it.effect("refuses a base ref git can't resolve before anything is created", () 
         isRepo: true,
         refName: "j5/main",
         missingRefs: ["no-such-ref", "only-on-origin"],
+        origin: { "only-on-origin": "0".repeat(40) },
       },
     });
     yield* Effect.gen(function* () {
@@ -1649,6 +1682,33 @@ it.effect("refuses a base ref git can't resolve before anything is created", () 
       assert.lengthOf(yield* Ref.get(launches), 1);
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect(
+  "a direct spawn from origin never fetches, so an unreachable origin doesn't refuse it",
+  () =>
+    Effect.gen(function* () {
+      const fetches = yield* Ref.make<ReadonlyArray<string>>([]);
+      const { layer, call, launches } = yield* spawnHarness({
+        checkout: {
+          isRepo: true,
+          refName: "j5/main",
+          origin: { "j5/main": "0".repeat(40) },
+          unreachableOriginBranches: ["j5/main"],
+        },
+        fetches,
+      });
+      yield* Effect.gen(function* () {
+        const spawned = yield* call({
+          ...spawnArgs,
+          workspace: { type: "worktree", base_ref: "j5/main", start_from_origin: true },
+          client_request_id: "direct-from-origin",
+        });
+        assert.isFalse(spawned.isFailure);
+        assert.lengthOf(yield* Ref.get(launches), 1);
+        assert.deepStrictEqual(yield* Ref.get(fetches), []);
+      }).pipe(Effect.provide(layer));
+    }),
 );
 
 const decodeSpawnInput = Schema.decodeUnknownExit(J5SpawnAgentInput);

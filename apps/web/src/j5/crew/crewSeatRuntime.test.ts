@@ -281,7 +281,33 @@ describe("crew seat workspace", () => {
     expect(added.seats[0]?.workspace).toEqual({ type: "shared" });
   });
 
+  it("drops a saved commit when the base or its origin choice is edited", () => {
+    const baseCommit = "3f9c2ab1".repeat(5);
+    const pinned = {
+      seat: "builder",
+      agentId: CUSTOM_AGENT,
+      instructions: "Build",
+      workspace: { type: "worktree" as const, baseRef: "main", baseCommit },
+    };
+    expect(setCrewSeatBaseRef(pinned, "release").workspace).toEqual({
+      type: "worktree",
+      baseRef: "release",
+    });
+    expect(setCrewSeatStartFromOrigin(pinned, true).workspace).toEqual({
+      type: "worktree",
+      baseRef: "main",
+      startFromOrigin: true,
+    });
+  });
+
   it("describes each choice on the seat row", () => {
+    expect(
+      describeCrewSeatWorkspace({
+        type: "worktree",
+        baseRef: "main",
+        baseCommit: "3f9c2ab1".repeat(5),
+      }),
+    ).toBe("New worktree from main @ 3f9c2ab1");
     expect(describeCrewSeatWorkspace({ type: "shared" })).toBe("Captain's checkout");
     expect(describeCrewSeatWorkspace({ type: "worktree", baseRef: "release" })).toBe(
       "New worktree from release",

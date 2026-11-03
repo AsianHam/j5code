@@ -527,6 +527,7 @@ const spawn = Effect.fn("j5.a2a.spawnAgent")(function* (
           worktreePath: own?.thread.worktreePath ?? null,
           checkBranches,
           baseRefs: SpawnWorkspace.namedBaseRefs([choice]),
+          pinBases: false,
           existingWorktreePaths: SpawnWorkspace.namedWorktreePaths([choice]),
         });
   const workspace = yield* Effect.fromResult(

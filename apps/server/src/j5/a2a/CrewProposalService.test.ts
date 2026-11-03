@@ -61,10 +61,12 @@ import {
 import {
   AgentCrewProposalService,
   layer as proposalStoreLayer,
+  type CrewProposalSeat,
 } from "./AgentCrewProposalService.ts";
 import { CrewLaunchReporter } from "./CrewLaunchReporter.ts";
 import {
   CrewLaunchOperationError,
+  CrewLaunchSeatUnavailableError,
   CrewLaunchService,
   layer as crewLaunchLayer,
   type CrewCaptain,
@@ -84,8 +86,12 @@ import { participantIdForThread } from "./HomeRegistrar.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
 import { SpawnCompositionService } from "./SpawnCompositionService.ts";
-import type { ResolvedSpawnWorkspace } from "./spawnWorkspace.ts";
-import { fakeSpawnWorkspaceLayer, noRepository } from "./test-support/spawnWorkspaceFakes.ts";
+import {
+  SpawnWorkspaceError,
+  type ResolvedSpawnWorkspace,
+  type SpawnWorkspaceChoice,
+} from "./spawnWorkspace.ts";
+import { fakeSpawnWorkspaceLayer } from "./test-support/spawnWorkspaceFakes.ts";
 import { crewSeatRequestKey, lifecycleId, spawnThreadId } from "./spawnIds.ts";
 import { CREW_PROPOSAL_SESSION } from "./crewSeatIds.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
@@ -120,10 +126,34 @@ const launchFailure = (cause: unknown) =>
 
 const decodeProposeCrewInput = Schema.decodeUnknownEffect(J5ProposeCrewInput);
 
+/**
+ * The fake repository's bases. A ref resolves to `fakeCommit(ref)` unless a test moved it or took
+ * it away; a saved commit exists unless a test removed it. Tests use their own ref names.
+ */
+const repo = { moved: new Map<string, string>(), gone: new Set<string>() };
+const fakeCommit = (ref: string) => Buffer.from(ref).toString("hex").padEnd(40, "0").slice(0, 40);
+
+/** A base as the launcher resolves it: its saved commit while it exists, else the ref now. */
+const fakeBaseCommit = (workspace: { baseRef: string; baseCommit?: string | undefined }) =>
+  workspace.baseCommit === undefined
+    ? repo.gone.has(workspace.baseRef)
+      ? null
+      : (repo.moved.get(workspace.baseRef) ?? fakeCommit(workspace.baseRef))
+    : repo.gone.has(workspace.baseCommit)
+      ? null
+      : workspace.baseCommit;
+
 /** The launcher's resolution is tested on its own; here a seat's choice passes through as given. */
 const fakeWorkspace = (seat: CrewLaunchSeat): ResolvedSpawnWorkspace =>
   seat.workspace.type === "worktree"
-    ? { type: "worktree", baseRef: seat.workspace.baseRef, startFromOrigin: false }
+    ? {
+        type: "worktree",
+        baseRef: seat.workspace.baseRef,
+        ...(fakeBaseCommit(seat.workspace) === null
+          ? {}
+          : { baseCommit: fakeBaseCommit(seat.workspace)! }),
+        startFromOrigin: false,
+      }
     : seat.workspace.type === "existing_worktree"
       ? {
           type: "existing_worktree",
@@ -147,8 +177,33 @@ const fakeWorkspaceOptions = {
 const fakeLauncher = (crews: AgentCrewInstanceService["Service"]) =>
   Layer.mock(CrewLaunchService)({
     workspaceOptions: () => Effect.succeed(fakeWorkspaceOptions),
-    resolveSeats: (captain, seats) =>
-      Effect.succeed(
+    pinWorkspaces: (_captain, seats) =>
+      Effect.forEach(seats, (seat): Effect.Effect<SpawnWorkspaceChoice, SpawnWorkspaceError> => {
+        const { workspace } = seat;
+        if (workspace.type !== "worktree") return Effect.succeed(workspace);
+        const baseCommit = fakeBaseCommit(workspace);
+        return baseCommit === null
+          ? Effect.fail(
+              new SpawnWorkspaceError({
+                detail: `Seat "${seat.name}": Base ref '${workspace.baseRef}' doesn't resolve to a commit in this repository.`,
+                nextStep: "Name an existing branch, tag, or commit for workspace.base_ref.",
+              }),
+            )
+          : Effect.succeed({ ...workspace, baseCommit });
+      }),
+    resolveSeats: (captain, seats) => {
+      const unresolved = seats.find(
+        (seat) => seat.workspace.type === "worktree" && fakeBaseCommit(seat.workspace) === null,
+      );
+      if (unresolved !== undefined)
+        return Effect.fail(
+          new CrewLaunchSeatUnavailableError({
+            seatName: unresolved.name,
+            agentId: unresolved.agentId ?? "custom seat",
+            detail: "Its base doesn't resolve to a commit.",
+          }),
+        );
+      return Effect.succeed(
         seats.map(
           (seat) =>
             ({
@@ -172,7 +227,8 @@ const fakeLauncher = (crews: AgentCrewInstanceService["Service"]) =>
               },
             }) satisfies ResolvedCrewLaunchSeat,
         ),
-      ),
+      );
+    },
     launch: (input) =>
       input.displayName === "Boom"
         ? Effect.fail(launchFailure(new Error("provider unavailable")))
@@ -1327,13 +1383,20 @@ it.effect(
           brief: input.brief,
           seats: proposed,
         });
-        assert.deepStrictEqual((yield* store.read(open.proposal.id))?.requestedSeats, proposed);
+        const baseCommit = fakeCommit("release");
+        assert.deepStrictEqual((yield* store.read(open.proposal.id))?.requestedSeats, [
+          {
+            ...proposed[0]!,
+            workspace: { type: "worktree", baseRef: "release", branch: "fix/login", baseCommit },
+          },
+        ]);
         const first = yield* gate.preview({ proposalId: open.proposal.id });
         // Every preview carries what the card offers: the Captain's branch, where it works, worktrees.
         assert.deepStrictEqual(first.workspaceOptions, fakeWorkspaceOptions);
         assert.deepStrictEqual(first.seats[0]?.workspace, {
           type: "worktree",
           baseRef: "release",
+          baseCommit,
           startFromOrigin: false,
         });
         const shared = [{ ...proposed[0]!, workspace: { type: "shared" as const } }];
@@ -1783,7 +1846,7 @@ const playbookFixtureWithSettings = (
       ),
       Layer.provideMerge(Layer.mock(CrewLaunchReporter)({ watch: () => Effect.void })),
       Layer.provideMerge(playbookStoreLayer),
-      Layer.provideMerge(fakeSpawnWorkspaceLayer({ checkout: noRepository })),
+      Layer.provideMerge(fakeSpawnWorkspaceLayer({ checkout: { isRepo: true, refName: "main" } })),
       Layer.provideMerge(
         Layer.mock(ThreadManagementService)({
           getThreadProjection: (threadId) =>
@@ -3692,4 +3755,245 @@ it.effect(
         );
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped),
+);
+
+const builderOn = (baseRef: string, seat = "builder") => ({
+  ...custom(seat),
+  workspace: { type: "worktree" as const, baseRef },
+});
+
+const baseCommitOf = (seat: CrewProposalSeat | undefined) =>
+  seat?.workspace?.type === "worktree" ? seat.workspace.baseCommit : undefined;
+
+it.effect("a base is pinned to its commit when proposed, and a renamed branch can't unpin it", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* fixture;
+    yield* Effect.gen(function* () {
+      const gate = yield* CrewProposalService;
+      const store = yield* AgentCrewProposalService;
+      const open = yield* gate.propose({
+        requestKey: "pin-rename",
+        captain,
+        displayName: "Pinned",
+        brief: "Build",
+        seats: [builderOn("pin-rename-branch")],
+      });
+      const pin = fakeCommit("pin-rename-branch");
+      assert.equal(baseCommitOf(open.proposal.requestedSeats[0]), pin);
+
+      // The branch is renamed after the proposal was accepted and before it is previewed.
+      repo.gone.add("pin-rename-branch");
+      const shown = yield* gate.preview({ proposalId: open.proposal.id });
+      const workspace = shown.seats[0]?.workspace;
+      assert.equal(workspace?.type === "worktree" && workspace.baseCommit, pin);
+
+      // It stays renamed through approval, so the commit saved on the proposal is what launches.
+      const approved = yield* gate.resolve({
+        proposalId: open.proposal.id,
+        decision: "approve",
+        approvalToken: shown.approvalToken,
+      });
+      assert.equal(approved.proposal.status, "approved");
+      assert.equal(baseCommitOf((yield* store.read(open.proposal.id))?.approvedSeats?.[0]), pin);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a ref that resolves to nothing is refused when proposed, and stores nothing", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* fixture;
+    yield* Effect.gen(function* () {
+      const gate = yield* CrewProposalService;
+      repo.gone.add("pin-stale-branch");
+      const roster = yield* gate
+        .propose({
+          requestKey: "pin-stale",
+          captain,
+          displayName: "Stale",
+          brief: "Build",
+          seats: [builderOn("pin-stale-branch")],
+        })
+        .pipe(Effect.flip);
+      assert.equal(roster._tag, "CrewProposalRequestError");
+      assert.include(roster.message, 'Seat "builder"');
+      assert.include(roster.message, "'pin-stale-branch'");
+      assert.include(roster.message, "Name an existing branch, tag, or commit");
+      const launched = yield* gate.propose({
+        requestKey: "pin-stale-crew",
+        captain,
+        displayName: "Crew",
+        brief: "Build",
+        seats: [custom("lead")],
+      });
+      const addition = yield* gate
+        .requestMember({
+          requestKey: "pin-stale-addition",
+          captain,
+          crewInstanceId: launched.instance?.id ?? null,
+          seat: builderOn("pin-stale-branch"),
+          brief: null,
+        })
+        .pipe(Effect.flip);
+      assert.equal(addition._tag, "CrewProposalRequestError");
+      const proposals = yield* (yield* AgentCrewProposalService).listForCaptain(captainId);
+      assert.deepStrictEqual(
+        proposals.map(({ requestedSeats }) => requestedSeats[0]?.seat),
+        ["lead"],
+      );
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("editing a base resolves and previews a new commit that needs its own approval", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* fixture;
+    yield* Effect.gen(function* () {
+      const gate = yield* CrewProposalService;
+      const store = yield* AgentCrewProposalService;
+      const open = yield* gate.propose({
+        requestKey: "pin-edit",
+        captain,
+        displayName: "Edit",
+        brief: "Build",
+        seats: [builderOn("pin-edit-old")],
+      });
+      const original = yield* gate.preview({ proposalId: open.proposal.id });
+      // The card drops the saved commit when the base is edited.
+      const edited = [builderOn("pin-edit-new")];
+      const next = yield* gate.preview({ proposalId: open.proposal.id, seats: edited });
+      const workspace = next.seats[0]?.workspace;
+      assert.equal(
+        workspace?.type === "worktree" && workspace.baseCommit,
+        fakeCommit("pin-edit-new"),
+      );
+      assert.notEqual(next.approvalToken, original.approvalToken);
+      const stale = yield* gate
+        .resolve({
+          proposalId: open.proposal.id,
+          decision: "approve",
+          seats: edited,
+          approvalToken: original.approvalToken,
+        })
+        .pipe(Effect.flip);
+      assert.equal(stale._tag, "CrewProposalRequestError");
+      yield* gate.resolve({
+        proposalId: open.proposal.id,
+        decision: "approve",
+        seats: edited,
+        approvalToken: next.approvalToken,
+      });
+      assert.equal(
+        baseCommitOf((yield* store.read(open.proposal.id))?.approvedSeats?.[0]),
+        fakeCommit("pin-edit-new"),
+      );
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a retry keeps the original pin, and changed arguments are still a conflict", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* fixture;
+    yield* Effect.gen(function* () {
+      const gate = yield* CrewProposalService;
+      const input = {
+        requestKey: "pin-retry",
+        captain,
+        displayName: "Retry",
+        brief: "Build",
+        seats: [builderOn("pin-retry-branch")],
+      };
+      const first = yield* gate.propose(input);
+      // The branch moves on; an identical retry finds the stored proposal and its pin.
+      repo.moved.set("pin-retry-branch", "9".repeat(40));
+      const retry = yield* gate.propose(input);
+      assert.deepStrictEqual(retry.proposal, first.proposal);
+      assert.equal(baseCommitOf(retry.proposal.requestedSeats[0]), fakeCommit("pin-retry-branch"));
+      const changed = yield* gate
+        .propose({ ...input, seats: [builderOn("pin-retry-other")] })
+        .pipe(Effect.flip);
+      assert.include(changed.message, "different request");
+      assert.deepStrictEqual(
+        (yield* (yield* AgentCrewProposalService).read(first.proposal.id))?.requestedSeats,
+        first.proposal.requestedSeats,
+      );
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("automatic approval and direct additions launch from the pinned commit", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* fixtureWithSettings({ crewAutoApprove: true });
+    yield* Effect.gen(function* () {
+      const gate = yield* CrewProposalService;
+      const roster = yield* gate.propose({
+        requestKey: "pin-auto",
+        captain,
+        displayName: "Auto",
+        brief: "Build",
+        seats: [builderOn("pin-auto-branch")],
+      });
+      assert.equal(roster.proposal.status, "approved");
+      assert.equal(baseCommitOf(roster.proposal.approvedSeats?.[0]), fakeCommit("pin-auto-branch"));
+      const addition = yield* gate.requestMember({
+        requestKey: "pin-auto-addition",
+        captain,
+        crewInstanceId: roster.instance!.id,
+        seat: builderOn("pin-auto-addition-branch", "second"),
+        brief: null,
+      });
+      assert.equal(addition.proposal.status, "approved");
+      assert.equal(
+        baseCommitOf(addition.proposal.approvedSeats?.[0]),
+        fakeCommit("pin-auto-addition-branch"),
+      );
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("an open proposal from before pins is pinned by its first preview, never guessed", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* fixture;
+    yield* Effect.gen(function* () {
+      const gate = yield* CrewProposalService;
+      const store = yield* AgentCrewProposalService;
+      const legacy = (id: string, baseRef: string) =>
+        store.create({
+          id: `legacy-${id}`,
+          projectId: captain.projectId,
+          captainParticipantId: captain.participantId,
+          captainThreadId: captain.thread.id,
+          crewInstanceId: null,
+          kind: "roster",
+          brief: "Build",
+          displayName: "Legacy",
+          requestedSeats: [builderOn(baseRef)],
+          createdAt: DateTime.formatIso(createdAt),
+        });
+      const open = yield* legacy("live", "pin-legacy-branch");
+      const shown = yield* gate.preview({ proposalId: open.id });
+      const workspace = shown.seats[0]?.workspace;
+      assert.equal(
+        workspace?.type === "worktree" && workspace.baseCommit,
+        fakeCommit("pin-legacy-branch"),
+      );
+      // Nothing is written to the open row; approval binds what the preview showed.
+      assert.isUndefined(baseCommitOf((yield* store.read(open.id))?.requestedSeats[0]));
+      yield* gate.resolve({
+        proposalId: open.id,
+        decision: "approve",
+        approvalToken: shown.approvalToken,
+      });
+      assert.equal(
+        baseCommitOf((yield* store.read(open.id))?.approvedSeats?.[0]),
+        fakeCommit("pin-legacy-branch"),
+      );
+
+      // Its ref already gone: the preview says so and the proposal needs an edit or a decline.
+      repo.gone.add("pin-legacy-gone");
+      const stale = yield* legacy("gone", "pin-legacy-gone");
+      const refused = yield* gate.preview({ proposalId: stale.id }).pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchSeatUnavailableError");
+      assert.include(refused.message, "builder");
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
 );

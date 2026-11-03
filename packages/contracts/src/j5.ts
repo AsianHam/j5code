@@ -107,7 +107,14 @@ export const CrewSeatWorkspace = Schema.Union([
   Schema.Struct({ type: Schema.Literal("shared") }),
   Schema.Struct({
     type: Schema.Literal("worktree"),
+    /** The label for the base; what the worktree starts from is `baseCommit`. */
     baseRef: Schema.String,
+    /**
+     * The full commit `baseRef` meant when the choice was accepted. Absent only on a choice stored
+     * before commits were pinned, or edited on the card since; preview then resolves it and the
+     * approval binds what it showed.
+     */
+    baseCommit: Schema.optionalKey(Schema.String),
     branch: Schema.optionalKey(Schema.String),
     startFromOrigin: Schema.optionalKey(Schema.Boolean),
   }),

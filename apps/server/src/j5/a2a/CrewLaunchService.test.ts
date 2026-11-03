@@ -65,9 +65,13 @@ import { crewSeatRequestKey, spawnThreadId } from "./spawnIds.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
 import { SpawnCompositionService } from "./SpawnCompositionService.ts";
-import { type FakeCheckout, fakeSpawnWorkspaceLayer } from "./test-support/spawnWorkspaceFakes.ts";
+import {
+  type FakeCheckout,
+  fakeSha,
+  fakeSpawnWorkspaceLayer,
+} from "./test-support/spawnWorkspaceFakes.ts";
 import type { ThreadLaunchInput } from "../../orchestration-v2/ThreadLaunchService.ts";
-import type { SpawnWorkspaceChoice } from "./spawnWorkspace.ts";
+import type { ResolvedSpawnWorkspace, SpawnWorkspaceChoice } from "./spawnWorkspace.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
 
 const savedBriefs = Effect.gen(function* () {
@@ -2080,7 +2084,12 @@ it.effect("launches each seat in the workspace it names, and refuses one git can
       assert.deepStrictEqual(
         resolved.map((entry) => entry.runtime.workspace),
         [
-          { type: "worktree", baseRef: "j5/main", startFromOrigin: false },
+          {
+            type: "worktree",
+            baseRef: "j5/main",
+            baseCommit: fakeSha(repo, "j5/main"),
+            startFromOrigin: false,
+          },
           {
             type: "existing_worktree",
             worktreePath: "/repo-worktrees/feature",
@@ -2132,6 +2141,7 @@ it.effect("launches each seat in the workspace it names, and refuses one git can
         SELECT workspace FROM j5_crew_seat_context WHERE thread_id = ${threadOf("builder")}
       `;
       assert.include(contexts[0]!.workspace, '"baseRef":"j5/main"');
+      assert.include(contexts[0]!.workspace, `"baseCommit":"${fakeSha(repo, "j5/main")}"`);
     }).pipe(Effect.provide(layerFor(repo)));
   }),
 );
@@ -2222,6 +2232,223 @@ it.effect("binds an existing worktree's live branch, so a stale preview can't ap
       );
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect("pins a new worktree's base commit, and a moved or renamed branch can't change it", () =>
+  Effect.gen(function* () {
+    const { context, commands, captain } = yield* fixture;
+    const codex = provider("codex", "codex", [{ slug: "gpt-5.6-sol", options: ["high"] }]);
+    const release = "1".repeat(40);
+    const live = yield* Ref.make<FakeCheckout>({
+      isRepo: true,
+      refName: "j5/main",
+      commits: { release },
+    });
+    const layer = crewLaunchLayer.pipe(
+      Layer.provideMerge(
+        dependencies(
+          commands,
+          [codex],
+          new Set(),
+          new Set(),
+          new Set(),
+          false,
+          new Set(),
+          () => Effect.void,
+          { checkout: { isRepo: false, refName: null }, liveCheckout: live },
+        ),
+      ),
+      Layer.provideMerge(Layer.succeedContext(context)),
+      Layer.provideMerge(
+        personaLibraryLayer("j5-crew-launch-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    const builder = (workspace: SpawnWorkspaceChoice) => ({
+      name: "builder",
+      agentId: null,
+      reason: "Builds",
+      instructions: "Build it",
+      workspace,
+    });
+    const baseOf = (seats: ReadonlyArray<{ readonly workspace: ResolvedSpawnWorkspace }>) =>
+      seats[0]?.workspace.type === "worktree" ? seats[0].workspace.baseCommit : undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      const [pinned] = yield* launcher.pinWorkspaces(captain, [
+        builder({ type: "worktree", baseRef: "release" }),
+      ]);
+      assert.deepStrictEqual(pinned, { type: "worktree", baseRef: "release", baseCommit: release });
+
+      // The branch moves, then is renamed away: the saved commit still resolves and is what shows.
+      yield* Ref.set(live, {
+        isRepo: true,
+        refName: "j5/main",
+        commits: { release: "2".repeat(40) },
+      });
+      assert.equal(baseOf(yield* launcher.resolveSeats(captain, [builder(pinned!)])), release);
+      yield* Ref.set(live, { isRepo: true, refName: "j5/main", missingRefs: ["release"] });
+      assert.equal(baseOf(yield* launcher.resolveSeats(captain, [builder(pinned!)])), release);
+
+      // A seat saved before pins existed has none, so the ref is read now and shown for approval.
+      const legacy = yield* launcher
+        .resolveSeats(captain, [builder({ type: "worktree", baseRef: "release" })])
+        .pipe(Effect.flip);
+      assert.include(legacy.message, "Base ref 'release' doesn't resolve to a commit");
+      assert.include(legacy.message, "builder");
+      yield* Ref.set(live, {
+        isRepo: true,
+        refName: "j5/main",
+        commits: { release: "3".repeat(40) },
+      });
+      assert.equal(
+        baseOf(
+          yield* launcher.resolveSeats(captain, [
+            builder({ type: "worktree", baseRef: "release" }),
+          ]),
+        ),
+        "3".repeat(40),
+      );
+
+      // A submitted ref that resolves to nothing is refused naming the seat, so nothing is stored.
+      yield* Ref.set(live, { isRepo: true, refName: "j5/main", missingRefs: ["j5/2969a292"] });
+      const stale = yield* launcher
+        .pinWorkspaces(captain, [builder({ type: "worktree", baseRef: "j5/2969a292" })])
+        .pipe(Effect.flip);
+      assert.equal(
+        stale.detail,
+        `Seat "builder": Base ref 'j5/2969a292' doesn't resolve to a commit in this repository.`,
+      );
+
+      // A saved commit that is truly gone fails naming the revision, with no fallback to the ref.
+      yield* Ref.set(live, { isRepo: true, refName: "j5/main", missingRefs: [release] });
+      const gone = yield* launcher.resolveSeats(captain, [builder(pinned!)]).pipe(Effect.flip);
+      assert.include(
+        gone.message,
+        `Base commit ${release.slice(0, 8)} (from 'release') is no longer in this repository.`,
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect(
+  "start_from_origin pins origin's tip when the base is chosen, and never advances it",
+  () =>
+    Effect.gen(function* () {
+      const { context, commands, captain } = yield* fixture;
+      const codex = provider("codex", "codex", [{ slug: "gpt-5.6-sol", options: ["high"] }]);
+      const fetches = yield* Ref.make<ReadonlyArray<string>>([]);
+      const live = yield* Ref.make<FakeCheckout>({
+        isRepo: true,
+        refName: "j5/main",
+        commits: { main: "a".repeat(40) },
+        origin: { main: "b".repeat(40) },
+      });
+      const layer = crewLaunchLayer.pipe(
+        Layer.provideMerge(
+          dependencies(
+            commands,
+            [codex],
+            new Set(),
+            new Set(),
+            new Set(),
+            false,
+            new Set(),
+            () => Effect.void,
+            { checkout: { isRepo: false, refName: null }, liveCheckout: live, fetches },
+          ),
+        ),
+        Layer.provideMerge(Layer.succeedContext(context)),
+        Layer.provideMerge(
+          personaLibraryLayer("j5-crew-launch-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      const seat = (startFromOrigin: boolean) => ({
+        name: "builder",
+        agentId: null,
+        reason: "Builds",
+        instructions: "Build it",
+        workspace: { type: "worktree" as const, baseRef: "main", startFromOrigin },
+      });
+      yield* Effect.gen(function* () {
+        const launcher = yield* CrewLaunchService;
+        // Locally the branch is a, origin's is b; from origin the pin is b, fetched first.
+        const [local] = yield* launcher.pinWorkspaces(captain, [seat(false)]);
+        assert.equal(local?.type === "worktree" && local.baseCommit, "a".repeat(40));
+        assert.deepStrictEqual(yield* Ref.get(fetches), []);
+        const [fromOrigin] = yield* launcher.pinWorkspaces(captain, [seat(true)]);
+        assert.equal(fromOrigin?.type === "worktree" && fromOrigin.baseCommit, "b".repeat(40));
+        assert.deepStrictEqual(yield* Ref.get(fetches), ["main"]);
+        // Origin moves on; the saved commit is used without another fetch.
+        yield* Ref.update(live, (checkout) => ({ ...checkout, origin: { main: "c".repeat(40) } }));
+        const resolved = yield* launcher.resolveSeats(captain, [
+          { ...seat(true), workspace: fromOrigin as never },
+        ]);
+        assert.equal(
+          resolved[0]?.workspace.type === "worktree" && resolved[0].workspace.baseCommit,
+          "b".repeat(40),
+        );
+        assert.deepStrictEqual(yield* Ref.get(fetches), ["main"]);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect(
+  "an unreachable origin refuses only the seat that started from it, naming that seat",
+  () =>
+    Effect.gen(function* () {
+      const { context, commands, captain } = yield* fixture;
+      const codex = provider("codex", "codex", [{ slug: "gpt-5.6-sol", options: ["high"] }]);
+      const layer = crewLaunchLayer.pipe(
+        Layer.provideMerge(
+          dependencies(
+            commands,
+            [codex],
+            new Set(),
+            new Set(),
+            new Set(),
+            false,
+            new Set(),
+            () => Effect.void,
+            {
+              checkout: {
+                isRepo: true,
+                refName: "j5/main",
+                commits: { main: "a".repeat(40) },
+                origin: { main: "b".repeat(40) },
+                unreachableOriginBranches: ["main"],
+              },
+            },
+          ),
+        ),
+        Layer.provideMerge(Layer.succeedContext(context)),
+        Layer.provideMerge(
+          personaLibraryLayer("j5-crew-launch-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      const seat = (name: string, startFromOrigin: boolean) => ({
+        name,
+        agentId: null,
+        reason: "Builds",
+        instructions: "Build it",
+        workspace: { type: "worktree" as const, baseRef: "main", startFromOrigin },
+      });
+      yield* Effect.gen(function* () {
+        const launcher = yield* CrewLaunchService;
+        // The other seats of the roster resolve; the seat from origin is refused by name.
+        const pinned = yield* launcher
+          .pinWorkspaces(captain, [seat("local", false), seat("fresh", true)])
+          .pipe(Effect.flip);
+        assert.include(pinned.detail, 'Seat "fresh":');
+        assert.include(pinned.detail, "could not be fetched");
+        assert.notInclude(pinned.detail, "can't be read");
+        assert.include(pinned.nextStep, "local branch");
+        const [local] = yield* launcher.pinWorkspaces(captain, [seat("local", false)]);
+        assert.equal(local?.type === "worktree" && local.baseCommit, "a".repeat(40));
+      }).pipe(Effect.provide(layer));
+    }),
 );
 
 const captainProjectId = () => ProjectId.make("project:crew-launch");

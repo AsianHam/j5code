@@ -396,7 +396,7 @@ const CrewPlaybookName = NonEmptyString.annotate({
 });
 const CrewSeatWorkspace = J5SpawnWorkspace.annotate({
   description:
-    'Where the seat works, chosen for every seat, with the same three choices as j5_spawn_agent: {"type":"shared"} (your checkout), {"type":"worktree","base_ref":...}, or {"type":"existing_worktree","worktree_path":...}.',
+    'Where the seat works, chosen for every seat, with the same three choices as j5_spawn_agent: {"type":"shared"} (your checkout), {"type":"worktree","base_ref":...}, or {"type":"existing_worktree","worktree_path":...}. A new worktree\'s base_ref is resolved to a commit when the proposal is accepted and the worktree starts from that commit, so renaming or moving the branch later changes nothing; a base_ref that does not resolve is refused. Name your own branch to start from your checkout\'s current commit; uncommitted changes are not included.',
 });
 const CrewSeatRuntimeMode = RuntimeMode.annotate({
   description:

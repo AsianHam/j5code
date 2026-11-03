@@ -88,7 +88,20 @@ export const layer = Layer.effect(
           }
           return yield* inner.dispatch({
             ...command,
-            dispatchMode: { type: "defer_start", workspaceStrategy: workspace },
+            dispatchMode: {
+              type: "defer_start",
+              // The saved commit is the base, and it is never fetched forward: a seat saved
+              // before commits were pinned still starts from its ref.
+              workspaceStrategy:
+                workspace.baseCommit === undefined
+                  ? workspace
+                  : {
+                      type: "worktree",
+                      baseRef: workspace.baseCommit,
+                      ...(workspace.branch === undefined ? {} : { branch: workspace.branch }),
+                      startFromOrigin: false,
+                    },
+            },
           });
         }).pipe(
           Effect.mapError((cause) =>

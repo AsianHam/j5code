@@ -153,7 +153,12 @@ const comparableDraft = (draft: CrewSeatDraft) =>
       : draft.workspace.type === "shared"
         ? ["shared"]
         : draft.workspace.type === "worktree"
-          ? ["worktree", draft.workspace.baseRef, draft.workspace.startFromOrigin ?? false]
+          ? [
+              "worktree",
+              draft.workspace.baseRef,
+              draft.workspace.baseCommit ?? null,
+              draft.workspace.startFromOrigin ?? false,
+            ]
           : ["existing_worktree", draft.workspace.worktreePath],
   ]);
 

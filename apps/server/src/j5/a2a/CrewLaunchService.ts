@@ -49,6 +49,7 @@ import {
   namedBaseRefs,
   namedWorktreePaths,
   resolveSpawnWorkspace,
+  SpawnWorkspaceError,
   spawnCreateCommandId,
   spawnThreadCheckout,
 } from "./spawnWorkspace.ts";
@@ -177,7 +178,9 @@ export interface CrewLaunchResult {
   readonly seats: ReadonlyArray<CrewSeatLaunchOutcome>;
 }
 
-class CrewLaunchSeatUnavailableError extends Data.TaggedError("CrewLaunchSeatUnavailableError")<{
+export class CrewLaunchSeatUnavailableError extends Data.TaggedError(
+  "CrewLaunchSeatUnavailableError",
+)<{
   readonly seatName: string;
   readonly agentId: string;
   readonly detail: string;
@@ -253,6 +256,15 @@ export interface CrewLaunchServiceShape {
     seats: ReadonlyArray<CrewLaunchSeat>,
   ) => Effect.Effect<ReadonlyArray<ResolvedCrewLaunchSeat>, CrewLaunchError>;
   /**
+   * Each seat's workspace choice as it should be stored: a new worktree's base resolved to a
+   * commit and saved on the choice, anything else as given. Refuses a base that resolves to
+   * nothing, naming the seat. Only worktree seats are read from the repository.
+   */
+  readonly pinWorkspaces: (
+    captain: CrewCaptain,
+    seats: ReadonlyArray<CrewLaunchSeat>,
+  ) => Effect.Effect<ReadonlyArray<SpawnWorkspaceChoice>, SpawnWorkspaceError>;
+  /**
    * Launch an approved roster once: seats resolve, the instance is recorded with every planned
    * seat, `onRecorded` runs, then every seat is attempted and briefed. A seat that fails does not
    * stop the next one; each seat's outcome is returned, and a seat whose thread was never created
@@ -284,6 +296,53 @@ export const layer = Layer.effect(
     const spawnWorkspace = yield* SpawnWorkspaceService;
     const memberModels = yield* CrewMemberModels;
 
+    /** One read of the Captain's repository for what these seats name; null when all are shared. */
+    const inspectWorkspaces = (captain: CrewCaptain, seats: ReadonlyArray<CrewLaunchSeat>) =>
+      seats.every((seat) => seat.workspace.type === "shared")
+        ? Effect.succeed(null)
+        : spawnWorkspace.inspect({
+            projectId: captain.thread.projectId,
+            worktreePath: captain.thread.worktreePath,
+            checkBranches: seats.some(
+              (seat) => seat.workspace.type === "worktree" && seat.workspace.branch !== undefined,
+            ),
+            baseRefs: namedBaseRefs(seats.map((seat) => seat.workspace)),
+            pinBases: true,
+            existingWorktreePaths: namedWorktreePaths(seats.map((seat) => seat.workspace)),
+          });
+
+    const pinWorkspaces = Effect.fn("j5.a2a.crewLaunch.pinWorkspaces")(function* (
+      captain: CrewCaptain,
+      seats: ReadonlyArray<CrewLaunchSeat>,
+    ) {
+      const checkout = yield* inspectWorkspaces(
+        captain,
+        seats.filter((seat) => seat.workspace.type === "worktree"),
+      );
+      if (checkout === null) return seats.map((seat) => seat.workspace);
+      return yield* Effect.forEach(
+        seats,
+        (seat): Effect.Effect<SpawnWorkspaceChoice, SpawnWorkspaceError> => {
+          const { workspace } = seat;
+          if (workspace.type !== "worktree") return Effect.succeed(workspace);
+          return Effect.fromResult(resolveSpawnWorkspace(checkout, workspace)).pipe(
+            Effect.map((resolved) =>
+              resolved.type === "worktree" && resolved.baseCommit !== undefined
+                ? { ...workspace, baseCommit: resolved.baseCommit }
+                : workspace,
+            ),
+            Effect.mapError(
+              (error) =>
+                new SpawnWorkspaceError({
+                  detail: `Seat "${seat.name}": ${error.detail}`,
+                  nextStep: error.nextStep,
+                }),
+            ),
+          );
+        },
+      );
+    });
+
     // Resolve every seat before creating anything: a Crew launches whole or not at all.
     const resolveSeats = Effect.fn("j5.a2a.crewLaunch.resolveSeats")(function* (
       captain: CrewCaptain,
@@ -292,17 +351,7 @@ export const layer = Layer.effect(
       const providers = yield* registry.getProviders;
       // Every seat's workspace resolves against one read of the Captain's repository, here at
       // preview, so the approval token binds what each seat will get. Shared seats need none.
-      const checkout = seats.every((seat) => seat.workspace.type === "shared")
-        ? null
-        : yield* spawnWorkspace.inspect({
-            projectId: captain.thread.projectId,
-            worktreePath: captain.thread.worktreePath,
-            checkBranches: seats.some(
-              (seat) => seat.workspace.type === "worktree" && seat.workspace.branch !== undefined,
-            ),
-            baseRefs: namedBaseRefs(seats.map((seat) => seat.workspace)),
-            existingWorktreePaths: namedWorktreePaths(seats.map((seat) => seat.workspace)),
-          });
+      const checkout = yield* inspectWorkspaces(captain, seats);
       const resolveWorkspace = (seat: CrewLaunchSeat) =>
         Effect.fromResult(
           checkout === null
@@ -996,6 +1045,12 @@ export const layer = Layer.effect(
         worktreePath: captain.thread.worktreePath,
       });
 
-    return CrewLaunchService.of({ launch, addSeats, resolveSeats, workspaceOptions });
+    return CrewLaunchService.of({
+      launch,
+      addSeats,
+      resolveSeats,
+      pinWorkspaces,
+      workspaceOptions,
+    });
   }),
 );
