@@ -120,6 +120,7 @@ import {
 import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
 import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useSharedConversationEntries } from "../../j5/sharing/sharedTimeline";
+import { withoutHiddenCrewNotices } from "../../j5/crew/crewNotices.logic";
 import { participantIdsForThreadA2ADelivery } from "../../j5/a2a/ThreadA2ARenderer";
 import { useParticipantIdentities } from "../../j5/a2a/ParticipantIdentitiesClient";
 import {
@@ -702,7 +703,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     availableRevertTurnCounts,
     worktreeSetup,
   });
-  const rows = useStableRows(rawRows, listIdentityKey);
+  // J5 (case 104): a Crew notice with nothing for the person takes no row, dropped after the rows
+  // are derived so it still bounds the Captain turn it started.
+  const rows = useStableRows(withoutHiddenCrewNotices(rawRows), listIdentityKey);
   // Run status/timestamps change per stream event; keep them out of shared row context.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);

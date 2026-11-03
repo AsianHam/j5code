@@ -1,7 +1,7 @@
 /**
- * The platform's Crew notices as they appear in a Captain's thread, recognized from their tags so
- * the timeline can show a card instead of the raw block. Recognition is strict: a block the
- * parser does not understand stays raw, and prose is never guessed at.
+ * The platform's Crew notices in a Captain's thread, recognized strictly from their tags: a block
+ * the parser does not understand stays raw. It reads every field, including ones the timeline no
+ * longer draws, since the strict parse keeps an unreadable block raw and the approval summary reads them.
  */
 export interface CrewNoticeMessage {
   readonly role: string;
@@ -137,6 +137,8 @@ const parseGate = (text: string): CrewNoticePresentation | null => {
     });
   }
   // `seat_failed: <seat> | <run status> | <error>`; the error may itself contain the separator.
+  // The server always writes an error ("no error detail was recorded" when there is none,
+  // `formatRunFailure`), so a failed seat is never dropped here for an empty one.
   const failures = fields(block, "seat_failed").flatMap((entry) => {
     const [seat, runStatus, ...rest] = entry.split(" | ");
     return seat === undefined || runStatus === undefined || rest.length === 0

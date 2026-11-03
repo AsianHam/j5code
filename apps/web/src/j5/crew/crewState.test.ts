@@ -4,6 +4,7 @@ import {
   classifyCrewSeat,
   crewHasRunningSeat,
   formatCrewStateSummary,
+  seatRunLabel,
   summarizeCrewState,
   type CrewSeatThread,
 } from "./crewState";
@@ -85,5 +86,15 @@ describe("crew state", () => {
       crewHasRunningSeat(summarizeCrewState([seat(), seat({ hasPendingApprovals: true })])),
     ).toBe(false);
     expect(formatCrewStateSummary(summarizeCrewState([]))).toBeNull();
+  });
+
+  it("names how a seat's last run ended, and leaves live and unknown states to the row", () => {
+    expect(seatRunLabel("failed")).toBe("Failed");
+    expect(seatRunLabel("interrupted")).toBe("Interrupted");
+    expect(seatRunLabel("cancelled")).toBe("Interrupted");
+    expect(seatRunLabel("completed")).toBe("Completed");
+    expect(seatRunLabel("running")).toBeNull();
+    expect(seatRunLabel("idle")).toBeNull();
+    expect(seatRunLabel(undefined)).toBeNull();
   });
 });
