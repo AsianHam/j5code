@@ -17,7 +17,7 @@ import { describePersonaSwap, removedSeatSteps, stepTitle, unownedSteps } from "
 import { CrewProposalMemberDialog } from "./CrewProposalMemberDialog";
 import type { CrewProposalRow } from "./crewProposalDraft";
 import { CrewProposalMemberRow } from "./CrewProposalMemberRow";
-import { useCrewMemberModels } from "./useCrewMemberModels";
+import { useCrewMemberModels, useCrewMemberReasoning } from "./useCrewMemberModels";
 import { useCrewProposalPreview } from "./useCrewProposalPreview";
 import { ComposerBanner } from "../../components/chat/ComposerBanner";
 import { useCanOperateThread } from "../sharing/access";
@@ -60,6 +60,10 @@ export function CrewProposalCard(props: {
   );
   const canResolve = permitted && writesToCaptain;
   const memberModels = useCrewMemberModels(
+    props.environmentId,
+    proposal.captainThreadId as ThreadId,
+  );
+  const memberReasoning = useCrewMemberReasoning(
     props.environmentId,
     proposal.captainThreadId as ThreadId,
   );
@@ -335,6 +339,7 @@ export function CrewProposalCard(props: {
           environmentId={props.environmentId}
           workspaceOptions={preview.workspaceOptions}
           memberModels={memberModels}
+          memberReasoning={memberReasoning}
           agents={agents}
           disabled={props.busy}
           onClose={() => setEditing(null)}

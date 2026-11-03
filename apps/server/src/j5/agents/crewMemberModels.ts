@@ -1,7 +1,11 @@
 import type { ModelSelection, ProjectId } from "@t3tools/contracts";
 import {
   crewMemberModelRefusal,
+  crewMemberReasoningRefusal,
+  crewMemberSelectionLevel,
+  eligibleCrewMemberLevelsForModel,
   eligibleCrewMemberModels,
+  isCrewMemberLevelChecked,
   isCrewMemberModelChecked,
 } from "@t3tools/contracts/j5";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -37,18 +41,42 @@ export class CrewMemberModelNotEligibleError extends Schema.TaggedError<CrewMemb
   }
 }
 
+/** A reasoning level outside the project's list for custom members, with what the model offers. */
+export class CrewMemberReasoningNotEligibleError extends Schema.TaggedError<CrewMemberReasoningNotEligibleError>()(
+  "CrewMemberReasoningNotEligibleError",
+  {
+    projectId: Schema.String,
+    projectTitle: Schema.String,
+    instanceId: Schema.String,
+    model: Schema.String,
+    level: Schema.String,
+    eligible: Schema.Array(Schema.Struct({ level: Schema.String, label: Schema.String })),
+  },
+) {
+  override get message(): string {
+    return crewMemberReasoningRefusal({
+      selection: this,
+      projectTitle: this.projectTitle,
+      eligible: this.eligible,
+    });
+  }
+}
+
 /**
- * The one place that decides whether a resolved model may run a custom worker in a project: a
- * Crew's custom member, a plain `j5_spawn_agent`, or a plain `delegate_task`. Persona seats that
- * keep their persona's model never reach it.
+ * The one place that decides whether a resolved model and reasoning level may run a custom worker
+ * in a project: a Crew's custom member, a plain `j5_spawn_agent`, or a plain `delegate_task`.
+ * Persona seats that keep their persona's selection never reach it.
  */
 export class CrewMemberModels extends Context.Service<
   CrewMemberModels,
   {
     readonly assertEligible: (input: {
       readonly projectId: ProjectId;
-      readonly selection: Pick<ModelSelection, "instanceId" | "model">;
-    }) => Effect.Effect<void, CrewMemberModelNotEligibleError>;
+      readonly selection: Pick<ModelSelection, "instanceId" | "model" | "options">;
+    }) => Effect.Effect<
+      void,
+      CrewMemberModelNotEligibleError | CrewMemberReasoningNotEligibleError
+    >;
   }
 >()("t3/j5/agents/crewMemberModels") {}
 
@@ -58,26 +86,48 @@ export const layer = Layer.effect(
     const settings = yield* ServerSettings.ServerSettingsService;
     const registry = yield* ProviderRegistry;
     const projects = yield* ProjectService;
-    const assertEligible: CrewMemberModels["Service"]["assertEligible"] = Effect.fn(
-      "j5.crewMemberModels.assertEligible",
-    )(function* ({ projectId, selection }) {
-      const list = yield* settings.getSettings.pipe(
-        Effect.map((all) => resolveProjectSettings(all, projectId).settings.crewMemberModels),
-        Effect.orDie,
-      );
-      if (isCrewMemberModelChecked(list, selection)) return;
-      const eligible = eligibleCrewMemberModels(list, yield* registry.getProviders);
-      const projectTitle = yield* projects.getById(projectId).pipe(
+    const projectTitleOf = (projectId: ProjectId) =>
+      projects.getById(projectId).pipe(
         Effect.map(Option.map((project) => project.title)),
         Effect.map(Option.getOrElse(() => projectId as string)),
         Effect.orElseSucceed(() => projectId as string),
       );
-      return yield* new CrewMemberModelNotEligibleError({
+    const assertEligible: CrewMemberModels["Service"]["assertEligible"] = Effect.fn(
+      "j5.crewMemberModels.assertEligible",
+    )(function* ({ projectId, selection }) {
+      const resolved = yield* settings.getSettings.pipe(
+        Effect.map((all) => resolveProjectSettings(all, projectId).settings),
+        Effect.orDie,
+      );
+      const list = resolved.crewMemberModels;
+      if (!isCrewMemberModelChecked(list, selection)) {
+        return yield* new CrewMemberModelNotEligibleError({
+          projectId,
+          projectTitle: yield* projectTitleOf(projectId),
+          instanceId: selection.instanceId,
+          model: selection.model,
+          eligible: eligibleCrewMemberModels(list, yield* registry.getProviders),
+        });
+      }
+      // With no saved list every level is eligible, so the catalog is not read at all.
+      const levels = resolved.crewMemberReasoning;
+      if (levels === null) return;
+      const provider = (yield* registry.getProviders).find(
+        (candidate) => candidate.instanceId === selection.instanceId,
+      );
+      const level = crewMemberSelectionLevel(
+        provider?.models.find((model) => model.slug === selection.model),
+        selection.options,
+      );
+      if (provider === undefined || level === null) return;
+      if (isCrewMemberLevelChecked(levels, { instanceId: provider.instanceId, level })) return;
+      return yield* new CrewMemberReasoningNotEligibleError({
         projectId,
-        projectTitle,
+        projectTitle: yield* projectTitleOf(projectId),
         instanceId: selection.instanceId,
         model: selection.model,
-        eligible,
+        level,
+        eligible: eligibleCrewMemberLevelsForModel(levels, provider, selection.model),
       });
     });
     return CrewMemberModels.of({ assertEligible });

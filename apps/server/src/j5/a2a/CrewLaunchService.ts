@@ -1,4 +1,4 @@
-import { CrewSeatWorkspace } from "@t3tools/contracts/j5";
+import { CrewSeatWorkspace, crewMemberSelectionLevel } from "@t3tools/contracts/j5";
 import {
   describeCrewSeatRuntime,
   materializeCrewModelSelection,
@@ -187,7 +187,7 @@ class CrewLaunchSeatUnavailableError extends Data.TaggedError("CrewLaunchSeatUna
   }
 }
 
-/** A custom seat's model is not on the project's "Models for custom members" list. */
+/** A custom seat's model or reasoning level is not on the project's "Models for custom members" lists. */
 class CrewLaunchModelNotEligibleError extends Data.TaggedError("CrewLaunchModelNotEligibleError")<{
   readonly seatName: string;
   readonly detail: string;
@@ -319,8 +319,17 @@ export const layer = Layer.effect(
           ),
         );
       const resolved: Array<ResolvedCrewLaunchSeat> = [];
-      // `custom` seats run on whatever the project's list of models for custom members allows. A
-      // persona seat that keeps its persona's own model is not custom and skips the list.
+      // The reasoning level a selection runs at on its model, explicit or the model's default.
+      const levelOf = (selection: ModelSelection) =>
+        crewMemberSelectionLevel(
+          providers
+            .find((candidate) => candidate.instanceId === selection.instanceId)
+            ?.models.find((model) => model.slug === selection.model),
+          selection.options,
+        );
+      // `custom` seats run on whatever the project's lists of models and reasoning levels for
+      // custom members allow. A persona seat that keeps its persona's own model and level is not
+      // custom and skips the lists.
       const resolveSelection = Effect.fn("j5.a2a.crewLaunch.resolveSelection")(function* (
         seat: CrewLaunchSeat,
         selection: ModelSelection,
@@ -433,15 +442,18 @@ export const layer = Layer.effect(
           const definition = catalog.definitions.find(({ id }) => id === agentId);
           // Editing any field on the roster card freezes the model it showed into the seat, and
           // that is the fallback route when the primary's provider was signed out at proposal
-          // time. A seat counts as keeping the persona's model by matching either route, never by
-          // its absence.
+          // time. A seat counts as keeping the persona's model and level by matching either route,
+          // never by its absence.
           const frozen = seat.modelSelection;
           const frozenDriver = providers.find(
             (candidate) => candidate.instanceId === frozen.instanceId,
           )?.driver;
           const keepsPersonaModel =
             definition?.modelRoute.some(
-              (target) => target.driver === frozenDriver && target.model === frozen.model,
+              (target) =>
+                target.driver === frozenDriver &&
+                target.model === frozen.model &&
+                target.reasoningEffort === levelOf(frozen),
             ) ?? false;
           const { modelSelection, provider } = yield* resolveSelection(
             seat,

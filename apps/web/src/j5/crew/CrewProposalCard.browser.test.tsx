@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   preview: vi.fn(),
   read: vi.fn(),
   memberModels: null as ReadonlyArray<{ instanceId: string; model: string }> | null,
+  memberReasoning: null as ReadonlyArray<{ instanceId: string; level: string }> | null,
 }));
 vi.mock(import("@effect/atom-react"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -29,7 +30,10 @@ vi.mock("../a2a/ParticipantIdentitiesClient", () => ({
   useParticipantLabels: () => new Map([["captain", "Release Captain"]]),
 }));
 vi.mock("../sharing/access", () => ({ useCanOperateThread: () => state.permitted }));
-vi.mock("./useCrewMemberModels", () => ({ useCrewMemberModels: () => state.memberModels }));
+vi.mock("./useCrewMemberModels", () => ({
+  useCrewMemberModels: () => state.memberModels,
+  useCrewMemberReasoning: () => state.memberReasoning,
+}));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (query: unknown) => ({ data: query === "crew-proposals" ? [proposal] : {} }),
 }));
@@ -78,6 +82,25 @@ const codexProvider: ServerProvider = {
   models: [
     { slug: "gpt-6", name: "GPT-6", isCustom: false, capabilities: null },
     { slug: "other-model", name: "Other model", isCustom: false, capabilities: null },
+    {
+      slug: "deep",
+      name: "Deep",
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium", isDefault: true },
+              { id: "high", label: "High" },
+            ],
+          },
+        ],
+      },
+    },
   ],
 };
 const providers: ReadonlyArray<ServerProvider> = [
@@ -134,6 +157,7 @@ const resolve = vi.fn();
 function setup() {
   state.permitted = true;
   state.memberModels = null;
+  state.memberReasoning = null;
   state.preview.mockReset().mockImplementation(preview);
   state.read.mockReset().mockImplementation(({ input }: { input: { personaId: string } }) =>
     Promise.resolve({
@@ -645,4 +669,43 @@ it("leaves a persona member's pickers whole, since it runs on its own model", as
   await click(button("Edit seat reviewer"));
   await click(button("reviewer model"));
   expect(option("reviewer model", "Other model")).toBeDefined();
+});
+
+it("offers a custom member only the reasoning levels its project's list allows", async () => {
+  setup();
+  state.memberReasoning = [
+    { instanceId: "codex", level: "low" },
+    { instanceId: "codex", level: "high" },
+  ];
+  await using _screen = await render(card(), { router: false });
+  await click(button("Edit seat builder"));
+  await click(button("builder model"));
+  await click(option("builder model", "Deep"));
+  // The model's default, medium, is not allowed, so the seat starts on the first allowed level.
+  expect(button("builder reasoning").textContent).toContain("Low");
+  await click(button("builder reasoning"));
+  expect(option("builder reasoning", "Low")).toBeDefined();
+  expect(option("builder reasoning", "High")).toBeDefined();
+  expect(option("builder reasoning", "Medium")).toBeUndefined();
+  await click(option("builder reasoning", "High"));
+  await click(button("Save changes"));
+  await click(approve());
+  expect(resolve.mock.calls[0]?.[1][0].modelSelection).toEqual({
+    instanceId: "codex",
+    model: "deep",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  });
+});
+
+it("leaves a persona member's reasoning picker whole", async () => {
+  setup();
+  state.memberReasoning = [{ instanceId: "codex", level: "low" }];
+  await using _screen = await render(card(), { router: false });
+  await click(button("Edit seat reviewer"));
+  await click(button("reviewer model"));
+  await click(option("reviewer model", "Deep"));
+  expect(button("reviewer reasoning").textContent).toContain("Medium");
+  await click(button("reviewer reasoning"));
+  expect(option("reviewer reasoning", "Medium")).toBeDefined();
+  expect(option("reviewer reasoning", "High")).toBeDefined();
 });

@@ -85,7 +85,14 @@ const createdAt = DateTime.makeUnsafe("2026-09-09T16:00:00.000Z");
 const provider = (
   instanceId: string,
   driver: string,
-  models: ReadonlyArray<{ slug: string; options: ReadonlyArray<string> }>,
+  models: ReadonlyArray<{
+    slug: string;
+    options: ReadonlyArray<string>;
+    /** The option the model runs at when a selection names none. */
+    defaultOption?: string;
+    /** A model that advertises no reasoning option at all. */
+    noReasoning?: true;
+  }>,
 ): ServerProvider => ({
   instanceId: ProviderInstanceId.make(instanceId),
   driver: ProviderDriverKind.make(driver),
@@ -103,14 +110,20 @@ const provider = (
     name: model.slug,
     isCustom: false,
     capabilities: {
-      optionDescriptors: [
-        {
-          id: driver === "codex" ? "reasoningEffort" : "effort",
-          label: "Reasoning",
-          type: "select",
-          options: model.options.map((id) => ({ id, label: id })),
-        },
-      ],
+      optionDescriptors: model.noReasoning
+        ? []
+        : [
+            {
+              id: driver === "codex" ? "reasoningEffort" : "effort",
+              label: "Reasoning",
+              type: "select",
+              options: model.options.map((id) => ({
+                id,
+                label: id,
+                ...(id === model.defaultOption ? { isDefault: true } : {}),
+              })),
+            },
+          ],
     },
   })),
 });
@@ -2456,15 +2469,16 @@ it.effect("a persona keeps its own model off the list, until its model is overri
         model: own!.modelSelection.model,
       };
       // Editing a field on the roster card freezes the persona's model into the seat; it is the
-      // same model, so the seat still keeps it, with or without the options the card carried.
+      // same model and level, so the seat still keeps it.
       const [frozen] = yield* launcher.resolveSeats(captain, [
         { ...persona, modelSelection: own!.modelSelection, runtimeMode: "approval-required" },
       ]);
       assert.equal(frozen!.modelSelection.model, personaModel.model);
-      const [bare] = yield* launcher.resolveSeats(captain, [
-        { ...persona, modelSelection: personaModel },
-      ]);
-      assert.equal(bare!.modelSelection.model, personaModel.model);
+      // Naming no reasoning value is not keeping the persona's: it runs at the model's default.
+      const bare = yield* launcher
+        .resolveSeats(captain, [{ ...persona, modelSelection: personaModel }])
+        .pipe(Effect.flip);
+      assert.equal(bare._tag, "CrewLaunchModelNotEligibleError");
       // A different model on the card makes it a custom choice, held to the list.
       const other = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"].find(
         (model) => model !== personaModel.model,
@@ -2517,4 +2531,223 @@ it.effect(
         assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped),
+);
+
+it.effect("a persona seat on either route's level is unchanged; another level is checked", () =>
+  Effect.gen(function* () {
+    const { layer, captain } = yield* eligibilityFixture({
+      providers: [
+        codexModels("gpt-5.6-sol"),
+        provider("claudeAgent", "claudeAgent", [
+          { slug: "claude-opus-5", options: ["high", "low"] },
+        ]),
+      ],
+      settings: { crewMemberReasoning: [] },
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      const seat = (level: string) => ({
+        workspace: { type: "shared" as const },
+        name: "builder",
+        agentId: "builder",
+        reason: "Builds",
+        runtimeMode: "approval-required" as const,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5",
+          options: [{ id: "effort", value: level }],
+        },
+      });
+      yield* launcher.resolveSeats(captain, [seat("high")]);
+      const refused = yield* launcher.resolveSeats(captain, [seat("low")]).pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+      assert.include(refused.message, "Reasoning level low");
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+const codexLevel = (level: string) => ({ instanceId: ProviderInstanceId.make("codex"), level });
+const solAt = (value: string) => ({ ...sol, options: [{ id: "reasoningEffort", value }] });
+const terraAt = (value: string) => ({ ...terra, options: [{ id: "reasoningEffort", value }] });
+// The Captain runs on gpt-5.6-sol with no explicit level, so it runs at the model's default.
+const reasoningProviders = [
+  provider("codex", "codex", [
+    { slug: "gpt-5.6-sol", options: ["low", "medium", "high"], defaultOption: "medium" },
+    { slug: "gpt-5.6-terra", options: ["high", "xhigh"] },
+    { slug: "gpt-5.6-luna", options: [], noReasoning: true },
+  ]),
+];
+
+it.effect(
+  "a saved level list holds a custom seat to its checked levels and names what to use",
+  () =>
+    Effect.gen(function* () {
+      const { layer, captain, commands } = yield* eligibilityFixture({
+        providers: reasoningProviders,
+        settings: { crewMemberReasoning: [codexLevel("low"), codexLevel("high")] },
+      });
+      yield* Effect.gen(function* () {
+        const launcher = yield* CrewLaunchService;
+        const checked = yield* launcher.resolveSeats(captain, [
+          customSeat("low", solAt("low")),
+          customSeat("high", solAt("high")),
+        ]);
+        assert.lengthOf(checked, 2);
+        const refused = yield* launcher
+          .resolveSeats(captain, [customSeat("medium", solAt("medium"))])
+          .pipe(Effect.flip);
+        assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+        for (const part of [
+          "Reasoning level medium of gpt-5.6-sol on codex",
+          "Billing Migration",
+          "Models for custom members in Agent Setup",
+          "Eligible levels for gpt-5.6-sol: low, high.",
+        ])
+          assert.include(refused.message, part);
+        // Another model's levels are listed for that model, not this one's.
+        const terraRefused = yield* launcher
+          .resolveSeats(captain, [customSeat("terra", terraAt("xhigh"))])
+          .pipe(Effect.flip);
+        assert.include(terraRefused.message, "Eligible levels for gpt-5.6-terra: high.");
+        // Approving the roster goes through the same check, and nothing is created.
+        const launched = yield* launcher
+          .launch({
+            providerSessionId: "session",
+            requestKey: "launch-ineligible-level",
+            captain,
+            displayName: "Crew",
+            seats: [customSeat("medium", solAt("medium"))],
+            brief: "Work.",
+          })
+          .pipe(Effect.flip);
+        assert.equal(launched._tag, "CrewLaunchModelNotEligibleError");
+        assert.lengthOf(yield* Ref.get(commands), 0);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "a custom seat with no explicit level runs at the model's default, which is checked",
+  () =>
+    Effect.gen(function* () {
+      // The Captain's own selection names no level, so a seat that inherits it runs at medium.
+      const refusing = yield* eligibilityFixture({
+        providers: reasoningProviders,
+        settings: { crewMemberReasoning: [codexLevel("high")] },
+      });
+      yield* Effect.gen(function* () {
+        const launcher = yield* CrewLaunchService;
+        const refused = yield* launcher
+          .resolveSeats(refusing.captain, [customSeat("inherits")])
+          .pipe(Effect.flip);
+        assert.include(refused.message, "Reasoning level medium of gpt-5.6-sol");
+      }).pipe(Effect.provide(refusing.layer));
+      const allowing = yield* eligibilityFixture({
+        providers: reasoningProviders,
+        settings: { crewMemberReasoning: [codexLevel("medium")] },
+      });
+      yield* Effect.gen(function* () {
+        const launcher = yield* CrewLaunchService;
+        yield* launcher.resolveSeats(allowing.captain, [customSeat("inherits")]);
+      }).pipe(Effect.provide(allowing.layer));
+    }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "a saved empty level list makes no level eligible, but a model with none is not held",
+  () =>
+    Effect.gen(function* () {
+      const { layer, captain } = yield* eligibilityFixture({
+        providers: reasoningProviders,
+        settings: { crewMemberReasoning: [] },
+      });
+      yield* Effect.gen(function* () {
+        const launcher = yield* CrewLaunchService;
+        const refused = yield* launcher
+          .resolveSeats(captain, [customSeat("inherits")])
+          .pipe(Effect.flip);
+        assert.include(refused.message, "No reasoning level of gpt-5.6-sol is eligible");
+        yield* launcher.resolveSeats(captain, [
+          customSeat("plain", { instanceId: sol.instanceId, model: "gpt-5.6-luna" }),
+        ]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "the model list is checked before the level, and a level new to the catalog starts unchecked",
+  () =>
+    Effect.gen(function* () {
+      const { layer, captain } = yield* eligibilityFixture({
+        providers: reasoningProviders,
+        // Saved when terra offered only xhigh; high arrived later.
+        settings: {
+          crewMemberModels: [terra],
+          crewMemberReasoning: [codexLevel("xhigh")],
+        },
+      });
+      yield* Effect.gen(function* () {
+        const launcher = yield* CrewLaunchService;
+        const modelFirst = yield* launcher
+          .resolveSeats(captain, [customSeat("sol", solAt("high"))])
+          .pipe(Effect.flip);
+        assert.include(modelFirst.message, "Model gpt-5.6-sol on codex");
+        yield* launcher.resolveSeats(captain, [customSeat("known", terraAt("xhigh"))]);
+        const fresh = yield* launcher
+          .resolveSeats(captain, [customSeat("fresh", terraAt("high"))])
+          .pipe(Effect.flip);
+        assert.include(fresh.message, "Reasoning level high of gpt-5.6-terra");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
+);
+
+it.effect("a persona keeps its own level off the list, until its level is changed", () =>
+  Effect.gen(function* () {
+    const levels = ["low", "medium", "high", "xhigh"];
+    const { layer, captain } = yield* eligibilityFixture({
+      providers: [
+        provider(
+          "codex",
+          "codex",
+          ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"].map((slug) => ({
+            slug,
+            options: levels,
+          })),
+        ),
+      ],
+      settings: { crewMemberReasoning: [] },
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      const persona = {
+        workspace: { type: "shared" as const },
+        name: "builder",
+        agentId: "builder",
+        reason: "Builds",
+      };
+      const [own] = yield* launcher.resolveSeats(captain, [persona]);
+      // The card freezes the persona's whole selection into the seat; unchanged, it is not held.
+      yield* launcher.resolveSeats(captain, [
+        { ...persona, modelSelection: own!.modelSelection, runtimeMode: "approval-required" },
+      ]);
+      const personaLevel = own!.modelSelection.options?.find(
+        (option) => option.id === "reasoningEffort",
+      )?.value;
+      const otherLevel = levels.find((level) => level !== personaLevel)!;
+      const refused = yield* launcher
+        .resolveSeats(captain, [
+          {
+            ...persona,
+            modelSelection: {
+              instanceId: own!.modelSelection.instanceId,
+              model: own!.modelSelection.model,
+              options: [{ id: "reasoningEffort", value: otherLevel }],
+            },
+          },
+        ])
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+      assert.include(refused.message, `Reasoning level ${otherLevel}`);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
 );

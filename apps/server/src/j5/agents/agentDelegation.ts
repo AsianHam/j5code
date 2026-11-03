@@ -38,7 +38,7 @@ export type J5DelegateTaskInput = typeof J5DelegateTaskInput.Type;
  * fallback.
  */
 export const J5_DELEGATE_TASK_DESCRIPTION =
-  "Start one child agent with only `task`. No parent history. Pass persona=ID when the user writes @persona:ID or asks for a persona by name: the server pins that persona's instructions, provider, model, reasoning, and runtime policy, so omit target and runtimeMode. Give the persona a self-contained task, and if that call fails, report the error instead of substituting a plain child. Without persona, this is a plain J5-tracked child for cross-provider work, for same-provider work the native subagent tool cannot run, or for work the user wants tracked as a J5 task; for an ordinary subagent request, use your provider's native subagent mechanism instead. Without persona the child's model, an inherited one included, must be one the project's Models for custom members list allows; a refusal lists the eligible models to retry with in `target`. Separate checkout or PR per child: `isolation:'worktree'`. Keep `taskId` for `task_status` and `task_cancel`.";
+  "Start one child agent with only `task`. No parent history. Pass persona=ID when the user writes @persona:ID or asks for a persona by name: the server pins that persona's instructions, provider, model, reasoning, and runtime policy, so omit target and runtimeMode. Give the persona a self-contained task, and if that call fails, report the error instead of substituting a plain child. Without persona, this is a plain J5-tracked child for cross-provider work, for same-provider work the native subagent tool cannot run, or for work the user wants tracked as a J5 task; for an ordinary subagent request, use your provider's native subagent mechanism instead. Without persona the child's model and reasoning level, inherited ones included, must be ones the project's Models for custom members lists allow; a refusal lists the eligible ones to retry with in `target`. Separate checkout or PR per child: `isolation:'worktree'`. Keep `taskId` for `task_status` and `task_cancel`.";
 
 /** J5's delegate_task: the upstream tool with the persona extension, registered in place of it. */
 export const J5DelegateTaskTool = Tool.make("delegate_task", {
@@ -52,7 +52,7 @@ export const J5DelegateTaskTool = Tool.make("delegate_task", {
     OrchestratorMcpService,
     ThreadManagementService,
     ProviderRegistry.ProviderRegistry,
-    // A plain child's model is held to the project's list of models for custom members.
+    // A plain child's model and reasoning level are held to the project's lists for custom members.
     CrewMemberModels,
   ],
 })
@@ -67,7 +67,8 @@ export const delegateTask = Effect.fn("j5.delegateTask")(function* (input: J5Del
     const service = yield* OrchestratorMcpService;
     const memberModels = yield* CrewMemberModels;
     // A persona runs on its own model; a plain child, even one that inherits its parent's model,
-    // runs on one the project's list allows. Upstream calls this with the model it resolved.
+    // runs on a model and level the project's lists allow. Upstream calls this with the model it
+    // resolved.
     return yield* service.delegateTask(scope, {
       ...delegate,
       authorizeTarget: ({ projectId, modelSelection }) =>
@@ -76,7 +77,10 @@ export const delegateTask = Effect.fn("j5.delegateTask")(function* (input: J5Del
             (error) =>
               new OrchestratorMcpFailure({
                 code: "model_unavailable",
-                message: `${error.message} Retry with target set to one of them as providerInstanceId and model.`,
+                message:
+                  error._tag === "CrewMemberModelNotEligibleError"
+                    ? `${error.message} Retry with target set to one of them as providerInstanceId and model.`
+                    : `${error.message} Retry with target options setting the model's reasoning option to one of them.`,
               }),
           ),
         ),

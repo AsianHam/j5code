@@ -479,8 +479,9 @@ const spawn = Effect.fn("j5.a2a.spawnAgent")(function* (
             }),
           ),
         );
-  // A persona runs on its own model. A plain agent runs on one the project's list allows, and a
-  // retry finishes the agent its first attempt created, so only a first attempt is held to it.
+  // A persona runs on its own model. A plain agent runs on a model and level the project's
+  // lists allow, and a retry finishes the agent its first attempt created, so only a first
+  // attempt is held to them.
   if (persona === undefined && firstAttempt)
     yield* (yield* CrewMemberModels)
       .assertEligible({ projectId: target, selection: modelSelection })
@@ -488,7 +489,7 @@ const spawn = Effect.fn("j5.a2a.spawnAgent")(function* (
         Effect.mapError((error) =>
           stateError(
             error.message,
-            "Retry j5_spawn_agent with one of the eligible models, or name a persona.",
+            "Retry j5_spawn_agent with one of the eligible models or levels, or name a persona.",
           ),
         ),
       );

@@ -228,7 +228,7 @@ const crewProposalNextStep = (error: CrewProposalError) =>
     : error._tag === "CrewLaunchSeatUnavailableError"
       ? "Choose a different persona from j5_list_personas or ask the user to fix that persona, then retry."
       : error._tag === "CrewLaunchModelNotEligibleError"
-        ? "Give that custom member one of the eligible models above, or leave its model unset to use yours if yours is eligible, then retry."
+        ? "Give that custom member one of the eligible models or levels above, or leave its model unset to use yours if yours is eligible, then retry."
         : error._tag === "CrewLaunchCapError"
           ? "The crew is full. Work with the seats it has, or propose a new crew for the extra work."
           : error._tag === "CrewLaunchSeatConflictError"

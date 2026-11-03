@@ -49,6 +49,7 @@ const modelSelection = {
   model: BUILT_IN_AGENT_PERSONAS.scout.modelRoute[0].model,
 };
 const otherModel = "gpt-5.6-other";
+const plainModel = "gpt-5.6-plain";
 const provider: ServerProvider = {
   instanceId: modelSelection.instanceId,
   driver: ProviderDriverKind.make("codex"),
@@ -61,21 +62,28 @@ const provider: ServerProvider = {
   availability: "available",
   slashCommands: [],
   skills: [],
-  models: [modelSelection.model, otherModel].map((slug) => ({
-    slug,
-    name: "Model",
-    isCustom: false,
-    capabilities: {
-      optionDescriptors: [
-        {
-          id: "reasoningEffort",
-          label: "Reasoning",
-          type: "select" as const,
-          options: [{ id: "high", label: "High" }],
-        },
-      ],
-    },
-  })),
+  models: [
+    ...[modelSelection.model, otherModel].map((slug) => ({
+      slug,
+      name: "Model",
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select" as const,
+            options: [
+              { id: "high", label: "High", isDefault: true },
+              { id: "low", label: "Low" },
+            ],
+          },
+        ],
+      },
+    })),
+    // A model that advertises no reasoning option has no level to hold.
+    { slug: plainModel, name: "Plain", isCustom: false, capabilities: null },
+  ],
 };
 const adapter = {
   instanceId: modelSelection.instanceId,
@@ -327,5 +335,75 @@ it.effect("holds a plain delegated child to the list, inherited model included",
     assert.equal(replayed.childThreadId, explicit.childThreadId);
     const none = yield* plain("fresh", { model: otherModel }).pipe(Effect.flip);
     assert.include(none.message, "nothing is checked");
+  }).pipe(Effect.provide(listedLayer)),
+);
+
+it.effect("holds a plain delegated child to the level list, an inherited level included", () =>
+  Effect.gen(function* () {
+    const { orchestrator, scope } = yield* runningParent;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const asParent = Effect.provideService(McpInvocationContext, scope);
+    const plain = (
+      clientRequestId: string,
+      target?: { readonly model: string; readonly level?: string },
+    ) =>
+      delegateTask({
+        task: "Plain child work.",
+        clientRequestId,
+        ...(target === undefined
+          ? {}
+          : {
+              target: {
+                providerInstanceId: modelSelection.instanceId,
+                model: target.model,
+                ...(target.level === undefined
+                  ? {}
+                  : { options: [{ id: "reasoningEffort", value: target.level }] }),
+              },
+            }),
+      }).pipe(asParent);
+    const level = { instanceId: modelSelection.instanceId, level: "low" };
+
+    // The parent runs on its model's default level, high, which this list leaves out.
+    yield* settings.updateSettings({ crewMemberReasoning: [level] });
+    const refused = yield* plain("inherits").pipe(Effect.flip);
+    assert.equal(refused.code, "model_unavailable");
+    for (const part of [
+      `Reasoning level high of ${modelSelection.model}`,
+      "Billing Migration",
+      "Models for custom members in Agent Setup",
+      `Eligible levels for ${modelSelection.model}: low.`,
+      "Retry with target options",
+    ])
+      assert.include(refused.message, part);
+
+    // A persona runs on its own level, a model with no reasoning option has nothing to hold, and
+    // an explicit checked level works.
+    const persona = yield* delegateTask({
+      task: "Return a short evidence brief.",
+      persona: "scout",
+      clientRequestId: "persona",
+    }).pipe(asParent);
+    assert.equal(
+      (yield* orchestrator.getThreadProjection(persona.childThreadId)).thread.modelSelection.model,
+      modelSelection.model,
+    );
+    yield* plain("plain-model", { model: plainModel });
+    const explicit = yield* plain("explicit", { model: otherModel, level: "low" });
+    assert.equal(
+      (yield* orchestrator.getThreadProjection(explicit.childThreadId)).thread.modelSelection.model,
+      otherModel,
+    );
+    const unchecked = yield* plain("unchecked", { model: otherModel, level: "high" }).pipe(
+      Effect.flip,
+    );
+    assert.include(unchecked.message, `Reasoning level high of ${otherModel}`);
+
+    // A list saved afterwards does not refuse the retry of a delegation already accepted.
+    yield* settings.updateSettings({ crewMemberReasoning: [] });
+    const replayed = yield* plain("explicit", { model: otherModel, level: "low" });
+    assert.equal(replayed.childThreadId, explicit.childThreadId);
+    const none = yield* plain("fresh", { model: otherModel, level: "low" }).pipe(Effect.flip);
+    assert.include(none.message, "No reasoning level");
   }).pipe(Effect.provide(listedLayer)),
 );

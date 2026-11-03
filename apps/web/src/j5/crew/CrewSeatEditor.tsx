@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import {
   isCrewMemberModelChecked,
   type CrewMemberModels,
+  type CrewMemberReasoning,
   type CrewProposalSeatRuntime,
   type CrewWorkspaceOptions,
 } from "@t3tools/contracts/j5";
@@ -35,6 +36,7 @@ import {
   setCrewReasoning,
   type CrewSeatDraft,
 } from "./crewSeatRuntime";
+import { crewReasoningChoicesFor, withEligibleCrewReasoning } from "./crewMemberModels.logic";
 
 interface CrewSeatEditorProps {
   readonly value: CrewSeatDraft;
@@ -45,6 +47,8 @@ interface CrewSeatEditorProps {
   readonly workspaceOptions?: CrewWorkspaceOptions | undefined;
   /** The project's models for custom members; a custom member's pickers offer only these. */
   readonly memberModels?: CrewMemberModels | undefined;
+  /** The project's reasoning levels for custom members; the reasoning picker offers only these. */
+  readonly memberReasoning?: CrewMemberReasoning | undefined;
   readonly disabled: boolean;
   readonly loadingInstructions?: boolean;
   readonly onPersonaChange: (personaId: string) => void;
@@ -220,9 +224,11 @@ function CrewSeatWorkspaceField(props: CrewSeatEditorProps) {
 
 function CrewSeatRuntimeFields(props: CrewSeatEditorProps & { environmentId: EnvironmentId }) {
   const providers = useAtomValue(serverEnvironment.providersValueAtom(props.environmentId)) ?? [];
-  // A custom member runs on a model the project's list allows; a persona keeps its own model, so
-  // its pickers stay whole (the server checks a persona seat whose model was changed).
-  const memberModels = props.value.agentId === CUSTOM_AGENT ? props.memberModels : null;
+  // A custom member runs on a model and level the project's lists allow; a persona keeps its own,
+  // so its pickers stay whole (the server checks a persona seat whose model or level was changed).
+  const custom = props.value.agentId === CUSTOM_AGENT;
+  const memberModels = custom ? props.memberModels : null;
+  const memberReasoning = custom ? props.memberReasoning : null;
   const choices = providers.flatMap((provider) => {
     if (
       !(
@@ -252,15 +258,7 @@ function CrewSeatRuntimeFields(props: CrewSeatEditorProps & { environmentId: Env
   const reasoningValue =
     selection?.options?.find(({ id }) => id === reasoning?.id)?.value ??
     getProviderOptionCurrentValue(reasoning);
-  const reasoningChoices =
-    reasoning?.type === "select"
-      ? reasoning.options
-      : reasoning?.type === "boolean"
-        ? [
-            { id: "true", label: "On" },
-            { id: "false", label: "Off" },
-          ]
-        : [];
+  const reasoningChoices = crewReasoningChoicesFor(reasoning, provider, memberReasoning);
   const mode = CREW_ACCESS_OPTIONS.find(({ value: mode }) => mode === value.runtimeMode);
   const accessOptions =
     provider?.driver === "acpRegistry"
@@ -285,7 +283,14 @@ function CrewSeatRuntimeFields(props: CrewSeatEditorProps & { environmentId: Env
               nextProvider?.models.find((candidate) => candidate.slug === selection?.model) ??
               nextProvider?.models[0];
             if (nextProvider && nextModel)
-              props.onChange(chooseCrewHarness(value, nextProvider, nextModel));
+              props.onChange(
+                withEligibleCrewReasoning(
+                  chooseCrewHarness(value, nextProvider, nextModel),
+                  nextProvider,
+                  nextModel,
+                  memberReasoning,
+                ),
+              );
           }}
         >
           <SelectTrigger size="lg" aria-label={`${label} provider`}>
@@ -330,7 +335,15 @@ function CrewSeatRuntimeFields(props: CrewSeatEditorProps & { environmentId: Env
           }
           onValueChange={(slug) => {
             const nextModel = offered?.models.find((candidate) => candidate.slug === slug);
-            if (offered && nextModel) props.onChange(chooseCrewHarness(value, offered, nextModel));
+            if (offered && nextModel)
+              props.onChange(
+                withEligibleCrewReasoning(
+                  chooseCrewHarness(value, offered, nextModel),
+                  offered,
+                  nextModel,
+                  memberReasoning,
+                ),
+              );
           }}
         >
           <SelectTrigger size="lg" aria-label={`${label} model`}>

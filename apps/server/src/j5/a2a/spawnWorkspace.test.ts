@@ -371,7 +371,7 @@ const spawnHarness = (input: {
                   {
                     id: "gpt-5.6-sol",
                     label: "GPT-5.6 Sol",
-                    options: [{ id: "reasoningEffort", values: ["high"] }],
+                    options: [{ id: "reasoningEffort", values: ["low", "high"] }],
                   },
                 ],
                 canRunChildTask: true,
@@ -644,6 +644,80 @@ it.effect(
         memberModels: crewMemberModelsLayer({
           providers: [codexSolAndTerra],
           settings: terraOnly,
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const replayed = yield* call({ ...spawnArgs, client_request_id: "already-created" });
+        assert.isFalse(replayed.isFailure);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+const codexWithLevels = {
+  ...codexSolAndTerra,
+  models: ["gpt-5.6-sol", "gpt-5.6-terra"].map((slug) => ({
+    slug,
+    name: slug,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+    },
+  })),
+} as unknown as ServerProvider;
+const lowOnly = {
+  crewMemberReasoning: [{ instanceId: ProviderInstanceId.make("codex"), level: "low" }],
+};
+
+it.effect("a plain spawn runs at a reasoning level its project's list allows", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      memberModels: crewMemberModelsLayer({
+        providers: [codexWithLevels],
+        settings: lowOnly,
+        projectTitle: "Billing Migration",
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const refused = yield* call({ ...spawnArgs, client_request_id: "off-list-level" });
+      assert.isTrue(refused.isFailure);
+      for (const part of [
+        "Reasoning level high of gpt-5.6-sol on codex",
+        "Billing Migration",
+        "Models for custom members in Agent Setup",
+        "Eligible levels for gpt-5.6-sol: low.",
+      ])
+        assert.include(message(refused), part);
+      assert.lengthOf(yield* Ref.get(commands), 0, "a refused spawn creates nothing");
+      const allowed = yield* call({
+        ...spawnArgs,
+        reasoning: "low",
+        client_request_id: "on-list-level",
+      });
+      assert.isFalse(allowed.isFailure);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect(
+  "a retry of a spawn that already created its agent is not held to a level list saved since",
+  () =>
+    Effect.gen(function* () {
+      const { layer, call } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+        existingChildRuntimeMode: "full-access",
+        memberModels: crewMemberModelsLayer({
+          providers: [codexWithLevels],
+          settings: lowOnly,
         }),
       });
       yield* Effect.gen(function* () {
