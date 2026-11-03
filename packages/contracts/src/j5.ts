@@ -7,6 +7,7 @@ export * from "./j5/fleet.ts";
 export * from "./j5/peerPoll.ts";
 export * from "./j5/playbook.ts";
 export * from "./j5/access.ts";
+export * from "./j5/crewMemberModels.ts";
 export * from "./j5/levels.ts";
 export * from "./j5/people.ts";
 export * from "./j5/sharedConversation.ts";

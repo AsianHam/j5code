@@ -211,7 +211,7 @@ Agents can also launch a persona as a Peer Agent: `j5_spawn_agent` accepts an op
 
 Focused verification covers imported ids and custom artifacts, malformed and missing sources, duplicates, route eligibility, unsupported policies, snapshot integrity, source edits/removal, launch receipts, compatibility with old assignments, and shared client presentation. Server, contracts, and affected client typechecks accompany the focused tests. Browser and simulator verification require an explicit request.
 
-Follow-up work: in-app git commit/push/pull (status nudges and open-in-editor ship; write operations are deliberately out of scope), skill and model allowlists beyond this slice, posture visibility, validation of handoff artifact contents beyond existence, and supported diagnostic/publication operations. None is marked complete by this contract.
+Follow-up work: in-app git commit/push/pull (status nudges and open-in-editor ship; write operations are deliberately out of scope), skill allowlists and ordered model allowlists beyond a persona's two routes, posture visibility, validation of handoff artifact contents beyond existence, and supported diagnostic/publication operations. None is marked complete by this contract. A project's [Models for custom members](../features/crews.md) list is not a persona allowlist: a persona always runs on its own configured route, even on a model that list leaves out.
 
 ## History
 

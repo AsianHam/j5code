@@ -11,7 +11,12 @@ import type {
 } from "@t3tools/contracts/j5";
 import { expect, it, vi } from "vite-plus/test";
 
-const state = vi.hoisted(() => ({ permitted: true, preview: vi.fn(), read: vi.fn() }));
+const state = vi.hoisted(() => ({
+  permitted: true,
+  preview: vi.fn(),
+  read: vi.fn(),
+  memberModels: null as ReadonlyArray<{ instanceId: string; model: string }> | null,
+}));
 vi.mock(import("@effect/atom-react"), async (importOriginal) => ({
   ...(await importOriginal()),
   useAtomValue: ((atom: unknown) => atom) as never,
@@ -24,6 +29,7 @@ vi.mock("../a2a/ParticipantIdentitiesClient", () => ({
   useParticipantLabels: () => new Map([["captain", "Release Captain"]]),
 }));
 vi.mock("../sharing/access", () => ({ useCanOperateThread: () => state.permitted }));
+vi.mock("./useCrewMemberModels", () => ({ useCrewMemberModels: () => state.memberModels }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (query: unknown) => ({ data: query === "crew-proposals" ? [proposal] : {} }),
 }));
@@ -127,6 +133,7 @@ const preview = (
 const resolve = vi.fn();
 function setup() {
   state.permitted = true;
+  state.memberModels = null;
   state.preview.mockReset().mockImplementation(preview);
   state.read.mockReset().mockImplementation(({ input }: { input: { personaId: string } }) =>
     Promise.resolve({
@@ -614,4 +621,28 @@ it("Reset to persona text restores the persona's own and sends no replacement", 
   expect(screen.container.textContent).not.toContain("Edited");
   await click(approve());
   expect(resolve.mock.calls[0]?.[1][1]).toEqual(proposal.requestedSeats[1]);
+});
+
+it("offers a custom member only the models its project's list allows", async () => {
+  setup();
+  state.memberModels = [{ instanceId: "codex", model: "gpt-6" }];
+  await using _screen = await render(card(), { router: false });
+  await click(button("Edit seat builder"));
+  await click(button("builder model"));
+  expect(option("builder model", "GPT-6")).toBeDefined();
+  expect(option("builder model", "Other model")).toBeUndefined();
+  await click(option("builder model", "GPT-6"));
+  // No model of the other provider is on the list, so it is not offered at all.
+  await click(button("builder provider"));
+  expect(option("builder provider", "Codex")).toBeDefined();
+  expect(option("builder provider", "Claude")).toBeUndefined();
+});
+
+it("leaves a persona member's pickers whole, since it runs on its own model", async () => {
+  setup();
+  state.memberModels = [{ instanceId: "codex", model: "gpt-6" }];
+  await using _screen = await render(card(), { router: false });
+  await click(button("Edit seat reviewer"));
+  await click(button("reviewer model"));
+  expect(option("reviewer model", "Other model")).toBeDefined();
 });

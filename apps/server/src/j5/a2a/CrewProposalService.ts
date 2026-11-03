@@ -1027,6 +1027,7 @@ export const layer = Layer.effect(
         Effect.catchTags({
           CrewProposalRequestError: refused,
           CrewLaunchSeatUnavailableError: refused,
+          CrewLaunchModelNotEligibleError: refused,
           CrewLaunchCapError: refused,
           CrewLaunchSeatConflictError: refused,
           CrewStepAlreadyOwnedError: refused,

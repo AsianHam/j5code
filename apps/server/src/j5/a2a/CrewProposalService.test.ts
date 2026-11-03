@@ -47,6 +47,7 @@ import { buildAgentPersonaCatalog } from "../agents/agentPersonaRouting.ts";
 import { playbookTools } from "../playbooks/mcp.ts";
 import { makePlaybookCrewRelay } from "../playbooks/PlaybookCrewRelay.ts";
 import { crewLaunchReportText } from "./crewGateNotice.ts";
+import { crewMemberModelsLayer } from "../test-support/crewMemberModels.ts";
 import { crewSeatFromInput } from "./mcp/handlers.ts";
 import { J5ProposeCrewInput } from "./mcp/tools.ts";
 import { PlaybookStore, playbookStoreLayer } from "../playbooks/PlaybookStore.ts";
@@ -1768,9 +1769,18 @@ const playbookFixtureWithSettings = (
     const barrier = yield* Ref.make<Deferred.Deferred<void> | null>(null);
     const arrivals = yield* Ref.make(0);
     const providers = yield* Ref.make<ReadonlyArray<ServerProvider>>([codex]);
+    // One settings layer object, so a test's settings change reaches the launcher's model check.
+    const settingsLayer = ServerSettings.layerTest(overrides);
     const layer = crewProposalLayer.pipe(
-      Layer.provideMerge(ServerSettings.layerTest(overrides)),
+      Layer.provideMerge(settingsLayer),
       Layer.provideMerge(crewLaunchLayer),
+      Layer.provideMerge(
+        crewMemberModelsLayer({
+          providers: [codex],
+          settingsLayer,
+          projectTitle: "Billing Migration",
+        }),
+      ),
       Layer.provideMerge(Layer.mock(CrewLaunchReporter)({ watch: () => Effect.void })),
       Layer.provideMerge(playbookStoreLayer),
       Layer.provideMerge(fakeSpawnWorkspaceLayer({ checkout: noRepository })),
@@ -3397,6 +3407,113 @@ it.effect("refuses a signed-out provider before recording an automatic launch or
         1,
       );
       assert.lengthOf(yield* Ref.get(commands), commandsBefore);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+const codexSol = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" };
+
+it.effect("refuses a model off the list before recording an automatic launch or addition", () =>
+  Effect.gen(function* () {
+    const { layer, commands } = yield* playbookFixtureWithSettings({
+      crewAutoApprove: true,
+      crewMemberModels: [],
+    });
+    yield* Effect.gen(function* () {
+      const gate = yield* CrewProposalService;
+      const store = yield* AgentCrewProposalService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const input = {
+        requestKey: "model-roster",
+        captain,
+        displayName: "Models",
+        brief: "Inspect",
+        seats: [custom("scout")],
+      };
+      // The Captain's own model is what the custom seat inherits, and nothing is checked.
+      const refused = yield* gate.propose(input).pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+      assert.include(refused.message, "scout");
+      assert.include(refused.message, "Models for custom members in Agent Setup");
+      assert.lengthOf(yield* store.listForCaptain(captainId), 0);
+      assert.lengthOf(yield* Ref.get(commands), 0);
+      yield* settings.updateSettings({ crewMemberModels: [codexSol] });
+      const launched = yield* gate.propose(input);
+      assert.equal(launched.proposal.status, "approved");
+      yield* settings.updateSettings({ crewMemberModels: [] });
+      const commandsBefore = (yield* Ref.get(commands)).length;
+      const addition = yield* gate
+        .requestMember({
+          requestKey: "model-addition",
+          captain,
+          crewInstanceId: launched.instance!.id,
+          seat: custom("reviewer"),
+          brief: null,
+        })
+        .pipe(Effect.flip);
+      assert.equal(addition._tag, "CrewLaunchModelNotEligibleError");
+      assert.lengthOf(
+        (yield* (yield* AgentCrewInstanceService).read(launched.instance!.id))!.members,
+        1,
+      );
+      assert.lengthOf(yield* Ref.get(commands), commandsBefore);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a retry of an accepted launch or addition is not held to a list saved since", () =>
+  Effect.gen(function* () {
+    const { layer, commands } = yield* playbookFixtureWithSettings({ crewAutoApprove: true });
+    yield* Effect.gen(function* () {
+      const gate = yield* CrewProposalService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const input = {
+        requestKey: "accepted-roster",
+        captain,
+        displayName: "Accepted",
+        brief: "Inspect",
+        seats: [custom("scout")],
+      };
+      const launched = yield* gate.propose(input);
+      const addition = {
+        requestKey: "accepted-addition",
+        captain,
+        crewInstanceId: launched.instance!.id,
+        seat: custom("reviewer"),
+        brief: null,
+      };
+      const added = yield* gate.requestMember(addition);
+      const commandsBefore = (yield* Ref.get(commands)).length;
+      // The person saves a list that leaves out the model both seats already run on.
+      yield* settings.updateSettings({ crewMemberModels: [] });
+      const replayedLaunch = yield* gate.propose(input);
+      const replayedAddition = yield* gate.requestMember(addition);
+      assert.equal(replayedLaunch.proposal.id, launched.proposal.id);
+      assert.equal(replayedAddition.proposal.id, added.proposal.id);
+      assert.lengthOf(yield* Ref.get(commands), commandsBefore);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a preview refuses a seat whose model is off the list until it is checked", () =>
+  Effect.gen(function* () {
+    const { layer } = yield* playbookFixtureWithSettings({ crewMemberModels: [] });
+    yield* Effect.gen(function* () {
+      const gate = yield* CrewProposalService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const opened = yield* gate.propose({
+        requestKey: "model-preview",
+        captain,
+        displayName: "Preview",
+        brief: "Inspect",
+        seats: [custom("scout")],
+      });
+      assert.equal(opened.proposal.status, "open");
+      const refused = yield* gate.preview({ proposalId: opened.proposal.id }).pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+      yield* settings.updateSettings({ crewMemberModels: [codexSol] });
+      const preview = yield* gate.preview({ proposalId: opened.proposal.id });
+      assert.equal(preview.seats[0]?.modelSelection.model, "gpt-5.6-sol");
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.scoped),
 );

@@ -28,6 +28,11 @@ import { resolveAgentPersonaRuntime } from "../agents/agentPersonaRuntime.ts";
 import { guardAgentPersonaThreadCreate } from "../agents/agentPersonaOrchestration.ts";
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import { personaLibraryLayer } from "../test-support/personaLibrary.ts";
+import { CrewMemberModels } from "../agents/crewMemberModels.ts";
+import {
+  crewMemberModelsLayer,
+  permissiveCrewMemberModels,
+} from "../test-support/crewMemberModels.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import {
   OrchestratorDispatchError,
@@ -231,8 +236,11 @@ const dependencies = (
   workspace: Parameters<typeof fakeSpawnWorkspaceLayer>[0] = {
     checkout: { isRepo: true, refName: "main" },
   },
+  // Every model is eligible unless a test saves a list.
+  memberModels: Layer.Layer<CrewMemberModels> = permissiveCrewMemberModels,
 ) =>
   Layer.mergeAll(
+    memberModels,
     fakeSpawnWorkspaceLayer(workspace).pipe(
       Layer.provideMerge(
         threadManagementFake(
@@ -2201,4 +2209,312 @@ it.effect("binds an existing worktree's live branch, so a stale preview can't ap
       );
     }).pipe(Effect.provide(layer));
   }),
+);
+
+const captainProjectId = () => ProjectId.make("project:crew-launch");
+
+const eligibilityFixture = (input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly settings?: Parameters<typeof crewMemberModelsLayer>[0]["settings"];
+}) =>
+  Effect.gen(function* () {
+    const { context, commands, captain } = yield* fixture;
+    const layer = crewLaunchLayer.pipe(
+      Layer.provideMerge(
+        dependencies(
+          commands,
+          input.providers,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          crewMemberModelsLayer({
+            providers: input.providers,
+            ...(input.settings === undefined ? {} : { settings: input.settings }),
+            projectTitle: "Billing Migration",
+          }),
+        ),
+      ),
+      Layer.provideMerge(Layer.succeedContext(context)),
+      Layer.provideMerge(
+        personaLibraryLayer("j5-crew-models-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    return { layer, captain, commands };
+  });
+
+const sol = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" };
+const terra = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-terra" };
+const codexModels = (...slugs: ReadonlyArray<string>) =>
+  provider(
+    "codex",
+    "codex",
+    slugs.map((slug) => ({ slug, options: ["high"] })),
+  );
+const customSeat = (name: string, modelSelection?: typeof sol) => ({
+  workspace: { type: "shared" as const },
+  name,
+  agentId: null,
+  reason: "Works",
+  instructions: "Do the work.",
+  ...(modelSelection === undefined ? {} : { modelSelection }),
+});
+
+it.effect("every model is eligible for a custom seat until a list is saved", () =>
+  Effect.gen(function* () {
+    const { layer, captain } = yield* eligibilityFixture({
+      providers: [codexModels("gpt-5.6-sol", "gpt-5.6-terra")],
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      const resolved = yield* launcher.resolveSeats(captain, [
+        customSeat("inherits"),
+        customSeat("explicit", terra),
+      ]);
+      assert.deepStrictEqual(
+        resolved.map((seat) => seat.modelSelection.model),
+        ["gpt-5.6-sol", "gpt-5.6-terra"],
+      );
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a saved list holds a custom seat to its checked models and names what to use", () =>
+  Effect.gen(function* () {
+    const { layer, captain, commands } = yield* eligibilityFixture({
+      providers: [codexModels("gpt-5.6-sol", "gpt-5.6-terra")],
+      settings: { crewMemberModels: [sol] },
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      const checked = yield* launcher.resolveSeats(captain, [
+        customSeat("inherits"),
+        customSeat("explicit", sol),
+      ]);
+      assert.lengthOf(checked, 2);
+      const refused = yield* launcher
+        .resolveSeats(captain, [customSeat("explicit", terra)])
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+      for (const part of [
+        "gpt-5.6-terra",
+        "Billing Migration",
+        "Models for custom members in Agent Setup",
+        "codex/gpt-5.6-sol",
+      ])
+        assert.include(refused.message, part);
+      // The refusal covers a launch as it does a preview, and nothing is created.
+      const launched = yield* launcher
+        .launch({
+          providerSessionId: "session",
+          requestKey: "launch-ineligible",
+          captain,
+          displayName: "Crew",
+          seats: [customSeat("explicit", terra)],
+          brief: "Work.",
+        })
+        .pipe(Effect.flip);
+      assert.equal(launched._tag, "CrewLaunchModelNotEligibleError");
+      assert.lengthOf(yield* Ref.get(commands), 0);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a model new to the catalog after the list was saved starts unchecked", () =>
+  Effect.gen(function* () {
+    const { layer, captain } = yield* eligibilityFixture({
+      providers: [codexModels("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.7-new")],
+      // Saved when the catalog held two models, and both were checked.
+      settings: { crewMemberModels: [sol, terra] },
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      yield* launcher.resolveSeats(captain, [customSeat("known", terra)]);
+      const refused = yield* launcher
+        .resolveSeats(captain, [
+          customSeat("fresh", { instanceId: sol.instanceId, model: "gpt-5.7-new" }),
+        ])
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+      assert.include(refused.message, "codex/gpt-5.6-sol, codex/gpt-5.6-terra.");
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a custom seat that inherits the Captain's model is held to the list", () =>
+  Effect.gen(function* () {
+    // The Captain runs on gpt-5.6-sol, which the list leaves out.
+    const { layer, captain } = yield* eligibilityFixture({
+      providers: [codexModels("gpt-5.6-sol", "gpt-5.6-terra")],
+      settings: { crewMemberModels: [terra] },
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      const refused = yield* launcher
+        .resolveSeats(captain, [customSeat("inherits")])
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+      assert.include(refused.message, "Model gpt-5.6-sol on codex");
+      assert.include(refused.message, "codex/gpt-5.6-terra");
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a saved list with nothing checked makes no model eligible", () =>
+  Effect.gen(function* () {
+    const { layer, captain } = yield* eligibilityFixture({
+      providers: [codexModels("gpt-5.6-sol", "gpt-5.6-terra")],
+      settings: { crewMemberModels: [] },
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      const refused = yield* launcher
+        .resolveSeats(captain, [customSeat("inherits")])
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+      assert.include(refused.message, "nothing is checked");
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a stale entry for a model the catalog no longer lists changes nothing", () =>
+  Effect.gen(function* () {
+    const { layer, captain } = yield* eligibilityFixture({
+      providers: [codexModels("gpt-5.6-sol", "gpt-5.6-terra")],
+      settings: {
+        crewMemberModels: [{ instanceId: sol.instanceId, model: "retired-model" }, sol],
+      },
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      yield* launcher.resolveSeats(captain, [customSeat("inherits")]);
+      const refused = yield* launcher
+        .resolveSeats(captain, [customSeat("other", terra)])
+        .pipe(Effect.flip);
+      assert.include(refused.message, "Eligible models: codex/gpt-5.6-sol.");
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a project's own list replaces the environment's", () =>
+  Effect.gen(function* () {
+    const { layer, captain } = yield* eligibilityFixture({
+      providers: [codexModels("gpt-5.6-sol", "gpt-5.6-terra")],
+      settings: {
+        crewMemberModels: [sol],
+        projectSettingsOverrides: { [captainProjectId()]: { crewMemberModels: [terra] } },
+      },
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      yield* launcher.resolveSeats(captain, [customSeat("allowed", terra)]);
+      const refused = yield* launcher
+        .resolveSeats(captain, [customSeat("inherits")])
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a project can override a saved list with every model", () =>
+  Effect.gen(function* () {
+    const { layer, captain } = yield* eligibilityFixture({
+      providers: [codexModels("gpt-5.6-sol", "gpt-5.6-terra")],
+      settings: {
+        crewMemberModels: [],
+        projectSettingsOverrides: { [captainProjectId()]: { crewMemberModels: null } },
+      },
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      yield* launcher.resolveSeats(captain, [customSeat("inherits"), customSeat("other", terra)]);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a persona keeps its own model off the list, until its model is overridden", () =>
+  Effect.gen(function* () {
+    const { layer, captain } = yield* eligibilityFixture({
+      providers: [codexModels("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")],
+      settings: { crewMemberModels: [] },
+    });
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      const persona = {
+        workspace: { type: "shared" as const },
+        name: "builder",
+        agentId: "builder",
+        reason: "Builds",
+      };
+      const [own] = yield* launcher.resolveSeats(captain, [persona]);
+      const personaModel = {
+        instanceId: own!.modelSelection.instanceId,
+        model: own!.modelSelection.model,
+      };
+      // Editing a field on the roster card freezes the persona's model into the seat; it is the
+      // same model, so the seat still keeps it, with or without the options the card carried.
+      const [frozen] = yield* launcher.resolveSeats(captain, [
+        { ...persona, modelSelection: own!.modelSelection, runtimeMode: "approval-required" },
+      ]);
+      assert.equal(frozen!.modelSelection.model, personaModel.model);
+      const [bare] = yield* launcher.resolveSeats(captain, [
+        { ...persona, modelSelection: personaModel },
+      ]);
+      assert.equal(bare!.modelSelection.model, personaModel.model);
+      // A different model on the card makes it a custom choice, held to the list.
+      const other = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"].find(
+        (model) => model !== personaModel.model,
+      )!;
+      const refused = yield* launcher
+        .resolveSeats(captain, [
+          { ...persona, modelSelection: { instanceId: personaModel.instanceId, model: other } },
+        ])
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+      assert.include(refused.message, `Model ${other} on codex`);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "a persona seat frozen on its fallback route is unchanged while the primary is back",
+  () =>
+    Effect.gen(function* () {
+      const claudeModels = provider("claudeAgent", "claudeAgent", [
+        { slug: "claude-opus-5", options: ["high"] },
+        { slug: "claude-sonnet-5", options: ["high"] },
+      ]);
+      const { layer, captain } = yield* eligibilityFixture({
+        providers: [codexModels("gpt-5.6-sol"), claudeModels],
+        settings: { crewMemberModels: [] },
+      });
+      yield* Effect.gen(function* () {
+        const launcher = yield* CrewLaunchService;
+        const persona = {
+          workspace: { type: "shared" as const },
+          name: "builder",
+          agentId: "builder",
+          reason: "Builds",
+          runtimeMode: "approval-required" as const,
+        };
+        const claude = (model: string) => ({
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model,
+          options: [{ id: "effort", value: "high" }],
+        });
+        // The primary (Codex) resolves again, but the card froze the fallback (Claude) route.
+        const [fallback] = yield* launcher.resolveSeats(captain, [
+          { ...persona, modelSelection: claude("claude-opus-5") },
+        ]);
+        assert.equal(fallback!.modelSelection.model, "claude-opus-5");
+        const refused = yield* launcher
+          .resolveSeats(captain, [{ ...persona, modelSelection: claude("claude-sonnet-5") }])
+          .pipe(Effect.flip);
+        assert.equal(refused._tag, "CrewLaunchModelNotEligibleError");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
 );

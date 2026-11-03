@@ -16,6 +16,7 @@ import { layer as archiveCrewLayer } from "./ArchiveCrewService.ts";
 import { layerNotifying as agentCrewProposalNotifyingLayer } from "./AgentCrewProposalService.ts";
 import { manualLayer as crewLaunchReporterLayer } from "./CrewLaunchReporter.ts";
 import { layer as crewLaunchLayer } from "./CrewLaunchService.ts";
+import { layer as crewMemberModelsLayer } from "../agents/crewMemberModels.ts";
 import { layer as crewProposalLayer } from "./CrewProposalService.ts";
 import { layer as crewSeatFinishNotifierLayer } from "./CrewSeatFinishNotifier.ts";
 import * as NativeQuestionNotifier from "./NativeQuestionNotifier.ts";
@@ -175,6 +176,7 @@ const makeJ5A2AAuxiliaryLayer = (
   const crewLaunchProvided = crewLaunchLayer.pipe(
     Layer.provideMerge(agentCrewInstanceLayer),
     Layer.provideMerge(spawnWorkspaceProvided),
+    Layer.provideMerge(crewMemberModelsLayer),
   );
   // The report watches the seats an approval launched and tells the Captain how they started; the
   // finish notifier's stream feeds it, so one stream serves every Crew reaction.

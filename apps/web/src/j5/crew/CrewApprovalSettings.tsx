@@ -9,6 +9,7 @@ import {
   useUpdateScopedSettings,
 } from "../../components/settings/useScopedSettings";
 import { Switch } from "../../components/ui/switch";
+import { CrewMemberModelsSettings } from "./CrewMemberModelsSettings";
 
 export function CrewApprovalSettings() {
   const settings = useScopedSettings();
@@ -41,6 +42,7 @@ export function CrewApprovalSettings() {
           />
         }
       />
+      <CrewMemberModelsSettings />
     </SettingsSection>
   );
 }

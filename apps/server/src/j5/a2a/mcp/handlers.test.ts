@@ -46,6 +46,7 @@ import {
 import { DispatchModeLimit } from "../../../orchestration-v2/DispatchModeLimit.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
+import { permissiveCrewMemberModels } from "../../test-support/crewMemberModels.ts";
 import { type AgentCrewInstance, AgentCrewInstanceService } from "../AgentCrewInstanceService.ts";
 import {
   ArchiveCrewConfirmationRequiredError,
@@ -1290,6 +1291,7 @@ it.effect("preflights home before creation and records facts before the one stab
       orchestrator,
       Layer.mock(ParticipantPlacementService)({}),
       Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      permissiveCrewMemberModels,
       Layer.mock(AgentCrewInstanceService)({ findMembership: () => Effect.succeed(null) }),
       Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
       Layer.mock(ArchiveCrewService)({}),
@@ -1457,6 +1459,7 @@ it.effect("refuses spawn before thread creation when the caller is a Subagent", 
         dispatch: () => Ref.update(dispatches, (count) => count + 1).pipe(Effect.as({} as never)),
       }),
       Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      permissiveCrewMemberModels,
       Layer.mock(AgentCrewInstanceService)({ findMembership: () => Effect.succeed(null) }),
       Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
       Layer.mock(ArchiveCrewService)({}),
@@ -1660,6 +1663,7 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
           }),
       }),
       Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([codex, claude]) }),
+      permissiveCrewMemberModels,
       Layer.mock(AgentCrewInstanceService)({ findMembership: () => Effect.succeed(null) }),
       Layer.mock(ParticipantPlacementService)({}),
       Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
@@ -1984,6 +1988,7 @@ it.effect("archives a crew only as a unit through its captain with one confirmat
       threadManagementMock({}),
       Layer.mock(OrchestratorMcpService)({}),
       Layer.mock(ProviderRegistry)({}),
+      permissiveCrewMemberModels,
       Layer.mock(ParticipantPlacementService)({}),
       Layer.mock(AgentCrewInstanceService)({}),
       Layer.mock(CrewProposalService)({}),
@@ -2121,6 +2126,7 @@ it.effect("lists saved agents with purpose, policy, availability, and route", ()
       threadManagementMock({}),
       Layer.mock(OrchestratorMcpService)({}),
       Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([codex]) }),
+      permissiveCrewMemberModels,
       Layer.mock(AgentCrewInstanceService)({ findMembership: () => Effect.succeed(null) }),
       Layer.mock(ParticipantPlacementService)({}),
       Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
@@ -2250,6 +2256,7 @@ it.effect("routes crew proposals through a captain that is not itself a crew mem
       }),
       Layer.mock(OrchestratorMcpService)({}),
       Layer.mock(ProviderRegistry)({}),
+      permissiveCrewMemberModels,
       Layer.mock(AgentCrewInstanceService)({
         findMembership: () => Ref.get(membership),
         listForCaptain: () => Effect.succeed([]),

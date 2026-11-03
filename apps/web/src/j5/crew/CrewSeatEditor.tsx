@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { CrewProposalSeatRuntime, CrewWorkspaceOptions } from "@t3tools/contracts/j5";
+import {
+  isCrewMemberModelChecked,
+  type CrewMemberModels,
+  type CrewProposalSeatRuntime,
+  type CrewWorkspaceOptions,
+} from "@t3tools/contracts/j5";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 
 import { Input } from "../../components/ui/input";
@@ -38,6 +43,8 @@ interface CrewSeatEditorProps {
   readonly runtime?: CrewProposalSeatRuntime | undefined;
   /** What the Captain's repository offers a seat's workspace, from the latest preview. */
   readonly workspaceOptions?: CrewWorkspaceOptions | undefined;
+  /** The project's models for custom members; a custom member's pickers offer only these. */
+  readonly memberModels?: CrewMemberModels | undefined;
   readonly disabled: boolean;
   readonly loadingInstructions?: boolean;
   readonly onPersonaChange: (personaId: string) => void;
@@ -213,19 +220,34 @@ function CrewSeatWorkspaceField(props: CrewSeatEditorProps) {
 
 function CrewSeatRuntimeFields(props: CrewSeatEditorProps & { environmentId: EnvironmentId }) {
   const providers = useAtomValue(serverEnvironment.providersValueAtom(props.environmentId)) ?? [];
-  const choices = providers.filter(
-    (provider) =>
-      provider.enabled &&
-      provider.installed &&
-      provider.status === "ready" &&
-      provider.availability !== "unavailable" &&
-      provider.models.length > 0,
-  );
+  // A custom member runs on a model the project's list allows; a persona keeps its own model, so
+  // its pickers stay whole (the server checks a persona seat whose model was changed).
+  const memberModels = props.value.agentId === CUSTOM_AGENT ? props.memberModels : null;
+  const choices = providers.flatMap((provider) => {
+    if (
+      !(
+        provider.enabled &&
+        provider.installed &&
+        provider.status === "ready" &&
+        provider.availability !== "unavailable" &&
+        provider.models.length > 0
+      )
+    )
+      return [];
+    const models = provider.models.filter((model) =>
+      isCrewMemberModelChecked(memberModels, {
+        instanceId: provider.instanceId,
+        model: model.slug,
+      }),
+    );
+    return models.length === 0 ? [] : [{ ...provider, models }];
+  });
   const entries = deriveProviderInstanceEntries(choices);
   const value = resolvedCrewSeatDraft(props.value, props.runtime);
   const selection = value.modelSelection;
   const provider = providers.find(({ instanceId }) => instanceId === selection?.instanceId);
   const model = provider?.models.find(({ slug }) => slug === selection?.model);
+  const offered = choices.find(({ instanceId }) => instanceId === selection?.instanceId);
   const reasoning = crewReasoningDescriptor(model);
   const reasoningValue =
     selection?.options?.find(({ id }) => id === reasoning?.id)?.value ??
@@ -307,9 +329,8 @@ function CrewSeatRuntimeFields(props: CrewSeatEditorProps & { environmentId: Env
             props.disabled || !choices.some((candidate) => candidate.instanceId === activeProvider)
           }
           onValueChange={(slug) => {
-            const nextModel = provider?.models.find((candidate) => candidate.slug === slug);
-            if (provider && nextModel)
-              props.onChange(chooseCrewHarness(value, provider, nextModel));
+            const nextModel = offered?.models.find((candidate) => candidate.slug === slug);
+            if (offered && nextModel) props.onChange(chooseCrewHarness(value, offered, nextModel));
           }}
         >
           <SelectTrigger size="lg" aria-label={`${label} model`}>
@@ -318,7 +339,7 @@ function CrewSeatRuntimeFields(props: CrewSeatEditorProps & { environmentId: Env
             </SelectValue>
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
-            {(provider?.models ?? []).map((entry) => (
+            {(offered?.models ?? []).map((entry) => (
               <SelectItem key={entry.slug} value={entry.slug}>
                 {entry.name.replace(/^Claude\s+/u, "")}
               </SelectItem>

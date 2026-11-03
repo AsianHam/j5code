@@ -17,6 +17,7 @@ import {
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
+import { permissiveCrewMemberModels } from "../../test-support/crewMemberModels.ts";
 import {
   J5OrchestratorSurface,
   J5_ORCHESTRATOR_CAPABILITIES_DESCRIPTION,
@@ -104,6 +105,7 @@ const TestLayer = McpHttpServer.toolkitRegistration(
       }),
       Layer.mock(ThreadManagementService)({}),
       Layer.mock(ProviderRegistry)({}),
+      permissiveCrewMemberModels,
     ),
   ),
   Layer.provideMerge(McpServer.McpServer.layer),

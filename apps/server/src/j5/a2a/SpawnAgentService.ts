@@ -37,6 +37,7 @@ import {
 } from "../../orchestration-v2/DispatchModeLimit.ts";
 
 import { makeAgentPersonaLibrary } from "../agents/agentPersonaLibrary.ts";
+import { CrewMemberModels } from "../agents/crewMemberModels.ts";
 import { translateAgentPersonaProviderPolicy } from "../agents/agentPersonaProviderPolicy.ts";
 import { prepareAgentPersonaPeerSpawn } from "../agents/agentPersonaSpawn.ts";
 
@@ -478,6 +479,19 @@ const spawn = Effect.fn("j5.a2a.spawnAgent")(function* (
             }),
           ),
         );
+  // A persona runs on its own model. A plain agent runs on one the project's list allows, and a
+  // retry finishes the agent its first attempt created, so only a first attempt is held to it.
+  if (persona === undefined && firstAttempt)
+    yield* (yield* CrewMemberModels)
+      .assertEligible({ projectId: target, selection: modelSelection })
+      .pipe(
+        Effect.mapError((error) =>
+          stateError(
+            error.message,
+            "Retry j5_spawn_agent with one of the eligible models, or name a persona.",
+          ),
+        ),
+      );
   if (input.scratch === true && input.workspace.type !== "root") {
     return yield* stateError(
       "An agent without a project works in a folder of its own, not in a checkout or a worktree.",

@@ -13,6 +13,7 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
   type RuntimeMode,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import { layerMemory } from "../../persistence/Sqlite.ts";
@@ -63,6 +64,11 @@ import {
   type SpawnCheckout,
 } from "./spawnWorkspace.ts";
 import { type FakeCheckout, fakeSpawnWorkspaceLayer } from "./test-support/spawnWorkspaceFakes.ts";
+import { CrewMemberModels } from "../agents/crewMemberModels.ts";
+import {
+  crewMemberModelsLayer,
+  permissiveCrewMemberModels,
+} from "../test-support/crewMemberModels.ts";
 import { noDocumentTextLayer } from "../test-support/documentText.ts";
 
 const checkout = (
@@ -188,6 +194,8 @@ const spawnHarness = (input: {
   readonly beforeProjectRead?: Effect.Effect<void>;
   /** Who calls; the thread caller unless a test calls as an outside agent. */
   readonly scope?: McpInvocationScope;
+  /** The check on a plain agent's model; every model is eligible unless a test saves a list. */
+  readonly memberModels?: Layer.Layer<CrewMemberModels>;
 }) =>
   Effect.gen(function* () {
     const log = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -214,6 +222,7 @@ const spawnHarness = (input: {
       acceptsUrgency: false,
     } satisfies ParticipantDirectoryRow;
     const dependencies = Layer.mergeAll(
+      input.memberModels ?? permissiveCrewMemberModels,
       noDocumentTextLayer,
       Layer.mock(A2ASendService)({ listParticipants: () => Effect.succeed([callerRow]) }),
       Layer.mock(A2AHomeRegistrar)({
@@ -574,6 +583,74 @@ it.effect("spawns into another project's main checkout, as a root of that projec
       if (brief?.type === "message.dispatch") assert.include(brief.text, "Other project");
     }).pipe(Effect.provide(layer));
   }),
+);
+
+const codexSolAndTerra = {
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
+  enabled: true,
+  installed: true,
+  status: "ready",
+  availability: "available",
+  models: ["gpt-5.6-sol", "gpt-5.6-terra"].map((slug) => ({ slug, name: slug })),
+} as unknown as ServerProvider;
+const terraOnly = {
+  crewMemberModels: [{ instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-terra" }],
+};
+
+it.effect("a plain spawn runs on a model its project's list allows", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      memberModels: crewMemberModelsLayer({
+        providers: [codexSolAndTerra],
+        settings: {
+          ...terraOnly,
+          // The other project keeps every model, so the list that applies is the target's.
+          projectSettingsOverrides: { [otherProjectId]: { crewMemberModels: null } },
+        },
+        projectTitle: "Billing Migration",
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const refused = yield* call({ ...spawnArgs, client_request_id: "off-list" });
+      assert.isTrue(refused.isFailure);
+      for (const part of [
+        "Model gpt-5.6-sol on codex",
+        "Billing Migration",
+        "Models for custom members in Agent Setup",
+        "codex/gpt-5.6-terra",
+      ])
+        assert.include(message(refused), part);
+      assert.lengthOf(yield* Ref.get(commands), 0, "a refused spawn creates nothing");
+      const elsewhere = yield* call({
+        ...spawnArgs,
+        project_id: LedgerProjectId.make(otherProjectId),
+        workspace: { type: "root" },
+        client_request_id: "other-project-list",
+      });
+      assert.isFalse(elsewhere.isFailure);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect(
+  "a retry of a spawn that already created its agent is not held to a list saved since",
+  () =>
+    Effect.gen(function* () {
+      const { layer, call } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+        existingChildRuntimeMode: "full-access",
+        memberModels: crewMemberModelsLayer({
+          providers: [codexSolAndTerra],
+          settings: terraOnly,
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const replayed = yield* call({ ...spawnArgs, client_request_id: "already-created" });
+        assert.isFalse(replayed.isFailure);
+      }).pipe(Effect.provide(layer));
+    }),
 );
 
 it.effect("spawns an agent with no project into a folder of its own", () =>

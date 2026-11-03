@@ -23,6 +23,7 @@ import * as Result from "effect/Result";
 
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
+import { CrewMemberModels } from "../agents/crewMemberModels.ts";
 import { prepareAgentPersonaLaunch } from "../agents/agentPersonaLaunch.ts";
 import { agentHandoffArtifactPath } from "../agents/agentPersonaArtifacts.ts";
 import {
@@ -186,6 +187,16 @@ class CrewLaunchSeatUnavailableError extends Data.TaggedError("CrewLaunchSeatUna
   }
 }
 
+/** A custom seat's model is not on the project's "Models for custom members" list. */
+class CrewLaunchModelNotEligibleError extends Data.TaggedError("CrewLaunchModelNotEligibleError")<{
+  readonly seatName: string;
+  readonly detail: string;
+}> {
+  override get message(): string {
+    return `Seat ${this.seatName}: ${this.detail} Nothing was spawned.`;
+  }
+}
+
 /** The Crew is full; the seats it holds already reach the cap once the request is counted. */
 class CrewLaunchCapError extends Data.TaggedError("CrewLaunchCapError")<{
   readonly crewInstanceId: string;
@@ -223,6 +234,7 @@ export class CrewLaunchOperationError extends Data.TaggedError("CrewLaunchOperat
 
 export type CrewLaunchError =
   | CrewLaunchSeatUnavailableError
+  | CrewLaunchModelNotEligibleError
   | CrewLaunchCapError
   | CrewLaunchSeatConflictError
   | CrewLaunchOperationError
@@ -270,6 +282,7 @@ export const layer = Layer.effect(
     const registry = yield* ProviderRegistry;
     const agents = yield* makeAgentPersonaLibrary;
     const spawnWorkspace = yield* SpawnWorkspaceService;
+    const memberModels = yield* CrewMemberModels;
 
     // Resolve every seat before creating anything: a Crew launches whole or not at all.
     const resolveSeats = Effect.fn("j5.a2a.crewLaunch.resolveSeats")(function* (
@@ -306,9 +319,12 @@ export const layer = Layer.effect(
           ),
         );
       const resolved: Array<ResolvedCrewLaunchSeat> = [];
+      // `custom` seats run on whatever the project's list of models for custom members allows. A
+      // persona seat that keeps its persona's own model is not custom and skips the list.
       const resolveSelection = Effect.fn("j5.a2a.crewLaunch.resolveSelection")(function* (
         seat: CrewLaunchSeat,
         selection: ModelSelection,
+        custom: boolean,
       ) {
         const provider = providers.find(
           (candidate) => candidate.instanceId === selection.instanceId,
@@ -346,13 +362,25 @@ export const layer = Layer.effect(
             agentId: seat.agentId ?? "custom seat",
             detail: optionProblem,
           });
+        if (custom)
+          yield* memberModels
+            .assertEligible({ projectId: captain.thread.projectId, selection })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new CrewLaunchModelNotEligibleError({
+                    seatName: seat.name,
+                    detail: error.message,
+                  }),
+              ),
+            );
         return { modelSelection, provider: provider! };
       });
       for (const seat of seats) {
         const agentId = seat.agentId;
         if (agentId === null) {
           const selection = seat.modelSelection ?? captain.thread.modelSelection;
-          const { modelSelection, provider } = yield* resolveSelection(seat, selection);
+          const { modelSelection, provider } = yield* resolveSelection(seat, selection, true);
           // Access is the one setting a custom seat does not take from its Captain: a seat nobody
           // configured runs in Full access, so it never stops for approvals in a thread the person
           // is not watching. The person sees and can change it on the roster card.
@@ -396,13 +424,30 @@ export const layer = Layer.effect(
               resolvedModelSelection: (yield* resolveSelection(
                 seat,
                 prepared.resolvedModelSelection,
+                false,
               )).modelSelection,
               ...(seat.runtimeMode === undefined ? {} : { runtimeModeOverride: seat.runtimeMode }),
             };
           }
-          const { modelSelection, provider } = yield* resolveSelection(seat, seat.modelSelection);
           const catalog = yield* agents.catalog();
           const definition = catalog.definitions.find(({ id }) => id === agentId);
+          // Editing any field on the roster card freezes the model it showed into the seat, and
+          // that is the fallback route when the primary's provider was signed out at proposal
+          // time. A seat counts as keeping the persona's model by matching either route, never by
+          // its absence.
+          const frozen = seat.modelSelection;
+          const frozenDriver = providers.find(
+            (candidate) => candidate.instanceId === frozen.instanceId,
+          )?.driver;
+          const keepsPersonaModel =
+            definition?.modelRoute.some(
+              (target) => target.driver === frozenDriver && target.model === frozen.model,
+            ) ?? false;
+          const { modelSelection, provider } = yield* resolveSelection(
+            seat,
+            seat.modelSelection,
+            !keepsPersonaModel,
+          );
           if (definition === undefined || catalog.disabledIds.includes(agentId))
             return yield* new CrewLaunchSeatUnavailableError({
               seatName: seat.name,
@@ -435,13 +480,14 @@ export const layer = Layer.effect(
             ...(seat.runtimeMode === undefined ? {} : { runtimeModeOverride: seat.runtimeMode }),
           };
         }).pipe(
-          Effect.mapError(
-            (error) =>
-              new CrewLaunchSeatUnavailableError({
-                seatName: seat.name,
-                agentId,
-                detail: error.message,
-              }),
+          Effect.mapError((error) =>
+            error._tag === "CrewLaunchModelNotEligibleError"
+              ? error
+              : new CrewLaunchSeatUnavailableError({
+                  seatName: seat.name,
+                  agentId,
+                  detail: error.message,
+                }),
           ),
         );
         // The person's edited text runs instead of the persona's, never beside it: the seat's

@@ -2,7 +2,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { CrewWorkspaceOptions } from "@t3tools/contracts/j5";
+import type { CrewMemberModels, CrewWorkspaceOptions } from "@t3tools/contracts/j5";
 import { useEffect, useEffectEvent, useState, type RefObject } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -33,6 +33,7 @@ export function CrewProposalMemberDialog(props: {
   previewSeatName: string;
   environmentId: EnvironmentId | null;
   workspaceOptions?: CrewWorkspaceOptions | undefined;
+  memberModels?: CrewMemberModels | undefined;
   agents: ReadonlyArray<{ personaId: string; displayName: string }>;
   disabled: boolean;
   onClose: () => void;
@@ -142,6 +143,7 @@ export function CrewProposalMemberDialog(props: {
             agents={props.agents}
             runtime={runtime}
             workspaceOptions={props.workspaceOptions ?? preview.workspaceOptions}
+            memberModels={props.memberModels}
             disabled={props.disabled}
             loadingInstructions={loadingPersona}
             onChange={setValue}

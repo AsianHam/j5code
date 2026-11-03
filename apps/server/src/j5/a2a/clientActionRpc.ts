@@ -59,6 +59,7 @@ const proposalFailure = failAsJ5ActionError({
     "CrewProposalNotOpenError",
     "CrewProposalRequestError",
     "CrewLaunchSeatUnavailableError",
+    "CrewLaunchModelNotEligibleError",
     "CrewLaunchCapError",
     "CrewLaunchSeatConflictError",
     "CrewStepAlreadyOwnedError",
