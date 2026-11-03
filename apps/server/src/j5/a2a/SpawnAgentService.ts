@@ -78,7 +78,11 @@ export class SpawnAgentService extends Context.Service<
 
 const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
   scope: McpInvocationScope,
-  input: { readonly provider: string; readonly model: string; readonly reasoning: string },
+  input: {
+    readonly provider: string;
+    readonly model: string;
+    readonly reasoning?: string | undefined;
+  },
 ) {
   // The default listing is a short list; a search by the model id reaches the whole catalog.
   const capabilities = yield* (yield* OrchestratorMcpService.OrchestratorMcpService)
@@ -119,9 +123,21 @@ const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
       descriptor.values.every((value) => typeof value === "string"),
   );
   if (reasoningDescriptor === undefined) {
+    if (input.reasoning === undefined) {
+      return { instanceId: provider.providerInstanceId, model: model.id } satisfies ModelSelection;
+    }
+    const options = (model.options ?? []).map(
+      (option) => `${option.id} (${option.values.join(", ")})`,
+    );
     return yield* stateError(
-      `Model ${input.model} on provider ${input.provider} exposes no reasoning options; j5_spawn_agent requires explicit reasoning selection.`,
-      "Call orchestrator_capabilities and choose a model that exposes reasoning options before retrying j5_spawn_agent.",
+      `Model ${input.model} on provider ${input.provider} has no reasoning option, so reasoning ${input.reasoning} cannot apply. ${options.length === 0 ? "It has no options." : `Its options: ${options.join("; ")}.`}`,
+      "Retry j5_spawn_agent without reasoning.",
+    );
+  }
+  if (input.reasoning === undefined) {
+    return yield* stateError(
+      `Model ${input.model} on provider ${input.provider} needs a reasoning level, and none was given.`,
+      `Retry j5_spawn_agent with reasoning set to one of: ${reasoningDescriptor.values.join(", ")}.`,
     );
   }
   if (!reasoningDescriptor.values.includes(input.reasoning)) {
@@ -148,7 +164,7 @@ const prepareSpawnPersona = Effect.fn("j5.a2a.mcp.prepareSpawnPersona")(function
     readonly persona: string;
     readonly provider: string;
     readonly model: string;
-    readonly reasoning: string;
+    readonly reasoning?: string | undefined;
   },
   modelSelection: ModelSelection,
 ) {

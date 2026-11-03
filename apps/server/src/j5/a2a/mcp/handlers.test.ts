@@ -1427,7 +1427,7 @@ it.effect("preflights home before creation and records facts before the one stab
       assert.isTrue(optionless.isFailure);
       assert.include(
         (optionless.result as unknown as { readonly message: string }).message,
-        "Model grok-custom-optionless on provider codex-luna exposes no reasoning options; j5_spawn_agent requires explicit reasoning selection",
+        "Model grok-custom-optionless on provider codex-luna has no reasoning option",
       );
       assert.lengthOf(yield* Ref.get(commands), 4);
 
@@ -1562,7 +1562,10 @@ const personaCapabilityProvider = (provider: ServerProvider) => ({
     label: model.name,
     options: model.capabilities?.optionDescriptors?.map((descriptor) => ({
       id: descriptor.id,
-      values: descriptor.type === "select" ? descriptor.options.map((option) => option.id) : [],
+      values:
+        descriptor.type === "select"
+          ? descriptor.options.map((option) => option.id)
+          : [false, true],
     })),
   })),
   canRunChildTask: true,
@@ -1581,9 +1584,25 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
       { slug: "gpt-5.6-terra", options: ["medium", "high"] },
       { slug: "gpt-5.6-sol", options: ["high"] },
     ]);
-    const claude = personaProvider("claudeAgent", "claudeAgent", [
+    const claudeWithLevels = personaProvider("claudeAgent", "claudeAgent", [
       { slug: "claude-opus-5", options: ["high"] },
     ]);
+    const claude: ServerProvider = {
+      ...claudeWithLevels,
+      models: [
+        ...claudeWithLevels.models,
+        {
+          slug: "claude-haiku-4-5",
+          name: "claude-haiku-4-5",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
+            ],
+          },
+        },
+      ],
+    };
     const callerRow = {
       projectId: ledgerProjectId,
       participantId: callerParticipantId,
@@ -1813,6 +1832,27 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
       assert.include(failureMessage(outOfRoute), "Agent scout allows only");
       assert.include(failureMessage(outOfRoute), "outside its declared routes");
       assert.include(failureMessage(outOfRoute), "or omit persona");
+
+      // A route always names a level, so a persona never runs without one and none is inferred.
+      const { reasoning: _reasoning, ...scoutWithoutReasoning } = scout;
+      const noLevelOnRoute = yield* call({
+        ...scoutWithoutReasoning,
+        client_request_id: "spawn-persona-no-level-on-route",
+      });
+      assert.isTrue(noLevelOnRoute.isFailure);
+      assert.include(failureMessage(noLevelOnRoute), "needs a reasoning level");
+      const modelWithoutLevels = yield* call({
+        ...scoutWithoutReasoning,
+        provider: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-haiku-4-5",
+        client_request_id: "spawn-persona-model-without-levels",
+      });
+      assert.isTrue(modelWithoutLevels.isFailure);
+      assert.include(failureMessage(modelWithoutLevels), "Agent scout allows only");
+      assert.include(
+        failureMessage(modelWithoutLevels),
+        "claudeAgent claude-haiku-4-5 (no reasoning) is outside its declared routes",
+      );
 
       const unenforceable = yield* call({
         ...scout,

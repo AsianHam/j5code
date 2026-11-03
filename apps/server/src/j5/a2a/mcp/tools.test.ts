@@ -94,7 +94,7 @@ it("publishes the ratified single-target lifecycle contracts fail-closed", () =>
   };
   assert.sameMembers(
     [...(spawnSchema.required ?? [])],
-    ["brief", "title", "provider", "model", "reasoning", "workspace"],
+    ["brief", "title", "provider", "model", "workspace"],
   );
   assert.sameMembers([...(stopSchema.required ?? [])], ["participant_id"]);
   assert.property(spawnSchema.properties ?? {}, "client_request_id");

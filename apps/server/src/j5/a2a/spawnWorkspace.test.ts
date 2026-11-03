@@ -411,6 +411,22 @@ const spawnHarness = (input: {
                 canRunCrossProviderChildTask: true,
                 constraints: [],
               },
+              {
+                providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                driverKind: ProviderDriverKind.make("claudeAgent"),
+                displayName: "Claude",
+                models: [
+                  {
+                    id: "claude-haiku-4-5",
+                    label: "Claude Haiku 4.5",
+                    options: [{ id: "thinking", values: [false, true], default: true }],
+                  },
+                  { id: "custom-no-options", label: "Custom" },
+                ],
+                canRunChildTask: true,
+                canRunCrossProviderChildTask: true,
+                constraints: [],
+              },
             ],
             features: {
               appOwnedSubagents: true,
@@ -759,6 +775,169 @@ it.effect(
         assert.isFalse(replayed.isFailure);
       }).pipe(Effect.provide(layer));
     }),
+);
+
+const { reasoning: _reasoning, ...spawnArgsWithoutReasoning } = spawnArgs;
+const haikuArgs = {
+  ...spawnArgsWithoutReasoning,
+  provider: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-haiku-4-5",
+  workspace: { type: "shared" as const },
+} satisfies J5SpawnAgentInput;
+const claudeHaiku = {
+  ...codexSolAndTerra,
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  models: [
+    {
+      slug: "claude-haiku-4-5",
+      name: "claude-haiku-4-5",
+      capabilities: {
+        optionDescriptors: [
+          { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
+        ],
+      },
+    },
+  ],
+} as unknown as ServerProvider;
+
+it.effect("spawns a model with no reasoning option without a reasoning value", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+    });
+    yield* Effect.gen(function* () {
+      const spawned = yield* call(haikuArgs);
+      assert.isFalse(spawned.isFailure, message(spawned));
+      const expected = { instanceId: haikuArgs.provider, model: "claude-haiku-4-5" };
+      const created = yield* Ref.get(commands);
+      assert.deepStrictEqual(
+        created.flatMap((command) =>
+          command.type === "thread.create" || command.type === "message.dispatch"
+            ? [command.modelSelection]
+            : [],
+        ),
+        [expected, expected],
+      );
+      const optionless = yield* call({ ...haikuArgs, model: "custom-no-options" });
+      assert.isFalse(optionless.isFailure, message(optionless));
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect(
+  "refuses a reasoning value for a model with no reasoning option, naming its options",
+  () =>
+    Effect.gen(function* () {
+      const { layer, call, commands } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+      });
+      yield* Effect.gen(function* () {
+        const refused = yield* call({ ...haikuArgs, reasoning: "high" });
+        assert.isTrue(refused.isFailure);
+        for (const part of [
+          "Model claude-haiku-4-5 on provider claudeAgent has no reasoning option",
+          "thinking (false, true)",
+          "Retry j5_spawn_agent without reasoning",
+        ])
+          assert.include(message(refused), part);
+        const optionless = yield* call({
+          ...haikuArgs,
+          model: "custom-no-options",
+          reasoning: "high",
+        });
+        assert.isTrue(optionless.isFailure);
+        assert.include(message(optionless), "It has no options");
+        assert.lengthOf(yield* Ref.get(commands), 0, "a refused spawn creates nothing");
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("refuses a model with reasoning options when no reasoning is given, naming them", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+    });
+    yield* Effect.gen(function* () {
+      const refused = yield* call({ ...spawnArgsWithoutReasoning, workspace: { type: "shared" } });
+      assert.isTrue(refused.isFailure);
+      for (const part of [
+        "Model gpt-5.6-sol on provider codex needs a reasoning level",
+        "low, high",
+      ])
+        assert.include(message(refused), part);
+      assert.lengthOf(yield* Ref.get(commands), 0, "a refused spawn creates nothing");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("holds a model with no reasoning option to the model list only", () =>
+  Effect.gen(function* () {
+    const noLevels = { crewMemberReasoning: [] };
+    const haikuListed = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      memberModels: crewMemberModelsLayer({ providers: [claudeHaiku], settings: noLevels }),
+    });
+    yield* Effect.gen(function* () {
+      const spawned = yield* haikuListed.call(haikuArgs);
+      assert.isFalse(spawned.isFailure, message(spawned));
+    }).pipe(Effect.provide(haikuListed.layer));
+
+    const haikuUnlisted = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      memberModels: crewMemberModelsLayer({
+        providers: [claudeHaiku, codexSolAndTerra],
+        settings: { ...terraOnly, ...noLevels },
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const refused = yield* haikuUnlisted.call(haikuArgs);
+      assert.isTrue(refused.isFailure);
+      assert.include(message(refused), "Model claude-haiku-4-5 on claudeAgent");
+      assert.lengthOf(yield* Ref.get(haikuUnlisted.commands), 0);
+    }).pipe(Effect.provide(haikuUnlisted.layer));
+  }),
+);
+
+it.effect("binds a client_request_id with or without reasoning, as any other field", () =>
+  Effect.gen(function* () {
+    const replayContext = yield* Layer.build(
+      RequestReplayService.layer.pipe(Layer.provide(layerMemory)),
+    );
+    const replay = Layer.succeed(
+      RequestReplayService.RequestReplayService,
+      Context.get(replayContext, RequestReplayService.RequestReplayService),
+    );
+    const { layer, call } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      replay,
+    });
+    yield* Effect.gen(function* () {
+      const haiku = { ...haikuArgs, client_request_id: "haiku-key" };
+      const first = yield* call(haiku);
+      assert.isFalse(first.isFailure, message(first));
+      const again = yield* call(haiku);
+      assert.deepStrictEqual(again.result, first.result);
+      const added = yield* call({ ...haiku, reasoning: "high" });
+      assert.isTrue(added.isFailure);
+      assert.include(message(added), "already bound to a different request");
+
+      // A refused attempt binds nothing, so the corrected call keeps its key.
+      const sol = {
+        ...spawnArgsWithoutReasoning,
+        workspace: { type: "shared" as const },
+        client_request_id: "sol-key",
+      };
+      const omitted = yield* call(sol);
+      assert.isTrue(omitted.isFailure);
+      assert.include(message(omitted), "needs a reasoning level");
+      const corrected = yield* call({ ...sol, reasoning: "high" });
+      assert.isFalse(corrected.isFailure, message(corrected));
+      const removed = yield* call(sol);
+      assert.isTrue(removed.isFailure);
+      assert.include(message(removed), "already bound to a different request");
+    }).pipe(Effect.provide(layer));
+  }),
 );
 
 it.effect("spawns an agent with no project into a folder of its own", () =>
@@ -1714,6 +1893,13 @@ it.effect(
 );
 
 const decodeSpawnInput = Schema.decodeUnknownExit(J5SpawnAgentInput);
+
+it("treats a null reasoning from a harness that sends null for optional fields as omitted", () => {
+  const decodeAsAdvertised = Schema.decodeUnknownSync(Schema.toCodecJson(J5SpawnAgentInput));
+  const { provider: _provider, ...args } = haikuArgs;
+  const decoded = decodeAsAdvertised({ ...args, provider: "claudeAgent", reasoning: null });
+  assert.isUndefined(decoded.reasoning);
+});
 
 it("requires a workspace on every spawn", () => {
   const { workspace: _workspace, ...withoutWorkspace } = spawnArgs;

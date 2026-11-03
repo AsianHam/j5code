@@ -24,7 +24,8 @@ export interface AgentPersonaPeerSpawnRequest {
   readonly provider: ServerProvider | undefined;
   readonly instanceId: ProviderInstanceId;
   readonly model: string;
-  readonly reasoning: string;
+  /** Left out for a model with no reasoning option. A route always names a level, so none matches. */
+  readonly reasoning?: string | undefined;
 }
 
 /**
@@ -68,7 +69,7 @@ export const prepareAgentPersonaPeerSpawn = Effect.fn("j5.prepareAgentPersonaPee
         .map(describeTarget)
         .join(
           " or ",
-        )}; ${provider.driver} ${request.model} (${request.reasoning}) is outside its declared routes.`,
+        )}; ${provider.driver} ${request.model} (${request.reasoning ?? "no reasoning"}) is outside its declared routes.`,
     });
   }
   const unavailable = agentPersonaTargetUnavailableReason(provider, target);
