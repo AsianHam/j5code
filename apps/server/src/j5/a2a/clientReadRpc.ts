@@ -2,6 +2,7 @@ import { AuthAccessReadScope, AuthOrchestrationReadScope, ThreadId } from "@t3to
 import {
   J5_CLIENT_READ_WS_METHODS,
   type CrewArchiveWorktreesRequest,
+  type CrewWorktreeCleanupListRequest,
   type FleetReadRequest,
   type HumanInboxListRequest,
   type OpenInboxCountRequest,
@@ -14,7 +15,7 @@ import * as Schema from "effect/Schema";
 
 import { failAsJ5ActionError } from "../rpcActionError.ts";
 import { connectionPersonId } from "../sharing/connectionPerson.ts";
-import { connectionReads, connectionWrites } from "../sharing/connectionWriter.ts";
+import { connectionReads, connectionWrites, isOwner } from "../sharing/connectionWriter.ts";
 import { PersonAccess, type SessionIdentity } from "../sharing/PersonAccess.ts";
 import { SharedThreads } from "../sharing/SharedThreads.ts";
 import { ClientReadsService } from "./ClientReadsService.ts";
@@ -38,6 +39,7 @@ export const CLIENT_READ_RPC_SCOPES = {
   [METHODS.listSpawnedChildren]: AuthOrchestrationReadScope,
   [METHODS.readPreArchiveFacts]: AuthOrchestrationReadScope,
   [METHODS.readCrewArchiveWorktrees]: AuthOrchestrationReadScope,
+  [METHODS.listCrewWorktreeCleanups]: AuthOrchestrationReadScope,
   [METHODS.readParticipantIdentities]: AuthOrchestrationReadScope,
   [METHODS.listPeers]: AuthAccessReadScope,
   [METHODS.subscribeReadChanges]: AuthOrchestrationReadScope,
@@ -78,6 +80,16 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
     Effect.provideService(PersonAccess, people),
     Effect.provideService(SharedThreads, shared),
   );
+  // Listed to Owners only: removing worktrees is the Owner's call, so no one else has anything
+  // to answer, and the count is of what waits on the person.
+  const cleanupsReached = Effect.fn("j5.a2a.clientReadRpc.cleanupsReached")(function* (
+    status: CrewWorktreeCleanupListRequest["status"],
+  ) {
+    if (!(yield* isOwner(session).pipe(Effect.provideService(PersonAccess, people)))) return [];
+    return yield* clientReads
+      .crewWorktreeCleanups(status)
+      .pipe(Effect.catch(failed("Reading worktree cleanups failed.")));
+  });
   return {
     [METHODS.listHumanInbox]: (input: HumanInboxListRequest) =>
       personOf.pipe(
@@ -92,7 +104,18 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
         Effect.flatMap((personId) =>
           clientReads.openInboxCount(personId).pipe(Effect.catch(inboxFailure)),
         ),
+        // An open worktree cleanup waits on a person like an ask does.
+        Effect.flatMap((counted) =>
+          cleanupsReached("open").pipe(
+            Effect.map((open) => ({ ...counted, count: counted.count + open.length })),
+          ),
+        ),
       ),
+    [METHODS.listCrewWorktreeCleanups]: Effect.fn("j5.a2a.clientReadRpc.listCrewWorktreeCleanups")(
+      function* (input: CrewWorktreeCleanupListRequest) {
+        return { items: yield* cleanupsReached(input.status) };
+      },
+    ),
     [METHODS.listCrewProposals]: Effect.fn("j5.a2a.clientReadRpc.listCrewProposals")(function* () {
       const listed = yield* clientReads.crewProposals.pipe(
         Effect.catch(failed("Reading crew proposals failed.")),

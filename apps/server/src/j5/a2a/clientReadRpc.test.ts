@@ -49,8 +49,8 @@ const SESSION = {
   subject: "one-time-token",
 };
 
-/** A connection that is the given person's device, or no one's. */
-const connectionOf = (personId: ParticipantId | null) =>
+/** A connection that is the given person's device at a level of the server, or no one's. */
+const connectionOf = (personId: ParticipantId | null, level: "owner" | "collaborator" = "owner") =>
   Layer.mock(PersonAccess)({
     sessionReach: () =>
       Effect.succeed(
@@ -60,8 +60,8 @@ const connectionOf = (personId: ParticipantId | null) =>
               kind: "person" as const,
               person: { personId, displayName: null, firstOwner: true },
               levels: [],
-              serverLevel: "owner" as const,
-              highest: "owner" as const,
+              serverLevel: level,
+              highest: level,
               ceiling: null,
             },
       ),
@@ -74,6 +74,7 @@ const writesEverywhere = Layer.mock(SharedThreads)({});
 const handlersOver = (
   reads: Layer.Layer<ClientReadsService, SqlError>,
   personId: ParticipantId | null = LOCAL_PERSON,
+  level: "owner" | "collaborator" = "owner",
 ) =>
   makeClientReadRpcHandlers(SESSION).pipe(
     Effect.provide(
@@ -81,7 +82,7 @@ const handlersOver = (
         reads,
         Layer.mock(PeerAdminService)({}),
         readChangesLayer,
-        connectionOf(personId),
+        connectionOf(personId, level),
         writesEverywhere,
       ),
     ),
@@ -205,6 +206,7 @@ it.effect("keeps identity requests exact, ordered, and total, and drops an id th
           return Effect.succeed({ entries });
         },
         openInboxCount: (personId) => Effect.succeed({ personId: personId ?? alpha, count: 3 }),
+        crewWorktreeCleanups: () => Effect.succeed([]),
       }),
     );
     const identities = handlers[METHODS.readParticipantIdentities];
@@ -222,6 +224,43 @@ it.effect("keeps identity requests exact, ordered, and total, and drops an id th
     assert.deepStrictEqual(yield* handlers[METHODS.readOpenInboxCount]({}), {
       personId: LOCAL_PERSON,
       count: 3,
+    });
+  }),
+);
+
+const openCleanup = {
+  id: "cleanup:1",
+  crewInstanceId: "crew:1",
+  crewName: "Crew One",
+  projectId: "project:gate",
+  captainThreadId: ThreadId.make("thread:captain"),
+  filedAt: "2026-10-27T12:00:00.000Z",
+  status: "open" as const,
+  decidedAt: null,
+  entries: [],
+};
+const cleanupReads = Layer.mock(ClientReadsService)({
+  openInboxCount: (personId) =>
+    Effect.succeed({ personId: personId ?? ParticipantId.make("agent:none"), count: 3 }),
+  crewWorktreeCleanups: () => Effect.succeed([openCleanup]),
+});
+
+it.effect("counts and lists an open worktree cleanup for an Owner, who answers it", () =>
+  Effect.gen(function* () {
+    const handlers = yield* handlersOver(cleanupReads);
+    assert.strictEqual((yield* handlers[METHODS.readOpenInboxCount]({})).count, 4);
+    assert.deepStrictEqual(yield* handlers[METHODS.listCrewWorktreeCleanups]({ status: "open" }), {
+      items: [openCleanup],
+    });
+  }),
+);
+
+it.effect("neither counts nor lists a worktree cleanup for someone who cannot answer it", () =>
+  Effect.gen(function* () {
+    const handlers = yield* handlersOver(cleanupReads, LOCAL_PERSON, "collaborator");
+    assert.strictEqual((yield* handlers[METHODS.readOpenInboxCount]({})).count, 3);
+    assert.deepStrictEqual(yield* handlers[METHODS.listCrewWorktreeCleanups]({ status: "open" }), {
+      items: [],
     });
   }),
 );

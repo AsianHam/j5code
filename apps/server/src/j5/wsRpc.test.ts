@@ -170,6 +170,20 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
                 },
               })
             : Effect.fail(new A2AExchangeNotOpenError({ exchangeId: input.exchangeId })),
+        answerCrewWorktreeCleanup: ({ itemId }) =>
+          reached("cleanup", {
+            item: {
+              id: itemId,
+              crewInstanceId: "crew:1",
+              crewName: "Login Fix Crew",
+              projectId: "project:gate",
+              captainThreadId: ThreadId.make("thread:captain"),
+              filedAt: "2026-10-27T12:00:00.000Z",
+              status: "decided" as const,
+              decidedAt: "2026-10-27T12:05:00.000Z",
+              entries: [],
+            },
+          }),
       }),
       Layer.mock(PeerAdminService)({
         issueCredential: (input) =>
@@ -303,6 +317,9 @@ const callEach = (client: Effect.Success<ReturnType<typeof clientFor>>["client"]
         exchangeId: "ask:1",
       }),
     ),
+    [ACTIONS.answerCrewWorktreeCleanup]: outcome(
+      client[ACTIONS.answerCrewWorktreeCleanup]({ itemId: "cleanup:1", removePaths: [] }),
+    ),
     [ACTIONS.issuePeerCredential]: outcome(
       client[ACTIONS.issuePeerCredential]({
         environmentId: "environment-home",
@@ -407,7 +424,8 @@ describe("J5 client action RPC scopes", () => {
                 tag: "EnvironmentAuthorizationError",
                 requiredPermission: method.startsWith("j5.peers.")
                   ? AuthAccessWriteScope
-                  : method.startsWith("j5.playbooks.")
+                  : method.startsWith("j5.playbooks.") ||
+                      method === ACTIONS.answerCrewWorktreeCleanup
                     ? AuthSettingsWriteScope
                     : AuthOrchestrationOperateScope,
               },
@@ -461,6 +479,15 @@ describe("J5 client action RPC handlers", () => {
         (yield* client[ACTIONS.archiveCrew]({ crewInstanceId: "crew:1" })).status,
         "archived",
       );
+      // Removing worktrees is an Owner's call, which the settings scope stands for.
+      const owner = yield* clientFor([...operator, AuthSettingsWriteScope]);
+      assert.equal(
+        (yield* owner.client[ACTIONS.answerCrewWorktreeCleanup]({
+          itemId: "cleanup:1",
+          removePaths: [],
+        })).item.status,
+        "decided",
+      );
       assert.deepStrictEqual(
         yield* client[ACTIONS.respondCrewRuntimeRequest]({
           threadId,
@@ -486,6 +513,7 @@ describe("J5 client action RPC handlers", () => {
         "answer",
         "delete artifact",
       ]);
+      assert.deepStrictEqual(owner.handled, ["cleanup"]);
     }).pipe(Effect.scoped),
   );
 

@@ -552,6 +552,63 @@ const CrewArchiveWorktreesResponse = Schema.Struct({
 });
 
 /**
+ * One worktree an archive kept with unfinished work, as measured when the archive kept it.
+ * Removing it discards the uncommitted files; the branch, and so every commit, stays.
+ */
+export const CrewWorktreeCleanupEntry = Schema.Struct({
+  threadId: ThreadId,
+  threadTitle: Schema.String,
+  path: Schema.String,
+  branch: Schema.NullOr(Schema.String),
+  uncommittedFiles: Schema.Int,
+  /** Null when the default branch could not be compared. */
+  commitsAhead: Schema.NullOr(Schema.Int),
+  pullRequestUrl: Schema.NullOr(Schema.String),
+  /** Null until the item is decided. `kept` is the person's choice; `skipped` is J5's. */
+  outcome: Schema.NullOr(Schema.Literals(["removed", "kept", "skipped", "failed"])),
+  /**
+   * Why it was skipped: its work changed after the item was filed, another unarchived thread or
+   * an open session now uses it, it was already gone, or J5 could not check it.
+   */
+  reason: Schema.NullOr(Schema.Literals(["changed", "shared", "in_use", "gone", "unverified"])),
+  /** The git error text of a failed removal. */
+  detail: Schema.NullOr(Schema.String),
+});
+export type CrewWorktreeCleanupEntry = typeof CrewWorktreeCleanupEntry.Type;
+
+/** The one Inbox approval an archive files for every J5-created worktree it kept unfinished. */
+export const CrewWorktreeCleanupItem = Schema.Struct({
+  id: Schema.String,
+  crewInstanceId: Schema.String,
+  crewName: Schema.String,
+  projectId: Schema.String,
+  captainThreadId: ThreadId,
+  filedAt: Schema.String,
+  status: Schema.Literals(["open", "decided"]),
+  decidedAt: Schema.NullOr(Schema.String),
+  entries: Schema.Array(CrewWorktreeCleanupEntry),
+});
+export type CrewWorktreeCleanupItem = typeof CrewWorktreeCleanupItem.Type;
+
+export const CrewWorktreeCleanupListRequest = Schema.Struct({
+  status: Schema.Literals(["open", "decided"]),
+});
+export type CrewWorktreeCleanupListRequest = typeof CrewWorktreeCleanupListRequest.Type;
+export const CrewWorktreeCleanupListResponse = Schema.Struct({
+  items: Schema.Array(CrewWorktreeCleanupItem),
+});
+
+/** The paths to remove; an empty list keeps every worktree and clears the item. */
+export const CrewWorktreeCleanupAnswerRequest = Schema.Struct({
+  itemId: Schema.String.check(Schema.isNonEmpty()),
+  removePaths: Schema.Array(Schema.String),
+});
+export type CrewWorktreeCleanupAnswerRequest = typeof CrewWorktreeCleanupAnswerRequest.Type;
+export const CrewWorktreeCleanupAnswerResponse = Schema.Struct({
+  item: CrewWorktreeCleanupItem,
+});
+
+/**
  * What a J5 server reports about its ledger. Every J5 read is gated on `j5ProjectLedger`. The two
  * older keys are reported `false`, not left out: a client from before the ledger was re-keyed
  * gates its J5 reads on them, shows a `false` one as unsupported without calling its route, and
@@ -1081,6 +1138,7 @@ export const J5_CLIENT_ACTION_WS_METHODS = {
   archiveCrew: "j5.crews.archive",
   respondCrewRuntimeRequest: "j5.crews.respondRuntimeRequest",
   answerHumanExchange: "j5.inbox.answer",
+  answerCrewWorktreeCleanup: "j5.crews.answerWorktreeCleanup",
   issuePeerCredential: "j5.peers.issueCredential",
   addPeer: "j5.peers.add",
   removePeer: "j5.peers.remove",
@@ -1120,6 +1178,11 @@ export const J5ClientActionRpcGroup = RpcGroup.make(
   Rpc.make(J5_CLIENT_ACTION_WS_METHODS.answerHumanExchange, {
     payload: AnswerHumanExchangeRequest,
     success: AnswerHumanExchangeResponse,
+    error: clientActionError,
+  }),
+  Rpc.make(J5_CLIENT_ACTION_WS_METHODS.answerCrewWorktreeCleanup, {
+    payload: CrewWorktreeCleanupAnswerRequest,
+    success: CrewWorktreeCleanupAnswerResponse,
     error: clientActionError,
   }),
   Rpc.make(J5_CLIENT_ACTION_WS_METHODS.issuePeerCredential, {
@@ -1255,6 +1318,7 @@ export const J5_CLIENT_READ_WS_METHODS = {
   listSpawnedChildren: "j5.fleet.listSpawnedChildren",
   readPreArchiveFacts: "j5.archive.readFacts",
   readCrewArchiveWorktrees: "j5.archive.readCrewWorktrees",
+  listCrewWorktreeCleanups: "j5.crews.listWorktreeCleanups",
   readParticipantIdentities: "j5.participants.readIdentities",
   listPeers: "j5.peers.list",
   subscribeReadChanges: "j5.reads.subscribeChanges",
@@ -1328,6 +1392,11 @@ export const J5ClientReadRpcGroup = RpcGroup.make(
     J5_CLIENT_READ_WS_METHODS.readCrewArchiveWorktrees,
     CrewArchiveWorktreesRequest,
     CrewArchiveWorktreesResponse,
+  ),
+  clientRead(
+    J5_CLIENT_READ_WS_METHODS.listCrewWorktreeCleanups,
+    CrewWorktreeCleanupListRequest,
+    CrewWorktreeCleanupListResponse,
   ),
   clientRead(
     J5_CLIENT_READ_WS_METHODS.readParticipantIdentities,

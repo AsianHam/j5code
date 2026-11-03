@@ -272,6 +272,8 @@ export interface ClientReadsShape {
     ReadonlyArray<CrewArchiveWorktreeRead>,
     Read<typeof makeCrewArchiveWorktreesRead>["error"]
   >;
+  /** The Inbox's worktree cleanup approvals, open or decided. */
+  readonly crewWorktreeCleanups: CrewWorktrees["Service"]["listCleanups"];
 }
 
 export class ClientReadsService extends Context.Service<ClientReadsService, ClientReadsShape>()(
@@ -403,6 +405,7 @@ export const layer: Layer.Layer<
       fleet: yield* makeFleetRead,
       preArchiveFacts: yield* makePreArchiveFactsRead,
       crewArchiveWorktrees: yield* makeCrewArchiveWorktreesRead,
+      crewWorktreeCleanups: (yield* CrewWorktrees).listCleanups,
     });
   }),
 );

@@ -2,6 +2,7 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
 } from "@t3tools/contracts";
 import {
   J5ActionError,
@@ -14,6 +15,7 @@ import {
   type CrewProposalResolveRequest,
   type CrewRuntimeRequestRespondRequest,
   type CrewStopRequest,
+  type CrewWorktreeCleanupAnswerRequest,
   type IssuePeerCredentialRequest,
   type PeerProbeRequest,
   type RemovePeerRequest,
@@ -45,6 +47,7 @@ export const CLIENT_ACTION_RPC_SCOPES = {
   [METHODS.archiveCrew]: AuthOrchestrationOperateScope,
   [METHODS.respondCrewRuntimeRequest]: AuthOrchestrationOperateScope,
   [METHODS.answerHumanExchange]: AuthOrchestrationOperateScope,
+  [METHODS.answerCrewWorktreeCleanup]: AuthSettingsWriteScope,
   [METHODS.issuePeerCredential]: AuthAccessWriteScope,
   [METHODS.addPeer]: AuthAccessWriteScope,
   [METHODS.removePeer]: AuthAccessWriteScope,
@@ -173,6 +176,21 @@ export const makeClientActionRpcHandlers = Effect.fn("j5.makeClientActionRpcHand
               conversation.recordReply(personId, reply),
             )
             .pipe(Effect.catch(failAsJ5ActionError({ failed: "Human inbox operation failed." }))),
+        ),
+      ),
+    // Removing worktrees is the Owner's call, like archiving the Crew that left them.
+    [METHODS.answerCrewWorktreeCleanup]: (input: CrewWorktreeCleanupAnswerRequest) =>
+      services(requireOwner(session)).pipe(
+        Effect.andThen(actions.answerCrewWorktreeCleanup(input)),
+        Effect.catch(
+          failAsJ5ActionError({
+            refusals: [
+              "CrewWorktreeCleanupNotFoundError",
+              "CrewWorktreeCleanupAnsweredError",
+              "CrewWorktreeCleanupPathError",
+            ],
+            failed: "Answering the worktree cleanup failed.",
+          }),
         ),
       ),
     [METHODS.issuePeerCredential]: (input: IssuePeerCredentialRequest) =>

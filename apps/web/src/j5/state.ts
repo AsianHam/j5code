@@ -68,6 +68,23 @@ export const answeredInboxSourcesAtom = createJ5ReadSourcesAtom({
   capability: "j5ProjectLedger",
   queryAtom: answeredInboxQueryAtom,
 });
+// The worktree cleanup approvals an archive files; shown in the Inbox beside the asks. A server
+// without the read fails its source alone.
+export const worktreeCleanupQueryAtom =
+  (status: "open" | "decided") => (environmentId: EnvironmentId) =>
+    j5Environment.crewWorktreeCleanups({ environmentId, input: { status } });
+export const openWorktreeCleanupSourcesAtom = createJ5ReadSourcesAtom({
+  ...inboxSourcesInput,
+  label: "web-j5:worktree-cleanup-sources",
+  capability: "j5ProjectLedger",
+  queryAtom: worktreeCleanupQueryAtom("open"),
+});
+export const decidedWorktreeCleanupSourcesAtom = createJ5ReadSourcesAtom({
+  ...inboxSourcesInput,
+  label: "web-j5:decided-worktree-cleanup-sources",
+  capability: "j5ProjectLedger",
+  queryAtom: worktreeCleanupQueryAtom("decided"),
+});
 export const crewProposalSourcesAtom = createJ5ReadSourcesAtom({
   ...inboxSourcesInput,
   label: "web-j5:crew-proposal-sources",

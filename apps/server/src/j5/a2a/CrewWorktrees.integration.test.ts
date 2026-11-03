@@ -18,6 +18,7 @@ import { CrewWorktrees, manualLayer } from "./CrewWorktrees.ts";
 import { LedgerProjectId } from "./contracts.ts";
 import { A2ALedger, layer as ledgerLayer } from "./LedgerService.ts";
 import { participantIdForThread } from "./HomeRegistrar.ts";
+import { ReadChanges } from "./ReadChanges.ts";
 
 it.effect(
   "records the worktree upstream's launch creates for a seat's first assignment, from the event it commits",
@@ -51,6 +52,7 @@ it.effect(
             Layer.mock(ProviderSessionManagerV2)({}),
             Layer.mock(GitVcsDriver)({}),
             Layer.mock(GitManager)({}),
+            Layer.mock(ReadChanges)({}),
             NodeServices.layer,
           ),
         ),

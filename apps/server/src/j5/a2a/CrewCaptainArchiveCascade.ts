@@ -15,6 +15,7 @@ import { ThreadManagementService } from "../../orchestration-v2/ThreadManagement
 import { isAutoSettlementCandidate } from "../../orchestration-v2/ThreadSettlementService.ts";
 import { AgentCrewInstanceService, type AgentCrewInstance } from "./AgentCrewInstanceService.ts";
 import { ArchiveCrewService } from "./ArchiveCrewService.ts";
+import { CrewWorktrees } from "./CrewWorktrees.ts";
 import { participantIdForThread } from "./HomeRegistrar.ts";
 import { crewSeatRequestKey, lifecycleCommandId } from "./spawnIds.ts";
 import {
@@ -75,6 +76,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const crews = yield* AgentCrewInstanceService;
     const archives = yield* ArchiveCrewService;
+    const worktrees = yield* CrewWorktrees;
     const threads = yield* ThreadManagementService;
 
     const retire = Effect.fn("j5.a2a.captainArchiveCascade.retire")(function* (
@@ -211,7 +213,9 @@ export const layer = Layer.effect(
               threadId: member.threadId,
             });
           }
-          yield* crews.restoreWithCaptain(instance.id);
+          // Its worktrees are in use again: an open approval to remove them is moot.
+          if (yield* crews.restoreWithCaptain(instance.id))
+            yield* worktrees.withdrawCleanup(instance.id);
         }),
       );
       yield* Effect.logInfo("J5 Captain unarchived; its Crew came back with it", {

@@ -49,6 +49,7 @@ import * as TerminalManager from "../../terminal/Manager.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { CrewWorktrees, manualLayer } from "./CrewWorktrees.ts";
 import { runJ5A2AMigrations } from "./Migrations.ts";
+import { ReadChanges } from "./ReadChanges.ts";
 
 const projectId = ProjectId.make("project:crew-worktrees");
 
@@ -60,6 +61,7 @@ const gitLayer = GitVcsDriver.layer.pipe(
 interface SeatThread {
   archivedAt: DateTime.Utc | null;
   branch: string | null;
+  title: string;
 }
 
 /**
@@ -108,6 +110,7 @@ const fixture = Effect.gen(function* () {
   let pullRequestFails = false;
   const pullRequestLookups: Array<string> = [];
   const invalidated: Array<string> = [];
+  const notified: Array<ReadonlyArray<string>> = [];
 
   const layer = manualLayer.pipe(
     Layer.provide(
@@ -163,6 +166,9 @@ const fixture = Effect.gen(function* () {
         // Only the daemon reads the event store, and this is the layer without it.
         Layer.mock(EventSinkV2)({}),
         Layer.succeed(GitVcsDriver.GitVcsDriver, git),
+        Layer.mock(ReadChanges)({
+          notify: (...keys) => Effect.sync(() => void notified.push(keys)),
+        }),
         Layer.mock(GitManager)({
           branchPullRequest: ({ branch }) => {
             pullRequestLookups.push(branch);
@@ -220,6 +226,7 @@ const fixture = Effect.gen(function* () {
       archivedAt:
         options.archived === false ? null : DateTime.makeUnsafe("2026-10-27T13:00:00.000Z"),
       branch,
+      title: `Thread ${name}`,
     });
     bound.set(threadId, worktree);
     yield* sql`
@@ -275,6 +282,7 @@ const fixture = Effect.gen(function* () {
     threads,
     metadataUpdated,
     invalidated,
+    notified,
     pullRequestLookups,
     bound,
     setProjectRoots: (roots: typeof otherProjectRoots) => (otherProjectRoots = roots),
@@ -766,7 +774,7 @@ it.effect("records only the first worktree path of a seat on a new worktree", ()
         workspace: '{"type":"existing_worktree","worktreePath":"/somewhere"}',
       });
       const unrelated = ThreadId.make("thread:crew-worktrees:not-a-seat");
-      f.threads.set(unrelated, { archivedAt: null, branch: "main" });
+      f.threads.set(unrelated, { archivedAt: null, branch: "main", title: "Not a seat" });
       assert.isFalse(
         yield* f.service.handleStoredEvent(f.metadataUpdated(sharedSeat.threadId, "main", f.repo)),
       );
@@ -938,4 +946,442 @@ it.effect(
         );
       }),
     ),
+);
+
+const crew = {
+  crewInstanceId: "crew:one",
+  archivedAt: "2026-10-27T13:00:00.000Z",
+  crewName: "Crew One",
+  projectId: projectId,
+  captainThreadId: ThreadId.make("thread:crew-worktrees:captain"),
+};
+
+type Fixture = Effect.Success<typeof fixture>;
+
+/** An archive that keeps two worktrees for unfinished work: two uncommitted files, one commit. */
+const archiveKeepingTwo = Effect.fn("test.archiveKeepingTwo")(function* (f: Fixture) {
+  const edited = yield* f.seat("edited");
+  const ahead = yield* f.seat("ahead");
+  yield* f.fs.writeFileString(f.path.join(edited.worktree, "tracked.txt"), "edited\n");
+  yield* f.fs.writeFileString(f.path.join(edited.worktree, "new.txt"), "new\n");
+  yield* f.fs.writeFileString(f.path.join(ahead.worktree, "tracked.txt"), "committed\n");
+  yield* f.run(ahead.worktree, ["commit", "-am", "work"]);
+  yield* f.service.cleanup({ seats: [edited, ahead], crew });
+  const [item] = yield* f.service.listCleanups("open");
+  return { edited, ahead, item: item! };
+});
+
+it.effect("files one approval for every worktree kept for unfinished work, and no other", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const edited = yield* f.seat("edited");
+      const ahead = yield* f.seat("ahead");
+      const merged = yield* f.seat("merged");
+      const shared = yield* f.seat("shared");
+      yield* f.fs.writeFileString(f.path.join(edited.worktree, "tracked.txt"), "edited\n");
+      yield* f.fs.writeFileString(f.path.join(edited.worktree, "new.txt"), "new\n");
+      yield* f.fs.writeFileString(f.path.join(ahead.worktree, "tracked.txt"), "committed\n");
+      yield* f.run(ahead.worktree, ["commit", "-am", "work"]);
+      f.setPullRequest({
+        state: "open",
+        url: "https://example.test/pull/7",
+        headRef: ahead.branch,
+        baseRef: "main",
+      });
+      f.setOtherBoundPaths([
+        { threadId: ThreadId.make("thread:crew-worktrees:other"), worktreePath: shared.worktree },
+      ]);
+      const seats = [edited, ahead, merged, shared];
+      yield* f.service.cleanup({ seats, crew });
+
+      const open = yield* f.service.listCleanups("open");
+      assert.lengthOf(open, 1);
+      assert.deepInclude(open[0]!, {
+        crewInstanceId: "crew:one",
+        crewName: "Crew One",
+        status: "open",
+        decidedAt: null,
+      });
+      assert.deepStrictEqual(
+        open[0]!.entries.map((entry) => [
+          entry.threadId,
+          entry.threadTitle,
+          entry.branch,
+          entry.uncommittedFiles,
+          entry.commitsAhead,
+          entry.pullRequestUrl,
+          entry.outcome,
+        ]),
+        [
+          [
+            edited.threadId,
+            "Thread edited",
+            edited.branch,
+            2,
+            0,
+            "https://example.test/pull/7",
+            null,
+          ],
+          [ahead.threadId, "Thread ahead", ahead.branch, 0, 1, "https://example.test/pull/7", null],
+        ],
+      );
+      // What the recheck compares against stays on the server.
+      assert.notProperty(open[0]!.entries[0]!, "headSha");
+      assert.deepStrictEqual(f.notified, [["inbox"]]);
+
+      // The archive asked for again while the item is open files nothing more.
+      yield* f.service.cleanup({ seats, crew });
+      assert.lengthOf(yield* f.service.listCleanups("open"), 1);
+      assert.deepStrictEqual(f.notified, [["inbox"]]);
+    }),
+  ),
+);
+
+it.effect(
+  "removes every worktree of the item when asked to, keeps their branches, and records it",
+  () =>
+    run(
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const { edited, ahead, item } = yield* archiveKeepingTwo(f);
+        const decided = yield* f.service.answerCleanup({
+          itemId: item.id,
+          removePaths: [edited.worktree, ahead.worktree],
+        });
+        assert.strictEqual(decided.status, "decided");
+        assert.deepStrictEqual(
+          decided.entries.map((entry) => [entry.outcome, entry.reason, entry.detail]),
+          [
+            ["removed", null, null],
+            ["removed", null, null],
+          ],
+        );
+        assert.isFalse(yield* f.fs.exists(edited.worktree));
+        assert.isFalse(yield* f.fs.exists(ahead.worktree));
+        // The commit survives on the branch; the uncommitted files are what removal discards.
+        yield* f.run(f.repo, ["rev-parse", "--verify", `refs/heads/${ahead.branch}`]);
+        assert.lengthOf(yield* f.service.listCleanups("open"), 0);
+        const [listed] = yield* f.service.listCleanups("decided");
+        assert.deepStrictEqual(listed, decided);
+        assert.deepStrictEqual(f.notified, [["inbox"], ["inbox"]]);
+      }),
+    ),
+);
+
+it.effect("removes only the worktrees picked and keeps the rest", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const { edited, ahead, item } = yield* archiveKeepingTwo(f);
+      const decided = yield* f.service.answerCleanup({
+        itemId: item.id,
+        removePaths: [ahead.worktree],
+      });
+      assert.deepStrictEqual(
+        decided.entries.map((entry) => [entry.path, entry.outcome]),
+        [
+          [edited.worktree, "kept"],
+          [ahead.worktree, "removed"],
+        ],
+      );
+      assert.isTrue(yield* f.fs.exists(edited.worktree));
+      assert.isFalse(yield* f.fs.exists(ahead.worktree));
+    }),
+  ),
+);
+
+it.effect("keeping all clears the item and changes nothing", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const { edited, ahead, item } = yield* archiveKeepingTwo(f);
+      const decided = yield* f.service.answerCleanup({ itemId: item.id, removePaths: [] });
+      assert.deepStrictEqual(
+        decided.entries.map((entry) => entry.outcome),
+        ["kept", "kept"],
+      );
+      assert.isTrue(yield* f.fs.exists(edited.worktree));
+      assert.isTrue(yield* f.fs.exists(ahead.worktree));
+      assert.lengthOf(yield* f.service.listCleanups("open"), 0);
+    }),
+  ),
+);
+
+it.effect("an archive that runs again after keeping all files nothing more", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const { edited, ahead, item } = yield* archiveKeepingTwo(f);
+      yield* f.service.answerCleanup({ itemId: item.id, removePaths: [] });
+
+      yield* f.service.cleanup({ seats: [edited, ahead], crew });
+      assert.lengthOf(yield* f.service.listCleanups("open"), 0);
+      assert.lengthOf(yield* f.service.listCleanups("decided"), 1);
+    }),
+  ),
+);
+
+it.effect("skips a worktree whose files were already changed when they change again", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const { edited, item } = yield* archiveKeepingTwo(f);
+      // Same files, same status codes: only what is in them differs from what was filed.
+      yield* f.fs.writeFileString(f.path.join(edited.worktree, "tracked.txt"), "edited again\n");
+      yield* f.fs.writeFileString(f.path.join(edited.worktree, "new.txt"), "new again\n");
+
+      const decided = yield* f.service.answerCleanup({
+        itemId: item.id,
+        removePaths: [edited.worktree],
+      });
+      assert.deepStrictEqual(
+        decided.entries.map((entry) => [entry.outcome, entry.reason]),
+        [
+          ["skipped", "changed"],
+          ["kept", null],
+        ],
+      );
+      assert.strictEqual(
+        yield* f.fs.readFileString(f.path.join(edited.worktree, "tracked.txt")),
+        "edited again\n",
+      );
+    }),
+  ),
+);
+
+it.effect("skips a worktree whose staged content changed under identical working files", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const staged = yield* f.seat("staged");
+      const file = f.path.join(staged.worktree, "tracked.txt");
+      // The file reads MM both times, with the same working copy; only the staged blob differs.
+      const stage = Effect.fn("test.stage")(function* (content: string) {
+        yield* f.fs.writeFileString(file, content);
+        yield* f.run(staged.worktree, ["add", "tracked.txt"]);
+        yield* f.fs.writeFileString(file, "working\n");
+      });
+      yield* stage("staged first\n");
+      yield* f.service.cleanup({ seats: [staged], crew });
+      const [item] = yield* f.service.listCleanups("open");
+
+      yield* stage("staged NEW\n");
+      const decided = yield* f.service.answerCleanup({
+        itemId: item!.id,
+        removePaths: [staged.worktree],
+      });
+      assert.deepStrictEqual(
+        decided.entries.map((entry) => [entry.outcome, entry.reason]),
+        [["skipped", "changed"]],
+      );
+      assert.isTrue(yield* f.fs.exists(staged.worktree));
+    }),
+  ),
+);
+
+it.effect("files nothing for commits its branch does not hold, and never removes them", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const strayed = yield* f.seat("strayed");
+      const tracked = f.path.join(strayed.worktree, "tracked.txt");
+      yield* f.run(strayed.worktree, ["checkout", "--detach"]);
+      yield* f.fs.writeFileString(tracked, "detached work\n");
+      yield* f.run(strayed.worktree, ["commit", "-am", "work"]);
+      const results = yield* f.service.cleanup({ seats: [strayed], crew });
+      assert.deepStrictEqual(
+        results.map((result) => [result.outcome, result.reason]),
+        [["kept", "unverified"]],
+      );
+      assert.lengthOf(yield* f.service.listCleanups("open"), 0);
+      assert.isTrue(yield* f.fs.exists(strayed.worktree));
+
+      // The same after an item was filed: the branch moved off the commit the item measured.
+      const moved = yield* f.seat("moved");
+      yield* f.fs.writeFileString(f.path.join(moved.worktree, "tracked.txt"), "committed\n");
+      yield* f.run(moved.worktree, ["commit", "-am", "work"]);
+      yield* f.service.cleanup({ seats: [moved], crew });
+      const [item] = yield* f.service.listCleanups("open");
+      yield* f.run(moved.worktree, ["checkout", "--detach"]);
+      yield* f.run(f.repo, ["update-ref", `refs/heads/${moved.branch}`, "main"]);
+      const decided = yield* f.service.answerCleanup({
+        itemId: item!.id,
+        removePaths: [moved.worktree],
+      });
+      assert.deepStrictEqual(
+        decided.entries.map((entry) => [entry.outcome, entry.reason]),
+        [["skipped", "unverified"]],
+      );
+      assert.isTrue(yield* f.fs.exists(moved.worktree));
+    }),
+  ),
+);
+
+it.effect("a Crew archived again after it came back files its own approval", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const first = yield* f.seat("first");
+      yield* f.fs.writeFileString(f.path.join(first.worktree, "new.txt"), "new\n");
+      yield* f.service.cleanup({ seats: [first], crew });
+      assert.lengthOf(yield* f.service.listCleanups("open"), 1);
+
+      // The Captain came back: the open item has nothing left to decide, and shows nowhere.
+      f.notified.length = 0;
+      yield* f.service.withdrawCleanup(crew.crewInstanceId);
+      assert.lengthOf(yield* f.service.listCleanups("open"), 0);
+      assert.lengthOf(yield* f.service.listCleanups("decided"), 0);
+      assert.deepStrictEqual(f.notified, [["inbox"]]);
+
+      const second = yield* f.seat("second");
+      yield* f.fs.writeFileString(f.path.join(second.worktree, "new.txt"), "new\n");
+      const again = { ...crew, archivedAt: "2026-10-28T13:00:00.000Z" };
+      yield* f.service.cleanup({ seats: [first, second], crew: again });
+      const [item] = yield* f.service.listCleanups("open");
+      assert.deepStrictEqual(
+        item!.entries.map((entry) => entry.threadId),
+        [first.threadId, second.threadId],
+      );
+
+      // The same archive run again files nothing more, and withdrawing leaves an answered item.
+      yield* f.service.cleanup({ seats: [first, second], crew: again });
+      assert.lengthOf(yield* f.service.listCleanups("open"), 1);
+      yield* f.service.answerCleanup({ itemId: item!.id, removePaths: [] });
+      yield* f.service.withdrawCleanup(crew.crewInstanceId);
+      assert.lengthOf(yield* f.service.listCleanups("decided"), 1);
+    }),
+  ),
+);
+
+it.effect("skips a worktree with a nested repository, which cannot be compared by content", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const nested = yield* f.seat("nested");
+      const inner = f.path.join(nested.worktree, "inner");
+      yield* f.fs.makeDirectory(inner);
+      yield* f.run(inner, ["init"]);
+      yield* f.fs.writeFileString(f.path.join(inner, "file.txt"), "x\n");
+      yield* f.service.cleanup({ seats: [nested], crew });
+      const [item] = yield* f.service.listCleanups("open");
+
+      const decided = yield* f.service.answerCleanup({
+        itemId: item!.id,
+        removePaths: [nested.worktree],
+      });
+      assert.deepStrictEqual(
+        decided.entries.map((entry) => [entry.outcome, entry.reason]),
+        [["skipped", "changed"]],
+      );
+      assert.isTrue(yield* f.fs.exists(nested.worktree));
+    }),
+  ),
+);
+
+it.effect("skips and reports a worktree that changed, is shared, is in use or came back", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const edited = yield* f.seat("edited");
+      const ahead = yield* f.seat("ahead");
+      const busy = yield* f.seat("busy");
+      const back = yield* f.seat("back");
+      const plain = yield* f.seat("plain");
+      for (const seat of [edited, busy, back, plain])
+        yield* f.fs.writeFileString(f.path.join(seat.worktree, "new.txt"), "new\n");
+      yield* f.fs.writeFileString(f.path.join(ahead.worktree, "tracked.txt"), "committed\n");
+      yield* f.run(ahead.worktree, ["commit", "-am", "work"]);
+      yield* f.service.cleanup({ seats: [edited, ahead, busy, back, plain], crew });
+      const [item] = yield* f.service.listCleanups("open");
+
+      // After the item was filed: more work, a new commit, an open session, an unarchived thread.
+      yield* f.fs.writeFileString(f.path.join(edited.worktree, "other.txt"), "more\n");
+      yield* f.fs.writeFileString(f.path.join(ahead.worktree, "tracked.txt"), "again\n");
+      yield* f.run(ahead.worktree, ["commit", "-am", "more work"]);
+      yield* f.setSession(busy.worktree);
+      f.threads.get(back.threadId)!.archivedAt = null;
+
+      const decided = yield* f.service.answerCleanup({
+        itemId: item!.id,
+        removePaths: item!.entries.map((entry) => entry.path),
+      });
+      assert.deepStrictEqual(
+        decided.entries.map((entry) => [entry.outcome, entry.reason]),
+        [
+          ["skipped", "changed"],
+          ["skipped", "changed"],
+          ["skipped", "in_use"],
+          ["skipped", "shared"],
+          ["removed", null],
+        ],
+      );
+      for (const seat of [edited, ahead, busy, back])
+        assert.isTrue(yield* f.fs.exists(seat.worktree));
+      assert.isFalse(yield* f.fs.exists(plain.worktree));
+    }),
+  ),
+);
+
+it.effect("refuses a second answer, and a path the item does not list", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const { ahead, item } = yield* archiveKeepingTwo(f);
+      const stray = yield* f.service
+        .answerCleanup({ itemId: item.id, removePaths: ["/not/listed"] })
+        .pipe(Effect.flip);
+      assert.strictEqual(stray._tag, "CrewWorktreeCleanupPathError");
+      assert.lengthOf(yield* f.service.listCleanups("open"), 1);
+
+      yield* f.service.answerCleanup({ itemId: item.id, removePaths: [] });
+      const second = yield* f.service
+        .answerCleanup({ itemId: item.id, removePaths: [ahead.worktree] })
+        .pipe(Effect.flip);
+      assert.strictEqual(second._tag, "CrewWorktreeCleanupAnsweredError");
+      assert.strictEqual(second.message, "This worktree cleanup was already answered.");
+      assert.isTrue(yield* f.fs.exists(ahead.worktree));
+    }),
+  ),
+);
+
+it.effect("reports a removal git refuses and still removes the others", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const { edited, ahead, item } = yield* archiveKeepingTwo(f);
+      yield* f.run(f.repo, ["worktree", "lock", edited.worktree]);
+      const decided = yield* f.service.answerCleanup({
+        itemId: item.id,
+        removePaths: [edited.worktree, ahead.worktree],
+      });
+      const [first, second] = decided.entries;
+      assert.strictEqual(first!.outcome, "failed");
+      assert.isString(first!.detail);
+      assert.isAbove(first!.detail!.length, 0);
+      assert.strictEqual(second!.outcome, "removed");
+      assert.isTrue(yield* f.fs.exists(edited.worktree));
+    }),
+  ),
+);
+
+it.effect("skips a worktree that was removed some other way while the item was open", () =>
+  run(
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const { edited, ahead, item } = yield* archiveKeepingTwo(f);
+      yield* f.run(f.repo, ["worktree", "remove", "--force", edited.worktree]);
+      const decided = yield* f.service.answerCleanup({
+        itemId: item.id,
+        removePaths: [edited.worktree, ahead.worktree],
+      });
+      assert.deepStrictEqual(
+        decided.entries.map((entry) => [entry.outcome, entry.reason]),
+        [
+          ["skipped", "gone"],
+          ["removed", null],
+        ],
+      );
+    }),
+  ),
 );

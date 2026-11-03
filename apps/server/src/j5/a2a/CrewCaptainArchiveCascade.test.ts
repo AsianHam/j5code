@@ -15,6 +15,7 @@ import { OrchestratorProjectionError } from "../../orchestration-v2/Orchestrator
 import { ProjectionStoreThreadNotFoundError } from "../../orchestration-v2/ProjectionStore.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { AgentCrewInstanceService, type AgentCrewInstance } from "./AgentCrewInstanceService.ts";
+import { CrewWorktrees } from "./CrewWorktrees.ts";
 import { ArchiveCrewService, type ArchiveCrewInput } from "./ArchiveCrewService.ts";
 import { CrewCaptainArchiveCascade, layer as cascadeLayer } from "./CrewCaptainArchiveCascade.ts";
 import { participantIdForThread } from "./HomeRegistrar.ts";
@@ -59,6 +60,7 @@ const captainProjection = (archivedAt: string | null, deletedAt: string | null =
     },
   }) as unknown as OrchestrationV2ThreadProjection;
 const noThreads = Layer.mock(ThreadManagementService)({});
+const noWorktrees = Layer.mock(CrewWorktrees)({ withdrawCleanup: () => Effect.void });
 
 it.effect("retires the live Crews a Captain commanded when the person archives its thread", () =>
   Effect.gen(function* () {
@@ -66,6 +68,7 @@ it.effect("retires the live Crews a Captain commanded when the person archives i
     const layer = cascadeLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          noWorktrees,
           Layer.mock(AgentCrewInstanceService)({
             listInvolving: (input) =>
               Effect.succeed(
@@ -126,6 +129,7 @@ it.effect(
       const layer = cascadeLayer.pipe(
         Layer.provide(
           Layer.mergeAll(
+            noWorktrees,
             Layer.mock(AgentCrewInstanceService)({
               listLive: () =>
                 Effect.succeed([
@@ -179,6 +183,7 @@ it.effect("a Crew whose retirement fails is tried once, and the next Crew still 
     const testLayer = cascadeLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          noWorktrees,
           Layer.mock(AgentCrewInstanceService)({
             listInvolving: () => Effect.succeed([crew("crew:broken", null), crew("crew:ok", null)]),
           }),
@@ -315,6 +320,7 @@ it.effect("settling a Captain settles its Crew's seats, and unsettling it unsett
     const layer = cascadeLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          noWorktrees,
           Layer.mock(AgentCrewInstanceService)({
             listInvolving: () =>
               Effect.succeed([
@@ -381,9 +387,13 @@ it.effect("unarchiving a Captain brings back the Crews that retired with it", ()
   Effect.gen(function* () {
     const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2Command>>([]);
     const restored = yield* Ref.make<ReadonlyArray<string>>([]);
+    const withdrawn = yield* Ref.make<ReadonlyArray<string>>([]);
     const layer = cascadeLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.mock(CrewWorktrees)({
+            withdrawCleanup: (id) => Ref.update(withdrawn, (items) => [...items, id]),
+          }),
           Layer.mock(AgentCrewInstanceService)({
             // The store lists only Crews that retired with this Captain, never one retired alone.
             listRetiredWithCaptain: (threadId) =>
@@ -437,6 +447,8 @@ it.effect("unarchiving a Captain brings back the Crews that retired with it", ()
         [["thread.unarchive", seatThread]],
       );
       assert.deepStrictEqual(yield* Ref.get(restored), ["crew:with-captain"]);
+      // The Crew is live again, so an open worktree approval for its archive is withdrawn.
+      assert.deepStrictEqual(yield* Ref.get(withdrawn), ["crew:with-captain"]);
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -452,6 +464,7 @@ it.effect("a Captain archived again after an unarchive retires its Crew again", 
     const layer = cascadeLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          noWorktrees,
           Layer.mock(AgentCrewInstanceService)({
             listInvolving: () => Effect.map(current, (instance) => [instance]),
             listRetiredWithCaptain: () =>
@@ -529,6 +542,7 @@ it.effect("settling a Captain leaves a seat that is waiting on the person or sti
     const layer = cascadeLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          noWorktrees,
           Layer.mock(AgentCrewInstanceService)({ listInvolving: () => Effect.succeed([trio]) }),
           Layer.mock(ArchiveCrewService)({}),
           Layer.mock(ThreadManagementService)({
@@ -589,6 +603,7 @@ it.effect(
       const layer = cascadeLayer.pipe(
         Layer.provide(
           Layer.mergeAll(
+            noWorktrees,
             Layer.mock(AgentCrewInstanceService)({
               listInvolving: () => Effect.succeed([instance]),
             }),

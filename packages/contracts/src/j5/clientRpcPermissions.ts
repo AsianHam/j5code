@@ -53,6 +53,8 @@ export const J5_CLIENT_GUARDED_RPC_SCOPES = {
   [J5_CLIENT_ACTION_WS_METHODS.archiveCrew]: AuthOrchestrationOperateScope,
   [J5_CLIENT_ACTION_WS_METHODS.respondCrewRuntimeRequest]: AuthOrchestrationOperateScope,
   [J5_CLIENT_ACTION_WS_METHODS.answerHumanExchange]: AuthOrchestrationOperateScope,
+  // Removing the worktrees a Crew's archive kept is the Owner's call, as is archiving the Crew.
+  [J5_CLIENT_ACTION_WS_METHODS.answerCrewWorktreeCleanup]: AuthSettingsWriteScope,
 
   [J5_CLIENT_ACTION_WS_METHODS.issuePeerCredential]: AuthAccessWriteScope,
   [J5_CLIENT_ACTION_WS_METHODS.addPeer]: AuthAccessWriteScope,

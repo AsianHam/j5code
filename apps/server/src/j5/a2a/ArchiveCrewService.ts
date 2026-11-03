@@ -215,6 +215,15 @@ const createdSeats = (facts: ArchiveCrewConsequenceFacts) =>
     .filter((member) => !member.neverCreated)
     .map((member) => ({ seatName: member.seatName, threadId: member.threadId }));
 
+/** Who the worktree approval is filed for. */
+const approvalCrew = (instance: AgentCrewInstance, archivedAt: string) => ({
+  crewInstanceId: instance.id,
+  archivedAt: instance.archivedAt ?? archivedAt,
+  crewName: instance.displayName,
+  projectId: instance.projectId,
+  captainThreadId: instance.captainThreadId,
+});
+
 const hasConsequences = (facts: ArchiveCrewConsequenceFacts) =>
   facts.members.some(
     (member) => member.facts.openExchanges.length > 0 || member.facts.runningTurn !== null,
@@ -407,6 +416,7 @@ export const layer = Layer.effect(
                 : ("already_archived" as const),
             })),
             seats: createdSeats(facts),
+            crew: approvalCrew(instance, input.archivedAt),
             sessions: [] as ReadonlyArray<CrewSeatSession>,
           };
         }
@@ -493,6 +503,7 @@ export const layer = Layer.effect(
           status: "archived" as const,
           members: results,
           seats: createdSeats(facts),
+          crew: approvalCrew(instance, input.archivedAt),
           sessions,
         };
       },
@@ -504,10 +515,10 @@ export const layer = Layer.effect(
     // open, or because a check failed, gets another look when the archive is asked for again.
     const archive: ArchiveCrewServiceShape["archive"] = Effect.fn("j5.a2a.archiveCrew.archive")(
       function* (input) {
-        const { seats, sessions, ...outcome } = yield* archiveUnit(input);
+        const { seats, sessions, crew, ...outcome } = yield* archiveUnit(input);
         // Each seat's session is closed before the cleanup looks for one open in its worktree.
         yield* worktrees.closeSessions(sessions);
-        const removed = yield* worktrees.cleanup({ seats });
+        const removed = yield* worktrees.cleanup({ seats, crew });
         return { ...outcome, worktrees: removed };
       },
     );

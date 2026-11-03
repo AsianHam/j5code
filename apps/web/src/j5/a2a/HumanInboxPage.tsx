@@ -55,6 +55,17 @@ import {
 } from "../crew/crewRuntimeRequestsClient";
 import { NativeQuestionInboxSection } from "./NativeQuestionInboxSection";
 import {
+  CrewWorktreeCleanupSection,
+  DecidedCleanupRow,
+  useWorktreeCleanupInbox,
+} from "./CrewWorktreeCleanupSection";
+import { refreshWorktreeCleanups } from "./crewWorktreeCleanupClient";
+import {
+  inboxSummary,
+  worktreeCleanupKey,
+  type ScopedWorktreeCleanup,
+} from "./crewWorktreeCleanup.logic";
+import {
   answeredInboxQueryAtom,
   answeredInboxSourcesAtom,
   crewRuntimeRequestSourcesAtom,
@@ -323,18 +334,21 @@ function OpenInboxItem({
 
 function AnsweredShelf({
   items,
+  cleanups,
   onOpenThread,
   senderLabels,
   projectNameOf,
   showEnvironment,
 }: {
   readonly items: ReadonlyArray<HumanInboxItem>;
+  /** Worktree cleanups that are decided and not shown in place. */
+  readonly cleanups: ReadonlyArray<ScopedWorktreeCleanup>;
   readonly onOpenThread: (item: HumanInboxItem) => void;
   readonly senderLabels: SenderLabels;
   readonly projectNameOf: ProjectNameOf;
   readonly showEnvironment: boolean;
 }) {
-  if (items.length === 0) return null;
+  if (items.length === 0 && cleanups.length === 0) return null;
   return (
     <details className="group/shelf border-t border-border pt-4">
       <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md py-2 text-sm font-medium text-muted-foreground outline-hidden marker:hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
@@ -343,7 +357,9 @@ function AnsweredShelf({
           className="size-4 transition-transform duration-150 group-open/shelf:rotate-90"
         />
         Answered
-        <span className="tabular-nums text-muted-foreground/70">{items.length}</span>
+        <span className="tabular-nums text-muted-foreground/70">
+          {items.length + cleanups.length}
+        </span>
       </summary>
       <ol className="mt-1 divide-y divide-border/60 ps-6">
         {items.map((item) => {
@@ -374,6 +390,13 @@ function AnsweredShelf({
             </li>
           );
         })}
+        {cleanups.map((item) => (
+          <DecidedCleanupRow
+            item={item}
+            key={worktreeCleanupKey(item)}
+            showEnvironment={showEnvironment}
+          />
+        ))}
       </ol>
     </details>
   );
@@ -391,6 +414,7 @@ async function refreshHumanInboxes(environmentId?: EnvironmentId, force = false)
     refreshJ5Sources(openInboxSourcesAtom, openInboxQueryAtom, options),
     refreshJ5Sources(answeredInboxSourcesAtom, answeredInboxQueryAtom, options),
     refreshCrewRuntimeRequests(environmentId),
+    refreshWorktreeCleanups(environmentId),
   ]);
   const failed = results.flat().find((result) => result._tag === "Failure");
   if (failed?._tag === "Failure") throw Cause.squash(failed.cause);
@@ -477,6 +501,7 @@ export function HumanInboxPage() {
   const runtimeRequests = useCrewRuntimeRequests();
   const runtimeSources = useAtomValue(crewRuntimeRequestSourcesAtom);
   const nativeQuestions = useNativeQuestionInbox();
+  const cleanups = useWorktreeCleanupInbox();
   const previousOpenItems = useRef(new Map<EnvironmentId, ReadonlySet<string>>());
   // oxlint-disable-next-line t3code/react-effect-budget -- an answered item leaving the open list rereads the answered list; it reacts to data arriving, not to a handler here.
   useEffect(() => {
@@ -596,11 +621,12 @@ export function HumanInboxPage() {
                 <p className="mt-1 text-sm text-muted-foreground">
                   {loading && items.length === 0
                     ? "Loading questions waiting on you…"
-                    : `${items.length} ${complete ? "open" : "loaded"} ${items.length === 1 ? "question" : "questions"}${
-                        runtimeRequests.length + nativeQuestions.length === 0
-                          ? ""
-                          : ` · ${runtimeRequests.length + nativeQuestions.length} agent ${runtimeRequests.length + nativeQuestions.length === 1 ? "request" : "requests"}`
-                      }`}
+                    : inboxSummary({
+                        questions: items.length,
+                        complete,
+                        agentRequests: runtimeRequests.length + nativeQuestions.length,
+                        worktreeCleanups: cleanups.openCount,
+                      })}
                 </p>
               </div>
               <Button
@@ -648,6 +674,7 @@ export function HumanInboxPage() {
             !loading &&
             error === null &&
             shownItems.length === 0 &&
+            cleanups.inPlace.length === 0 &&
             runtimeRequests.length === 0 &&
             nativeQuestions.length === 0 ? (
               <div className="flex min-h-56 flex-col items-center justify-center px-6 py-12 text-center">
@@ -679,7 +706,16 @@ export function HumanInboxPage() {
               </ol>
             )}
 
+            <CrewWorktreeCleanupSection
+              errors={cleanups.errors}
+              items={cleanups.inPlace}
+              onAnswer={cleanups.answer}
+              pendingKey={cleanups.pendingKey}
+              showEnvironment={showEnvironment}
+            />
+
             <AnsweredShelf
+              cleanups={cleanups.shelf}
               items={answeredItems}
               onOpenThread={openThread}
               senderLabels={senderLabels}

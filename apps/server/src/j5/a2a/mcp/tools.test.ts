@@ -103,6 +103,7 @@ it("publishes the ratified single-target lifecycle contracts fail-closed", () =>
   assert.notProperty(spawnSchema.properties ?? {}, "agent");
   assert.include(J5SpawnAgentTool.description ?? "", "one of that persona's declared routes");
   assert.property(stopSchema.properties ?? {}, "client_request_id");
+  // Exact on purpose: no tool answers the Inbox's worktree cleanup approval; only a person can.
   assert.sameMembers(Object.keys(J5Toolkit.tools), [
     "j5_playbook_back",
     "j5_playbook_cancel",

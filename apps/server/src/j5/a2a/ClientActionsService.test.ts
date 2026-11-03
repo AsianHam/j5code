@@ -20,6 +20,7 @@ import {
   type RespondToCrewRuntimeRequestInput,
 } from "./CrewRuntimeRequestService.ts";
 import { CrewStopNotFoundError, CrewStopService, type StopCrewInput } from "./CrewStopService.ts";
+import { CrewWorktrees } from "./CrewWorktrees.ts";
 import { A2ADeliveryWorker } from "./DeliveryWorker.ts";
 import { A2AHumanInbox } from "./HumanInboxService.ts";
 
@@ -169,6 +170,7 @@ const serviceWith = (seen: ReturnType<typeof calls>) =>
             seen.notified += 1;
           }),
         }),
+        Layer.mock(CrewWorktrees)({}),
       ),
     ),
     Layer.provide(NodeServices.layer),

@@ -149,7 +149,10 @@ const makeJ5A2AAuxiliaryLayer = (
   const archiveFactsProvided = archiveFactsLayer.pipe(Layer.provide(placementFactsLayer));
   // One instance: its recorder daemon tails the event stream, and the archive and the dialog's
   // read use the same service. The stateless projection reader is built from the shared database.
-  const crewWorktreesProvided = crewWorktreesLayer.pipe(Layer.provide(projectionStoreLayer));
+  const crewWorktreesProvided = crewWorktreesLayer.pipe(
+    Layer.provide(projectionStoreLayer),
+    Layer.provide(readChangesLayer),
+  );
   // The saved-agent handoff worker drains the queue the run-finalization observer fills; the
   // queue layer is the same instance server.ts provides to that observer.
   const agentHandoffNudgeWorkerProvided = agentHandoffNudgeWorkerLayer.pipe(

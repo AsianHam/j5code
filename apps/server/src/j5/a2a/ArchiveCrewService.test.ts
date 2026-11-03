@@ -94,6 +94,7 @@ const fixture = Effect.gen(function* () {
   // What cleanup was asked about, and what it reports back.
   const cleanedSeats = yield* Ref.make<ReadonlyArray<ReadonlyArray<ThreadId>>>([]);
   const cleanupResult = yield* Ref.make<ReadonlyArray<CrewArchiveWorktree>>([]);
+  const approvalStamps = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
   // The retired stamps and playbook cancels that had already happened when cleanup was asked.
   const lifecycleAtCleanup = yield* Ref.make<ReadonlyArray<string>>([]);
   // The order of session reads, seat archives, session closes and cleanup passes.
@@ -119,9 +120,10 @@ const fixture = Effect.gen(function* () {
             ),
           closeSessions: (sessions) =>
             Effect.forEach(sessions, (session) => step(`close:${session.providerSessionId}`)),
-          cleanup: ({ seats }) =>
+          cleanup: ({ seats, crew }) =>
             Effect.all([
               step("cleanup"),
+              Ref.update(approvalStamps, (items) => [...items, crew?.archivedAt]),
               Ref.update(cleanedSeats, (items) => [...items, seats.map((seat) => seat.threadId)]),
               Ref.get(lifecycle).pipe(Effect.flatMap((seen) => Ref.set(lifecycleAtCleanup, seen))),
             ]).pipe(Effect.andThen(Ref.get(cleanupResult))),
@@ -217,6 +219,7 @@ const fixture = Effect.gen(function* () {
     crewArchivedAt,
     cleanedSeats,
     cleanupResult,
+    approvalStamps,
     lifecycleAtCleanup,
     sessionSteps,
   };
@@ -552,7 +555,7 @@ it.effect("closes each seat's session after its archive and before the worktree 
 
 it.effect("a replay of an archived Crew checks its worktrees again", () =>
   Effect.gen(function* () {
-    const { layer, input, cleanedSeats, cleanupResult } = yield* fixture;
+    const { layer, input, cleanedSeats, cleanupResult, approvalStamps } = yield* fixture;
     yield* Effect.gen(function* () {
       const service = yield* ArchiveCrewService;
       yield* service.archive(input({ callerParticipantId: null, confirmationSatisfied: true }));
@@ -560,9 +563,18 @@ it.effect("a replay of an archived Crew checks its worktrees again", () =>
         { path: "/wt/critic", branch: "j5/critic", outcome: "removed", reason: null },
       ]);
       const replay = yield* service.archive(
-        input({ callerParticipantId: null, confirmationSatisfied: true }),
+        input({
+          callerParticipantId: null,
+          confirmationSatisfied: true,
+          archivedAt: "2026-09-10T08:00:00.000Z",
+        }),
       );
       assert.equal(replay.status, "already_archived");
+      // The replay is the same archive, so an approval it would file carries the original stamp.
+      assert.deepStrictEqual(yield* Ref.get(approvalStamps), [
+        "2026-09-09T17:00:00.000Z",
+        "2026-09-09T17:00:00.000Z",
+      ]);
       assert.deepStrictEqual(
         replay.worktrees.map((entry) => entry.outcome),
         ["removed"],
