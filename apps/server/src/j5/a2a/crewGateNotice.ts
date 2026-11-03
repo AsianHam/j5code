@@ -211,14 +211,14 @@ export const crewLaunchReportText = (input: {
     );
   if (waiting === 0 && failed.length === 0 && notCreated.length === 0 && pending.length === 0)
     prose.push(
-      "Your crew is running. Each seat has your brief and this roster; coordinate with j5_send_message, and ask the user through the inbox for decisions you cannot make from the brief.",
+      "Your crew is running. Each seat has your brief and this roster; coordinate with j5_send_message, and ask the user with j5_send_message (expect_reply=true) for decisions you cannot make from the brief.",
     );
   if (playbook !== null && proposal.kind === "roster")
     prose.push(
       `This Crew follows playbook ${playbook.name}. Start it with j5_playbook_start(name: "${playbook.name}", client_request_id, crew_instance_id: "${instance.id}"). The platform hands each step to the seat that owns it; unowned steps are yours.`,
     );
   prose.push(
-    "Seats are told to message you with their results; do not ask for the same results again. Members run their own review loops and message you only for a review pass, a blocker, a disagreement they could not settle, or their final result or step report: you resolve technical disagreements within the agreed scope yourself, and ask the user only when product intent or their judgment is needed. End your turn and read their messages as they arrive.",
+    "Seats are told to message you with their results; do not ask for the same results again. Members run their own review loops and message you only for a review pass, a blocker, a disagreement they could not settle, or their final result or step report: you resolve technical disagreements within the agreed scope yourself, and ask the user only when product intent or their judgment is needed; when you do, ask with j5_send_message to the user with expect_reply=true, not a native question tool, so the request reaches their Inbox, state the disagreement, the options as a list and your recommendation, and keep working on what does not depend on the answer. End your turn and read their messages as they arrive.",
   );
   return `${block}\n\n${prose.join(" ")}`;
 };

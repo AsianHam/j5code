@@ -356,6 +356,7 @@ import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
+import { AdjudicationDock } from "../j5/a2a/AdjudicationDock";
 import { CrewRosterGate } from "../j5/crew/CrewRosterGate";
 import { composerProviderCandidates } from "../j5/agents/personaComposerSelection";
 import { useDraftAgentAssignment } from "../j5/agents/useDraftAgentAssignment";
@@ -3549,6 +3550,11 @@ export default function ChatView(props: ChatViewProps) {
                                   <>
                                     <CrewRosterGate
                                       key={`crew:${activeThread.environmentId}:${activeThread.id}`}
+                                      environmentId={activeThread.environmentId}
+                                      threadId={activeThread.id}
+                                    />
+                                    <AdjudicationDock
+                                      key={`ask:${activeThread.environmentId}:${activeThread.id}`}
                                       environmentId={activeThread.environmentId}
                                       threadId={activeThread.id}
                                     />

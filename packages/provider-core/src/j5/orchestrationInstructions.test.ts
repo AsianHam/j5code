@@ -284,6 +284,10 @@ describe("J5 orchestration instructions", () => {
       J5_ORCHESTRATION_INSTRUCTIONS,
       "settle technical disagreements within the agreed scope yourself, and ask the user only when product intent or their judgment is needed",
     );
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "ask with `j5_send_message` to the user with `expect_reply=true`, not a native question tool, so the request reaches their Inbox, state the disagreement, the options as a list and your recommendation, and keep working on what does not depend on the answer",
+    );
     assert.notInclude(J5_ORCHESTRATION_INSTRUCTIONS, "deliveryOutcome");
   });
 

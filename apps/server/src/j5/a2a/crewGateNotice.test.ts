@@ -286,6 +286,10 @@ describe("crew launch report", () => {
       text,
       "resolve technical disagreements within the agreed scope yourself, and ask the user only when product intent or their judgment is needed",
     );
+    assert.include(
+      text,
+      "ask with j5_send_message to the user with expect_reply=true, not a native question tool, so the request reaches their Inbox, state the disagreement, the options as a list and your recommendation, and keep working on what does not depend on the answer",
+    );
     assert.notInclude(text, "seat_failed");
   });
   it("identifies automatic approval without attributing it to a person", () => {
