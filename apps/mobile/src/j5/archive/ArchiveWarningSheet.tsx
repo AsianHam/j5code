@@ -2,10 +2,14 @@ import {
   ARCHIVE_WARNING_WORKSPACE_NOTE,
   archiveWarningAskHeader,
   archiveWarningSeatConsequences,
+  groupWorktreeEstimates,
   sentenceEnd,
+  worktreeReasonLabel,
+  worktreeShortPath,
   type ArchiveWarning,
   type ArchiveWarningPayload,
   type ArchiveWarningRow,
+  type ArchiveWarningWorktrees,
 } from "@t3tools/client-runtime/j5/archive-flow";
 import { useSyncExternalStore } from "react";
 import { Modal, Platform, ScrollView, View } from "react-native";
@@ -79,6 +83,64 @@ function AskRow({ row }: { readonly row: ArchiveWarningRow }) {
       </View>
       <AppText textRole="footnote" className="text-foreground" selectable>
         {row.intent}
+      </AppText>
+    </View>
+  );
+}
+
+function WorktreeList({
+  heading,
+  worktrees,
+}: {
+  readonly heading: string;
+  readonly worktrees: NonNullable<ArchiveWarningWorktrees>;
+}) {
+  if (worktrees.length === 0) return null;
+  return (
+    <View className="gap-1">
+      <AppText textRole="body" className="font-t3-medium text-foreground">
+        {heading}
+      </AppText>
+      {worktrees.map((worktree) => (
+        <View key={`${worktree.crewInstanceId}:${worktree.seat}`} className="flex-row gap-2">
+          <AppText textRole="caption" className="uppercase text-foreground-muted">
+            {worktree.seat}
+          </AppText>
+          <AppText textRole="footnote" className="min-w-0 shrink text-foreground">
+            {worktreeShortPath(worktree.path)}
+          </AppText>
+          {worktree.reason === null ? null : (
+            <AppText textRole="label" className="ml-auto text-foreground-muted">
+              {worktreeReasonLabel[worktree.reason]}
+            </AppText>
+          )}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** Which worktrees J5 made for the Crews' seats archiving would remove, and which stay. */
+function WorktreeSection({ worktrees }: { readonly worktrees: ArchiveWarningWorktrees }) {
+  if (worktrees === null)
+    return (
+      <AppText textRole="footnote" className="text-foreground-muted">
+        Worktrees: couldn't check. Branches and pull requests remain.
+      </AppText>
+    );
+  const { removed, kept } = groupWorktreeEstimates(worktrees);
+  return (
+    <View className="gap-2">
+      <WorktreeList
+        heading="Worktrees removed, if still clean and merged at archive time:"
+        worktrees={removed}
+      />
+      <WorktreeList heading="Worktrees kept:" worktrees={kept} />
+      <AppText textRole="footnote" className="text-foreground-muted">
+        {worktrees.length === 0
+          ? "No worktrees were created for these seats. "
+          : "This is an estimate; each is checked again when you archive. "}
+        Branches and pull requests remain.
       </AppText>
     </View>
   );
@@ -160,9 +222,13 @@ function ArchiveWarningFacts({ payload }: { readonly payload: ArchiveWarningPayl
           ))}
         </View>
       ) : null}
-      <AppText textRole="footnote" className="text-foreground-muted">
-        {ARCHIVE_WARNING_WORKSPACE_NOTE}
-      </AppText>
+      {payload.worktrees === undefined ? (
+        <AppText textRole="footnote" className="text-foreground-muted">
+          {ARCHIVE_WARNING_WORKSPACE_NOTE}
+        </AppText>
+      ) : (
+        <WorktreeSection worktrees={payload.worktrees} />
+      )}
     </View>
   );
 }

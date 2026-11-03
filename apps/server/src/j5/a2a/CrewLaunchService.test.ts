@@ -48,6 +48,7 @@ import {
 import { ArchiveAgentService } from "./ArchiveAgentService.ts";
 import { playbookStoreLayer } from "../playbooks/PlaybookStore.ts";
 import { ArchiveCrewService, layer as archiveCrewLayer } from "./ArchiveCrewService.ts";
+import { CrewWorktrees } from "./CrewWorktrees.ts";
 import { crewApprovalToken, describeCrewSeatRuntime } from "./crewRuntimePreview.ts";
 import {
   CrewLaunchOperationError,
@@ -1412,6 +1413,13 @@ const unitFixture = Effect.gen(function* () {
     archiveCrewLayer.pipe(
       Layer.provide(archiveAgent),
       Layer.provide(playbookStoreLayer),
+      Layer.provide(
+        Layer.mock(CrewWorktrees)({
+          cleanup: () => Effect.succeed([]),
+          liveSessions: () => Effect.succeed([]),
+          closeSessions: () => Effect.void,
+        }),
+      ),
       Layer.provide(
         Layer.mock(ServerSecretStore)({
           getOrCreateRandom: () => Effect.succeed(new Uint8Array(32).fill(7)),

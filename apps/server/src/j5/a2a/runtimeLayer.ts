@@ -21,6 +21,8 @@ import { layer as crewSeatFinishNotifierLayer } from "./CrewSeatFinishNotifier.t
 import * as NativeQuestionNotifier from "./NativeQuestionNotifier.ts";
 import { layer as captainArchiveCascadeLayer } from "./CrewCaptainArchiveCascade.ts";
 import { layer as crewStopLayer } from "./CrewStopService.ts";
+import { layer as crewWorktreesLayer } from "./CrewWorktrees.ts";
+import { layer as projectionStoreLayer } from "../../orchestration-v2/ProjectionStore.ts";
 import { layer as crewRuntimeRequestLayer } from "./CrewRuntimeRequestService.ts";
 import { layer as deliveryWorkerLayer } from "./DeliveryWorker.ts";
 import { live as deliveryTransportLayer } from "./DeliveryTransport.ts";
@@ -144,6 +146,9 @@ const makeJ5A2AAuxiliaryLayer = (
     Layer.provide(peerHttpClient),
   );
   const archiveFactsProvided = archiveFactsLayer.pipe(Layer.provide(placementFactsLayer));
+  // One instance: its recorder daemon tails the event stream, and the archive and the dialog's
+  // read use the same service. The stateless projection reader is built from the shared database.
+  const crewWorktreesProvided = crewWorktreesLayer.pipe(Layer.provide(projectionStoreLayer));
   // The saved-agent handoff worker drains the queue the run-finalization observer fills; the
   // queue layer is the same instance server.ts provides to that observer.
   const agentHandoffNudgeWorkerProvided = agentHandoffNudgeWorkerLayer.pipe(
@@ -159,6 +164,7 @@ const makeJ5A2AAuxiliaryLayer = (
     Layer.provideMerge(archiveAgentProvided),
     Layer.provideMerge(agentCrewInstanceLayer),
     Layer.provideMerge(playbookStoreLayer),
+    Layer.provideMerge(crewWorktreesProvided),
   );
   // Hands each landing of a Crew-linked run to the seat that owns it, inside the Captain's step
   // calls; a pending hand-off is finished by the Captain's next or retried call.

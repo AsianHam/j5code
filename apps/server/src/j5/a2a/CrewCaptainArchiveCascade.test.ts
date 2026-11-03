@@ -77,7 +77,7 @@ it.effect("retires the live Crews a Captain commanded when the person archives i
           Layer.mock(ArchiveCrewService)({
             archive: (input) =>
               Ref.update(calls, (items) => [...items, input]).pipe(
-                Effect.as({ status: "archived" as const, members: [] }),
+                Effect.as({ status: "archived" as const, members: [], worktrees: [] }),
               ),
           }),
           noThreads,
@@ -142,7 +142,7 @@ it.effect(
                   Effect.flatMap(() =>
                     input.crewInstanceId === "crew:archived-captain"
                       ? Effect.die(new Error("a seat refused to archive"))
-                      : Effect.succeed({ status: "archived" as const, members: [] }),
+                      : Effect.succeed({ status: "archived" as const, members: [], worktrees: [] }),
                   ),
                 ),
             }),
@@ -188,7 +188,7 @@ it.effect("a Crew whose retirement fails is tried once, and the next Crew still 
                 calls.push(input);
                 return input.crewInstanceId === "crew:broken"
                   ? Effect.die("archive failure")
-                  : Effect.succeed({ status: "archived" as const, members: [] });
+                  : Effect.succeed({ status: "archived" as const, members: [], worktrees: [] });
               }),
           }),
           noThreads,
@@ -470,7 +470,7 @@ it.effect("a Captain archived again after an unarchive retires its Crew again", 
                 seen.add(commandId);
                 yield* Ref.set(seatArchived, true);
                 yield* Ref.set(retiredAt, input.archivedAt);
-                return { status: "archived" as const, members: [] };
+                return { status: "archived" as const, members: [], worktrees: [] };
               }),
           }),
           Layer.mock(ThreadManagementService)({

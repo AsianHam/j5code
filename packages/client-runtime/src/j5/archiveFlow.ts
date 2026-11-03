@@ -1,5 +1,10 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import type { PreArchiveCrewSeat, PreArchiveFacts } from "@t3tools/contracts/j5";
+import type {
+  CrewArchiveWorktreeEstimate,
+  CrewWorktreeReason,
+  PreArchiveCrewSeat,
+  PreArchiveFacts,
+} from "@t3tools/contracts/j5";
 import * as Cause from "effect/Cause";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -14,7 +19,7 @@ export type { PreArchiveFacts, PreArchiveLiveCrew as LiveCrew } from "@t3tools/c
 
 type J5Reads = Pick<
   ReturnType<typeof createJ5EnvironmentAtoms<never, unknown>>,
-  "readPreArchiveFacts" | "readParticipantIdentities"
+  "readPreArchiveFacts" | "readParticipantIdentities" | "readCrewArchiveWorktrees"
 >;
 
 /** Unknown participants stay absent, and so does every one when the read fails. */
@@ -37,6 +42,25 @@ export async function readParticipantIdentities(
 export interface ArchivePreflight {
   readonly facts: PreArchiveFacts | null;
   readonly participantLabels: ReadonlyMap<string, string>;
+  /**
+   * What archiving the Crews the thread commands would do with their seats' worktrees; null when
+   * that couldn't be read. Absent when the thread commands no Crew.
+   */
+  readonly worktrees?: ArchiveWarningWorktrees;
+}
+
+/** The worktree estimate for these Crews, or null when the read failed: "couldn't check". */
+export async function readCrewArchiveWorktrees(
+  j5: Pick<J5Reads, "readCrewArchiveWorktrees">,
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  crewInstanceIds: ReadonlyArray<string>,
+): Promise<ArchiveWarningWorktrees> {
+  const result = await j5.readCrewArchiveWorktrees.run(registry, {
+    environmentId,
+    input: { crewInstanceIds },
+  });
+  return result._tag === "Failure" ? null : result.value.worktrees;
 }
 
 /** Facts remain useful without identity labels; literal participant ids are the honest fallback. */
@@ -59,8 +83,18 @@ export async function readArchivePreflight(
       ...(facts.liveCrews ?? []).flatMap((crew) => crew.seats.map((seat) => seat.participantId)),
     ]),
   );
-  const identities = await readParticipantIdentities(j5, registry, threadRef.environmentId, ids);
-  return { facts, participantLabels: identities.labels };
+  const crewIds = (facts.liveCrews ?? []).map((crew) => crew.crewInstanceId);
+  const [identities, worktrees] = await Promise.all([
+    readParticipantIdentities(j5, registry, threadRef.environmentId, ids),
+    crewIds.length === 0
+      ? undefined
+      : readCrewArchiveWorktrees(j5, registry, threadRef.environmentId, crewIds),
+  ]);
+  return {
+    facts,
+    participantLabels: identities.labels,
+    ...(worktrees === undefined ? {} : { worktrees }),
+  };
 }
 
 export type ArchiveWarningUrgency = "blocking" | "soon" | "fyi" | null;
@@ -102,6 +136,8 @@ export type ArchiveWarningCrews =
   | { readonly state: "unknown" }
   | { readonly state: "known"; readonly crews: ReadonlyArray<ArchiveWarningCrew> };
 
+export type ArchiveWarningWorktrees = ReadonlyArray<CrewArchiveWorktreeEstimate> | null;
+
 export interface ArchiveWarningPayload {
   readonly threadTitle: string;
   readonly factsUnavailable: boolean;
@@ -109,6 +145,11 @@ export interface ArchiveWarningPayload {
   readonly openAsks: ReadonlyArray<ArchiveWarningRow>;
   /** Live Crews the agent commands; absent when the caller has no Crew facts to show. */
   readonly crews?: ArchiveWarningCrews;
+  /**
+   * What archiving the Crews would do with their seats' worktrees: null when it couldn't be
+   * read, absent when there are no Crews to read it for.
+   */
+  readonly worktrees?: ArchiveWarningWorktrees;
 }
 
 export interface ArchiveWarning {
@@ -133,6 +174,30 @@ export const archiveWarningAskHeader = (askCount: number) =>
 
 export const ARCHIVE_WARNING_WORKSPACE_NOTE =
   "Worktrees, branches, and pull requests remain. Cleanup is a separate action.";
+
+/** Why a worktree stays, in the words the archive warning uses. */
+export const worktreeReasonLabel: Record<CrewWorktreeReason, string> = {
+  uncommitted_changes: "has uncommitted changes",
+  unmerged_commits: "has commits that aren't merged",
+  shared: "another thread or project uses it",
+  in_use: "a session or terminal is open in it",
+  unverified: "couldn't be checked",
+  failed: "couldn't be removed",
+};
+
+/** The estimate split the way the warning lists it: what goes, and what stays and why. */
+export function groupWorktreeEstimates(worktrees: ReadonlyArray<CrewArchiveWorktreeEstimate>) {
+  return {
+    removed: worktrees.filter((worktree) => worktree.verdict === "remove"),
+    kept: worktrees.filter((worktree) => worktree.verdict === "keep"),
+  };
+}
+
+/** The last folders of a path, which tell worktrees of one project apart. */
+export function worktreeShortPath(path: string): string {
+  const parts = path.split(/[\\/]+/).filter((part) => part !== "");
+  return parts.slice(-2).join("/");
+}
 
 /** Agent names can be a whole brief, so one may already end its own sentence. */
 export const sentenceEnd = (lastWords: string) => (/[.!?…]$/.test(lastWords.trimEnd()) ? "" : ".");
@@ -183,6 +248,8 @@ export function buildArchiveWarning(input: {
         placement: { state: "unknown" },
         openAsks: [],
         crews: { state: "unknown" },
+        // Unknown Crews may hold worktrees the archive would remove.
+        worktrees: null,
       },
     };
   }
@@ -243,7 +310,20 @@ export function buildArchiveWarning(input: {
   }));
   return {
     title,
-    payload: { threadTitle, factsUnavailable: false, placement, openAsks, crews },
+    payload: {
+      threadTitle,
+      factsUnavailable: false,
+      placement,
+      openAsks,
+      crews,
+      // Only a Captain with live Crews has seats whose worktrees archiving removes; Crews that
+      // couldn't be read may have some.
+      ...(crews.state === "unknown"
+        ? { worktrees: null }
+        : preflight.worktrees === undefined
+          ? {}
+          : { worktrees: preflight.worktrees }),
+    },
     confirmLabel: openAsks.length > 0 || crewsHaveConsequences ? "Archive anyway" : "Archive",
   };
 }

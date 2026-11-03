@@ -1,6 +1,7 @@
 import { AuthAccessReadScope, AuthOrchestrationReadScope, ThreadId } from "@t3tools/contracts";
 import {
   J5_CLIENT_READ_WS_METHODS,
+  type CrewArchiveWorktreesRequest,
   type FleetReadRequest,
   type HumanInboxListRequest,
   type OpenInboxCountRequest,
@@ -36,6 +37,7 @@ export const CLIENT_READ_RPC_SCOPES = {
   [METHODS.readFleet]: AuthOrchestrationReadScope,
   [METHODS.listSpawnedChildren]: AuthOrchestrationReadScope,
   [METHODS.readPreArchiveFacts]: AuthOrchestrationReadScope,
+  [METHODS.readCrewArchiveWorktrees]: AuthOrchestrationReadScope,
   [METHODS.readParticipantIdentities]: AuthOrchestrationReadScope,
   [METHODS.listPeers]: AuthAccessReadScope,
   [METHODS.subscribeReadChanges]: AuthOrchestrationReadScope,
@@ -146,6 +148,23 @@ export const makeClientReadRpcHandlers = Effect.fn("j5.makeClientReadRpcHandlers
       clientReads
         .preArchiveFacts(input.threadId)
         .pipe(Effect.catch(failed("Pre-archive fact lookup failed."))),
+    [METHODS.readCrewArchiveWorktrees]: Effect.fn("j5.a2a.clientReadRpc.readCrewArchiveWorktrees")(
+      function* (input: CrewArchiveWorktreesRequest) {
+        const listed = yield* clientReads
+          .crewArchiveWorktrees(input.crewInstanceIds)
+          .pipe(Effect.catch(failed("Crew worktree lookup failed.")));
+        // A worktree's path is shown to whoever reaches its Crew's Captain.
+        const reachesCaptain = yield* reaches;
+        const worktrees = yield* Effect.filter(listed, (entry) =>
+          reachesCaptain(Effect.succeed(entry.captainThreadId)),
+        );
+        return {
+          worktrees: worktrees.map(
+            ({ captainThreadId: _captainThreadId, ...estimate }) => estimate,
+          ),
+        };
+      },
+    ),
     [METHODS.readParticipantIdentities]: (input: ParticipantIdentitiesRequest) =>
       clientReads
         .participantIdentities({ participantIds: input.participantIds.filter(isParticipantId) })

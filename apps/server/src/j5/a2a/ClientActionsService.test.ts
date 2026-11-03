@@ -102,6 +102,20 @@ const serviceWith = (seen: ReturnType<typeof calls>) =>
                       result: "never_created" as const,
                     },
                   ],
+                  worktrees: [
+                    {
+                      path: "/wt/builder",
+                      branch: "j5/builder",
+                      outcome: "removed" as const,
+                      reason: null,
+                    },
+                    {
+                      path: "/wt/critic",
+                      branch: null,
+                      outcome: "kept" as const,
+                      reason: "uncommitted_changes" as const,
+                    },
+                  ],
                 })
               : Effect.fail(new ArchiveCrewNotFoundError({ crewInstanceId: input.crewInstanceId }));
           },
@@ -204,6 +218,13 @@ it.effect("archives a Crew as a person, with the dialog's confirmation already s
       [
         ["builder", "archived"],
         ["critic", "already_archived"],
+      ],
+    );
+    assert.deepStrictEqual(
+      archived.worktrees.map((entry) => [entry.path, entry.outcome, entry.reason]),
+      [
+        ["/wt/builder", "removed", null],
+        ["/wt/critic", "kept", "uncommitted_changes"],
       ],
     );
     // A person is not a participant and confirmed the dialog: no Captain check, no token dance.

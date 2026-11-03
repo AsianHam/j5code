@@ -331,11 +331,13 @@ participant, so no Captain check applies to it (Bryant, 2026-09-14).
 
 ### `j5_archive_crew`
 
-**Description (contract):** "Retire a whole Crew you command. Crews archive only as a unit —
+**Description (contract):** "Retire a whole Crew you command. Crews archive only as a unit;
 members are never retired one by one. A clean archive completes immediately; otherwise the call
 refuses with the facts and a confirmation_token. Before retrying with that token, check with the
-user. Nothing is destroyed: worktrees, branches, and ledgers stay readable. Reuse
-client_request_id to retry safely."
+user. Archiving removes the worktrees J5 created for the Crew's seats when they are clean, merged,
+unshared (no other thread or project uses it) and unused (no session or terminal is open in it),
+keeps every branch and pull request, and lists the rest with their reasons.
+Reuse client_request_id to retry safely."
 
 | Input                | Type              | Required | Meaning                                              |
 | -------------------- | ----------------- | -------- | ---------------------------------------------------- |
@@ -343,8 +345,13 @@ client_request_id to retry safely."
 | `confirmation_token` | string            | no       | Token from the refusal; confirms exactly those facts |
 | `client_request_id`  | string, non-empty | no       | Supply and reuse to make retries safe                |
 
-Result: `status` (`archived` or `already_archived`), `crew_instance_id`, and `members` (seat,
-participant_id, per-member result). Semantics: only the Captain — the participant that launched the
+Result: `status` (`archived` or `already_archived`), `crew_instance_id`, `members` (seat,
+participant_id, per-member result), and `worktrees`: one entry for each worktree J5 created for a
+seat on a new worktree, with its `path`, `branch`, an `outcome` of `removed`, `kept` or `failed`, and
+a `reason` (`uncommitted_changes`, `unmerged_commits`, `shared`, `in_use`, `unverified`, or
+`failed`) unless removed. The removal runs after every seat is archived and the Crew is marked
+archived, never fails the archive, and runs again when an archived Crew is archived again, so a
+worktree kept because a session or terminal was still open can be retried once it closes. Semantics: only the Captain — the participant that launched the
 Crew — may archive it (R19); anyone else is refused and pointed at asking the Captain. Facts are
 read for every member before anything happens. If any member has an open Exchange or a running
 turn, the call refuses with a per-seat list (`members[].open_exchanges`, `members[].running_turn`,

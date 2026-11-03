@@ -478,6 +478,33 @@ export type PreArchiveCrewSeat = typeof PreArchiveCrewSeat.Type;
  */
 export const CrewArchiveRequest = Schema.Struct({ crewInstanceId: Schema.String });
 export type CrewArchiveRequest = typeof CrewArchiveRequest.Type;
+
+/**
+ * Why a Crew seat's worktree stays after the Crew is archived: it has uncommitted or untracked
+ * changes, commits the default branch does not have (and no merged pull request for that exact
+ * commit), another unarchived thread works in it, a provider session is still open in it, J5
+ * could not check one of those, or `git worktree remove` failed.
+ */
+export const CrewWorktreeReason = Schema.Literals([
+  "uncommitted_changes",
+  "unmerged_commits",
+  "shared",
+  "in_use",
+  "unverified",
+  "failed",
+]);
+export type CrewWorktreeReason = typeof CrewWorktreeReason.Type;
+
+/** One worktree J5 created for a Crew seat, and what archiving the Crew did with it. */
+export const CrewArchiveWorktree = Schema.Struct({
+  path: Schema.String,
+  branch: Schema.NullOr(Schema.String),
+  outcome: Schema.Literals(["removed", "kept", "failed"]),
+  /** Null when removed. */
+  reason: Schema.NullOr(CrewWorktreeReason),
+});
+export type CrewArchiveWorktree = typeof CrewArchiveWorktree.Type;
+
 export const CrewArchiveResponse = Schema.Struct({
   crewInstanceId: Schema.String,
   status: Schema.Literals(["archived", "already_archived"]),
@@ -488,8 +515,32 @@ export const CrewArchiveResponse = Schema.Struct({
       result: Schema.Literals(["archived", "already_archived"]),
     }),
   ),
+  /** Absent from a server that predates worktree cleanup, which removed none. */
+  worktrees: Schema.Array(CrewArchiveWorktree).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type CrewArchiveResponse = typeof CrewArchiveResponse.Type;
+
+/**
+ * What archiving these Crews would do with the worktrees J5 created for their seats, read before
+ * the person confirms. An estimate: each is checked again when the archive runs.
+ */
+export const CrewArchiveWorktreesRequest = Schema.Struct({
+  crewInstanceIds: Schema.Array(Schema.String),
+});
+export type CrewArchiveWorktreesRequest = typeof CrewArchiveWorktreesRequest.Type;
+export const CrewArchiveWorktreeEstimate = Schema.Struct({
+  crewInstanceId: Schema.String,
+  seat: Schema.String,
+  path: Schema.String,
+  branch: Schema.NullOr(Schema.String),
+  verdict: Schema.Literals(["remove", "keep"]),
+  /** Null when it would be removed. */
+  reason: Schema.NullOr(CrewWorktreeReason),
+});
+export type CrewArchiveWorktreeEstimate = typeof CrewArchiveWorktreeEstimate.Type;
+const CrewArchiveWorktreesResponse = Schema.Struct({
+  worktrees: Schema.Array(CrewArchiveWorktreeEstimate),
+});
 
 /**
  * What a J5 server reports about its ledger. Every J5 read is gated on `j5ProjectLedger`. The two
@@ -1194,6 +1245,7 @@ export const J5_CLIENT_READ_WS_METHODS = {
   readFleet: "j5.fleet.read",
   listSpawnedChildren: "j5.fleet.listSpawnedChildren",
   readPreArchiveFacts: "j5.archive.readFacts",
+  readCrewArchiveWorktrees: "j5.archive.readCrewWorktrees",
   readParticipantIdentities: "j5.participants.readIdentities",
   listPeers: "j5.peers.list",
   subscribeReadChanges: "j5.reads.subscribeChanges",
@@ -1262,6 +1314,11 @@ export const J5ClientReadRpcGroup = RpcGroup.make(
     J5_CLIENT_READ_WS_METHODS.readPreArchiveFacts,
     PreArchiveFactsRequest,
     PreArchiveFacts,
+  ),
+  clientRead(
+    J5_CLIENT_READ_WS_METHODS.readCrewArchiveWorktrees,
+    CrewArchiveWorktreesRequest,
+    CrewArchiveWorktreesResponse,
   ),
   clientRead(
     J5_CLIENT_READ_WS_METHODS.readParticipantIdentities,

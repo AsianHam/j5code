@@ -32,7 +32,11 @@ import { fleetDetailSourcesAtom, j5Environment } from "../state";
 import { useLogicalProjects } from "../logicalProjects";
 import { requestConfirmDialog } from "../../confirmDialog";
 import type { ArchiveWarningCrew } from "@t3tools/client-runtime/j5/archive-flow";
-import { ArchiveWarningCrewSeats } from "../a2a/ArchiveWarningContent";
+import {
+  ArchiveWarningCrewSeats,
+  ArchiveWarningWorktreeSection,
+} from "../a2a/ArchiveWarningContent";
+import { readCrewArchiveWorktrees } from "../a2a/archiveFlowClient";
 import { archiveCrew } from "../crew/crewArchiveClient";
 import {
   classifyCrewSeat,
@@ -384,6 +388,11 @@ function FleetNodeRows(
       }),
     };
     const consequential = warning.seats.some((seat) => seat.runningTurn || seat.openAsks > 0);
+    // Read before the dialog opens, so it can say what happens to each seat's worktree. A read
+    // that fails says so rather than promising nothing is removed.
+    const worktrees = await readCrewArchiveWorktrees(environmentId, [crew.crewInstanceId]).catch(
+      () => null,
+    );
     const confirmed = await (requestConfirmDialog(
       `Archive crew ${crew.crewName}?`,
       { variant: "destructive" },
@@ -392,10 +401,8 @@ function FleetNodeRows(
           <div className="space-y-3 text-left">
             <p>Its {warning.seats.length === 1 ? "seat retires" : "seats retire"} together:</p>
             <ArchiveWarningCrewSeats crew={warning} />
-            <p className="border-t border-border/60 pt-3 text-muted-foreground">
-              Worktrees, branches, and pull requests remain. The roster stays readable under Retired
-              crews.
-            </p>
+            <ArchiveWarningWorktreeSection worktrees={worktrees} />
+            <p className="text-muted-foreground">The roster stays readable under Retired crews.</p>
           </div>
         ),
         confirmLabel: consequential ? "Archive anyway" : "Archive",

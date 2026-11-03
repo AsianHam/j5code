@@ -249,6 +249,12 @@ export function createJ5EnvironmentAtoms<R, E>(
       tag: J5_CLIENT_READ_WS_METHODS.readPreArchiveFacts,
       execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.readPreArchiveFacts, input),
     }),
+    // What archiving a Crew would do with its seats' worktrees; shown beside the facts above.
+    readCrewArchiveWorktrees: createEnvironmentRpcCommand(runtime, {
+      label: "j5:crew-archive-worktrees",
+      tag: J5_CLIENT_READ_WS_METHODS.readCrewArchiveWorktrees,
+      execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.readCrewArchiveWorktrees, input),
+    }),
     readParticipantIdentities: createEnvironmentRpcCommand(runtime, {
       label: "j5:participant-identities",
       tag: J5_CLIENT_READ_WS_METHODS.readParticipantIdentities,

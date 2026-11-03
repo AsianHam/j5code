@@ -11,6 +11,7 @@ import { PlaybookStore } from "../playbooks/PlaybookStore.ts";
 import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
 import { AgentCrewProposalService } from "./AgentCrewProposalService.ts";
 import { ArchiveCrewService } from "./ArchiveCrewService.ts";
+import { CrewWorktrees } from "./CrewWorktrees.ts";
 import { A2AArchiveFacts } from "./ArchiveFactsService.ts";
 import { CrewRuntimeRequestService } from "./CrewRuntimeRequestService.ts";
 import { ParticipantPlacementService } from "./PlacementService.ts";
@@ -49,6 +50,7 @@ const makeTestLayer = () => {
     Layer.mock(PlaybookStore)({}),
     Layer.mock(A2AArchiveFacts)({}),
     Layer.mock(ArchiveCrewService)({}),
+    Layer.mock(CrewWorktrees)({}),
   );
   const clientReads = clientReadsLayer.pipe(
     Layer.provide(inbox),

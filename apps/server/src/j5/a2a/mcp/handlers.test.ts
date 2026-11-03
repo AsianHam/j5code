@@ -2007,6 +2007,14 @@ it.effect("archives a crew only as a unit through its captain with one confirmat
                         result: "archived" as const,
                       },
                     ],
+                    worktrees: [
+                      {
+                        path: "/wt/builder",
+                        branch: "j5/builder",
+                        outcome: "kept" as const,
+                        reason: "unmerged_commits" as const,
+                      },
+                    ],
                   }),
             ),
           ),
@@ -2073,6 +2081,14 @@ it.effect("archives a crew only as a unit through its captain with one confirmat
         status: "archived",
         crew_instance_id: "crew:j5:test",
         members: [{ seat: "builder", participant_id: memberParticipantId, result: "archived" }],
+        worktrees: [
+          {
+            path: "/wt/builder",
+            branch: "j5/builder",
+            outcome: "kept",
+            reason: "unmerged_commits",
+          },
+        ],
       });
       const calls = yield* Ref.get(archiveCalls);
       assert.lengthOf(calls, 2);

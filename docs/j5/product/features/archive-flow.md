@@ -11,15 +11,15 @@ Archiving an agent is where obligations get stranded: the agent that was owed a 
 
 ## Definition
 
-Archiving sets an agent aside, and a person can bring it back. It **never destroys work**: worktrees, branches and pull requests survive, and cleaning them up is a separate act. It is **loud**: every open Exchange the agent holds ends with a notice to the waiter, and every fact that archiving will change is shown before it happens.
+Archiving sets an agent aside, and a person can bring it back. It **never destroys work**: branches and pull requests survive, and so does every worktree that holds unfinished work. Archiving one agent removes nothing; archiving a Crew removes only the clean, merged worktrees J5 created for its seats ([Crews](crews.md) AC19), and cleaning up any other is a separate act. It is **loud**: every open Exchange the agent holds ends with a notice to the waiter, and every fact that archiving will change is shown before it happens.
 
 Before the dialog appears, the platform reads the facts: the agent's open asks in both directions, and the agents placed beneath it. A fact it could not read is shown as "couldn't check" — never as an empty, reassuring list.
 
-**The dialog appears only when the facts warrant it.** An agent with nothing open and nothing beneath it archives without ceremony. Otherwise the dialog is titled "Archive ⟨agent name⟩?" and shows: the agents beneath it, which keep running; each open ask that will be terminated, as a two-line row mirroring an inbox item — urgency badge first, then "To" or "From" and the counterpart's name, then the time open, then the intent verbatim; the section's count and consequence ("N open asks will be terminated (counterparties are notified)"); a quiet reassurance that the workspace survives; and one destructive-styled confirm. One confirm, no type-to-confirm. Every line is a measured fact; the dialog offers no opinion on whether to proceed.
+**The dialog appears only when the facts warrant it.** An agent with nothing open and nothing beneath it archives without ceremony. Otherwise the dialog is titled "Archive ⟨agent name⟩?" and shows: the agents beneath it, which keep running; each open ask that will be terminated, as a two-line row mirroring an inbox item — urgency badge first, then "To" or "From" and the counterpart's name, then the time open, then the intent verbatim; the section's count and consequence ("N open asks will be terminated (counterparties are notified)"); a quiet reassurance that the workspace survives, or, for a Captain's live Crews, which seat worktrees would be removed and which kept, as an estimate; and one destructive-styled confirm. One confirm, no type-to-confirm. Every line is a measured fact; the dialog offers no opinion on whether to proceed.
 
 Afterwards, waiters receive a platform notice that the Exchange ended, the person's inbox items from this agent leave immediately (the dialog was the loud moment), the agent leaves the active sidebar, the Fleet page and the agents' address book, it can no longer be messaged, and its ledger and conversation stay readable forever.
 
-**Unarchiving** is the way back. It restores the same agent — the same participant id, placement and provenance — and makes it addressable again. It does not undo what archiving ended: the Exchanges that closed stay closed, and deliveries that were cancelled are not replayed. An agent may be archived and unarchived any number of times.
+**Unarchiving** is the way back. It restores the same agent — the same participant id, placement and provenance — and makes it addressable again. It does not undo what archiving ended: the Exchanges that closed stay closed, and deliveries that were cancelled are not replayed. A worktree that archiving removed keeps its recorded branch and path, and the agent's next turn recreates it from that branch. An agent may be archived and unarchived any number of times.
 
 **Deleting** is a different act, permanent, and only a person performs it. It removes the agent's membership and placement, offers to clean up the worktree, and leaves the agents beneath it, the historical provenance, and the ledger intact. When Memos exist, the agent's open Memos appear as a third section of the dialog.
 
@@ -45,7 +45,7 @@ Archiving is **not** deleting, **not** a way to archive a single Crew member, an
 6. Every waiter on an ended Exchange receives a platform notice rendered as a muted notice line in its thread.
 7. The person's inbox items from the archived agent leave immediately, with no terminal row.
 8. The archived agent leaves the active sidebar and the Fleet page, is hidden from the agents' address book unless archived agents are asked for, and cannot receive a message or an ask; its ledger and conversation remain readable.
-9. No worktree, branch, or pull request is deleted by archiving.
+9. Archiving an agent deletes no worktree, branch, or pull request. Archiving a Crew, including through its Captain, deletes no branch or pull request, and closes the seats' provider sessions and removes a worktree only as [Crews](crews.md) AC19 allows, after the Captain's own archive, which upstream's sidebar performs, has committed; that archive itself removes nothing. Before a Captain's archive or Archive crew, the dialog lists the seat worktrees it would remove and those it would keep with the reason, labeled as an estimate, or says it couldn't check.
 
 ### Boundaries
 
@@ -54,8 +54,8 @@ Archiving is **not** deleting, **not** a way to archive a single Crew member, an
 
 ### Unarchiving and deleting
 
-12. Unarchiving restores the same participant id, placement and provenance and makes the agent addressable again; the Exchanges that archiving closed stay closed and no cancelled delivery is replayed.
-13. Deleting is permanent, is performed only by a person, removes the agent's membership and placement, and leaves the agents beneath it, historical provenance and the ledger intact; it is the only flow that offers worktree cleanup.
+12. Unarchiving restores the same participant id, placement and provenance and makes the agent addressable again; the Exchanges that archiving closed stay closed and no cancelled delivery is replayed; a worktree archiving removed is recreated from its kept branch on the agent's next turn, and forking the agent does the same.
+13. Deleting is permanent, is performed only by a person, removes the agent's membership and placement, and leaves the agents beneath it, historical provenance and the ledger intact; it is the only flow that offers to clean up an agent's own worktree.
 
 ## Scenarios
 
@@ -73,3 +73,5 @@ Archiving is **not** deleting, **not** a way to archive a single Crew member, an
 - 2026-09-08 — rewritten into the definition shape. Former identifiers: AR1 → AC11; AR2 → AC1; AR3 → AC2–AC5; AR4 → AC6–AC9; AR5 → AC3–AC4; J1–J3 → AC3, AC5. Build sequencing that lived here (the dialog shipping ahead of waiter notices) is history.
 - 2026-09-22 — an archive touches one agent: the dialog names the agents beneath it as ones that keep running, not as ones it archives (#254, option A; Bryant).
 - 2026-10-07 — Squadrons retired: an agent's project is upstream's and never changes, so unarchiving has no home to restore, and there is no Squadron to archive (Jackson, 2026-10-05; [#412](https://github.com/Jacksondr5/j5code/issues/412)).
+- 2026-10-27 — archiving a Crew removes the clean, merged worktrees J5 created for its seats; the dialog lists what would go and what would stay; AC9 and the definition rewritten ([#748](https://github.com/Jacksondr5/j5code/issues/748); Crews proposal v2).
+- 2026-10-31 — archiving a Crew also closes its seats' provider sessions before the worktree cleanup, so an open session no longer keeps a clean, merged worktree (Jackson, 2026-10-31; [#748](https://github.com/Jacksondr5/j5code/issues/748)).

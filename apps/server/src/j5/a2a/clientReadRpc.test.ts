@@ -25,6 +25,7 @@ import { PlaybookStore, playbookStoreLayer } from "../playbooks/PlaybookStore.ts
 import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
 import { AgentCrewProposalService, type CrewProposal } from "./AgentCrewProposalService.ts";
 import { ArchiveCrewService } from "./ArchiveCrewService.ts";
+import { CrewWorktrees } from "./CrewWorktrees.ts";
 import { A2AArchiveFacts, A2AArchiveFactsError } from "./ArchiveFactsService.ts";
 import { makeClientReadRpcHandlers } from "./clientReadRpc.ts";
 import { ClientReadsService, layer as clientReadsLayer } from "./ClientReadsService.ts";
@@ -112,6 +113,7 @@ const handlersWith = (given: {
           Layer.mock(AgentCrewInstanceService)({}),
           Layer.mock(PlaybookCrewRelay)({}),
           Layer.mock(ArchiveCrewService)({}),
+          Layer.mock(CrewWorktrees)({}),
           database,
         ),
       ),

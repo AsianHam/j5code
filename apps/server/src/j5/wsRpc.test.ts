@@ -140,7 +140,12 @@ const clientFor = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
               : Effect.fail(new CrewStopNotFoundError({ crewInstanceId })),
         archiveCrew: ({ crewInstanceId }) =>
           crewInstanceId === "crew:1"
-            ? reached("archive", { crewInstanceId, status: "archived" as const, members: [] })
+            ? reached("archive", {
+                crewInstanceId,
+                status: "archived" as const,
+                members: [],
+                worktrees: [],
+              })
             : Effect.fail(
                 new ArchiveCrewPartialFailureError({
                   crewInstanceId,

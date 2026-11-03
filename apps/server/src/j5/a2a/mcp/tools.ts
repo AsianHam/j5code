@@ -535,6 +535,25 @@ export const J5ArchiveCrewResult = Schema.Struct({
       result: Schema.Literals(["archived", "already_archived", "never_created"]),
     }),
   ),
+  // The worktrees J5 created for the Crew's seats on a new worktree, and what the archive did
+  // with each: removed (clean and merged), kept with a reason, or a removal that failed.
+  worktrees: Schema.Array(
+    Schema.Struct({
+      path: Schema.String,
+      branch: Schema.NullOr(Schema.String),
+      outcome: Schema.Literals(["removed", "kept", "failed"]),
+      reason: Schema.NullOr(
+        Schema.Literals([
+          "uncommitted_changes",
+          "unmerged_commits",
+          "shared",
+          "in_use",
+          "unverified",
+          "failed",
+        ]),
+      ),
+    }),
+  ),
 });
 
 export const J5ArchiveCrewMemberFacts = Schema.Struct({
@@ -571,7 +590,7 @@ export const J5_STOP_AGENT_DESCRIPTION =
   "Stop one Peer Agent the way a user Stop does: its running turn is interrupted now, turns already queued behind it, messages you sent it included, are held until a person resumes its queue or the next message reaches it (that message resumes the queue and runs after them, in order), its pull request watches end, and the tasks it delegated stop too. The agent remains, stays readable, and can be messaged again later: stopping halts work, it retires nothing. It reaches any agent on this server, in any project. Reuse client_request_id to retry safely.";
 
 const J5_ARCHIVE_CREW_DESCRIPTION =
-  "Retire a whole Crew you command. Crews archive only as a unit; members are never retired one by one. A clean archive completes immediately; otherwise the call refuses with the facts and a confirmation_token. Before retrying with that token, check with the user. Nothing is destroyed: worktrees, branches, and ledgers stay readable. Reuse client_request_id to retry safely.";
+  "Retire a whole Crew you command. Crews archive only as a unit; members are never retired one by one. A clean archive completes immediately; otherwise the call refuses with the facts and a confirmation_token. Before retrying with that token, check with the user. Archiving removes the worktrees J5 created for the Crew's seats when they are clean, committed, merged, used by no other thread or project, and have no open session or terminal, and keeps every branch and pull request. Anything else stays and is listed in the result's worktrees with its reason: uncommitted_changes, unmerged_commits, shared, in_use, unverified (a check could not run), or failed (the removal itself failed). Worktrees from before this existed, the Captain's checkout, and existing worktrees a seat was pointed at are never removed. Ledgers stay readable. Reuse client_request_id to retry safely.";
 
 // McpToolAccess reads the calling thread before any tool that needs one, so each of those
 // tools depends on ThreadManagementService whether or not its handler does.
