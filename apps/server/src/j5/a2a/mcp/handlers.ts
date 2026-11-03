@@ -205,7 +205,7 @@ const preflightCrewCaptain = Effect.fn("j5.a2a.mcp.preflightCrewCaptain")(functi
     );
   }
   const parent = yield* (yield* ThreadManagementService)
-    .getThreadProjection(scope.thread.threadId)
+    .getThreadRecords(scope.thread.threadId, [])
     .pipe(
       Effect.mapError((error) =>
         stateError(
@@ -621,7 +621,15 @@ const handlers = {
           );
         }
       }
-      const snapshot = yield* Effect.option(orchestrator.getShellSnapshot());
+      const snapshot = yield* Effect.option(
+        orchestrator.getShellSnapshot({
+          threadIds: directory.flatMap((row) =>
+            row.participant.kind === "agent" && row.projectId === projectId
+              ? [row.participant.threadId]
+              : [],
+          ),
+        }),
+      );
       const threads = new Map(
         Option.match(snapshot, {
           onNone: () => [],
@@ -871,7 +879,7 @@ const handlers = {
       }
       const threadManagement = yield* ThreadManagementService;
       const targetProjection = yield* threadManagement
-        .getThreadProjection(target.threadId)
+        .getThreadRecords(target.threadId, ["runs"])
         .pipe(
           Effect.mapError((error) =>
             stateError(

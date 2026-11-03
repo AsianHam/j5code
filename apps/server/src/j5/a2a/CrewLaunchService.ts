@@ -53,7 +53,7 @@ import {
   spawnCreateCommandId,
   spawnThreadCheckout,
 } from "./spawnWorkspace.ts";
-import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
+import { getThreadRecordsIfPresent } from "./threadProjectionReads.ts";
 import { CREW_SEAT_CAP } from "./crewLimits.ts";
 import type { ParticipantId, LedgerProjectId } from "./contracts.ts";
 import {
@@ -679,7 +679,7 @@ export const layer = Layer.effect(
         }),
       );
       const child = yield* Effect.result(
-        getThreadProjectionIfPresent(threadManagement, member.threadId),
+        getThreadRecordsIfPresent(threadManagement, member.threadId, []),
       );
       if (Result.isFailure(child))
         return {

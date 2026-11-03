@@ -48,7 +48,7 @@ import { lifecycleCommandId, lifecycleId } from "./spawnIds.ts";
 import type { ResolvedSpawnWorkspace, SpawnWorkspaceChoice } from "./spawnWorkspace.ts";
 import { requestDigest, requestReplayConflict } from "./RequestReplayService.ts";
 import { worktreePathKey } from "./spawnWorkspace.ts";
-import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
+import { getThreadRecordsIfPresent } from "./threadProjectionReads.ts";
 
 /** Hard cap on seats per Crew, initial roster and additions together. */
 export { CREW_SEAT_CAP } from "./CrewLaunchService.ts";
@@ -520,9 +520,10 @@ export const layer = Layer.effect(
       proposal: CrewProposal,
     ) {
       const stable = { providerSessionId: PROPOSAL_SESSION, requestKey: proposal.id };
-      const captain = yield* getThreadProjectionIfPresent(
+      const captain = yield* getThreadRecordsIfPresent(
         threadManagement,
         proposal.captainThreadId,
+        [],
       ).pipe(Effect.mapError(operationError("reading the Captain thread")));
       // A deleted Captain takes no messages; the decline still has to go through, or the gate
       // it was refused at could never close.
@@ -548,9 +549,10 @@ export const layer = Layer.effect(
     const captainFor = Effect.fn("j5.a2a.crewProposal.captainFor")(function* (
       proposal: CrewProposal,
     ) {
-      const projection = yield* getThreadProjectionIfPresent(
+      const projection = yield* getThreadRecordsIfPresent(
         threadManagement,
         proposal.captainThreadId,
+        [],
       ).pipe(Effect.mapError(operationError("reading the Captain thread")));
       // Checked at launch, not held: a Captain archived or deleted while its gate
       // is open is refused here, since new seats would be briefed to report to a participant

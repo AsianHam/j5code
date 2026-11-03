@@ -135,7 +135,7 @@ const makeLayer = (stops: Ref.Ref<ReadonlyArray<Stop>>) => {
             ? liveThreadShell(threadId, { runtimeMode: runtimeModes.get(threadId)! })
             : null,
         ),
-      getThreadProjection: (threadId) => Effect.succeed(idle(threadId)),
+      getThreadRecords: (threadId) => Effect.succeed(idle(threadId)),
       dispatch: (command) =>
         command.type === "thread.stop"
           ? Ref.update(stops, (items) => [

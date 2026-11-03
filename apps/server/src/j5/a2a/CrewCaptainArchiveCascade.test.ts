@@ -1,4 +1,11 @@
 import {
+  EventId,
+  MessageId,
+  NodeId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ServerCommand as OrchestrationV2Command,
   type OrchestrationV2StoredEvent,
@@ -12,8 +19,14 @@ import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
 import { OrchestratorProjectionError } from "../../orchestration-v2/Orchestrator.ts";
-import { ProjectionStoreThreadNotFoundError } from "../../orchestration-v2/ProjectionStore.ts";
+import {
+  ProjectionStoreThreadNotFoundError,
+  ProjectionStoreV2,
+  layer as projectionStoreLayer,
+  threadShellFromProjection,
+} from "../../orchestration-v2/ProjectionStore.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
+import { layerMemory as sqliteMemory } from "../../persistence/Sqlite.ts";
 import { AgentCrewInstanceService, type AgentCrewInstance } from "./AgentCrewInstanceService.ts";
 import { CrewWorktrees } from "./CrewWorktrees.ts";
 import { ArchiveCrewService, type ArchiveCrewInput } from "./ArchiveCrewService.ts";
@@ -311,6 +324,8 @@ const seatProjection = (
     visibleTurnItems: [],
     updatedAt: DateTime.makeUnsafe(seatAt),
   }) as unknown as OrchestrationV2ThreadProjection;
+const seatShell = (threadId: ThreadId, facts: Parameters<typeof seatProjection>[1]) =>
+  threadShellFromProjection(seatProjection(threadId, facts));
 const lifecycleEvent = (id: string, type: string, threadId = captainThread) =>
   ({ sequence: 1, commandId: null, event: { id, type, threadId } }) as never;
 
@@ -331,9 +346,9 @@ it.effect("settling a Captain settles its Crew's seats, and unsettling it unsett
           Layer.mock(ArchiveCrewService)({}),
           Layer.mock(ThreadManagementService)({
             // The builder has not settled; the critic already has.
-            getThreadProjection: (threadId) =>
+            getThreadShell: (threadId) =>
               Effect.succeed(
-                seatProjection(threadId, {
+                seatShell(threadId, {
                   settledOverride: threadId === criticThread ? "settled" : null,
                 }),
               ),
@@ -546,9 +561,9 @@ it.effect("settling a Captain leaves a seat that is waiting on the person or sti
           Layer.mock(AgentCrewInstanceService)({ listInvolving: () => Effect.succeed([trio]) }),
           Layer.mock(ArchiveCrewService)({}),
           Layer.mock(ThreadManagementService)({
-            getThreadProjection: (threadId) =>
+            getThreadShell: (threadId) =>
               Effect.succeed(
-                seatProjection(threadId, {
+                seatShell(threadId, {
                   pendingRequest: threadId === waitingThread,
                   running: threadId === runningThread,
                 }),
@@ -609,9 +624,9 @@ it.effect(
             }),
             Layer.mock(ArchiveCrewService)({}),
             Layer.mock(ThreadManagementService)({
-              getThreadProjection: (threadId) =>
+              getThreadShell: (threadId) =>
                 Effect.succeed(
-                  seatProjection(
+                  seatShell(
                     threadId,
                     threadId === seats.pinned
                       ? { pinnedAt: seatAt }
@@ -652,4 +667,184 @@ it.effect(
         );
       }).pipe(Effect.provide(layer));
     }),
+);
+
+it.effect("a Captain's settle decides each seat from the SQL shell and skips a deleted seat", () =>
+  Effect.gen(function* () {
+    const seats = {
+      deleted: ThreadId.make("thread:store-deleted"),
+      running: ThreadId.make("thread:store-running"),
+      waiting: ThreadId.make("thread:store-waiting"),
+      queued: ThreadId.make("thread:store-queued"),
+      archived: ThreadId.make("thread:store-archived"),
+      idle: ThreadId.make("thread:store-idle"),
+    };
+    const member = crew("x", null).members[0]!;
+    const instance: AgentCrewInstance = {
+      ...crew("crew:store", null),
+      members: Object.entries(seats).map(([seatName, threadId]) => ({
+        ...member,
+        seatName,
+        threadId,
+      })),
+    };
+    const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2Command>>([]);
+    const layer = cascadeLayer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          noWorktrees,
+          Layer.mock(AgentCrewInstanceService)({
+            listInvolving: () => Effect.succeed([instance]),
+          }),
+          Layer.mock(ArchiveCrewService)({}),
+          Layer.effect(
+            ThreadManagementService,
+            Effect.map(ProjectionStoreV2, (store) =>
+              ThreadManagementService.of({
+                getThreadShell: (threadId: ThreadId) =>
+                  store.getThreadShell(threadId).pipe(Effect.orDie),
+                dispatch: (command: OrchestrationV2Command) =>
+                  Ref.update(dispatched, (items) => [...items, command]).pipe(
+                    Effect.as({ sequence: 1 } as never),
+                  ),
+              } as never),
+            ),
+          ),
+        ),
+      ),
+      Layer.provideMerge(projectionStoreLayer),
+      Layer.provide(sqliteMemory),
+    );
+    yield* Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-09-17T10:00:00.000Z"));
+      const store = yield* ProjectionStoreV2;
+      const now = DateTime.makeUnsafe(seatAt);
+      const instanceId = ProviderInstanceId.make("codex");
+      const modelSelection = { instanceId, model: "gpt-5.4" };
+      const thread = (threadId: ThreadId) => ({
+        id: threadId,
+        projectId: ProjectId.make("project:store"),
+        title: threadId,
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: threadId === seats.archived ? now : null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      });
+      for (const threadId of Object.values(seats))
+        yield* store.apply({
+          id: EventId.make(`event:${threadId}:created`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: thread(threadId),
+        });
+      yield* store.apply({
+        id: EventId.make("event:store:deleted"),
+        type: "thread.deleted",
+        threadId: seats.deleted,
+        occurredAt: now,
+        payload: { ...thread(seats.deleted), deletedAt: now },
+      });
+      const runId = RunId.make("run:store-running");
+      yield* store.apply({
+        id: EventId.make("event:store:run"),
+        type: "run.updated",
+        threadId: seats.running,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId: seats.running,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:store-running"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:store:request"),
+        type: "runtime-request.updated",
+        threadId: seats.waiting,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make("request:store-waiting"),
+          nodeId: NodeId.make("node:store-waiting"),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
+      // Sent a minute ago; no run has picked it up yet.
+      const sentAt = DateTime.makeUnsafe("2026-09-17T09:59:00.000Z");
+      yield* store.apply({
+        id: EventId.make("event:store:message"),
+        type: "message.updated",
+        threadId: seats.queued,
+        occurredAt: sentAt,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: MessageId.make("message:store-queued"),
+          threadId: seats.queued,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text: "Next step",
+          attachments: [],
+          streaming: false,
+          createdAt: sentAt,
+          updatedAt: sentAt,
+        },
+      });
+      // Each held seat is held by the fact it is here to exercise, as the SQL shell reports it.
+      assert.isNull(yield* store.getThreadShell(seats.deleted));
+      const shellOf = (threadId: ThreadId) =>
+        store.getThreadShell(threadId).pipe(Effect.map((shell) => shell!));
+      assert.equal((yield* shellOf(seats.running)).activityRunStatus, "running");
+      const waiting = yield* shellOf(seats.waiting);
+      assert.isNull(waiting.activityRunStatus);
+      assert.isNotNull(waiting.pendingRuntimeRequest);
+      const queued = yield* shellOf(seats.queued);
+      assert.isNull(queued.activityRunStatus);
+      assert.isNotNull(queued.latestUserMessageAt);
+
+      const cascade = yield* CrewCaptainArchiveCascade;
+      yield* cascade.handleStoredEvent(lifecycleEvent("event:settle", "thread.settled"));
+      // The deleted seat comes first, and the idle seat after it still follows.
+      assert.deepStrictEqual(
+        (yield* Ref.get(dispatched)).map((command) => [
+          command.type,
+          "threadId" in command ? command.threadId : null,
+        ]),
+        [["thread.settle", seats.idle]],
+      );
+    }).pipe(Effect.provide(layer));
+  }),
 );

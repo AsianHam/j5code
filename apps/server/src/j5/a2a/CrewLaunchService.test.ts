@@ -181,7 +181,7 @@ const threadManagementFake = (
   ) => Effect.Effect<void, OrchestratorDispatchError>,
 ) =>
   Layer.mock(ThreadManagementService)({
-    getThreadProjection: (threadId) =>
+    getThreadRecords: (threadId) =>
       realThreads
         ? Ref.get(commands).pipe(
             Effect.flatMap((commands) => {

@@ -9,7 +9,12 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import {
+  ProjectionStoreV2,
+  layer as ProjectionStoreLayer,
+} from "../../../orchestration-v2/ProjectionStore.ts";
+import {
   EnvironmentId,
+  EventId,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   type RuntimeMode,
@@ -851,9 +856,11 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
       }),
     );
     const shellSnapshotCalls = yield* Ref.make(0);
+    const shellSnapshotThreadIds = yield* Ref.make<ReadonlyArray<ThreadId> | undefined>(undefined);
     const orchestrator = Layer.mock(OrchestratorV2)({
-      getShellSnapshot: () =>
-        Ref.update(shellSnapshotCalls, (calls) => calls + 1).pipe(
+      getShellSnapshot: (options) =>
+        Ref.set(shellSnapshotThreadIds, options?.threadIds).pipe(
+          Effect.andThen(Ref.update(shellSnapshotCalls, (calls) => calls + 1)),
           Effect.as({
             schemaVersion: 2,
             snapshotSequence: 1,
@@ -902,6 +909,14 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
     const result = yield* call({});
     const directory = yield* decodeJ5ListParticipantsResult(result.encodedResult);
     assert.equal(yield* Ref.get(shellSnapshotCalls), 1);
+    assert.deepStrictEqual(
+      yield* Ref.get(shellSnapshotThreadIds),
+      rows.flatMap((row) =>
+        row.participant.kind === "agent" && row.projectId === ledgerProjectId
+          ? [row.participant.threadId]
+          : [],
+      ),
+    );
     assert.equal(directory.total, 5);
     assert.equal(directory.next_cursor, null);
 
@@ -1218,7 +1233,7 @@ it.effect("preflights home before creation and records facts before the one stab
         ),
     });
     const threadManagement = threadManagementMock({
-      getThreadProjection: (threadId) => Effect.succeed(projection(threadId)),
+      getThreadRecords: (threadId) => Effect.succeed(projection(threadId)),
       dispatch: (command) =>
         command.type === "thread.create" && String(command.commandId).includes("spawn-rejected")
           ? Effect.fail(
@@ -1616,7 +1631,7 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
           }),
       }),
       threadManagementMock({
-        getThreadProjection: (threadId) =>
+        getThreadRecords: (threadId) =>
           Ref.get(commands).pipe(
             Effect.map((all) => {
               const create = all.find(
@@ -2252,7 +2267,7 @@ it.effect("routes crew proposals through a captain that is not itself a crew mem
       }),
       Layer.mock(SpawnCompositionService)({}),
       threadManagementMock({
-        getThreadProjection: (threadId) => Effect.succeed(projection(threadId)),
+        getThreadRecords: (threadId) => Effect.succeed(projection(threadId)),
       }),
       Layer.mock(OrchestratorMcpService)({}),
       Layer.mock(ProviderRegistry)({}),
@@ -2543,7 +2558,7 @@ it.effect(
                   : null,
               ),
             ),
-          getThreadProjection: (threadId) =>
+          getThreadRecords: (threadId) =>
             Ref.get(targetRunning).pipe(
               Effect.map((running) => ({
                 ...projection(threadId),
@@ -2878,4 +2893,67 @@ it.effect(
         assert.isTrue(settledRemote.isFailure);
       }).pipe(Effect.provide(layer));
     }),
+);
+
+// j5_list_participants joins the shells of its project's agents: active and archived alike, and a
+// project with no agents asks for none.
+it.effect(
+  "a shell snapshot by thread ids returns active and archived shells, and none for none",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStoreV2;
+      const now = DateTime.makeUnsafe("2026-09-17T09:00:00.000Z");
+      const instanceId = ProviderInstanceId.make("codex");
+      const seed = (name: string, archivedAt: DateTime.Utc | null) => {
+        const threadId = ThreadId.make(`thread:by-ids:${name}`);
+        return store
+          .apply({
+            id: EventId.make(`event:by-ids:${name}`),
+            type: "thread.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: threadId,
+              projectId: ProjectId.make("project:by-ids"),
+              title: name,
+              providerInstanceId: instanceId,
+              modelSelection: { instanceId, model: "gpt-5.4" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: null,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdBy: "user",
+              creationSource: "web",
+              createdAt: now,
+              updatedAt: now,
+              archivedAt,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+          })
+          .pipe(Effect.as(threadId));
+      };
+      const active = yield* seed("active", null);
+      const archived = yield* seed("archived", now);
+      yield* seed("elsewhere", null);
+
+      const chosen = yield* store.getShellSnapshot({ threadIds: [active, archived] });
+      assert.deepStrictEqual(
+        chosen.threads.map((thread) => thread.id),
+        [active],
+      );
+      assert.deepStrictEqual(
+        chosen.archivedThreads.map((thread) => thread.id),
+        [archived],
+      );
+      const none = yield* store.getShellSnapshot({ threadIds: [] });
+      assert.deepStrictEqual([none.threads, none.archivedThreads], [[], []]);
+    }).pipe(
+      Effect.provide(ProjectionStoreLayer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    ),
 );

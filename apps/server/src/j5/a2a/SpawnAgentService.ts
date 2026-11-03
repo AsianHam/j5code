@@ -209,7 +209,7 @@ const preflightThreadSpawner = Effect.fn("j5.a2a.mcp.preflightThreadSpawner")(fu
     );
   }
   const parent = yield* (yield* ThreadManagementService.ThreadManagementService)
-    .getThreadProjection(scope.thread.threadId)
+    .getThreadRecords(scope.thread.threadId, [])
     .pipe(
       Effect.mapError((error) =>
         stateError(
@@ -611,7 +611,7 @@ const spawn = Effect.fn("j5.a2a.spawnAgent")(function* (
             ),
           );
         const child = yield* threadManagement
-          .getThreadProjection(threadId)
+          .getThreadRecords(threadId, [])
           .pipe(
             Effect.mapError((error) =>
               stateError(

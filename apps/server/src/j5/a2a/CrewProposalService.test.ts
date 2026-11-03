@@ -471,7 +471,7 @@ const fixtureWithDatabase = Effect.fn("test.crewProposal.fixture")(function* (
     ),
     Layer.provideMerge(
       Layer.mock(ThreadManagementService)({
-        getThreadProjection: (threadId) =>
+        getThreadRecords: (threadId) =>
           Effect.gen(function* () {
             // The orchestrator wraps the store's failure either way; the cause tells them apart.
             if ((yield* Ref.get(missingThreads)).has(threadId))
@@ -1849,11 +1849,6 @@ const playbookFixtureWithSettings = (
       Layer.provideMerge(fakeSpawnWorkspaceLayer({ checkout: { isRepo: true, refName: "main" } })),
       Layer.provideMerge(
         Layer.mock(ThreadManagementService)({
-          getThreadProjection: (threadId) =>
-            Effect.succeed({
-              thread: thread(threadId),
-              messages: [],
-            } as unknown as OrchestrationV2ThreadProjection),
           getThreadRecords: (threadId) => Effect.succeed({ thread: thread(threadId) } as never),
           dispatch: (command) =>
             Ref.update(commands, (items) => [...items, command]).pipe(

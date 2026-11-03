@@ -2,10 +2,13 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  EventId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   RunId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2Run,
   type OrchestrationV2StoredEvent,
@@ -32,7 +35,11 @@ import { ArtifactWorkspace } from "../artifacts/ArtifactWorkspace.ts";
 import { playbookStoreLayer } from "../playbooks/PlaybookStore.ts";
 import { CrewSeatFinishNotifier, manualLayer as notifierLayer } from "./CrewSeatFinishNotifier.ts";
 import { OrchestratorProjectionError } from "../../orchestration-v2/Orchestrator.ts";
-import { ProjectionStoreThreadNotFoundError } from "../../orchestration-v2/ProjectionStore.ts";
+import {
+  ProjectionStoreThreadNotFoundError,
+  ProjectionStoreV2,
+  layer as projectionStoreLayer,
+} from "../../orchestration-v2/ProjectionStore.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import {
   AgentCrewInstanceService,
@@ -126,6 +133,137 @@ const runEvent = (threadId: ThreadId, facts: RunFacts): OrchestrationV2StoredEve
 
 const seat = (name: string, agentId: string) => ({ seat: name, agentId, reason: `${name} works` });
 
+const captainMessage = (id: MessageId, text: string, threadId: ThreadId, label: string) => ({
+  id: EventId.make(`event:${id}:${label}`),
+  type: "message.updated" as const,
+  threadId,
+  occurredAt: createdAt,
+  payload: {
+    createdBy: "system" as const,
+    creationSource: "server" as const,
+    id,
+    threadId,
+    runId: null,
+    nodeId: null,
+    role: "user" as const,
+    text,
+    attachments: [],
+    streaming: false,
+    createdAt,
+    updatedAt: createdAt,
+  },
+});
+
+/** Thread, run and item events for upstream's SQL store, as the seat's provider would leave them. */
+const storeThread = (threadId: ThreadId) => {
+  const instanceId = ProviderInstanceId.make("codex");
+  return {
+    id: EventId.make(`event:${threadId}:created`),
+    type: "thread.created" as const,
+    threadId,
+    occurredAt: createdAt,
+    payload: {
+      id: threadId,
+      projectId: ProjectId.make("project:launch-report"),
+      title: threadId,
+      providerInstanceId: instanceId,
+      modelSelection: { instanceId, model: "gpt-5.6-sol" },
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      createdAt,
+      updatedAt: createdAt,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  };
+};
+const storeRun = (
+  threadId: ThreadId,
+  ordinal: number,
+  status: OrchestrationV2Run["status"],
+  userMessageId: MessageId,
+) => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const id = RunId.make(`run:${threadId}:${ordinal}`);
+  const terminal = status === "failed" || status === "completed";
+  return {
+    id: EventId.make(`event:${id}:${status}`),
+    type: "run.updated" as const,
+    threadId,
+    runId: id,
+    occurredAt: createdAt,
+    payload: {
+      id,
+      threadId,
+      ordinal,
+      providerInstanceId: instanceId,
+      modelSelection: { instanceId, model: "gpt-5.6-sol" },
+      providerThreadId: null,
+      userMessageId,
+      rootNodeId: null,
+      activeAttemptId: null,
+      status,
+      requestedAt: createdAt,
+      startedAt: createdAt,
+      completedAt: terminal ? createdAt : null,
+      checkpointId: null,
+      contextHandoffId: null,
+    },
+  };
+};
+const storeItem = (
+  threadId: ThreadId,
+  ordinal: number,
+  body:
+    | { readonly type: "reasoning"; readonly text: string; readonly streaming: boolean }
+    | {
+        readonly type: "error";
+        readonly failure: {
+          readonly class: "provider_error";
+          readonly message: string;
+          readonly code: null;
+          readonly retryable: null;
+        };
+      },
+) => {
+  const runId = RunId.make(`run:${threadId}:${ordinal}`);
+  const id = TurnItemId.make(`item:${runId}:${body.type}`);
+  return {
+    id: EventId.make(`event:${id}`),
+    type: "turn-item.updated" as const,
+    threadId,
+    runId,
+    occurredAt: createdAt,
+    payload: {
+      id,
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: body.type === "error" ? ("failed" as const) : ("completed" as const),
+      title: body.type,
+      startedAt: createdAt,
+      completedAt: createdAt,
+      updatedAt: createdAt,
+      ...body,
+    },
+  };
+};
+
 /**
  * With `daemon`, the production layer runs its sweep and stream against these reads. With
  * `wrapCrews`, the reporter sees the wrapped Crew store; the fixture's own `crews` stays the real one.
@@ -139,6 +277,8 @@ const makeFixture = Effect.fn("test.j5.crewLaunchReporter.fixture")(function* (
     readonly wrapCrews?: (
       crews: AgentCrewInstanceService["Service"],
     ) => AgentCrewInstanceService["Service"];
+    /** Thread reads go to upstream's SQL store, so its filters decide the rows. */
+    readonly realStore?: boolean;
   },
 ) {
   const database = NodeSqliteClient.layer({ filename: ":memory:" });
@@ -157,6 +297,12 @@ const makeFixture = Effect.fn("test.j5.crewLaunchReporter.fixture")(function* (
     }),
     context,
   );
+  const store = options?.realStore
+    ? Context.get(
+        yield* Layer.build(projectionStoreLayer.pipe(Layer.provide(Layer.succeedContext(context)))),
+        ProjectionStoreV2,
+      )
+    : null;
   const threads = yield* Ref.make<ReadonlyMap<string, OrchestrationV2ThreadProjection>>(
     new Map([[captainThread, projection(captainThread, [])]]),
   );
@@ -170,8 +316,14 @@ const makeFixture = Effect.fn("test.j5.crewLaunchReporter.fixture")(function* (
     Layer.provideMerge(
       Layer.mock(ThreadManagementService)({
         ...(daemon === undefined ? {} : { streamStoredEventsFrom: daemon.streamStoredEventsFrom }),
-        getThreadProjection: (threadId) =>
+        getThreadRecords: (threadId, fields, filter) =>
           Effect.gen(function* () {
+            if (store !== null)
+              return yield* store
+                .getThreadRecords(threadId, fields, filter)
+                .pipe(
+                  Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+                );
             const found = (yield* Ref.get(threads)).get(threadId);
             if (onRead !== undefined) yield* onRead(threadId);
             if (found === undefined)
@@ -179,12 +331,28 @@ const makeFixture = Effect.fn("test.j5.crewLaunchReporter.fixture")(function* (
                 threadId,
                 cause: new ProjectionStoreThreadNotFoundError({ threadId }),
               });
-            return found;
+            return {
+              ...found,
+              messages: found.messages.filter(
+                (message) =>
+                  filter?.messageIds === undefined || filter.messageIds.includes(message.id),
+              ),
+              turnItems: found.turnItems.filter(
+                (item) =>
+                  filter?.turnItemRunId === undefined || item.runId === filter.turnItemRunId,
+              ),
+            } as never;
           }),
         dispatch: (command) =>
           Effect.gen(function* () {
             yield* Ref.update(dispatched, (items) => [...items, command]);
-            if (command.type === "message.dispatch")
+            if (command.type === "message.dispatch" && store !== null)
+              yield* store
+                .apply(
+                  captainMessage(command.messageId, command.text, command.threadId, command.type),
+                )
+                .pipe(Effect.orDie);
+            else if (command.type === "message.dispatch")
               yield* Ref.update(threads, (map) => {
                 const captain = map.get(command.threadId)!;
                 return new Map(map).set(command.threadId, {
@@ -364,6 +532,7 @@ const makeFixture = Effect.fn("test.j5.crewLaunchReporter.fixture")(function* (
     dropThread,
     reports,
     receipts,
+    store,
     setOnRead: (hook: typeof onRead) => {
       onRead = hook;
     },
@@ -964,4 +1133,99 @@ it.effect("reports created seats waiting for work immediately, including after a
       assert.notInclude(reports[0]!, "Your crew is running.");
     }).pipe(Effect.provide(f.layer));
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "on the SQL store, a seat's verdict and failure come from its brief run's items and the report",
+  () =>
+    Effect.gen(function* () {
+      const { layer, approvedLaunch, reports, store } = yield* makeFixture(undefined, {
+        realStore: true,
+      });
+      const projections = store!;
+      const id = "proposal:sql-items";
+      const roster = [seat("first", "scout"), seat("second", "critic")];
+      yield* approvedLaunch({ id, requested: roster, approved: roster });
+      const first = crewSeatThreadId(id, "first");
+      const second = crewSeatThreadId(id, "second");
+      const firstBrief = MessageId.make(crewSeatBriefMessageId(id, "first"));
+      const secondBrief = MessageId.make(crewSeatBriefMessageId(id, "second"));
+      const earlier = MessageId.make("message:earlier-work");
+      const provider = {
+        class: "provider_error" as const,
+        code: null,
+        retryable: null,
+      };
+      yield* projections.apply(storeThread(captainThread));
+      // A message on the Captain that names a failed run but is not the launch report.
+      const lookalike = "failed_run: run:unreported";
+      yield* projections.apply(
+        captainMessage(MessageId.make("message:lookalike"), lookalike, captainThread, "seed"),
+      );
+      for (const threadId of [first, second]) {
+        yield* projections.apply(storeThread(threadId));
+        // Earlier work on the seat's thread: activity and a failure, neither of them its brief's.
+        yield* projections.apply(storeRun(threadId, 1, "failed", earlier));
+        yield* projections.apply(
+          storeItem(threadId, 1, { type: "reasoning", text: "Earlier work", streaming: false }),
+        );
+        yield* projections.apply(
+          storeItem(threadId, 1, {
+            type: "error",
+            failure: { ...provider, message: "the earlier run failed" },
+          }),
+        );
+      }
+      yield* projections.apply(storeRun(first, 2, "running", firstBrief));
+      yield* projections.apply(storeRun(second, 2, "running", secondBrief));
+
+      yield* Effect.gen(function* () {
+        const reporter = yield* CrewLaunchReporter;
+        yield* reporter.watch(id);
+        // Both brief runs are running with no activity of their own, so neither has started.
+        assert.lengthOf(yield* reports(), 0);
+
+        yield* projections.apply(storeRun(first, 2, "failed", firstBrief));
+        yield* projections.apply(
+          storeItem(first, 2, {
+            type: "error",
+            failure: { ...provider, message: "the brief run failed" },
+          }),
+        );
+        const failed = storeRun(first, 2, "failed", firstBrief);
+        assert.isNull(
+          yield* reporter.handleStoredEvent({
+            sequence: 2,
+            commandId: null,
+            event: failed,
+          } as unknown as OrchestrationV2StoredEvent),
+        );
+
+        yield* projections.apply(
+          storeItem(second, 2, { type: "reasoning", text: "On it", streaming: false }),
+        );
+        assert.equal(
+          yield* reporter.handleStoredEvent({
+            sequence: 3,
+            commandId: null,
+            event: storeRun(second, 2, "running", secondBrief),
+          } as unknown as OrchestrationV2StoredEvent),
+          id,
+        );
+        const [report] = yield* reports();
+        assert.include(report!, "launch: 1 started, 1 failed");
+        assert.include(report!, "the brief run failed");
+        assert.notInclude(report!, "the earlier run failed");
+
+        // The notice is found by its id: the failed run it names is covered, and a run named only
+        // by another message on the Captain is not.
+        assert.isTrue(yield* reporter.coversFailure(first, failed.payload as OrchestrationV2Run));
+        assert.isFalse(
+          yield* reporter.coversFailure(first, {
+            ...failed.payload,
+            id: RunId.make("run:unreported"),
+          } as OrchestrationV2Run),
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
 );

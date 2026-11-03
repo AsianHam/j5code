@@ -252,6 +252,22 @@ const spawnHarness = (input: {
       canOpenExchange: true,
       acceptsUrgency: false,
     } satisfies ParticipantDirectoryRow;
+    const readThread = (threadId: ThreadId) =>
+      input.liveCaller !== undefined && threadId === invocation.thread.threadId
+        ? Ref.get(input.liveCaller)
+        : Ref.get(commands).pipe(
+            Effect.map((all) => {
+              const create = all.find(
+                (command) => command.type === "thread.create" && command.threadId === threadId,
+              );
+              return create?.type === "thread.create"
+                ? {
+                    ...callerThread(threadId),
+                    thread: { ...callerThread(threadId).thread, ...create, id: threadId },
+                  }
+                : callerThread(threadId, input.callerRuntimeMode);
+            }),
+          );
     const dependencies = Layer.mergeAll(
       input.memberModels ?? permissiveCrewMemberModels,
       noDocumentTextLayer,
@@ -294,22 +310,8 @@ const spawnHarness = (input: {
           }),
       }),
       Layer.mock(ThreadManagementService)({
-        getThreadProjection: (threadId) =>
-          input.liveCaller !== undefined && threadId === invocation.thread.threadId
-            ? Ref.get(input.liveCaller)
-            : Ref.get(commands).pipe(
-                Effect.map((all) => {
-                  const create = all.find(
-                    (command) => command.type === "thread.create" && command.threadId === threadId,
-                  );
-                  return create?.type === "thread.create"
-                    ? {
-                        ...callerThread(threadId),
-                        thread: { ...callerThread(threadId).thread, ...create, id: threadId },
-                      }
-                    : callerThread(threadId, input.callerRuntimeMode);
-                }),
-              ),
+        getThreadProjection: readThread,
+        getThreadRecords: (threadId) => readThread(threadId) as never,
         // The caller is mid-run, as upstream's tool access check requires; the child does not
         // exist yet.
         getThreadShell: (threadId) =>

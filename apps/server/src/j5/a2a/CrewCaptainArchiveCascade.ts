@@ -1,7 +1,7 @@
 import type {
   OrchestrationV2Command,
   OrchestrationV2StoredEvent,
-  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -10,7 +10,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
-import { threadShellFromProjection } from "../../orchestration-v2/ProjectionStore.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { isAutoSettlementCandidate } from "../../orchestration-v2/ThreadSettlementService.ts";
 import { AgentCrewInstanceService, type AgentCrewInstance } from "./AgentCrewInstanceService.ts";
@@ -18,10 +17,7 @@ import { ArchiveCrewService } from "./ArchiveCrewService.ts";
 import { CrewWorktrees } from "./CrewWorktrees.ts";
 import { participantIdForThread } from "./HomeRegistrar.ts";
 import { crewSeatRequestKey, lifecycleCommandId } from "./spawnIds.ts";
-import {
-  getThreadProjectionIfPresent,
-  getThreadRecordsIfPresent,
-} from "./threadProjectionReads.ts";
+import { getThreadRecordsIfPresent } from "./threadProjectionReads.ts";
 
 const CASCADE_SESSION = "j5-captain-archive-cascade";
 
@@ -49,13 +45,12 @@ export class CrewCaptainArchiveCascade extends Context.Service<
 
 /**
  * Whether a Captain's settle carries this seat: only if upstream's `isAutoSettlementCandidate`
- * would let auto-settle take it, read through the sweep's own shell derivation. The auto-settle
- * opt-out and an unsettle's "active" override are exceptions: they hold off only automatic
- * settling, not a person's explicit Captain settle (register D14).
+ * would let auto-settle take it. The auto-settle opt-out and an unsettle's "active" override are
+ * exceptions: they hold off only automatic settling, not a person's explicit Captain settle
+ * (register D14).
  */
-const seatFollowsCaptainSettle = (projection: OrchestrationV2ThreadProjection, nowMs: number) => {
-  const shell = threadShellFromProjection(projection);
-  return isAutoSettlementCandidate(
+const seatFollowsCaptainSettle = (shell: OrchestrationV2ThreadShell, nowMs: number) =>
+  isAutoSettlementCandidate(
     {
       ...shell,
       autoSettleDisabledAt: null,
@@ -63,7 +58,6 @@ const seatFollowsCaptainSettle = (projection: OrchestrationV2ThreadProjection, n
     },
     nowMs,
   );
-};
 
 /**
  * A Crew never outlives its Captain (Crews AC17). Upstream's command has committed when J5 sees it,
@@ -146,10 +140,10 @@ export const layer = Layer.effect(
       });
 
     /**
-     * Settle or unsettle every seat of one live Crew that is not already there. Settle skips a
-     * seat upstream's auto-settle would leave alone (see `seatFollowsCaptainSettle`). Unsettle
-     * only reaches seats that are settled, so a seat that never settled keeps upstream's automatic
-     * settlement. A seat whose thread was never created, or an archived one, is left alone.
+     * Settle or unsettle every seat of one live Crew that is not already there, except an archived
+     * seat or one with no live thread. Settle skips a seat upstream's auto-settle would leave alone
+     * (see `seatFollowsCaptainSettle`). Unsettle only reaches settled seats, so a seat that never
+     * settled keeps upstream's automatic settlement.
      */
     const moveSeats = Effect.fn("j5.a2a.captainArchiveCascade.moveSeats")(function* (
       captainThreadId: ThreadId,
@@ -160,9 +154,9 @@ export const layer = Layer.effect(
       let moved = false;
       const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
       for (const member of instance.members) {
-        const seat = yield* getThreadProjectionIfPresent(threads, member.threadId);
-        if (seat === null || seat.thread.archivedAt !== null) continue;
-        const settled = seat.thread.settledOverride === "settled";
+        const seat = yield* threads.getThreadShell(member.threadId);
+        if (seat === null || seat.archivedAt !== null) continue;
+        const settled = seat.settledOverride === "settled";
         if (to === "settle" ? !seatFollowsCaptainSettle(seat, nowMs) : !settled) continue;
         const commandId = seatCommandId(
           captainThreadId,
