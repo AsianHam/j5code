@@ -610,3 +610,15 @@ it("counts all approved members from old gate notices while retaining launch fai
   expect(crewNoticeLines(notice!).map((line) => line.seat)).toEqual(["builder", "tester"]);
   expect(isHiddenCrewNotice(message)).toBe(false);
 });
+
+it("presents created waiting seats without claiming they started", () => {
+  const text = approvedGate
+    .replace("thread_id=thread:b", "thread_id=thread:b start=waiting")
+    .replace("thread_id=thread:c", "thread_id=thread:c start=waiting");
+  const notice = presentCrewNotice({ role: "user", createdBy: "system", text });
+  expect(notice?.kind).toBe("gate");
+  if (notice?.kind !== "gate") return;
+  expect(notice.roster.map((seat) => seat.start)).toEqual(["waiting", "waiting"]);
+  expect(crewApprovalSummary(notice)).toBe("Crew approved · 2 members");
+  expect(crewNoticeLines(notice)).toEqual([]);
+});

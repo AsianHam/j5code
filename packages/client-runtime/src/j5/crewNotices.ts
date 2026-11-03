@@ -9,7 +9,7 @@ export interface CrewNoticeMessage {
   readonly createdBy?: string | undefined;
 }
 
-export type SeatStart = "started" | "failed" | "pending";
+export type SeatStart = "waiting" | "started" | "failed" | "pending";
 
 export interface CrewRosterSeat {
   readonly seat: string;
@@ -83,7 +83,7 @@ export type CrewNoticePresentation =
 
 const GATE_BLOCK = /^<j5_crew_gate>\n([\s\S]*?)\n<\/j5_crew_gate>/;
 const ROSTER_LINE =
-  /^- ([^:]+): participant_id=(\S+) persona=(\S*) thread_id=(\S+)(?: start=(started|failed|pending))?( \(new\))?$/;
+  /^- ([^:]+): participant_id=(\S+) persona=(\S*) thread_id=(\S+)(?: start=(started|failed|pending|waiting))?( \(new\))?$/;
 
 // Decode after parsing: provider diagnostics cannot create fields or terminate tagged blocks.
 const decodeFailureField = (value: string) =>
@@ -97,7 +97,9 @@ const field = (block: string, name: string) =>
 const fields = (block: string, name: string) =>
   [...block.matchAll(new RegExp(`^${name}: (.*)$`, "gm"))].map((match) => match[1]!.trim());
 const seatStart = (value: string | undefined): SeatStart | null =>
-  value === "started" || value === "failed" || value === "pending" ? value : null;
+  value === "waiting" || value === "started" || value === "failed" || value === "pending"
+    ? value
+    : null;
 
 const parseGate = (text: string): CrewNoticePresentation | null => {
   const match = GATE_BLOCK.exec(text);
@@ -237,6 +239,34 @@ const parseSeats = (text: string): CrewNoticePresentation | null => {
   return seats.length === 0 || seats.some((seat) => seat === null)
     ? null
     : { kind: "seats", seats: seats as ReadonlyArray<FinishedSeat> };
+};
+
+/**
+ * What the platform told a Crew member with an assignment, kept in the member's own thread: the
+ * text the model read, in the tag the server wrote it in. Strictly recognized from that tag.
+ */
+export interface CrewContextNotice {
+  readonly kind: "introduction" | "roster-changed";
+  readonly title: string;
+  /** The context without its wrapper, as the model read it. */
+  readonly text: string;
+}
+
+const CONTEXT_OPEN = "<j5_crew_delivery_context>\n";
+const CONTEXT_CLOSE = "\n</j5_crew_delivery_context>";
+const ROSTER_CHANGED_OPEN = "<j5_crew_roster_changed>";
+
+export const presentCrewContext = (message: CrewNoticeMessage): CrewContextNotice | null => {
+  if (message.role !== "user" || message.createdBy !== "system") return null;
+  const { text } = message;
+  if (!text.startsWith(CONTEXT_OPEN) || !text.endsWith(CONTEXT_CLOSE)) return null;
+  const body = text
+    .slice(CONTEXT_OPEN.length, text.length - CONTEXT_CLOSE.length)
+    .replaceAll("<\\/j5_crew_delivery_context>", "</j5_crew_delivery_context>");
+  if (body.trim() === "") return null;
+  return body.startsWith(ROSTER_CHANGED_OPEN)
+    ? { kind: "roster-changed", title: "Roster changed", text: body }
+    : { kind: "introduction", title: "Introduction", text: body };
 };
 
 /** Null for anything that is not a Crew notice; the ordinary renderer then owns the message. */

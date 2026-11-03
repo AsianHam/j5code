@@ -34,7 +34,12 @@ export const projectCrewMemberships = (
           ? instance.members.find((candidate) => candidate.threadId === threadId)
           : undefined;
       if (seat !== undefined)
-        member = { kind: "member", seat: seat.seatName, crew: crewRef(instance) };
+        member = {
+          kind: "member",
+          seat: seat.seatName,
+          crew: crewRef(instance),
+          ...(seat.notStarted === undefined ? {} : { notStarted: seat.notStarted }),
+        };
       if (instance.archivedAt === null && instance.captainParticipantId === participantId)
         commanded.push(crewRef(instance));
     }

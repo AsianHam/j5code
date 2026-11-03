@@ -51,6 +51,7 @@ export const projectSpawnedChildren = (
         crewInstanceId: crew.id,
         crewName: crew.displayName,
         seat: member.seatName,
+        ...(member.notStarted === undefined ? {} : { notStarted: member.notStarted }),
       });
   }
   const entries: Array<SpawnedChildrenResponse["entries"][number]> = [];

@@ -3302,6 +3302,19 @@ const OrchestrationV2InternalCommand = Schema.Union([
     ),
   }),
   /**
+   * Adds a message the platform wrote to the history of `runId`, which is already under way. It
+   * starts and queues no run, so it tells a reader something without asking the agent for a
+   * turn. Internal so no client can speak as the platform.
+   */
+  Schema.Struct({
+    type: Schema.Literal("platform-message.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    messageId: MessageId,
+    text: Schema.String,
+  }),
+  /**
    * Internal so no client can mark a request saved without the value being
    * stored.
    */

@@ -187,3 +187,9 @@ describe("literalUserMessageContext", () => {
     expect(context.recordsById.size).toBe(0);
   });
 });
+
+it("shows authored text exactly as written, even when it begins with the Crew context marker", () => {
+  const authored = `<j5_crew_delivery_context>\nmine\n</j5_crew_delivery_context>\n\n${peerPlainRaw}`;
+  expect(presentJ5UserMessage(message({ text: authored }))).toBeNull();
+  expect(participantIdsForThreadA2AEnvelope(authored)).toEqual([]);
+});

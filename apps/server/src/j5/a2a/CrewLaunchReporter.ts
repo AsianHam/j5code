@@ -45,10 +45,9 @@ import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
 export const CREW_LAUNCH_REPORT_WINDOW_MS = 60_000;
 
 /**
- * The launch report: the one notice a Captain gets for an approval, posted when every seat this
- * proposal launched has produced provider activity or ended, or the window closed. Dispatching a brief commits intent only; before this, "your crew is running" was
- * said the moment the briefs were dispatched, and two seats that died on a signed-out provider
- * arrived later as finishes with no reason (Jackson's dogfood, 2026-09-17).
+ * The one notice a Captain gets for an approval. Waiting seats are reported immediately from
+ * their creation facts. An owed report from before deferred activation still measures its
+ * dispatched briefs against provider activity, completion, or the confirmation window.
  */
 export interface CrewLaunchReporterShape {
   /**
@@ -243,14 +242,21 @@ const makeLayer = (daemon: boolean) =>
           return;
         }
         const projection = yield* getThreadProjectionIfPresent(threads, seat.threadId);
+        const member = launch.instance.members.find(
+          (candidate) => candidate.threadId === seat.threadId,
+        );
         launch.verdicts.set(
           seat.seatName,
           projection === null
             ? { kind: "not_created", detail: NOT_CREATED_DETAIL }
-            : verdictFor(
-                projection.runs.find((candidate) => isFirstTurnRun(seat, candidate)),
-                projection,
-              ),
+            : member?.notStarted === true
+              ? { kind: "waiting" }
+              : verdictFor(
+                  member?.notStarted === false
+                    ? projection.runs.toSorted((a, b) => a.ordinal - b.ordinal)[0]
+                    : projection.runs.find((candidate) => isFirstTurnRun(seat, candidate)),
+                  projection,
+                ),
         );
       });
 

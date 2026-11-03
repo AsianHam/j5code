@@ -522,6 +522,14 @@ describe("groups 4 and 5: classified, drawn elsewhere", () => {
     ).toMatchObject({ group: "notice", kind: "crew-gate" });
     expect(
       presentJ5UserMessage({
+        id: "message:j5:crew-context:abc",
+        role: "user",
+        text: "<j5_crew_delivery_context>\nYou are on a Crew.\n</j5_crew_delivery_context>",
+        createdBy: "system",
+      }),
+    ).toMatchObject({ group: "notice", kind: "crew-context", summary: "Introduction" });
+    expect(
+      presentJ5UserMessage({
         id: "message:restart-continuation:run-1",
         role: "user",
         text: "Go on.",

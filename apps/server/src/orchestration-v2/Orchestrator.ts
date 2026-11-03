@@ -522,6 +522,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.created.record":
       return command.parentThreadId;
     case "secret_request.record":
+    case "platform-message.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -7887,6 +7888,84 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const dispatchPlatformMessageRecord = Effect.fn("orchestrationV2.dispatch.platformMessageRecord")(
+    function* (
+      command: Extract<
+        OrchestrationV2InternalCommand,
+        { readonly type: "platform-message.record" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs"])
+        .pipe(mapDispatchError(command));
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Run ${command.runId} is not in thread ${command.threadId}.`,
+        });
+      }
+      const now = yield* DateTime.now;
+      const emitEvent = emit(events, command);
+      yield* emitEvent({
+        type: "message.updated",
+        threadId: command.threadId,
+        runId: run.id,
+        ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: command.messageId,
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          role: "user",
+          text: command.text,
+          attachments: [],
+          streaming: false,
+          createdBy: "system",
+          creationSource: "server",
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      // A steer never opens a new response group, so the agent's work stays under its assignment.
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: run.id,
+        ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          providerThreadId: run.providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* nextTurnItemOrdinal({ thread: projection.thread }),
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "user_message",
+          messageId: command.messageId,
+          inputIntent: "steer",
+          text: command.text,
+          attachments: [],
+          createdBy: "system",
+          creationSource: "server",
+        },
+      });
+    },
+  );
+
   const dispatchRuntimeRequestRespond = Effect.fn("Orchestrator.dispatchRuntimeRequestRespond")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
@@ -12116,6 +12195,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
+        break;
+      case "platform-message.record":
+        yield* dispatchPlatformMessageRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

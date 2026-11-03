@@ -34,7 +34,12 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import type { ArchiveWarningCrew } from "@t3tools/client-runtime/j5/archive-flow";
 import { ArchiveWarningCrewSeats } from "../a2a/ArchiveWarningContent";
 import { archiveCrew } from "../crew/crewArchiveClient";
-import { crewHasRunningSeat, summarizeCrewState } from "../crew/crewState";
+import {
+  classifyCrewSeat,
+  crewHasRunningSeat,
+  seatQuietLabel,
+  summarizeCrewState,
+} from "../crew/crewState";
 import { stopCrew } from "../crew/crewStopClient";
 import {
   countFleetProjects,
@@ -79,12 +84,17 @@ const threadFor = (
   threadsByKey: ThreadLookup,
   environmentId: EnvironmentId,
   agent: FleetAgent,
-): EnvironmentThreadShell | undefined =>
-  agent.threadId === null
-    ? undefined
-    : threadsByKey.get(
-        scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(agent.threadId))),
-      );
+): (EnvironmentThreadShell & { readonly notStarted?: boolean }) | undefined => {
+  const thread =
+    agent.threadId === null
+      ? undefined
+      : threadsByKey.get(
+          scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(agent.threadId))),
+        );
+  return thread === undefined || agent.crew?.notStarted === undefined
+    ? thread
+    : { ...thread, notStarted: agent.crew.notStarted };
+};
 
 const projectKey = (ledgerProject: ScopedFleetLedgerProject) =>
   `${ledgerProject.environmentId}:${ledgerProject.id}`;
@@ -719,7 +729,15 @@ export function FleetRowItem(
         </span>
         {/* A placement tree lives in one project, so only its root names it. */}
         {props.row.depth === 0 ? <ProjectLabel {...props} agent={agent} /> : <span />}
-        <FleetFactCells environmentId={environmentId} agent={agent} />
+        <FleetFactCells
+          environmentId={environmentId}
+          agent={agent}
+          notStarted={
+            thread !== undefined &&
+            classifyCrewSeat(thread) !== "settled" &&
+            seatQuietLabel(thread) === "Not started"
+          }
+        />
       </button>
       <FleetFactDetails environmentId={environmentId} agent={agent} title={title} />
     </li>

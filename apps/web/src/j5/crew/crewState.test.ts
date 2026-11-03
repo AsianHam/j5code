@@ -4,6 +4,7 @@ import {
   classifyCrewSeat,
   crewHasRunningSeat,
   formatCrewStateSummary,
+  seatQuietLabel,
   seatRunLabel,
   summarizeCrewState,
   type CrewSeatThread,
@@ -56,6 +57,18 @@ describe("crew state", () => {
     expect(classifyCrewSeat(seat())).toBe("idle");
   });
 
+  it("counts not-started seats separately and treats lifecycle overrides like idle seats", () => {
+    const waiting = seat({ notStarted: true });
+    expect(classifyCrewSeat(waiting)).toBe("not-started");
+    expect(classifyCrewSeat(seat())).toBe("idle");
+    expect(formatCrewStateSummary(summarizeCrewState([waiting, seat()]))).toBe("1 not started");
+    expect(crewHasRunningSeat(summarizeCrewState([waiting]))).toBe(false);
+    expect(classifyCrewSeat({ ...waiting, archivedAt: "2026-10-27" })).toBe("archived");
+    expect(classifyCrewSeat({ ...waiting, settledOverride: "settled" })).toBe("settled");
+    expect(classifyCrewSeat({ ...waiting, settledOverride: "active" })).toBe("not-started");
+    expect(classifyCrewSeat({ ...waiting, runtime: { status: "running" } })).toBe("running");
+  });
+
   it("summarizes a Crew and formats only the states worth saying", () => {
     const summary = summarizeCrewState([
       seat({ runtime: { status: "running" }, updatedAt: "2026-09-14T12:00:00.000Z" }),
@@ -72,6 +85,7 @@ describe("crew state", () => {
       failed: 1,
       "needs-you": 1,
       settled: 1,
+      "not-started": 0,
       idle: 1,
       archived: 0,
       unknown: 1,
@@ -96,5 +110,16 @@ describe("crew state", () => {
     expect(seatRunLabel("running")).toBeNull();
     expect(seatRunLabel("idle")).toBeNull();
     expect(seatRunLabel(undefined)).toBeNull();
+  });
+
+  it("reads Not started only for a seat that never ran, and how its run ended otherwise", () => {
+    expect(seatQuietLabel({ notStarted: true })).toBe("Not started");
+    expect(seatQuietLabel({ notStarted: true, runtime: { status: "idle" } })).toBe("Not started");
+    expect(seatQuietLabel({ notStarted: true, runtime: { status: "failed" } })).toBe("Failed");
+    expect(seatQuietLabel({ notStarted: true, runtime: { status: "interrupted" } })).toBe(
+      "Interrupted",
+    );
+    expect(seatQuietLabel({ notStarted: false })).toBe("Idle");
+    expect(seatQuietLabel({})).toBe("Idle");
   });
 });

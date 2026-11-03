@@ -1,3 +1,4 @@
+import * as CrewDeliveryContext from "../a2a/CrewDeliveryContext.ts";
 import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "../../project/WorktreeSetupTracker.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
@@ -65,6 +66,7 @@ const adapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 export interface HarnessOptions {
+  readonly crewDeliveryContext?: boolean;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
@@ -78,12 +80,20 @@ export interface HarnessOptions {
 export function makeHarness(options: HarnessOptions = {}) {
   const database = SqlitePersistenceMemory;
   const registry = ProviderAdapterRegistry.layerFromAdapters([adapter]);
-  const orchestrator = ProviderReplayHarness.layerWithRegistry(
+  const baseOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "thread-launch" },
     registry,
     { databaseLayer: database, runEffectWorker: false },
   );
   const receipts = CommandReceiptStore.layer.pipe(Layer.provide(database));
+  const orchestrator =
+    options.crewDeliveryContext === true
+      ? CrewDeliveryContext.layer.pipe(
+          Layer.provideMerge(baseOrchestrator),
+          Layer.provide(receipts),
+          Layer.provide(database),
+        )
+      : baseOrchestrator;
   const threadManagement = ThreadManagement.layer.pipe(
     Layer.provide(orchestrator),
     Layer.provide(ServerSettings.layerTest(options.serverSettings)),
@@ -196,6 +206,7 @@ export function makeHarness(options: HarnessOptions = {}) {
     Layer.provide(Layer.mergeAll(threadManagement, projectedProjects, externalServices)),
   );
   return {
+    orchestrator,
     layer: Layer.mergeAll(launch, threadManagement, titleRegeneration, outbox, database),
     /** The faked project, git, and setup services plus the receipt store ThreadLaunch reads. */
     services: Layer.mergeAll(externalServices, receipts),

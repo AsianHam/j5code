@@ -195,15 +195,15 @@ asked for.
 
 ### `j5_propose_crew`
 
-**Description (contract):** "Propose the crew you need for the brief you were given. Use it when the
-user asks for a crew or the work splits into distinct responsibilities that should run at once. Mix
-saved personas and custom seats in the same roster: call j5_list_personas when choosing a saved
-persona, or leave persona unset for a custom seat with its own instructions (required) and the
-brief. Custom seats inherit your harness, model, and reasoning by default and run with full-access
-unless you set runtime_mode; to choose different ones, set model_selection (instanceId, model,
-options) and/or runtime_mode using orchestrator_capabilities. Saved personas are proposed with their
-own configuration; only the human may override their runtime before approval. To have the crew
-follow a playbook, set playbook to a name from j5_playbook_list and give seats the step ids they own
+**Description (contract):** "Propose the crew you need for the brief you were given. Use it when the user asks for a crew or
+the work splits into distinct responsibilities that should run at once. Mix saved personas and
+custom seats in the same roster: call j5_list_personas when choosing a saved persona, or leave
+persona unset for a custom seat with its own instructions (required) and the brief. Custom seats
+inherit your harness, model, and reasoning by default and run with full-access unless you set
+runtime_mode; to choose different ones, set model_selection (instanceId, model, options) and/or
+runtime_mode using orchestrator_capabilities. Saved personas are proposed with their own
+configuration; only the human may override their runtime before approval. To have the crew follow
+a playbook, set playbook to a name from j5_playbook_list and give seats the step ids they own
 (steps, from j5_playbook_read); a step has one owner, steps no seat owns are yours as Captain, and
 the result reports unowned steps and any step whose persona differs from its seat's. For a crew
 built from a playbook, staff one seat per distinct persona its steps name, each owning that
@@ -211,23 +211,24 @@ persona's steps, and propose a custom seat, noted in its reason, where a named p
 available. Every seat names its workspace, with the same three choices as j5_spawn_agent. Name the
 crew for what it is for and give each seat a short lowercase-hyphen name like code-reviewer. By
 default the user reviews and edits the roster in this thread, then approves or declines. If
-Auto-approve new Crews is on for your project, the proposed roster launches immediately with no
+Auto-approve new Crews is on for your project, the proposed roster is created immediately with no
 approval card. The result says whether it is open or approved; the launch report arrives here once
-startup is confirmed or fails. Each seat keeps its configured access and tool approvals, which may
-exceed yours. You become the crew's Captain and may command several crews at once; later requests,
-stops, and archives name the crew they mean. Use j5_send_message for member-to-member,
-member-to-Captain, and Captain-to-Captain coordination, including findings and direct results;
-artifacts do not gate these conversations. Reuse client_request_id to retry safely; a changed
-request is refused, so use a fresh one for new work. This tool works under every sandbox and
-approval policy, including approval policy never; never refuse the brief because approvals are
-disabled."
+creation finishes or fails. Approval creates seats without starting turns. Send each member its
+first assignment when it has work; reuse finished members for follow-up work in the same thread.
+Each seat keeps its configured access and tool approvals, which may exceed yours. You become the
+crew's Captain and may command several crews at once; later requests, stops, and archives name the
+crew they mean. Use j5_send_message for member-to-member, member-to-Captain, and
+Captain-to-Captain coordination, including findings and direct results; artifacts do not gate
+these conversations. Reuse client_request_id to retry safely; a changed request is refused, so use
+a fresh one for new work. This tool works under every sandbox and approval policy, including
+approval policy never; never refuse the brief because approvals are disabled."
 
 Published with `destructiveHint: true`: depending on the project setting, this call can launch agents immediately.
 
 | Input               | Type                                                                                                  | Required | Meaning                                                                                                                                                                                                  |
 | ------------------- | ----------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`              | string                                                                                                | yes      | The Crew's display name                                                                                                                                                                                  |
-| `brief`             | string                                                                                                | yes      | What every seat starts on, verbatim                                                                                                                                                                      |
+| `brief`             | string                                                                                                | yes      | The shared brief included with each seat's first assignment                                                                                                                                              |
 | `seats`             | 1–12 of `{seat, persona?, model_selection?, runtime_mode?, reason, instructions?, steps?, workspace}` | yes      | Seat name, persona id from `j5_list_personas` (none for a custom seat), why, wiring, custom-seat runtime, the playbook step ids the seat owns, and where it works (the `j5_spawn_agent` workspace shape) |
 | `playbook`          | string                                                                                                | no       | A playbook name from `j5_playbook_list` in the Captain's workspace; the Crew follows it                                                                                                                  |
 | `client_request_id` | string                                                                                                | no       | Supply and reuse to make retries safe                                                                                                                                                                    |
@@ -252,24 +253,25 @@ member records the step ids it owns, and each seat's first turn lists its steps 
 gate inline above the Captain's composer unless Auto-approve new Crews is enabled for the Captain's project; approval spawns the approved roster (the human may have edited it) as Peer Agents under the
 caller, persona-backed where a seat names one, records the Crew snapshot with each member's reason
 (with human or automatic approval recorded), and posts
-a `<j5_crew_gate>` launch report into the caller's thread once every seat has started or failed to start (or a minute has passed): the roster, what the user changed against the proposal, and per seat `start=started|failed|pending`, with a `seat_failed` line carrying the run's error (`not_started` when the seat's thread exists but its brief never went out) and a `seat_not_created` line for an approved seat whose thread was never created, which is left off the roster. A proposal resolves once: a seat that fails does not stop the others or reopen the gate. Declines post the decline at once.
-Every seat names its workspace, with the same three choices as `j5_spawn_agent`, so there is no Captain-aware default (Jackson, 2026-10-03). Each seat's workspace resolves at preview against the Captain's repository, and the approval token binds it, as it binds the Captain's branch and worktree. Every preview also carries the Captain's current branch, the directory its branch picker searches, and its worktrees, for the roster card's editor; the branches themselves are searched live, so no list is capped. A seat the person adds starts in the Captain's checkout. A seat recorded before workspaces were required stays readable but is refused at preview and approval until one is chosen. A new-worktree seat's brief starts once ThreadLaunch has prepared it, as for `j5_spawn_agent`, so the launch report may read `pending` for a seat whose setup outlasts the report's minute, and a failed preparation arrives as that seat's failure.
+a `<j5_crew_gate>` launch report into the caller's thread immediately after creation: the roster, what the user changed against the proposal, and per seat `start=waiting|started|failed|pending`, with a `seat_failed` line carrying the run's error (`not_started` when the seat's thread exists but registration failed) and a `seat_not_created` line for an approved seat whose thread was never created, which is left off the roster. A proposal resolves once: a seat that fails does not stop the others or reopen the gate. Declines post the decline at once.
+Every seat names its workspace, with the same three choices as `j5_spawn_agent`, so there is no Captain-aware default (Jackson, 2026-10-03). Each seat's workspace resolves at preview against the Captain's repository, and the approval token binds it, as it binds the Captain's branch and worktree. Every preview also carries the Captain's current branch, the directory its branch picker searches, and its worktrees, for the roster card's editor; the branches themselves are searched live, so no list is capped. A seat the person adds starts in the Captain's checkout. A seat recorded before workspaces were required stays readable but is refused at preview and approval until one is chosen. New and added seats wait for their first assignment. A direct chat message, participant message, or playbook handoff activates the seat with its approved instructions and shared brief, the current roster with responsibilities and participant ids, and the assignment with its envelope and reply obligation intact. A new-worktree seat prepares its workspace before running that assignment; failed preparation is reported as a seat failure.
 New Crews require human approval by default. **Settings → Agent Setup → Crews → Auto-approve new Crews** skips that gate, off by default and overridable per project. The server reads the Captain's project setting only for a new request; changing it leaves existing Crews and open proposals alone. Automatic approval launches the proposed configuration through the same provider, workspace, capacity, and persona checks. Tool approvals still follow each seat's access. The persisted proposal and launch report distinguish automatic approval from a human decision.
 
 ### `j5_request_crew_member`
 
-**Description (contract):** "Add one seat directly to a running crew you command when the work needs
-expertise the roster lacks. No human approval is needed, regardless of Auto-approve new Crews. Give
-a seat name, a persona id from j5_list_personas or required instructions for a custom seat, a reason
-identifying the missing expertise, and its workspace (the same choices as j5_propose_crew). Custom
-seats inherit your model selection and run with full-access unless you set model_selection or
+**Description (contract):** "Add one seat directly to a running crew you command when the work needs expertise the roster
+lacks. No human approval is needed, regardless of Auto-approve new Crews. Give a seat name, a
+persona id from j5_list_personas or required instructions for a custom seat, a reason identifying
+the missing expertise, and its workspace (the same choices as j5_propose_crew). Custom seats
+inherit your model selection and run with full-access unless you set model_selection or
 runtime_mode; saved personas use their own configuration. Optionally give a brief; otherwise the
 seat gets the Crew's brief. On a playbook Crew, steps may claim only unowned step ids from
 j5_playbook_read. The result returns the updated roster or refuses the seat with its name and
-reason; startup is reported separately here. Each member's configured access still controls tool
-approvals. Captain-only: a member sends the concern to its Captain with j5_send_message. Reuse
-client_request_id to retry safely; a changed request is refused, so use a fresh one for new work.
-Works under every approval policy, including approval policy never."
+reason; creation is reported separately here. The new member waits for its first assignment; send
+it with j5_send_message when the work is ready. Each member's configured access still controls
+tool approvals. Captain-only: a member sends the concern to its Captain with j5_send_message.
+Reuse client_request_id to retry safely; a changed request is refused, so use a fresh one for new
+work. Works under every approval policy, including approval policy never."
 
 | Input                             | Type           | Required | Meaning                                                                     |
 | --------------------------------- | -------------- | -------- | --------------------------------------------------------------------------- |
@@ -402,7 +404,7 @@ run; `j5_stop_crew` doesn't, and unarchiving doesn't restart it.
 5. A `j5_send_message` to the caller itself is refused with an error naming the caller's own id.
 6. `j5_list_participants` marks the caller's row `self`, reports a person's row as unable to receive a plain message and able to be asked, and omits provider Subagents.
 7. `j5_spawn_agent` refuses a call that omits provider, model, or reasoning, refuses a choice outside the Role's allowlist with an error naming the Role, and refuses a caller that sits in a Crew with an error naming escalation to its Captain.
-8. A spawned agent's first turn contains its own participant id and project.
+8. A spawned agent's first turn contains its own participant id and project. A Crew seat receives its approved instructions, shared brief, current roster with responsibilities and participant ids, and any playbook or handoff obligation on its first assignment; the assignment keeps its own envelope and reply obligation. Later assignments reuse the same thread without repeating that introduction, unless the provider conversation was replaced, which sends it again. Started members receive net roster changes at the top of their next delivery, including a message steered into a running turn, without a separate turn.
 9. `j5_stop_agent` and `t3_thread_organize` act on one target; neither cascades. `j5_stop_agent` reaches an agent in any project on this server, and refuses a target that runs with broader permission modes than the caller unless the caller is that seat's Captain. A stopped run is never resumed after a server restart, even when restart continuation is enabled.
 10. `t3_thread_organize` archives and restores any thread in the environment that upstream's access check lets the caller act on. Archive closes Exchanges through the shared reactor without a confirmation-token exchange or interrupting an existing run; human archive warnings remain.
 11. `j5_clear_own_ask` closes only an Exchange the caller opened and records the closure as sender-cleared.

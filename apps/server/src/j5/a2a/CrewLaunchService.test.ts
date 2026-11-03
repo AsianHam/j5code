@@ -1,3 +1,4 @@
+import * as SqlClient from "effect/sql/SqlClient";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -62,6 +63,13 @@ import { type FakeCheckout, fakeSpawnWorkspaceLayer } from "./test-support/spawn
 import type { ThreadLaunchInput } from "../../orchestration-v2/ThreadLaunchService.ts";
 import type { SpawnWorkspaceChoice } from "./spawnWorkspace.ts";
 import { ParticipantId, LedgerProjectId } from "./contracts.ts";
+
+const savedBriefs = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{ readonly thread_id: string; readonly first_turn_text: string }>`
+    SELECT thread_id, first_turn_text FROM j5_crew_seat_context ORDER BY rowid
+  `;
+});
 
 const projectId = LedgerProjectId.make("ledger:crew-launch");
 const captainThread = ThreadId.make("thread:captain");
@@ -264,7 +272,7 @@ const dependencies = (
     Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
   );
 
-it.effect("launches an approved roster whole, records it, briefs each seat, then adds a seat", () =>
+it.effect("creates approved seats and additions without starting turns", () =>
   Effect.gen(function* () {
     const { context, commands, captain } = yield* fixture;
     const codex = provider("codex", "codex", [
@@ -356,9 +364,13 @@ it.effect("launches an approved roster whole, records it, briefs each seat, then
       const captured = yield* Ref.get(commands);
       assert.deepStrictEqual(
         captured.map((command) => command.type),
-        ["thread.create", "thread.create", "message.dispatch", "message.dispatch"],
+        ["thread.create", "thread.create"],
       );
-      const builderBrief = captured[2];
+      const builderBrief = {
+        type: "message.dispatch",
+        text: (yield* savedBriefs)[0]!.first_turn_text,
+      };
+      assert.isTrue(instance.members.every((member) => member.notStarted));
       if (builderBrief?.type === "message.dispatch") {
         assert.include(builderBrief.text, "your_seat: builder");
         assert.include(builderBrief.text, `captain_participant_id: ${captainId}`);
@@ -391,7 +403,13 @@ it.effect("launches an approved roster whole, records it, briefs each seat, then
           ["sentry", 2],
         ],
       );
-      const sentryBrief = (yield* Ref.get(commands)).at(-1);
+      assert.isTrue(
+        (yield* Ref.get(commands)).every((command) => command.type !== "message.dispatch"),
+      );
+      const sentryBrief = {
+        type: "message.dispatch",
+        text: (yield* savedBriefs).at(-1)!.first_turn_text,
+      };
       if (sentryBrief?.type === "message.dispatch") {
         assert.include(sentryBrief.text, "your_seat: sentry");
         assert.include(sentryBrief.text, "- builder: participant_id=");
@@ -469,16 +487,17 @@ it.effect(
           assert.deepStrictEqual(created.modelSelection, captain.thread.modelSelection);
           assert.equal(created.runtimeMode, "full-access");
         }
-        const brief = captured.find(
-          (command) =>
-            command.type === "message.dispatch" && command.text.includes("your_seat: scribe"),
-        );
-        assert.equal(brief?.type, "message.dispatch");
-        if (brief?.type === "message.dispatch") {
-          assert.include(brief.text, "<seat_instructions>\nWrite the running notes.");
-          assert.notInclude(brief.text, "<seat_obligation>");
-          assert.include(brief.text, "persona=custom");
-        }
+        assert.isFalse(captured.some((command) => command.type === "message.dispatch"));
+        const brief = (yield* savedBriefs).find((row) =>
+          row.first_turn_text.includes("your_seat: scribe"),
+        )!.first_turn_text;
+        assert.include(brief, "<seat_instructions>\nWrite the running notes.");
+        assert.notInclude(brief, "<seat_obligation>");
+        assert.include(brief, "persona=custom");
+        const [stored] = yield* (yield* SqlClient.SqlClient)<{
+          readonly agent_display_name: string | null;
+        }>`SELECT agent_display_name FROM j5_crew_seat_context WHERE first_turn_text LIKE '%your_seat: scribe%'`;
+        assert.equal(stored?.agent_display_name, "custom");
 
         // A persona Captain runs under its persona's policy (workspace write, auto-accept-edits here)
         // and has the person supervising it; its custom seat still defaults to Full access.
@@ -1547,18 +1566,10 @@ it.effect(
           (yield* crews.read(launched.instance.id))!.members.map((member) => member.seatName),
           ["builder", "sentry"],
         );
-        // Only the seats that exist got a brief, and their roster names only each other.
-        const briefs = (yield* Ref.get(unit.commands)).flatMap((command) =>
-          command.type === "message.dispatch" ? [command] : [],
+        assert.isFalse(
+          (yield* Ref.get(unit.commands)).some((command) => command.type === "message.dispatch"),
         );
-        assert.sameMembers(
-          briefs.map((command) => command.threadId),
-          [unit.seatThread("trio", "builder"), unit.seatThread("trio", "sentry")],
-        );
-        for (const brief of briefs) {
-          assert.include(brief.text, "- builder");
-          assert.notInclude(brief.text, "- critic");
-        }
+        assert.isTrue(launched.instance.members.every((member) => member.notStarted));
       }).pipe(Effect.provide(unit.layer));
     }).pipe(Effect.scoped),
 );
@@ -1859,8 +1870,9 @@ it.effect("records a playbook Crew's step owners and surfaces a taken step unwra
           ["helper", []],
         ],
       );
-      const briefs = (yield* Ref.get(commands)).flatMap((command) =>
-        command.type === "message.dispatch" ? [command.text] : [],
+      const briefs = (yield* savedBriefs).map((row) => row.first_turn_text);
+      assert.isFalse(
+        (yield* Ref.get(commands)).some((command) => command.type === "message.dispatch"),
       );
       assert.include(briefs[0], "your_steps:\n- plan: Plan the release\n</seat_playbook>");
       assert.include(briefs[1], "your_steps: none\n</seat_playbook>");
@@ -2084,21 +2096,13 @@ it.effect("launches each seat in the workspace it names, and refuses one git can
         assert.equal(scribe.worktreePath, captain.thread.worktreePath);
         assert.equal(scribe.branch, captain.thread.branch);
       }
-      // Only the new worktree waits on ThreadLaunch; the other two briefs start at once.
-      const briefs = captured.filter((command) => command.type === "message.dispatch");
-      assert.sameMembers(
-        briefs.map((command) => command.threadId),
-        [threadOf("reviewer"), threadOf("scribe")],
-      );
-      const [launch] = yield* Ref.get(launches);
-      assert.equal(launch?.threadId, threadOf("builder"));
-      assert.isTrue(launch?.reuseExistingThread);
-      assert.deepStrictEqual(launch?.workspaceStrategy, {
-        type: "worktree",
-        baseRef: "j5/main",
-        startFromOrigin: false,
-      });
-      assert.include(launch?.initialMessage?.text, "your_seat: builder");
+      assert.isFalse(captured.some((command) => command.type === "message.dispatch"));
+      assert.deepStrictEqual(yield* Ref.get(launches), []);
+      const sql = yield* SqlClient.SqlClient;
+      const contexts = yield* sql<{ readonly workspace: string }>`
+        SELECT workspace FROM j5_crew_seat_context WHERE thread_id = ${threadOf("builder")}
+      `;
+      assert.include(contexts[0]!.workspace, '"baseRef":"j5/main"');
     }).pipe(Effect.provide(layerFor(repo)));
   }),
 );

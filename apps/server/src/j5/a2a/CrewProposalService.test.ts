@@ -1847,7 +1847,7 @@ const proposeRelease = (
   });
 
 it.effect(
-  "records a playbook Crew on its proposal, instance, and members, and briefs each seat",
+  "records a playbook Crew on its proposal, instance, and members, and saves each seat introduction",
   () =>
     Effect.gen(function* () {
       const { layer, workspaceRoot, commands } = yield* playbookFixture;
@@ -1901,11 +1901,20 @@ it.effect(
             ["builder", ["build"]],
           ],
         );
-        const brief = (yield* Ref.get(commands)).find(
-          (command) => command.type === "message.dispatch",
+        const sql = yield* SqlClient.SqlClient;
+        const plannerThread = instance.members.find(
+          ({ seatName }) => seatName === "planner",
+        )!.threadId;
+        const [brief] = yield* sql<{ first_turn_text: string }>`
+          SELECT first_turn_text FROM j5_crew_seat_context WHERE thread_id = ${plannerThread}
+        `;
+        assert.isFalse(
+          (yield* Ref.get(commands)).some(
+            (command) => command.type === "message.dispatch" && command.threadId === plannerThread,
+          ),
         );
         assert.include(
-          brief?.type === "message.dispatch" ? brief.text : "",
+          brief!.first_turn_text,
           "<seat_playbook>\nplaybook: release (Release)\nyour_steps:\n- plan: Plan\n</seat_playbook>",
         );
       }).pipe(Effect.provide(layer));
@@ -2225,11 +2234,18 @@ it.effect("a Crew whose playbook file is gone still takes a seat that claims no 
           ["helper", []],
         ],
       );
-      const brief = (yield* Ref.get(commands)).findLast(
-        (command) => command.type === "message.dispatch",
+      const sql = yield* SqlClient.SqlClient;
+      const helperThread = members.find(({ seatName }) => seatName === "helper")!.threadId;
+      const [brief] = yield* sql<{ first_turn_text: string }>`
+        SELECT first_turn_text FROM j5_crew_seat_context WHERE thread_id = ${helperThread}
+      `;
+      assert.isFalse(
+        (yield* Ref.get(commands)).some(
+          (command) => command.type === "message.dispatch" && command.threadId === helperThread,
+        ),
       );
       assert.include(
-        brief?.type === "message.dispatch" ? brief.text : "",
+        brief!.first_turn_text,
         "<seat_playbook>\nplaybook: release (release)\nyour_steps: none\n</seat_playbook>",
       );
     }).pipe(Effect.provide(layer));
@@ -2448,11 +2464,17 @@ it.effect(
         const builderThread = instance.members.find(
           ({ seatName }) => seatName === "builder",
         )!.threadId;
-        const builderBrief = (yield* Ref.get(commands)).find(
-          (command) => command.type === "message.dispatch" && command.threadId === builderThread,
+        const sql = yield* SqlClient.SqlClient;
+        const [builderBrief] = yield* sql<{ first_turn_text: string }>`
+          SELECT first_turn_text FROM j5_crew_seat_context WHERE thread_id = ${builderThread}
+        `;
+        assert.isFalse(
+          (yield* Ref.get(commands)).some(
+            (command) => command.type === "message.dispatch" && command.threadId === builderThread,
+          ),
         );
         assert.include(
-          builderBrief?.type === "message.dispatch" ? builderBrief.text : "",
+          builderBrief!.first_turn_text,
           "your_steps:\n- build: Build\n- release: Release\n</seat_playbook>",
         );
 

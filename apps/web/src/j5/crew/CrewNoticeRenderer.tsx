@@ -1,13 +1,15 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { UsersIcon } from "lucide-react";
+import { ChevronRightIcon, UsersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
+  presentCrewContext,
   presentCrewNotice,
+  type CrewContextNotice,
   type CrewNoticeMessage,
   type CrewNoticePresentation,
 } from "@t3tools/client-runtime/j5/crew-notices";
@@ -28,6 +30,46 @@ export interface CrewNoticeRenderInput {
   /** The thread the timeline shows; seats open on its environment. */
   readonly threadRef?: ScopedThreadRef | null | undefined;
   readonly markdownCwd?: string | undefined;
+}
+
+/**
+ * What the platform told this member with an assignment, folded to its title: the text is the
+ * model's own reading, long and not written for the person, so it opens on request.
+ */
+function CrewContextCard(props: {
+  readonly notice: CrewContextNotice;
+  readonly input: CrewNoticeRenderInput;
+}) {
+  const { notice, input } = props;
+  return (
+    <details
+      className="group max-w-[88%] rounded-lg border border-border/70 bg-muted/25 px-3.5 py-2.5"
+      data-j5-crew-renderer="context"
+      data-j5-crew-context={notice.kind}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-x-2 text-xs text-muted-foreground outline-hidden [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon
+          className="size-3.5 shrink-0 group-open:rotate-90"
+          aria-hidden
+          data-j5-crew-context-chevron
+        />
+        <UsersIcon className="size-3.5 shrink-0" aria-hidden />
+        <span className="font-medium text-foreground">{notice.title}</span>
+        <span>from J5</span>
+        {input.timestampLabel ? (
+          <time
+            className="ms-auto tabular-nums text-muted-foreground"
+            dateTime={input.message.createdAt}
+          >
+            {input.timestampLabel}
+          </time>
+        ) : null}
+      </summary>
+      <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed">
+        {notice.text}
+      </pre>
+    </details>
+  );
 }
 
 /** A declined request as the Captain received it: what was asked for, and who declined it. */
@@ -147,6 +189,8 @@ function CrewNoticeLines(props: {
  * Approval summaries remain visible; completed finishes without a warning take no timeline row.
  */
 export function renderCrewNotice(input: CrewNoticeRenderInput): ReactNode {
+  const context = presentCrewContext(input.message);
+  if (context !== null) return <CrewContextCard notice={context} input={input} />;
   const notice = presentCrewNotice(input.message);
   if (notice === null) return null;
   if (notice.kind === "gate" && notice.decision === "declined")

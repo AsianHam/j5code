@@ -12,6 +12,7 @@ import { formatRunFailureField } from "./runFailures.ts";
  * on the roster.
  */
 export type SeatStartVerdict =
+  | { readonly kind: "waiting" }
   | { readonly kind: "started" }
   | {
       readonly kind: "failed";
@@ -147,7 +148,12 @@ export const crewLaunchReportText = (input: {
   );
   const pending = [...verdicts].filter(([, verdict]) => verdict.kind === "pending");
   const windowSeconds = Math.round(input.windowMs / 1000);
-  const launch = `launch: ${started} started, ${failed.length} failed, ${notCreated.length} not created, ${pending.length} start unconfirmed after ${windowSeconds}s`;
+  const waiting = [...verdicts].filter(([, verdict]) => verdict.kind === "waiting").length;
+  const launchCounts = `launch: ${waiting > 0 ? `${waiting} created and waiting for work, ` : ""}${started} started, ${failed.length} failed, ${notCreated.length} not created, ${pending.length} start unconfirmed after ${windowSeconds}s`;
+  const launch =
+    waiting > 0 && pending.length === 0
+      ? `launch: ${waiting} created and waiting for work, ${started} started, ${failed.length} failed, ${notCreated.length} not created`
+      : launchCounts;
   const failedLines = failed.map(([seat, verdict]) =>
     verdict.kind === "not_started"
       ? `seat_failed: ${seat} | not_started | ${reportField(verdict.detail)}`
@@ -199,7 +205,11 @@ export const crewLaunchReportText = (input: {
     prose.push(
       `${pending.length} ${pending.length === 1 ? "seat has" : "seats have"} no confirmed provider activity after ${windowSeconds}s; its first turn may still be queued, and you will hear from it when it finishes.`,
     );
-  if (failed.length === 0 && notCreated.length === 0 && pending.length === 0)
+  if (waiting > 0)
+    prose.push(
+      "Send each member its first assignment with j5_send_message when it has work; the first delivery includes the shared brief and current roster. Reuse finished members for follow-up work in the same thread.",
+    );
+  if (waiting === 0 && failed.length === 0 && notCreated.length === 0 && pending.length === 0)
     prose.push(
       "Your crew is running. Each seat has your brief and this roster; coordinate with j5_send_message, and ask the user through the inbox for decisions you cannot make from the brief.",
     );

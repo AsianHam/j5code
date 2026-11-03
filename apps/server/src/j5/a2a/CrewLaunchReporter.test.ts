@@ -940,3 +940,28 @@ it.effect(
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped),
 );
+
+it.effect("reports created seats waiting for work immediately, including after a restart", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    const id = "proposal:waiting";
+    const roster = [seat("builder", "scout"), seat("reviewer", "critic")];
+    yield* f.approvedLaunch({ id, requested: roster, approved: roster });
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      for (const entry of roster)
+        yield* sql`
+        INSERT INTO j5_crew_seat_context (thread_id, first_turn_text, workspace)
+        VALUES (${crewSeatThreadId(id, entry.seat)}, 'approved context', '{"type":"shared"}')
+      `;
+      yield* (yield* CrewLaunchReporter).reconcile;
+      const reports = yield* f.reports();
+      assert.lengthOf(reports, 1);
+      assert.include(reports[0]!, "2 created and waiting for work");
+      assert.include(reports[0]!, "start=waiting");
+      assert.notInclude(reports[0]!, "seat_pending:");
+      assert.notInclude(reports[0]!, "unconfirmed");
+      assert.notInclude(reports[0]!, "Your crew is running.");
+    }).pipe(Effect.provide(f.layer));
+  }).pipe(Effect.scoped),
+);

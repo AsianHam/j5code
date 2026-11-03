@@ -284,7 +284,12 @@ export type CrewRef = typeof CrewRef.Type;
 
 /** What a sidebar row needs: which Crew a thread sits in, or which Crews it commands. */
 export const ThreadCrewMembership = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("member"), seat: Schema.String, crew: CrewRef }),
+  Schema.Struct({
+    kind: Schema.Literal("member"),
+    seat: Schema.String,
+    crew: CrewRef,
+    notStarted: Schema.optionalKey(Schema.Boolean),
+  }),
   Schema.Struct({ kind: Schema.Literal("captain"), crews: Schema.Array(CrewRef) }),
 ]);
 export type ThreadCrewMembership = typeof ThreadCrewMembership.Type;
@@ -302,7 +307,12 @@ export const SpawnedChild = Schema.Struct({
   threadId: ThreadId,
   participantId: Schema.String,
   seat: Schema.NullOr(
-    Schema.Struct({ crewInstanceId: Schema.String, crewName: Schema.String, seat: Schema.String }),
+    Schema.Struct({
+      crewInstanceId: Schema.String,
+      crewName: Schema.String,
+      seat: Schema.String,
+      notStarted: Schema.optionalKey(Schema.Boolean),
+    }),
   ),
 });
 export type SpawnedChild = typeof SpawnedChild.Type;
@@ -388,6 +398,7 @@ export const FleetAgent = Schema.Struct({
       crewInstanceId: Schema.String,
       crewName: Schema.String,
       seat: Schema.String,
+      notStarted: Schema.optionalKey(Schema.Boolean),
       captainParticipantId: Schema.String,
     }),
   ),

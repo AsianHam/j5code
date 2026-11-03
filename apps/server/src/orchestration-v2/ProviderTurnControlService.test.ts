@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
+  MessageId,
   NodeId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
@@ -20,9 +21,20 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+
+import * as Crews from "../j5/a2a/AgentCrewInstanceService.ts";
+import * as CrewTurnContext from "../j5/a2a/CrewTurnContext.ts";
+import { participantIdForThread } from "../j5/a2a/HomeRegistrar.ts";
+import { A2ALedger, layer as ledgerLayer } from "../j5/a2a/LedgerService.ts";
+import { runJ5A2AMigrations } from "../j5/a2a/Migrations.ts";
+import { LedgerProjectId } from "../j5/a2a/contracts.ts";
+import { spawnFirstTurnText } from "../j5/a2a/spawnIds.ts";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -331,4 +343,144 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
+);
+
+const crewDatabase = NodeSqliteClient.layer({ filename: ":memory:" });
+const crewServices = Layer.mergeAll(
+  crewDatabase,
+  Crews.layer.pipe(Layer.provide(crewDatabase)),
+  ledgerLayer.pipe(Layer.provide(crewDatabase)),
+  // The seat records what it was told through a dispatch these tests do not inspect.
+  Layer.mock(Orchestrator.OrchestratorV2)({
+    dispatch: () => Effect.succeed({ sequence: 1, storedEvents: [] }),
+  }),
+);
+
+it.effect("steering a busy Crew seat carries the roster change made while it worked", () =>
+  Effect.gen(function* () {
+    yield* runJ5A2AMigrations();
+    const sql = yield* SqlClient.SqlClient;
+    const crews = yield* Crews.AgentCrewInstanceService;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:crew-builder");
+    const captainThreadId = ThreadId.make("thread:crew-captain");
+    const sessionId = ProviderSessionId.make("provider-session:crew-builder");
+    const providerThreadId = ProviderThreadId.make("provider-thread:crew-builder");
+    const providerTurnId = ProviderTurnId.make("provider-turn:crew-builder");
+    const attemptId = RunAttemptId.make("run-attempt:crew-builder");
+    const providerThread: OrchestrationV2ProviderThread = {
+      id: providerThreadId,
+      driver,
+      providerInstanceId,
+      providerSessionId: sessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: { driver, nativeId: "native-thread:crew-builder", strength: "strong" },
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const base = makeProjection({ now, threadId, providerThread, providerTurnId, attemptId });
+    const message = {
+      id: MessageId.make("message:steer-builder"),
+      text: "Also cover the retry path.",
+      attachments: [],
+      createdBy: "agent",
+      creationSource: "mcp",
+    };
+    const steered: Array<string> = [];
+    const runtime = {
+      steerTurn: (input: ProviderAdapter.ProviderAdapterV2SteerInput) =>
+        Effect.sync(() => void steered.push(input.message.text)),
+    } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+
+    const projectId = LedgerProjectId.make("project:crew-steer");
+    yield* (yield* A2ALedger).ensureProject({ projectId, createdAt: "2026-10-27T12:00:00.000Z" });
+    const seat = (seatName: string, id: ThreadId) => ({
+      seatName,
+      agentId: null,
+      threadId: id,
+      participantId: participantIdForThread(id),
+      reason: `Responsibility of ${seatName}`,
+    });
+    yield* crews.record({
+      id: "crew:steer",
+      projectId,
+      captainThreadId,
+      captainParticipantId: participantIdForThread(captainThreadId),
+      displayName: "Steer crew",
+      brief: "Shared goal",
+      createdAt: "2026-10-27T12:00:00.000Z",
+      members: [seat("builder", threadId)],
+    });
+    const text = spawnFirstTurnText({
+      brief: "Shared goal",
+      participantId: participantIdForThread(threadId),
+      projectId,
+      projectTitle: "Project",
+      spawnedByParticipantId: participantIdForThread(captainThreadId),
+      crew: {
+        displayName: "Steer crew",
+        instanceId: "crew:steer",
+        seatName: "builder",
+        captainParticipantId: participantIdForThread(captainThreadId),
+        roster: [],
+      },
+    });
+    yield* sql`INSERT INTO j5_crew_seat_context (thread_id, first_turn_text, workspace)
+      VALUES (${threadId}, ${text}, '{"type":"shared"}')`;
+    // The builder's assignment started the turn that is still running.
+    yield* Effect.gen(function* () {
+      yield* (yield* CrewTurnContext.CrewTurnContext).deliver(
+        { threadId, runId: RunId.make("run:crew-builder"), providerThread, text: "Build the fix." },
+        () => Effect.succeed(true),
+      );
+    }).pipe(Effect.provide(CrewTurnContext.layer));
+    yield* crews.addMembers("crew:steer", [
+      seat("reviewer", ThreadId.make("thread:crew-reviewer")),
+    ]);
+
+    const target = {
+      threadId,
+      providerSessionId: sessionId,
+      providerThreadId,
+      providerTurnId,
+      messageId: message.id,
+    };
+    const layerControl = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getProviderControlContext: () =>
+              Effect.succeed({
+                providerThread,
+                providerTurn: base.providerTurns[0],
+                attempt: base.attempts[0],
+                message,
+                run: { id: RunId.make("run:crew-builder") },
+              } as never),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            get: () => Effect.succeedSome(runtime),
+          }),
+        ),
+      ),
+      Layer.provide(CrewTurnContext.layer),
+    );
+    yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      yield* control.steer(target);
+      yield* control.steer(target);
+    }).pipe(Effect.provide(layerControl));
+
+    assert.lengthOf(steered, 2);
+    assert.include(steered[0]!, "joined: reviewer: participant_id=");
+    assert.isTrue(steered[0]!.endsWith("Also cover the retry path."));
+    assert.equal(steered[1], "Also cover the retry path.");
+  }).pipe(Effect.provide(crewServices)),
 );

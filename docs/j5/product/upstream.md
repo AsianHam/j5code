@@ -118,6 +118,18 @@ Letter codes in the Decided lines (SC2, QS1, AR3, and so on) are rulings recorde
 
 **Decided:** Jackson, 2026-10-13. Recorded in FORK.md case 74.
 
+#### D43. A thread can keep a message the platform wrote without a run
+
+**Upstream:** a message in a thread's history is a turn: dispatching one always starts a run, queues one behind the running turn, or steers the running one. There is no way to add something to the history that the agent is not asked to answer.
+
+**J5:** an internal command records a platform-authored message in a thread, as a user-role message from the platform, without starting, queuing or counting a run. J5 uses it for one thing: after the provider takes a prompt that carried a Crew member's introduction or a roster change, the member's thread records exactly what the model read, without the assignment, as a collapsed card. It sits with the run it was told in and is recorded once however often the delivery is retried.
+
+**Why:** since the Crew member's introduction began riding with its first assignment for the model only, the person reading the member's thread could not see what the member had been told (Jackson, review of the first-assignment change). Posting it with `message.dispatch` would have started a run on a member that should only be told something.
+
+**Consequences:** one new internal command, decided into upstream's existing message and turn-item events, with no new projection (FORK.md case 106); the edits are one `case` and one decision function in `Orchestrator.ts`, one internal command in the contracts, one `runId` in the delivery `ProviderTurnStartService.ts` already builds, and the turn services' layers built below the orchestrator in `runtimeLayer.ts`. The record sits in the thread's history with a steer's intent, so a context handoff or a history rebuilt after a lost session reads it as something the model was told, never as a turn to answer. At each advance, check that a new message or turn-item kind and the history rebuilds still take a run-less user message.
+
+**Decided:** Jackson, 2026-10-31, as the product decision that a member's introduction is visible in its thread; Bryant approved this implementation and the upstream edits. Recorded in FORK.md case 106.
+
 ### New threads
 
 #### D12. Multi-model send is refused from a persona draft
@@ -630,3 +642,4 @@ J5 kept a run from resuming after a usage-limit reset when the person had presse
 - 2026-10-31 — D33: "Merge back" is disabled for someone who can't start a thread in the fork's project, which the server already refused (Jackson's 2026-10-31 approval; [#730](https://github.com/Jacksondr5/j5code/issues/730)).
 - 2026-11-01 — D33: the mobile client reads shared conversations as web does, with each message's author and avatar, who answered each prompt, and another person's message held until its author is known; sharing itself stays on web and desktop (the mobile catch-up; [#832](https://github.com/Jacksondr5/j5code/issues/832), [#871](https://github.com/Jacksondr5/j5code/issues/871), [#869](https://github.com/Jacksondr5/j5code/issues/869)).
 - 2026-11-01 — D41 added: on mobile, a draft's persona has its own row under the checkout row, and the slash menu covers the draft rows (Jackson, Checkpoint 1; [#866](https://github.com/Jacksondr5/j5code/issues/866)).
+- 2026-10-31 — D43 added: a thread can keep a message the platform wrote without a run, so a Crew member's introduction and roster changes show in its own thread (Jackson, 2026-10-31).

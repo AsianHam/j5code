@@ -1,3 +1,4 @@
+import { CrewSeatWorkspace } from "@t3tools/contracts/j5";
 import {
   describeCrewSeatRuntime,
   materializeCrewModelSelection,
@@ -15,6 +16,8 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
@@ -56,7 +59,6 @@ import {
   spawnCrewInstanceId,
   spawnFirstTurnText,
   spawnHomeCommandId,
-  spawnMessageId,
   spawnPlacementCommandId,
   spawnThreadId,
   spawnTitle,
@@ -159,9 +161,9 @@ export interface CrewAddSeatsInput {
 }
 
 /**
- * How one approved seat's launch went: `created` when its thread, home, and brief all went out;
+ * How one approved seat's launch went: `created` when its thread and home exist and it is waiting for work;
  * `not_created` when its thread was never created, so its row is dropped and nothing can message
- * it; `not_started` when the thread exists but its home or its brief did not go through.
+ * it; `not_started` when the thread exists but its home or placement did not go through.
  */
 export type CrewSeatLaunchOutcome =
   | { readonly seatName: string; readonly kind: "created" }
@@ -624,8 +626,8 @@ export const layer = Layer.effect(
         const seatName = member.seat.name;
         // Seats go through the same start guard as j5_spawn_agent (see `withSpawnStart`), so every
         // door that creates a spawn thread keeps its invariant. A Crew's launches are already
-        // serialized, so its in-flight refusal is not expected here; the brief takes the guard
-        // again once every seat exists.
+        // serialized, so its in-flight refusal is not expected here. Their first assignments arrive
+        // separately.
         const started = yield* Effect.result(
           spawnWorkspace.withSpawnStart(
             {
@@ -645,8 +647,9 @@ export const layer = Layer.effect(
       return { outcomes, created };
     });
 
-    /** Brief every created seat, carrying on past one whose brief did not go out. */
-    const startBriefs = Effect.fn("j5.a2a.crewLaunch.startBriefs")(function* (
+    const sql = yield* SqlClient.SqlClient;
+    const encodeWorkspace = Schema.encodeEffect(Schema.fromJsonString(CrewSeatWorkspace));
+    const prepareBriefs = Effect.fn("j5.a2a.crewLaunch.prepareBriefs")(function* (
       captain: CrewCaptain,
       instance: AgentCrewInstance,
       planned: ReadonlyArray<Planned>,
@@ -656,12 +659,12 @@ export const layer = Layer.effect(
       const roster = instance.members.map((member) => ({
         seat: member.seatName,
         participantId: member.participantId,
+        reason: member.reason,
         agentDisplayName:
           planned.find((entry) => entry.seat.name === member.seatName)?.agentDisplayName ??
           member.agentId ??
           "custom",
       }));
-      const failed = new Map<string, string>();
       for (const member of planned) {
         const text = spawnFirstTurnText({
           brief,
@@ -698,38 +701,17 @@ export const layer = Layer.effect(
                   },
           },
         });
-        const dispatched = yield* Effect.result(
-          spawnWorkspace.withSpawnStart(
-            {
-              stableInput: member.stableInput,
-              threadId: member.threadId,
-            },
-            spawnWorkspace.startBrief({
-              workspace: member.workspace,
-              stableInput: member.stableInput,
-              ledgerProjectId: captain.projectId,
-              projectId: captain.thread.projectId,
-              threadId: member.threadId,
-              title: spawnTitle(member.seat.name),
-              messageId: spawnMessageId(member.stableInput),
-              text,
-              modelSelection: member.modelSelection,
-              runtimeMode: member.runtimeMode,
-              interactionMode: captain.thread.interactionMode,
-            }),
-          ),
-        );
-        if (Result.isFailure(dispatched))
-          failed.set(
-            member.seat.name,
-            `starting its brief failed: ${detailOf(dispatched.failure)}`,
-          );
+        const workspaceJson = yield* encodeWorkspace(member.workspace);
+        yield* sql`
+          INSERT INTO j5_crew_seat_context (thread_id, first_turn_text, workspace, agent_display_name)
+          VALUES (${member.threadId}, ${text}, ${workspaceJson}, ${member.agentDisplayName})
+          ON CONFLICT (thread_id) DO NOTHING
+        `;
       }
-      return failed;
     });
 
     /**
-     * Spawn and brief the reserved seats, then drop the rows of seats that were never created.
+     * Create the reserved seats with their approved context, then drop seats that were never created.
      * Every seat is attempted; the outcomes say what became of each.
      */
     const spawnAndBrief = Effect.fn("j5.a2a.crewLaunch.spawnAndBrief")(function* (
@@ -740,6 +722,17 @@ export const layer = Layer.effect(
       playbook: CrewLaunchPlaybook | null,
       addition: boolean,
     ) {
+      yield* prepareBriefs(captain, instance, planned, brief, playbook).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CrewLaunchOperationError({
+              phase: "prepare seat context",
+              seatName: null,
+              createdSeats: [],
+              cause,
+            }),
+        ),
+      );
       const spawned = yield* spawnSeats(captain, planned);
       const notCreated = spawned.outcomes.flatMap((outcome) =>
         outcome.kind === "not_created" ? [outcome.seatName] : [],
@@ -756,17 +749,7 @@ export const layer = Layer.effect(
             }),
           ),
         );
-      const current = (yield* crews.read(instance.id).pipe(Effect.orElseSucceed(() => null))) ?? {
-        ...instance,
-        members: instance.members.filter((member) => !notCreated.includes(member.seatName)),
-      };
-      const briefFailures = yield* startBriefs(captain, current, spawned.created, brief, playbook);
-      const seats = spawned.outcomes.map((outcome): CrewSeatLaunchOutcome => {
-        const briefFailure = briefFailures.get(outcome.seatName);
-        return outcome.kind === "created" && briefFailure !== undefined
-          ? { seatName: outcome.seatName, kind: "not_started", detail: briefFailure }
-          : outcome;
-      });
+      const seats = spawned.outcomes;
       const outcomes = (kind: CrewSeatLaunchOutcome["kind"]) =>
         seats.filter((seat) => seat.kind === kind).length;
       yield* recordAnalytics("j5.crew.launched", {
@@ -781,7 +764,13 @@ export const layer = Layer.effect(
         notCreated: outcomes("not_created"),
         notStarted: outcomes("not_started"),
       });
-      return { instance: current, seats } satisfies CrewLaunchResult;
+      return {
+        instance: (yield* crews.read(instance.id).pipe(Effect.orElseSucceed(() => null))) ?? {
+          ...instance,
+          members: instance.members.filter((member) => !notCreated.includes(member.seatName)),
+        },
+        seats,
+      } satisfies CrewLaunchResult;
     });
 
     const launch: CrewLaunchServiceShape["launch"] = Effect.fn("j5.a2a.crewLaunch.launch")(
@@ -846,7 +835,7 @@ export const layer = Layer.effect(
         );
       },
       (launch, input) =>
-        // One unit step from the record through the briefs, so a unit archive waits for every
+        // One unit step from the record through creation, so a unit archive waits for every
         // seat to exist before it reads the roster.
         crews.serialize(
           spawnCrewInstanceId({

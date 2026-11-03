@@ -6,7 +6,11 @@ import type {
 } from "@t3tools/contracts";
 
 import { resolveUserMessagePresentation } from "../userMessage.ts";
-import { participantIdsForCrewNotice, presentCrewNotice } from "./crewNotices.ts";
+import {
+  participantIdsForCrewNotice,
+  presentCrewContext,
+  presentCrewNotice,
+} from "./crewNotices.ts";
 
 /**
  * How J5 shows a user-role message in a thread's timeline, grouped by who is speaking
@@ -32,6 +36,7 @@ export type J5NoticeKind =
   | "silence"
   | "crew-gate"
   | "crew-seats"
+  | "crew-context"
   | "restart-continuation"
   | "pr-watch"
   | "platform";
@@ -503,6 +508,10 @@ export function presentJ5UserMessage(
   if (prompt !== undefined) return { group: "prompt", side: "left", kind: prompt[1], text };
 
   if (message.createdBy === "system") {
+    const context = presentCrewContext({ role: message.role, text, createdBy: message.createdBy });
+    if (context !== null) {
+      return { group: "notice", side: "left", kind: "crew-context", summary: context.title, text };
+    }
     const crew = presentCrewNotice({ role: message.role, text, createdBy: message.createdBy });
     return {
       group: "notice",
