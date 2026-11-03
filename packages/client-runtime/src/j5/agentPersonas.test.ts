@@ -967,6 +967,11 @@ it("reports drift only when both the snapshot and the current definition carry d
     "changed",
   );
   expect(agentPersonaDrift({ personaId: persona.personaId }, listed)).toBe("unknown");
+  const edited = { ...assignment, instructionsEdited: true };
+  expect(agentPersonaDrift({ ...edited, definitionDigest: "b".repeat(64) }, listed)).toBe(
+    "unknown",
+  );
+  expect(agentPersonaDrift(edited, listed)).toBe("unknown");
   expect(agentPersonaDrift(assignment, { personas: [] })).toBe("unknown");
   expect(agentPersonaDrift(assignment, null)).toBe("unknown");
 });

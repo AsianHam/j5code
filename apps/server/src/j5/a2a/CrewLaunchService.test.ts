@@ -1182,6 +1182,66 @@ it.effect("a full-access persona seat runs full access unless the seat overrides
   }).pipe(Effect.scoped),
 );
 
+it.effect("a persona seat's edited instructions replace the persona's own at launch", () =>
+  Effect.gen(function* () {
+    const { context, commands, captain } = yield* fixture;
+    const layer = crewLaunchLayer.pipe(
+      Layer.provideMerge(
+        dependencies(commands, [
+          provider("codex", "codex", [{ slug: "gpt-5.6-terra", options: ["high"] }]),
+        ]),
+      ),
+      Layer.provideMerge(Layer.succeedContext(context)),
+      Layer.provideMerge(
+        personaLibraryLayer("j5-edited-persona-", Object.values(BUILT_IN_AGENT_PERSONAS)),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    yield* Effect.gen(function* () {
+      const launcher = yield* CrewLaunchService;
+      const library = yield* makeAgentPersonaLibrary;
+      const seat = {
+        name: "scout",
+        agentId: "scout",
+        reason: "Look around",
+        workspace: { type: "shared" as const },
+      };
+      const instructionsOf = (resolved: (typeof plain)[number]) =>
+        resolveAgentPersonaRuntime(
+          { agentPersonaAssignment: resolved.assignment!, runtimeMode: resolved.runtimeMode },
+          library,
+        ).pipe(Effect.map(({ agentPersonaInstructions }) => agentPersonaInstructions!));
+      const plain = yield* launcher.resolveSeats(captain, [seat]);
+      const edited = yield* launcher.resolveSeats(captain, [
+        { ...seat, personaInstructions: "Only read the README." },
+      ]);
+      const original = BUILT_IN_AGENT_PERSONAS.scout.instructions;
+      assert.include(yield* instructionsOf(plain[0]!), original);
+      const replaced = yield* instructionsOf(edited[0]!);
+      assert.include(replaced, "Only read the README.");
+      assert.notInclude(replaced, original);
+      assert.equal(edited[0]!.assignment!.personaId, plain[0]!.assignment!.personaId);
+      assert.equal(edited[0]!.assignment!.instructionsEdited, true);
+      assert.notProperty(plain[0]!.assignment!, "instructionsEdited");
+      assert.notEqual(
+        edited[0]!.assignment!.definitionDigest,
+        plain[0]!.assignment!.definitionDigest,
+      );
+      // A seat with no edit resolves exactly as it always did, so its approval token is unchanged.
+      assert.deepStrictEqual(yield* launcher.resolveSeats(captain, [seat]), plain);
+      const proposal = {
+        id: "proposal:edit",
+        brief: "Look around.",
+        displayName: "Edit",
+      } as unknown as Parameters<typeof crewApprovalToken>[0];
+      assert.notEqual(
+        crewApprovalToken(proposal, captain, plain),
+        crewApprovalToken(proposal, captain, edited),
+      );
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.scoped),
+);
+
 it.effect("refuses persona seats whose effective ACP access the harness cannot enforce", () =>
   Effect.gen(function* () {
     const { context, commands, captain } = yield* fixture;

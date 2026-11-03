@@ -79,7 +79,11 @@ export const crewRosterChanges = (
     renamed,
     runtimeChanged,
     instructionsChanged: retained
-      .filter(({ previous, seat }) => previous.instructions !== seat.instructions)
+      .filter(
+        ({ previous, seat }) =>
+          previous.instructions !== seat.instructions ||
+          previous.personaInstructions !== seat.personaInstructions,
+      )
       .map(({ seat }) => seat.seat),
   };
 };

@@ -59,12 +59,14 @@ function Surface(props: {
   environmentId: EnvironmentId | null;
   busy?: boolean;
   proposalId?: string;
+  enabled?: boolean;
 }) {
   const preview = useCrewProposalPreview(
     props.environmentId,
     props.proposalId ?? "proposal:1",
     props.seats,
     props.busy ?? false,
+    props.enabled ?? true,
   );
   useEffect(() => {
     result = preview;
@@ -175,7 +177,7 @@ describe("crew runtime preview lifecycle", () => {
     await screen.rerender(surface(seats, environmentId, false));
     expect(previewCrewProposal).toHaveBeenCalledTimes(2);
     expect(result.data).toBeNull();
-    expect(result.runtimeSeats).toBeNull();
+    expect(result.runtimeSeats).toEqual(response.seats);
     expect(result.loading).toBe(true);
     await act(async () => next.resolve({ ...response, approvalToken: "preview:2" }));
     expect(result.data?.approvalToken).toBe("preview:2");
@@ -228,5 +230,50 @@ describe("crew runtime preview lifecycle", () => {
     expect(result.loading).toBe(false);
     expect(result.error).toContain("Connect");
     expect(previewCrewProposal).toHaveBeenCalledTimes(1);
+  });
+  it("keeps unchanged runtime readable for incomplete instructions without previewing an invalid roster", async () => {
+    setup();
+    previewCrewProposal.mockResolvedValue(response);
+    await using screen = await render(surface(), { router: false });
+    const invalid = [{ ...seats[0]!, instructions: "" }];
+    await screen.rerender(
+      <Surface seats={invalid} environmentId={environmentId} enabled={false} />,
+    );
+    expect(result.data).toBeNull();
+    expect(result.loading).toBe(false);
+    expect(result.runtimeSeats).toEqual(response.seats);
+    expect(previewCrewProposal).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-preview a new array with byte-identical seats", async () => {
+    setup();
+    previewCrewProposal.mockResolvedValue(response);
+    await using screen = await render(surface(), { router: false });
+    await screen.rerender(surface(seats.map((seat) => ({ ...seat }))));
+    expect(previewCrewProposal).toHaveBeenCalledTimes(1);
+    expect(result.data).toEqual(response);
+  });
+
+  it("retains repair choices after a failed preview without retaining approval authority or crossing environments", async () => {
+    setup();
+    const failed = deferred<CrewProposalPreviewResponse>();
+    const elsewhere = deferred<CrewProposalPreviewResponse>();
+    previewCrewProposal
+      .mockResolvedValueOnce(response)
+      .mockReturnValueOnce(failed.promise)
+      .mockReturnValueOnce(elsewhere.promise);
+    await using screen = await render(surface(), { router: false });
+    const changed = [{ ...seats[0]!, workspace: { type: "worktree" as const, baseRef: "" } }];
+    await screen.rerender(surface(changed));
+    expect(result.workspaceOptions).toEqual(response.workspaceOptions);
+    expect(result.data).toBeNull();
+    await act(async () => failed.reject(new Error("Invalid base branch")));
+    expect(result.workspaceOptions).toEqual(response.workspaceOptions);
+    expect(result.data).toBeNull();
+    expect(result.runtimeSeats).toBeNull();
+    expect(result.error).toBe("Invalid base branch");
+    await screen.rerender(surface(changed, EnvironmentId.make("different-environment")));
+    expect(result.workspaceOptions).toBeUndefined();
+    expect(result.data).toBeNull();
   });
 });

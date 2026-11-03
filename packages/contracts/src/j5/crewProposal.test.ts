@@ -84,3 +84,24 @@ it("still refuses a seat workspace it can't decode in a preview or an approval",
     }),
   ).toThrow();
 });
+
+it("carries the person's replacement persona text through a preview and an approval", () => {
+  const seat = {
+    seat: "reviewer",
+    agentId: "sentry",
+    reason: "Review",
+    personaInstructions: "Only read the README.",
+    workspace: { type: "shared" },
+  };
+  expect(decodePreviewRequest({ proposalId: "proposal", seats: [seat] }).seats?.[0]).toMatchObject({
+    personaInstructions: "Only read the README.",
+  });
+  expect(
+    decodeResolve({
+      proposalId: "proposal",
+      decision: "approve",
+      approvalToken: "token",
+      seats: [seat],
+    }),
+  ).toMatchObject({ seats: [{ personaInstructions: "Only read the README." }] });
+});

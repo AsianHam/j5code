@@ -20,6 +20,8 @@ export interface CrewSeatDraft {
   readonly seat: string;
   readonly agentId: string;
   readonly instructions: string;
+  /** The persona's whole text as edited on the card, run instead of the persona's own. */
+  readonly personaInstructions?: string;
   readonly modelSelection?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
   readonly workspace?: CrewSeatWorkspace;
@@ -65,6 +67,9 @@ export const crewSeatDraft = (seat: CrewProposalSeat): CrewSeatDraft => ({
   seat: seat.seat,
   agentId: seat.agentId ?? CUSTOM_AGENT,
   instructions: seat.instructions ?? "",
+  ...(seat.personaInstructions === undefined
+    ? {}
+    : { personaInstructions: seat.personaInstructions }),
   ...(seat.modelSelection === undefined ? {} : { modelSelection: seat.modelSelection }),
   ...(seat.runtimeMode === undefined ? {} : { runtimeMode: seat.runtimeMode }),
   ...(seat.workspace === undefined ? {} : { workspace: seat.workspace }),
@@ -197,6 +202,7 @@ export const applyCrewSeatDraft = (
   reason: seat.reason,
   agentId: draft.agentId === CUSTOM_AGENT ? null : draft.agentId,
   ...(draft.instructions ? { instructions: draft.instructions } : {}),
+  ...(draft.personaInstructions ? { personaInstructions: draft.personaInstructions } : {}),
   ...(draft.modelSelection ? { modelSelection: draft.modelSelection } : {}),
   ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
   ...(draft.workspace ? { workspace: draft.workspace } : {}),

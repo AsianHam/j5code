@@ -1,4 +1,9 @@
-import { ModelSelection, RuntimeMode, ThreadId } from "@t3tools/contracts";
+import {
+  AGENT_PERSONA_INSTRUCTIONS_MAX_LENGTH,
+  ModelSelection,
+  RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 import { CrewPersonaSwap, PLAYBOOK_MAX_STEPS } from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -23,6 +28,8 @@ export const CrewProposalSeat = Schema.Struct({
   agentId: Schema.NullOr(bounded(CREW_NAME_MAX_CHARS)),
   reason: bounded(CREW_REASON_MAX_CHARS),
   instructions: Schema.optional(bounded(CREW_TEXT_MAX_CHARS)),
+  /** Set only by the person's roster card, never by an agent's request: the persona's text, replaced. */
+  personaInstructions: Schema.optional(bounded(AGENT_PERSONA_INSTRUCTIONS_MAX_LENGTH)),
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
   /**

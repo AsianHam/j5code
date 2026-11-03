@@ -37,7 +37,11 @@ import {
 } from "../../orchestration-v2/ProjectionStore.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
-import { createAgentPersonaLibrary } from "../agents/agentPersonaLibrary.ts";
+import {
+  createAgentPersonaLibrary,
+  makeAgentPersonaLibrary,
+} from "../agents/agentPersonaLibrary.ts";
+import { resolveAgentPersonaRuntime } from "../agents/agentPersonaRuntime.ts";
 import { BUILT_IN_AGENT_PERSONAS } from "../agents/agentPersonas.ts";
 import { personaLibraryLayer } from "../test-support/personaLibrary.ts";
 import { buildAgentPersonaCatalog } from "../agents/agentPersonaRouting.ts";
@@ -3162,4 +3166,83 @@ it.effect.each(["roster", "addition"] as const)(
         }
       }).pipe(Effect.provide(layer));
     }),
+);
+
+it.effect(
+  "an approved edit replaces the persona's instructions and leaves what the agent filed alone",
+  () =>
+    Effect.gen(function* () {
+      const { layer, commands } = yield* playbookFixture;
+      yield* Effect.gen(function* () {
+        const gate = withPreview(yield* CrewProposalService);
+        const library = yield* makeAgentPersonaLibrary;
+        const { stateDir } = yield* ServerConfig;
+        yield* createAgentPersonaLibrary({
+          fs: yield* FileSystem.FileSystem,
+          path: yield* Path.Path,
+          stateDir,
+        }).createPersona({
+          id: "surveyor",
+          displayName: "Surveyor",
+          description: "Looks around.",
+          instructions: "Survey the whole repository.",
+          authorityPolicy: "read-only",
+          modelRoute: [
+            {
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.6-sol",
+              reasoningEffort: "high",
+            },
+            {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              model: "claude-opus-5-5",
+              reasoningEffort: "high",
+            },
+          ],
+        });
+        const filed = {
+          workspace: { type: "shared" as const },
+          seat: "surveyor",
+          agentId: "surveyor",
+          reason: "Looks around",
+        };
+        const request = {
+          requestKey: "persona-edit",
+          captain,
+          displayName: "Persona edit",
+          brief: "Look around.",
+          seats: [filed],
+        };
+        const opened = yield* gate.propose(request);
+        yield* gate.resolve({
+          proposalId: opened.proposal.id,
+          decision: "approve",
+          seats: [{ ...filed, personaInstructions: "Only read the README." }],
+        });
+
+        const stored = yield* (yield* AgentCrewProposalService).read(opened.proposal.id);
+        assert.notProperty(stored!.requestedSeats[0]!, "personaInstructions");
+        assert.equal(stored!.approvedSeats![0]!.personaInstructions, "Only read the README.");
+        // What the agent filed still replays, whatever the person later changed.
+        assert.equal((yield* gate.propose(request)).proposal.id, opened.proposal.id);
+
+        const created = (yield* Ref.get(commands)).find(
+          (command) => command.type === "thread.create",
+        );
+        assert.equal(created?.type, "thread.create");
+        const runtime = yield* resolveAgentPersonaRuntime(
+          { agentPersonaAssignment: created!.agentPersonaAssignment!, runtimeMode: "full-access" },
+          library,
+        );
+        assert.include(runtime.agentPersonaInstructions!, "Only read the README.");
+        assert.notInclude(runtime.agentPersonaInstructions!, "Survey the whole repository.");
+        const brief = (yield* Ref.get(commands)).find(
+          (command) => command.type === "message.dispatch",
+        );
+        assert.notInclude(
+          brief?.type === "message.dispatch" ? brief.text : "",
+          "<seat_instructions>",
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
 );

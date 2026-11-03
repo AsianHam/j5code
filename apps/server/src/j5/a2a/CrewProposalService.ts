@@ -64,6 +64,7 @@ const launchSeatOf = (seat: CrewProposalSeat): CrewLaunchSeat => {
     agentId: seat.agentId,
     reason: seat.reason,
     instructions: seat.instructions,
+    personaInstructions: seat.personaInstructions,
     modelSelection: seat.modelSelection,
     runtimeMode: seat.runtimeMode,
     steps: seat.steps,

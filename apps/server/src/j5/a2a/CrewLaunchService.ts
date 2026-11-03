@@ -22,7 +22,10 @@ import { ThreadManagementService } from "../../orchestration-v2/ThreadManagement
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { prepareAgentPersonaLaunch } from "../agents/agentPersonaLaunch.ts";
 import { agentHandoffArtifactPath } from "../agents/agentPersonaArtifacts.ts";
-import { makeAgentPersonaLibrary } from "../agents/agentPersonaLibrary.ts";
+import {
+  AgentPersonaLibraryError,
+  makeAgentPersonaLibrary,
+} from "../agents/agentPersonaLibrary.ts";
 import {
   providerCanEnforceAgentPersonaAuthority,
   translateAgentPersonaProviderPolicy,
@@ -69,6 +72,8 @@ export interface CrewLaunchSeat {
   readonly agentId: string | null;
   readonly reason: string | null;
   readonly instructions?: string | undefined;
+  /** Replaces the persona's own instructions for this seat; set only by the person's roster card. */
+  readonly personaInstructions?: string | undefined;
   readonly modelSelection?: ModelSelection | undefined;
   readonly runtimeMode?: RuntimeMode | undefined;
   /** Ids of the playbook steps the seat owns; recorded on its member row. */
@@ -377,7 +382,7 @@ export const layer = Layer.effect(
           });
           continue;
         }
-        const assignment = yield* Effect.gen(function* () {
+        const prepared = yield* Effect.gen(function* () {
           if (seat.modelSelection === undefined) {
             const prepared = yield* prepareAgentPersonaLaunch(
               { personaId: agentId },
@@ -437,6 +442,33 @@ export const layer = Layer.effect(
               }),
           ),
         );
+        // The person's edited text runs instead of the persona's, never beside it: the seat's
+        // assignment points at a snapshot of the persona with that text.
+        const assignment =
+          seat.personaInstructions === undefined
+            ? prepared
+            : yield* agents.readSnapshot(prepared).pipe(
+                Effect.flatMap((definition) =>
+                  agents.snapshot({ ...definition, instructions: seat.personaInstructions! }),
+                ),
+                Effect.flatMap((definitionDigest) =>
+                  definitionDigest === undefined
+                    ? Effect.fail(
+                        new AgentPersonaLibraryError({
+                          message: "Persona snapshot storage is unavailable.",
+                        }),
+                      )
+                    : Effect.succeed({ ...prepared, definitionDigest, instructionsEdited: true }),
+                ),
+                Effect.mapError(
+                  (error) =>
+                    new CrewLaunchSeatUnavailableError({
+                      seatName: seat.name,
+                      agentId,
+                      detail: error.message,
+                    }),
+                ),
+              );
         // Every seat reaching this point was approved by a human, and that approval is the
         // authority: explicit runtime choices override the persona sandbox while its behavior
         // instructions remain pinned to the original snapshot.

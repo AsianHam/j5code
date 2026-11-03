@@ -47,6 +47,7 @@ import { answerHumanExchange } from "./humanInboxClient";
 import { useScopedParticipantLabels } from "./ParticipantIdentitiesClient";
 import { presentParticipantIdentity } from "@t3tools/client-runtime/j5/participant-identity";
 import { CrewProposalCard } from "../crew/CrewProposalCard";
+import { clearCrewProposalDraft } from "../crew/crewProposalDraftStore";
 import { CrewRuntimeRequestsSection } from "../crew/CrewRuntimeRequestsSection";
 import type { ScopedCrewRuntimeRequest } from "../crew/crewRuntimeRequests.logic";
 import {
@@ -609,7 +610,8 @@ export function HumanInboxPage() {
     setResolvingProposalId(proposal.id);
     setError(null);
     const failure = await resolveInboxProposal(proposal, decision, seats, approvalToken);
-    if (failure !== null) setError(failure);
+    if (failure === null) clearCrewProposalDraft(proposal.environmentId, proposal.id);
+    else setError(failure);
     setResolvingProposalId(null);
   };
   const openCaptain = (proposal: ScopedCrewProposal) => {

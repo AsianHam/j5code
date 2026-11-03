@@ -150,6 +150,11 @@ export const CrewProposalSeat = Schema.Struct({
   agentId: Schema.NullOr(Schema.String),
   reason: Schema.String,
   instructions: Schema.optional(Schema.String),
+  /**
+   * The persona's whole instructions as the person edited them on the roster card, run in place
+   * of the persona's own. Agents never set it; `instructions` stays the extra text beside them.
+   */
+  personaInstructions: Schema.optional(Schema.String),
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
   /** Ids of the playbook steps this seat owns; only on a Crew that follows a playbook. */

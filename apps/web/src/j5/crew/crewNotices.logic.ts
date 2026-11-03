@@ -94,11 +94,23 @@ export const crewNoticeLines = (notice: CrewNoticePresentation): ReadonlyArray<C
   });
 };
 
-/** An approved gate or a finish with nothing to act on takes no row in the timeline. */
+/**
+ * The stored launch report records the approved members, including ones never created. The
+ * approver is named when the notice carries one, which only a shared conversation's does.
+ */
+export const crewApprovalSummary = (notice: CrewNoticePresentation): string | null => {
+  if (notice.kind !== "gate" || notice.decision !== "approved" || notice.requestKind !== "roster")
+    return null;
+  const count = notice.roster.length + notice.notCreated.length;
+  const by = notice.decidedBy ? ` · by ${notice.decidedBy}` : "";
+  return `Crew approved · ${count} ${count === 1 ? "member" : "members"}${by}`;
+};
+
+/** Completed finishes and successful additions take no row in the timeline. */
 export const isHiddenCrewNotice = (message: CrewNoticeMessage): boolean => {
   const notice = presentCrewNotice(message);
   if (notice === null || (notice.kind === "gate" && notice.decision === "declined")) return false;
-  return crewNoticeLines(notice).length === 0;
+  return crewApprovalSummary(notice) === null && crewNoticeLines(notice).length === 0;
 };
 
 const visibleRows = new WeakMap<object, ReadonlyArray<object>>();
