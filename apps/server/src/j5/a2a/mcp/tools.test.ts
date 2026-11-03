@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
+import { J5DelegateTaskTool } from "../../agents/agentDelegation.ts";
 import { A2A_SEND_TOOL_DESCRIPTION } from "../EnvelopeFormatter.ts";
 import { J5AttachmentUploadToolkit } from "./attachments.ts";
 import { J5AdaptedThreadToolkit } from "./threadTools.ts";
@@ -93,7 +94,7 @@ it("publishes the ratified single-target lifecycle contracts fail-closed", () =>
   };
   assert.sameMembers(
     [...(spawnSchema.required ?? [])],
-    ["brief", "title", "provider", "model", "reasoning", "workspace"],
+    ["brief", "title", "provider", "model", "workspace"],
   );
   assert.sameMembers([...(stopSchema.required ?? [])], ["participant_id"]);
   assert.property(spawnSchema.properties ?? {}, "client_request_id");
@@ -102,6 +103,7 @@ it("publishes the ratified single-target lifecycle contracts fail-closed", () =>
   assert.notProperty(spawnSchema.properties ?? {}, "agent");
   assert.include(J5SpawnAgentTool.description ?? "", "one of that persona's declared routes");
   assert.property(stopSchema.properties ?? {}, "client_request_id");
+  // Exact on purpose: no tool answers the Inbox's worktree cleanup approval; only a person can.
   assert.sameMembers(Object.keys(J5Toolkit.tools), [
     "j5_playbook_back",
     "j5_playbook_cancel",
@@ -128,10 +130,8 @@ it("publishes the ratified single-target lifecycle contracts fail-closed", () =>
   assert.include(J5ArchiveCrewTool.description ?? "", "confirmation_token");
   assert.include(J5ArchiveCrewTool.description ?? "", "check with the user");
   assert.isTrue(Context.get(J5ArchiveCrewTool.annotations, Tool.Destructive));
-  // Proposals only file a human-gated request, and must say so: read-only Captains run with
-  // approval policy never and have refused the brief when the gate looked like a shell approval.
-  assert.isFalse(Context.get(J5ProposeCrewTool.annotations, Tool.Destructive));
-  assert.isFalse(Context.get(J5RequestCrewMemberTool.annotations, Tool.Destructive));
+  assert.isTrue(Context.get(J5ProposeCrewTool.annotations, Tool.Destructive));
+  assert.isTrue(Context.get(J5RequestCrewMemberTool.annotations, Tool.Destructive));
   assert.include(J5ProposeCrewTool.description ?? "", "including approval policy never");
   assert.include(J5RequestCrewMemberTool.description ?? "", "including approval policy never");
   // Declared handoffs are written by the seat itself with the project j5_write_artifact tool
@@ -260,6 +260,21 @@ it("refuses a blank spawn title and stores it trimmed", () => {
   };
   assert.throws(() => decodeSpawnAgent({ ...spawn, title: "   " }));
   assert.equal(decodeSpawnAgent({ ...spawn, title: " Login fixer " }).title, "Login fixer");
+});
+
+it("says which of the two ways to get help each tool serves", () => {
+  // j5_spawn_agent serves neither: it is for a Peer Agent the user asked for.
+  assert.include(J5_SPAWN_AGENT_DESCRIPTION, "explicitly asks for a Peer Agent");
+  assert.include(
+    J5_SPAWN_AGENT_DESCRIPTION,
+    "When nobody asked for one, it is not a way to get help with your own work",
+  );
+  assert.include(J5_SPAWN_AGENT_DESCRIPTION, "create a subagent");
+  assert.include(J5_PROPOSE_CREW_DESCRIPTION, "the second of the two ways to get help");
+  assert.include(J5_PROPOSE_CREW_DESCRIPTION, "Use it when the user asks for a crew");
+  assert.notInclude(J5_PROPOSE_CREW_DESCRIPTION, "does not decide it");
+  assert.include(J5_REQUEST_CREW_MEMBER_DESCRIPTION, "the second of the two ways to get help");
+  assert.include(J5DelegateTaskTool.description, "the first of the two ways to get help");
 });
 
 it("tells a Captain proposing a crew how a playbook shapes the roster", () => {

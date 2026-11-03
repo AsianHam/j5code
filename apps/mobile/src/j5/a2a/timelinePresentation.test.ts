@@ -167,6 +167,21 @@ describe("presentJ5TimelineNotice", () => {
     ).toEqual({ kind: "raw", label: "Crew notice" });
   });
 
+  it("shows what a Crew member was told as a card of its own, not as the reader's message", () => {
+    expect(
+      presentJ5TimelineNotice({
+        id: "message:j5:crew-context:abc",
+        role: "user",
+        createdBy: "system",
+        text: "<j5_crew_delivery_context>\n<j5_crew_roster_changed>\njoined: security\n</j5_crew_roster_changed>\n</j5_crew_delivery_context>",
+      }),
+    ).toEqual({
+      kind: "context",
+      title: "Roster changed",
+      text: "<j5_crew_roster_changed>\njoined: security\n</j5_crew_roster_changed>",
+    });
+  });
+
   it("leaves letters and upstream's own messages to their rows", () => {
     expect(presentJ5TimelineNotice(delivery("agent", askRaw))).toBeNull();
     expect(

@@ -1,3 +1,4 @@
+import { CrewSeatWorkspace, crewMemberSelectionLevel } from "@t3tools/contracts/j5";
 import {
   describeCrewSeatRuntime,
   materializeCrewModelSelection,
@@ -15,14 +16,20 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
+import { CrewMemberModels } from "../agents/crewMemberModels.ts";
 import { prepareAgentPersonaLaunch } from "../agents/agentPersonaLaunch.ts";
 import { agentHandoffArtifactPath } from "../agents/agentPersonaArtifacts.ts";
-import { makeAgentPersonaLibrary } from "../agents/agentPersonaLibrary.ts";
+import {
+  AgentPersonaLibraryError,
+  makeAgentPersonaLibrary,
+} from "../agents/agentPersonaLibrary.ts";
 import {
   providerCanEnforceAgentPersonaAuthority,
   translateAgentPersonaProviderPolicy,
@@ -42,10 +49,11 @@ import {
   namedBaseRefs,
   namedWorktreePaths,
   resolveSpawnWorkspace,
+  SpawnWorkspaceError,
   spawnCreateCommandId,
   spawnThreadCheckout,
 } from "./spawnWorkspace.ts";
-import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
+import { getThreadRecordsIfPresent } from "./threadProjectionReads.ts";
 import { CREW_SEAT_CAP } from "./crewLimits.ts";
 import type { ParticipantId, LedgerProjectId } from "./contracts.ts";
 import {
@@ -53,7 +61,6 @@ import {
   spawnCrewInstanceId,
   spawnFirstTurnText,
   spawnHomeCommandId,
-  spawnMessageId,
   spawnPlacementCommandId,
   spawnThreadId,
   spawnTitle,
@@ -69,6 +76,8 @@ export interface CrewLaunchSeat {
   readonly agentId: string | null;
   readonly reason: string | null;
   readonly instructions?: string | undefined;
+  /** Replaces the persona's own instructions for this seat; set only by the person's roster card. */
+  readonly personaInstructions?: string | undefined;
   readonly modelSelection?: ModelSelection | undefined;
   readonly runtimeMode?: RuntimeMode | undefined;
   /** Ids of the playbook steps the seat owns; recorded on its member row. */
@@ -154,9 +163,9 @@ export interface CrewAddSeatsInput {
 }
 
 /**
- * How one approved seat's launch went: `created` when its thread, home, and brief all went out;
+ * How one approved seat's launch went: `created` when its thread and home exist and it is waiting for work;
  * `not_created` when its thread was never created, so its row is dropped and nothing can message
- * it; `not_started` when the thread exists but its home or its brief did not go through.
+ * it; `not_started` when the thread exists but its home or placement did not go through.
  */
 export type CrewSeatLaunchOutcome =
   | { readonly seatName: string; readonly kind: "created" }
@@ -169,13 +178,25 @@ export interface CrewLaunchResult {
   readonly seats: ReadonlyArray<CrewSeatLaunchOutcome>;
 }
 
-class CrewLaunchSeatUnavailableError extends Data.TaggedError("CrewLaunchSeatUnavailableError")<{
+export class CrewLaunchSeatUnavailableError extends Data.TaggedError(
+  "CrewLaunchSeatUnavailableError",
+)<{
   readonly seatName: string;
   readonly agentId: string;
   readonly detail: string;
 }> {
   override get message(): string {
     return `Seat ${this.seatName} (agent ${this.agentId}) is unavailable: ${this.detail} Nothing was spawned.`;
+  }
+}
+
+/** A custom seat's model or reasoning level is not on the project's "Models for custom members" lists. */
+class CrewLaunchModelNotEligibleError extends Data.TaggedError("CrewLaunchModelNotEligibleError")<{
+  readonly seatName: string;
+  readonly detail: string;
+}> {
+  override get message(): string {
+    return `Seat ${this.seatName}: ${this.detail} Nothing was spawned.`;
   }
 }
 
@@ -216,6 +237,7 @@ export class CrewLaunchOperationError extends Data.TaggedError("CrewLaunchOperat
 
 export type CrewLaunchError =
   | CrewLaunchSeatUnavailableError
+  | CrewLaunchModelNotEligibleError
   | CrewLaunchCapError
   | CrewLaunchSeatConflictError
   | CrewLaunchOperationError
@@ -233,6 +255,15 @@ export interface CrewLaunchServiceShape {
     captain: CrewCaptain,
     seats: ReadonlyArray<CrewLaunchSeat>,
   ) => Effect.Effect<ReadonlyArray<ResolvedCrewLaunchSeat>, CrewLaunchError>;
+  /**
+   * Each seat's workspace choice as it should be stored: a new worktree's base resolved to a
+   * commit and saved on the choice, anything else as given. Refuses a base that resolves to
+   * nothing, naming the seat. Only worktree seats are read from the repository.
+   */
+  readonly pinWorkspaces: (
+    captain: CrewCaptain,
+    seats: ReadonlyArray<CrewLaunchSeat>,
+  ) => Effect.Effect<ReadonlyArray<SpawnWorkspaceChoice>, SpawnWorkspaceError>;
   /**
    * Launch an approved roster once: seats resolve, the instance is recorded with every planned
    * seat, `onRecorded` runs, then every seat is attempted and briefed. A seat that fails does not
@@ -263,6 +294,54 @@ export const layer = Layer.effect(
     const registry = yield* ProviderRegistry;
     const agents = yield* makeAgentPersonaLibrary;
     const spawnWorkspace = yield* SpawnWorkspaceService;
+    const memberModels = yield* CrewMemberModels;
+
+    /** One read of the Captain's repository for what these seats name; null when all are shared. */
+    const inspectWorkspaces = (captain: CrewCaptain, seats: ReadonlyArray<CrewLaunchSeat>) =>
+      seats.every((seat) => seat.workspace.type === "shared")
+        ? Effect.succeed(null)
+        : spawnWorkspace.inspect({
+            projectId: captain.thread.projectId,
+            worktreePath: captain.thread.worktreePath,
+            checkBranches: seats.some(
+              (seat) => seat.workspace.type === "worktree" && seat.workspace.branch !== undefined,
+            ),
+            baseRefs: namedBaseRefs(seats.map((seat) => seat.workspace)),
+            pinBases: true,
+            existingWorktreePaths: namedWorktreePaths(seats.map((seat) => seat.workspace)),
+          });
+
+    const pinWorkspaces = Effect.fn("j5.a2a.crewLaunch.pinWorkspaces")(function* (
+      captain: CrewCaptain,
+      seats: ReadonlyArray<CrewLaunchSeat>,
+    ) {
+      const checkout = yield* inspectWorkspaces(
+        captain,
+        seats.filter((seat) => seat.workspace.type === "worktree"),
+      );
+      if (checkout === null) return seats.map((seat) => seat.workspace);
+      return yield* Effect.forEach(
+        seats,
+        (seat): Effect.Effect<SpawnWorkspaceChoice, SpawnWorkspaceError> => {
+          const { workspace } = seat;
+          if (workspace.type !== "worktree") return Effect.succeed(workspace);
+          return Effect.fromResult(resolveSpawnWorkspace(checkout, workspace)).pipe(
+            Effect.map((resolved) =>
+              resolved.type === "worktree" && resolved.baseCommit !== undefined
+                ? { ...workspace, baseCommit: resolved.baseCommit }
+                : workspace,
+            ),
+            Effect.mapError(
+              (error) =>
+                new SpawnWorkspaceError({
+                  detail: `Seat "${seat.name}": ${error.detail}`,
+                  nextStep: error.nextStep,
+                }),
+            ),
+          );
+        },
+      );
+    });
 
     // Resolve every seat before creating anything: a Crew launches whole or not at all.
     const resolveSeats = Effect.fn("j5.a2a.crewLaunch.resolveSeats")(function* (
@@ -272,17 +351,7 @@ export const layer = Layer.effect(
       const providers = yield* registry.getProviders;
       // Every seat's workspace resolves against one read of the Captain's repository, here at
       // preview, so the approval token binds what each seat will get. Shared seats need none.
-      const checkout = seats.every((seat) => seat.workspace.type === "shared")
-        ? null
-        : yield* spawnWorkspace.inspect({
-            projectId: captain.thread.projectId,
-            worktreePath: captain.thread.worktreePath,
-            checkBranches: seats.some(
-              (seat) => seat.workspace.type === "worktree" && seat.workspace.branch !== undefined,
-            ),
-            baseRefs: namedBaseRefs(seats.map((seat) => seat.workspace)),
-            existingWorktreePaths: namedWorktreePaths(seats.map((seat) => seat.workspace)),
-          });
+      const checkout = yield* inspectWorkspaces(captain, seats);
       const resolveWorkspace = (seat: CrewLaunchSeat) =>
         Effect.fromResult(
           checkout === null
@@ -299,9 +368,21 @@ export const layer = Layer.effect(
           ),
         );
       const resolved: Array<ResolvedCrewLaunchSeat> = [];
+      // The reasoning level a selection runs at on its model, explicit or the model's default.
+      const levelOf = (selection: ModelSelection) =>
+        crewMemberSelectionLevel(
+          providers
+            .find((candidate) => candidate.instanceId === selection.instanceId)
+            ?.models.find((model) => model.slug === selection.model),
+          selection.options,
+        );
+      // `custom` seats run on whatever the project's lists of models and reasoning levels for
+      // custom members allow. A persona seat that keeps its persona's own model and level is not
+      // custom and skips the lists.
       const resolveSelection = Effect.fn("j5.a2a.crewLaunch.resolveSelection")(function* (
         seat: CrewLaunchSeat,
         selection: ModelSelection,
+        custom: boolean,
       ) {
         const provider = providers.find(
           (candidate) => candidate.instanceId === selection.instanceId,
@@ -339,13 +420,25 @@ export const layer = Layer.effect(
             agentId: seat.agentId ?? "custom seat",
             detail: optionProblem,
           });
+        if (custom)
+          yield* memberModels
+            .assertEligible({ projectId: captain.thread.projectId, selection })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new CrewLaunchModelNotEligibleError({
+                    seatName: seat.name,
+                    detail: error.message,
+                  }),
+              ),
+            );
         return { modelSelection, provider: provider! };
       });
       for (const seat of seats) {
         const agentId = seat.agentId;
         if (agentId === null) {
           const selection = seat.modelSelection ?? captain.thread.modelSelection;
-          const { modelSelection, provider } = yield* resolveSelection(seat, selection);
+          const { modelSelection, provider } = yield* resolveSelection(seat, selection, true);
           // Access is the one setting a custom seat does not take from its Captain: a seat nobody
           // configured runs in Full access, so it never stops for approvals in a thread the person
           // is not watching. The person sees and can change it on the roster card.
@@ -377,7 +470,7 @@ export const layer = Layer.effect(
           });
           continue;
         }
-        const assignment = yield* Effect.gen(function* () {
+        const prepared = yield* Effect.gen(function* () {
           if (seat.modelSelection === undefined) {
             const prepared = yield* prepareAgentPersonaLaunch(
               { personaId: agentId },
@@ -389,13 +482,33 @@ export const layer = Layer.effect(
               resolvedModelSelection: (yield* resolveSelection(
                 seat,
                 prepared.resolvedModelSelection,
+                false,
               )).modelSelection,
               ...(seat.runtimeMode === undefined ? {} : { runtimeModeOverride: seat.runtimeMode }),
             };
           }
-          const { modelSelection, provider } = yield* resolveSelection(seat, seat.modelSelection);
           const catalog = yield* agents.catalog();
           const definition = catalog.definitions.find(({ id }) => id === agentId);
+          // Editing any field on the roster card freezes the model it showed into the seat, and
+          // that is the fallback route when the primary's provider was signed out at proposal
+          // time. A seat counts as keeping the persona's model and level by matching either route,
+          // never by its absence.
+          const frozen = seat.modelSelection;
+          const frozenDriver = providers.find(
+            (candidate) => candidate.instanceId === frozen.instanceId,
+          )?.driver;
+          const keepsPersonaModel =
+            definition?.modelRoute.some(
+              (target) =>
+                target.driver === frozenDriver &&
+                target.model === frozen.model &&
+                target.reasoningEffort === levelOf(frozen),
+            ) ?? false;
+          const { modelSelection, provider } = yield* resolveSelection(
+            seat,
+            seat.modelSelection,
+            !keepsPersonaModel,
+          );
           if (definition === undefined || catalog.disabledIds.includes(agentId))
             return yield* new CrewLaunchSeatUnavailableError({
               seatName: seat.name,
@@ -428,18 +541,45 @@ export const layer = Layer.effect(
             ...(seat.runtimeMode === undefined ? {} : { runtimeModeOverride: seat.runtimeMode }),
           };
         }).pipe(
-          Effect.mapError(
-            (error) =>
-              new CrewLaunchSeatUnavailableError({
-                seatName: seat.name,
-                agentId,
-                detail: error.message,
-              }),
+          Effect.mapError((error) =>
+            error._tag === "CrewLaunchModelNotEligibleError"
+              ? error
+              : new CrewLaunchSeatUnavailableError({
+                  seatName: seat.name,
+                  agentId,
+                  detail: error.message,
+                }),
           ),
         );
-        // Every seat reaching this point was approved by a human, and that approval is the
-        // authority: explicit runtime choices override the persona sandbox while its behavior
-        // instructions remain pinned to the original snapshot.
+        // The person's edited text runs instead of the persona's, never beside it: the seat's
+        // assignment points at a snapshot of the persona with that text.
+        const assignment =
+          seat.personaInstructions === undefined
+            ? prepared
+            : yield* agents.readSnapshot(prepared).pipe(
+                Effect.flatMap((definition) =>
+                  agents.snapshot({ ...definition, instructions: seat.personaInstructions! }),
+                ),
+                Effect.flatMap((definitionDigest) =>
+                  definitionDigest === undefined
+                    ? Effect.fail(
+                        new AgentPersonaLibraryError({
+                          message: "Persona snapshot storage is unavailable.",
+                        }),
+                      )
+                    : Effect.succeed({ ...prepared, definitionDigest, instructionsEdited: true }),
+                ),
+                Effect.mapError(
+                  (error) =>
+                    new CrewLaunchSeatUnavailableError({
+                      seatName: seat.name,
+                      agentId,
+                      detail: error.message,
+                    }),
+                ),
+              );
+        // Explicit runtime choices override the persona sandbox for both human-approved and
+        // automatic launches; behavior instructions stay pinned to the original snapshot.
         const policy = translateAgentPersonaProviderPolicy(
           assignment.authorityPolicy,
           assignment.resolvedDriver,
@@ -539,7 +679,7 @@ export const layer = Layer.effect(
         }),
       );
       const child = yield* Effect.result(
-        getThreadProjectionIfPresent(threadManagement, member.threadId),
+        getThreadRecordsIfPresent(threadManagement, member.threadId, []),
       );
       if (Result.isFailure(child))
         return {
@@ -593,8 +733,8 @@ export const layer = Layer.effect(
         const seatName = member.seat.name;
         // Seats go through the same start guard as j5_spawn_agent (see `withSpawnStart`), so every
         // door that creates a spawn thread keeps its invariant. A Crew's launches are already
-        // serialized, so its in-flight refusal is not expected here; the brief takes the guard
-        // again once every seat exists.
+        // serialized, so its in-flight refusal is not expected here. Their first assignments arrive
+        // separately.
         const started = yield* Effect.result(
           spawnWorkspace.withSpawnStart(
             {
@@ -614,8 +754,9 @@ export const layer = Layer.effect(
       return { outcomes, created };
     });
 
-    /** Brief every created seat, carrying on past one whose brief did not go out. */
-    const startBriefs = Effect.fn("j5.a2a.crewLaunch.startBriefs")(function* (
+    const sql = yield* SqlClient.SqlClient;
+    const encodeWorkspace = Schema.encodeEffect(Schema.fromJsonString(CrewSeatWorkspace));
+    const prepareBriefs = Effect.fn("j5.a2a.crewLaunch.prepareBriefs")(function* (
       captain: CrewCaptain,
       instance: AgentCrewInstance,
       planned: ReadonlyArray<Planned>,
@@ -625,12 +766,12 @@ export const layer = Layer.effect(
       const roster = instance.members.map((member) => ({
         seat: member.seatName,
         participantId: member.participantId,
+        reason: member.reason,
         agentDisplayName:
           planned.find((entry) => entry.seat.name === member.seatName)?.agentDisplayName ??
           member.agentId ??
           "custom",
       }));
-      const failed = new Map<string, string>();
       for (const member of planned) {
         const text = spawnFirstTurnText({
           brief,
@@ -667,38 +808,17 @@ export const layer = Layer.effect(
                   },
           },
         });
-        const dispatched = yield* Effect.result(
-          spawnWorkspace.withSpawnStart(
-            {
-              stableInput: member.stableInput,
-              threadId: member.threadId,
-            },
-            spawnWorkspace.startBrief({
-              workspace: member.workspace,
-              stableInput: member.stableInput,
-              ledgerProjectId: captain.projectId,
-              projectId: captain.thread.projectId,
-              threadId: member.threadId,
-              title: spawnTitle(member.seat.name),
-              messageId: spawnMessageId(member.stableInput),
-              text,
-              modelSelection: member.modelSelection,
-              runtimeMode: member.runtimeMode,
-              interactionMode: captain.thread.interactionMode,
-            }),
-          ),
-        );
-        if (Result.isFailure(dispatched))
-          failed.set(
-            member.seat.name,
-            `starting its brief failed: ${detailOf(dispatched.failure)}`,
-          );
+        const workspaceJson = yield* encodeWorkspace(member.workspace);
+        yield* sql`
+          INSERT INTO j5_crew_seat_context (thread_id, first_turn_text, workspace, agent_display_name)
+          VALUES (${member.threadId}, ${text}, ${workspaceJson}, ${member.agentDisplayName})
+          ON CONFLICT (thread_id) DO NOTHING
+        `;
       }
-      return failed;
     });
 
     /**
-     * Spawn and brief the reserved seats, then drop the rows of seats that were never created.
+     * Create the reserved seats with their approved context, then drop seats that were never created.
      * Every seat is attempted; the outcomes say what became of each.
      */
     const spawnAndBrief = Effect.fn("j5.a2a.crewLaunch.spawnAndBrief")(function* (
@@ -709,6 +829,17 @@ export const layer = Layer.effect(
       playbook: CrewLaunchPlaybook | null,
       addition: boolean,
     ) {
+      yield* prepareBriefs(captain, instance, planned, brief, playbook).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CrewLaunchOperationError({
+              phase: "prepare seat context",
+              seatName: null,
+              createdSeats: [],
+              cause,
+            }),
+        ),
+      );
       const spawned = yield* spawnSeats(captain, planned);
       const notCreated = spawned.outcomes.flatMap((outcome) =>
         outcome.kind === "not_created" ? [outcome.seatName] : [],
@@ -725,17 +856,7 @@ export const layer = Layer.effect(
             }),
           ),
         );
-      const current = (yield* crews.read(instance.id).pipe(Effect.orElseSucceed(() => null))) ?? {
-        ...instance,
-        members: instance.members.filter((member) => !notCreated.includes(member.seatName)),
-      };
-      const briefFailures = yield* startBriefs(captain, current, spawned.created, brief, playbook);
-      const seats = spawned.outcomes.map((outcome): CrewSeatLaunchOutcome => {
-        const briefFailure = briefFailures.get(outcome.seatName);
-        return outcome.kind === "created" && briefFailure !== undefined
-          ? { seatName: outcome.seatName, kind: "not_started", detail: briefFailure }
-          : outcome;
-      });
+      const seats = spawned.outcomes;
       const outcomes = (kind: CrewSeatLaunchOutcome["kind"]) =>
         seats.filter((seat) => seat.kind === kind).length;
       yield* recordAnalytics("j5.crew.launched", {
@@ -750,7 +871,13 @@ export const layer = Layer.effect(
         notCreated: outcomes("not_created"),
         notStarted: outcomes("not_started"),
       });
-      return { instance: current, seats } satisfies CrewLaunchResult;
+      return {
+        instance: (yield* crews.read(instance.id).pipe(Effect.orElseSucceed(() => null))) ?? {
+          ...instance,
+          members: instance.members.filter((member) => !notCreated.includes(member.seatName)),
+        },
+        seats,
+      } satisfies CrewLaunchResult;
     });
 
     const launch: CrewLaunchServiceShape["launch"] = Effect.fn("j5.a2a.crewLaunch.launch")(
@@ -815,7 +942,7 @@ export const layer = Layer.effect(
         );
       },
       (launch, input) =>
-        // One unit step from the record through the briefs, so a unit archive waits for every
+        // One unit step from the record through creation, so a unit archive waits for every
         // seat to exist before it reads the roster.
         crews.serialize(
           spawnCrewInstanceId({
@@ -918,6 +1045,12 @@ export const layer = Layer.effect(
         worktreePath: captain.thread.worktreePath,
       });
 
-    return CrewLaunchService.of({ launch, addSeats, resolveSeats, workspaceOptions });
+    return CrewLaunchService.of({
+      launch,
+      addSeats,
+      resolveSeats,
+      pinWorkspaces,
+      workspaceOptions,
+    });
   }),
 );

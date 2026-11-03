@@ -74,21 +74,28 @@ Read-only; no events.
 
 ### `j5_spawn_agent`
 
-**Description (contract):** "Spawn a Peer Agent: a full-citizen teammate with its own top-level
-thread, starting on your brief as its first turn. It joins your project unless you name another with
-project_id or set scratch for none, and records you as its immutable spawner; in your own project it
-is placed under you. It is addressable the moment this returns. In your brief, tell the new agent
-what it should do first and whether it should reply to you. Choose provider, model, and reasoning
-for the work in the brief; see orchestrator_capabilities for what's available. To run a persona
-from j5_list_personas, set `persona` to its id: the spawn gets that persona's instructions and
-runtime policy, and provider, model, and reasoning must be one of that persona's declared routes.
-Without a persona it runs in your permission and interaction modes, or in narrower ones you set with
-runtime_mode and interaction_mode. Attach files to the brief with attachments. Choose its workspace
-every time (see the workspace field). A new worktree is prepared after this returns, and the agent
-begins once it is bound, possibly while the project's setup script is still running; if preparing it
-fails, the agent's thread shows why, and it is not retried. Reuse client_request_id to retry the
-same spawn safely; reusing it with any change to the request is refused, so use a fresh one for new
-work."
+Agents have two ways to get help: a subagent (their provider's own, or `delegate_task`) or members on a Crew (`j5_propose_crew`, `j5_request_crew_member`). `j5_spawn_agent` serves neither. Its description keeps it for a Peer Agent or standalone agent the person explicitly asks for, and for callers that name it, such as an outside agent or a skill; when nobody asked for one it says to use a subagent or a Crew. Nothing a caller depends on was removed.
+
+**Description (contract):** "Use this when the user explicitly asks for a Peer Agent or a standalone agent they will talk to, or
+when an outside agent or a skill you are following names it. When nobody asked for one, it is not a
+way to get help with your own work: create a subagent (your native Subagent tool, or delegate_task)
+or put members on a Crew (j5_propose_crew). Spawn a Peer Agent: a full-citizen teammate with its own
+top-level thread, starting on your brief as its first turn. It joins your project unless you name
+another with project_id or set scratch for none, and records you as its immutable spawner; in your
+own project it is placed under you. It is addressable the moment this returns. In your brief, tell
+the new agent what it should do first and whether it should reply to you. Choose provider and model
+for the work in the brief, and reasoning if the model has a reasoning option; see
+orchestrator_capabilities for what's available. To run
+a persona from j5_list_personas, set `persona` to its id: the spawn gets that persona's instructions
+and runtime policy, and provider, model, and reasoning must be one of that persona's declared
+routes. Without a persona it runs in your permission and interaction modes, or in narrower ones you
+set with runtime_mode and interaction_mode. Without a persona its model and reasoning level must be
+ones the project's Models for custom members lists allow; an ineligible one is refused with the
+eligible ones. Attach files to the brief with attachments. Choose its workspace every time (see the
+workspace field). A new worktree is prepared after this returns, and the agent begins once it is
+bound, possibly while the project's setup script is still running; if preparing it fails, the
+agent's thread shows why, and it is not retried. Reuse client_request_id to retry the same spawn
+safely; reusing it with any change to the request is refused, so use a fresh one for new work."
 
 | Input               | Type                                  | Required | Meaning                                           |
 | ------------------- | ------------------------------------- | -------- | ------------------------------------------------- |
@@ -99,7 +106,9 @@ work."
 | `provider`          | id from `orchestrator_capabilities`   | yes      | Chosen per task — no inherit default (Jackson,    |
 |                     |                                       |          | 2026-08-29: inheriting is wrong more than right)  |
 | `model`             | id from `orchestrator_capabilities`   | yes      | Chosen per task                                   |
-| `reasoning`         | option from capabilities descriptors  | yes      | Chosen per task                                   |
+| `reasoning`         | option from capabilities descriptors  | if the   | Chosen per task. Required only when the model has |
+|                     |                                       | model    | a reasoning option                                |
+|                     |                                       | has one  |                                                   |
 | `workspace`         | `{type: "shared"}`, `{type: "root"}`, | yes      | Where the agent works; see Workspace below        |
 |                     | `{type: "worktree", base_ref,         |          |                                                   |
 |                     | branch?, start_from_origin?}`, or     |          |                                                   |
@@ -115,13 +124,13 @@ work."
 | `attachments`       | attachment list                       | no       | One to eight pending uploads for the brief        |
 | `client_request_id` | string, non-empty                     | no       | Supply and reuse to make retries safe             |
 
-**Rules.** The new agent is an ordinary root-lineage thread created through upstream's creation seam, never through delegation. It is created in the caller's project unless the caller names another with `project_id` or sets `scratch`, and it joins that project's ledger. An [outside agent](index.md#participants) has no project, so it passes one of the two on every spawn. These are what upstream's own launch tool offers and J5's lacked (Jackson, 2026-10-11). In another project the caller is still recorded as the spawner, but the placement tree is one project's, so the agent is a root there and stays at the top level of the sidebar. An outside agent is in no project's tree, so every agent it starts is a root, with the outside agent's `outside:` id recorded as its spawner. Without a persona the agent runs in the caller's permission and interaction modes, or in ones the caller chose, which may be no broader than the caller's own. For an outside agent the caller's modes are the level its sign-in was approved at, and a read-only sign-in spawns nothing. A persona's policy sets its permissions. For a thread caller it has no ceiling (2026-09-16). For an outside agent it must be within the approved level, because that level is a promise the approval page makes about an agent the person does not watch. Either caller may still choose a narrower interaction mode for a persona. A retry finishes the agent its first attempt created, in the modes it was created with, so it is refused when those are now broader than the caller's own; a caller's modes can be narrowed between the two. An outside agent's retry keys belong to its sign-in, whose level never changes. `attachments` are pending uploads, claimed into the new thread once it exists and carried by the brief. Placement and provenance are recorded atomically with creation; then the brief starts as the first turn. The new agent's first turn also states its own participant id and project as platform-provided facts, beside the brief and never inside it. When an outside agent started it, those facts name the outside agent by its label and say that `j5_send_message` cannot reply to it. Provider, model and reasoning are required and explicit even when a Role is given: a Role's allowlist constrains the choice and an out-of-list pick is an error naming the Role, never a silent default. The brief carries the task and the reply expectation; the spawner does not follow a spawn with a reply-expected `j5_send_message` — that form is for later work owed by an existing participant. Selection guidance and brief-writing conventions live in the [Spawning Guide](../features/spawning-guide.md).
+**Rules.** The new agent is an ordinary root-lineage thread created through upstream's creation seam, never through delegation. It is created in the caller's project unless the caller names another with `project_id` or sets `scratch`, and it joins that project's ledger. An [outside agent](index.md#participants) has no project, so it passes one of the two on every spawn. These are what upstream's own launch tool offers and J5's lacked (Jackson, 2026-10-11). In another project the caller is still recorded as the spawner, but the placement tree is one project's, so the agent is a root there and stays at the top level of the sidebar. An outside agent is in no project's tree, so every agent it starts is a root, with the outside agent's `outside:` id recorded as its spawner. Without a persona the agent runs in the caller's permission and interaction modes, or in ones the caller chose, which may be no broader than the caller's own. Without a persona its model must also be one the project's [Models for custom members](../features/crews.md) list allows, the project being the one the agent joins. The check runs before anything is created and only on a first attempt, so a retry that finds its agent already created is not held to a list saved since; a refusal names the model, the project and the setting and lists the eligible models. A persona's own model is never checked. For an outside agent the caller's modes are the level its sign-in was approved at, and a read-only sign-in spawns nothing. A persona's policy sets its permissions. For a thread caller it has no ceiling (2026-09-16). For an outside agent it must be within the approved level, because that level is a promise the approval page makes about an agent the person does not watch. Either caller may still choose a narrower interaction mode for a persona. A retry finishes the agent its first attempt created, in the modes it was created with, so it is refused when those are now broader than the caller's own; a caller's modes can be narrowed between the two. An outside agent's retry keys belong to its sign-in, whose level never changes. `attachments` are pending uploads, claimed into the new thread once it exists and carried by the brief. Placement and provenance are recorded atomically with creation; then the brief starts as the first turn. The new agent's first turn also states its own participant id and project as platform-provided facts, beside the brief and never inside it. When an outside agent started it, those facts name the outside agent by its label and say that `j5_send_message` cannot reply to it. Provider and model are required and explicit even when a Role is given, and so is reasoning when the model has a reasoning option: a select option such as `effort` or `reasoningEffort`, not a boolean such as `thinking`. A model with no reasoning option runs on its provider's defaults, and its model is still held to the project's list; it has no level to check. Passing reasoning for such a model is refused rather than dropped, naming the options it does have, and omitting it for a model with a reasoning option is refused, naming the levels. A Role's allowlist constrains the choice and an out-of-list pick is an error naming the Role, never a silent default. The brief carries the task and the reply expectation; the spawner does not follow a spawn with a reply-expected `j5_send_message` — that form is for later work owed by an existing participant. Selection guidance and brief-writing conventions live in the [Spawning Guide](../features/spawning-guide.md).
 
-**Workspace.** The spawner chooses where a Peer Agent works every time; there is no default, because the spawner knows whether it is starting a reviewer that must see uncommitted work, a builder that must not collide, or a scout that can't collide at all (Jackson, 2026-10-03). `{type: "shared"}` is the caller's own checkout and branch, and asks nothing of git; it is refused for an agent that joins another project, and for an outside agent, which has no checkout. `{type: "root"}` is the project's main checkout, upstream's name for it, and the only choice with `scratch`. As upstream's launch does, a main-checkout thread in the "No project" project gets a fresh folder of its own, whether the caller set `scratch` or named that project by its id. `{type: "worktree"}` is a new worktree from `base_ref`, which is required and must resolve to a commit (with `start_from_origin`, its fetched origin copy counts); a `branch` that already exists is refused. `{type: "existing_worktree"}` is one of the project's git worktrees other than its main checkout, named by path; the agent works on the branch git has checked out there, and any other path is refused with the valid ones listed. A choice that needs git is refused when the repository can't be read, before anything is created. A new worktree's thread is created unbound, with its registration and placement committed, so `j5_spawn_agent` returns as soon as the agent is registered and its brief accepted, not once the worktree is ready. Upstream's ThreadLaunch then creates the worktree, names a temporary `j5code/<hash>` branch and renames it from the brief in the background, and holds the brief as a preparing run until the worktree is bound and the project's setup script has started. The setup script is awaited first only when it is set to finish before the agent starts (`async: false`); otherwise the agent may begin while it is still running. If preparation fails, the agent's thread shows the failed preparation, as any upstream launch does; it is not retried or retired, and the spawner is not told. The agent is then unbound, which upstream reads as the project's checkout, so a later message to it runs there, where every Peer Agent worked before workspaces existed. J5 doesn't guard this upstream behaviour: in Jackson's install, 3 of 61 preparations failed, all on the first day, and none was messaged again (Jackson, 2026-10-06). A shared checkout or an existing worktree binds at creation, so its brief starts at once. A `client_request_id` is bound to the whole request it was first accepted with, before anything is created, and the binding survives a restart. A retry with any change, including another workspace, `base_ref` or `worktree_path`, is refused, naming the agent the first attempt created; new work needs a fresh `client_request_id`. A request refused before it is accepted, such as one with duplicate attachment ids or an unusable workspace, binds nothing, so it can be corrected under the same key. A retry of a spawn from before request binding binds its first retry when the workspace type matches its accepted create receipt, and is refused otherwise; later request changes under that key are refused. A second start for the same thread while one is in flight is refused with a retry instruction, so two concurrent retries cannot both create it. An existing worktree is looked up in upstream's ref listing, which refreshes every few seconds, so one created moments ago may be refused once; retry in a moment. Closing or archiving a Peer Agent never removes its worktree.
+**Workspace.** The spawner chooses where a Peer Agent works every time; there is no default, because the spawner knows whether it is starting a reviewer that must see uncommitted work, a builder that must not collide, or a scout that can't collide at all (Jackson, 2026-10-03). `{type: "shared"}` is the caller's own checkout and branch, and asks nothing of git; it is refused for an agent that joins another project, and for an outside agent, which has no checkout. `{type: "root"}` is the project's main checkout, upstream's name for it, and the only choice with `scratch`. As upstream's launch does, a main-checkout thread in the "No project" project gets a fresh folder of its own, whether the caller set `scratch` or named that project by its id. `{type: "worktree"}` is a new worktree from `base_ref`, which is required and must resolve to a commit (with `start_from_origin`, an already fetched origin copy counts; the spawn checks this without fetching, and preparation does the fetch); a `branch` that already exists is refused. `{type: "existing_worktree"}` is one of the project's git worktrees other than its main checkout, named by path; the agent works on the branch git has checked out there, and any other path is refused with the valid ones listed. A choice that needs git is refused when the repository can't be read, before anything is created. A new worktree's thread is created unbound, with its registration and placement committed, so `j5_spawn_agent` returns as soon as the agent is registered and its brief accepted, not once the worktree is ready. Upstream's ThreadLaunch then creates the worktree, names a temporary `j5code/<hash>` branch and renames it from the brief in the background, and holds the brief as a preparing run until the worktree is bound and the project's setup script has started. The setup script is awaited first only when it is set to finish before the agent starts (`async: false`); otherwise the agent may begin while it is still running. If preparation fails, the agent's thread shows the failed preparation, as any upstream launch does; it is not retried or retired, and the spawner is not told. The agent is then unbound, which upstream reads as the project's checkout, so a later message to it runs there, where every Peer Agent worked before workspaces existed. J5 doesn't guard this upstream behaviour: in Jackson's install, 3 of 61 preparations failed, all on the first day, and none was messaged again (Jackson, 2026-10-06). A shared checkout or an existing worktree binds at creation, so its brief starts at once. A `client_request_id` is bound to the whole request it was first accepted with, before anything is created, and the binding survives a restart. A retry with any change, including another workspace, `base_ref` or `worktree_path`, is refused, naming the agent the first attempt created; new work needs a fresh `client_request_id`. A request refused before it is accepted, such as one with duplicate attachment ids or an unusable workspace, binds nothing, so it can be corrected under the same key. A retry of a spawn from before request binding binds its first retry when the workspace type matches its accepted create receipt, and is refused otherwise; later request changes under that key are refused. A second start for the same thread while one is in flight is refused with a retry instruction, so two concurrent retries cannot both create it. An existing worktree is looked up in upstream's ref listing, which refreshes every few seconds, so one created moments ago may be refused once; retry in a moment. Closing or archiving a Peer Agent never removes its worktree.
 
 **Result:** the new agent's `participant_id` and `thread_id`, its `project_id` and `project_title`, and its placement with the caller recorded as spawner: under the caller in the caller's own project, and with no parent in another or when the caller is an outside agent.
 
-**Errors**, each naming state and next command: the caller is a provider Subagent; the caller's membership is missing or ambiguous; the caller's project ledger cannot be read; the caller sits in a Crew (naming its Captain as the escalation and `delegate_task` for its own subagents; only a Captain grows a Crew, through the gate); the chosen workspace can't be used (a path that isn't one of the project's worktrees, a `base_ref` that doesn't resolve, a `branch` that exists, an unreadable repository); the `client_request_id` is bound to a different request, or a start for it is already in flight; creation failed. For an outside agent: no `project_id` and no `scratch` (naming `t3_project_list`); the `shared` workspace (naming the three it may choose); a persona whose policy is broader than the approved level (naming the level, and a persona within it or a new sign-in at a higher level).
+**Errors**, each naming state and next command: the caller is a provider Subagent; the caller's membership is missing or ambiguous; the caller's project ledger cannot be read; the caller sits in a Crew (naming its Captain as the escalation and `delegate_task` for its own subagents; only a Captain grows a Crew, through the gate); the chosen workspace can't be used (a path that isn't one of the project's worktrees, a `base_ref` that doesn't resolve, a `branch` that exists, an unreadable repository); the model or its reasoning level, with no persona, is off the project's lists of models for custom members; the `client_request_id` is bound to a different request, or a start for it is already in flight; creation failed. For an outside agent: no `project_id` and no `scratch` (naming `t3_project_list`); the `shared` workspace (naming the three it may choose); a persona whose policy is broader than the approved level (naming the level, and a persona within it or a new sign-in at a higher level).
 
 **Events:** participant joined, placement created.
 
@@ -130,7 +139,9 @@ work."
 **Persona spawn (built 2026-09-09 as the `agent` input, `persona` since 2026-09-17):** the persona's declared routes are the
 allowlist SP3 describes. The explicit provider/model/reasoning pick must equal one route target on
 a provider instance that runs that driver and currently advertises the model and reasoning option;
-otherwise the call refuses, naming the persona and listing its routes, and nothing is created. The
+otherwise the call refuses, naming the persona and listing its routes, and nothing is created. A
+route always names a level, so a spawn that omits reasoning never matches one and no level is
+inferred from the routes. The
 matching route becomes the child's immutable persona assignment (same snapshot and digest as a
 composer launch), and its authority policy sets the child's runtime mode. The child's permissions
 come from its own persona's policy, never from the parent's: J5 carries no parent-child
@@ -183,50 +194,59 @@ Use `action: "unarchive"` to restore the same identity. Old Exchanges remain clo
 ### `j5_list_personas`
 
 **Description (contract):** "List the personas in this environment: id, purpose, runtime policy,
-whether each can start now, and the provider, model, and reasoning it would run on. Read this
-before choosing a persona for j5_spawn_agent or a crew roster so the choice fits the task and the
-user's budget. Read-only."
+whether each can start now, and the provider, model, and reasoning it would run on. Read this before
+choosing a persona for delegate_task, a crew roster, or j5_spawn_agent so the choice fits the task
+and the user's budget. Read-only."
 
 Named `list_agents` until 2026-09-17. No inputs. Result: `personas[]` with `id`, `display_name`, `description`, `runtime_policy`,
 `availability` (`available`, `blocked`, `disabled`) and `route` (driver · model · reasoning, or
-null when blocked). The same catalog Settings → Personas shows; disabled imports read as disabled,
+null when blocked). The same catalog Settings → Agent Setup shows; disabled imports read as disabled,
 unroutable or unenforceable personas as blocked. This is the P-B(a) spawn listing the spawning guide
 asked for.
 
 ### `j5_propose_crew`
 
-**Description (contract):** "Propose the crew you need for the brief you were given. Use it when the
-user asks for a crew or the work splits into distinct responsibilities that should run at once. Mix
-saved personas and custom seats in the same roster: call j5_list_personas when choosing a saved
-persona, or leave persona unset for a custom seat with its own instructions (required) and the
-brief. Custom seats inherit your harness, model, and reasoning by default and run with full-access
-unless you set runtime_mode; to choose different ones, set model_selection (instanceId, model,
-options) and/or runtime_mode using orchestrator_capabilities. Saved personas are proposed with their
-own configuration; only the human may override their runtime before approval. To have the crew
-follow a playbook, set playbook to a name from j5_playbook_list and give seats the step ids they own
-(steps, from j5_playbook_read); a step has one owner, steps no seat owns are yours as Captain, and the
-result reports unowned steps and any step whose persona differs from its seat's. For a crew built
-from a playbook, staff one seat per distinct persona its steps name, each owning that persona's
-steps, and propose a custom seat, noted in its reason, where a named persona isn't available. Every
-seat names its workspace, with the same three choices as j5_spawn_agent. Name the crew for what it is
-for and give each seat a short lowercase-hyphen name like code-reviewer. The user reviews the roster
-and each seat's resolved provider, model, reasoning, and access in this thread, may remove or add
-seats, and approves or declines; you receive the decision and the roster as a message here. Approved
-seats run with the runtime the human approves, which may exceed yours. You become the crew's Captain
-and may command several crews at once; later requests, stops, and archives name the crew they mean.
-Use j5_send_message for member-to-member, member-to-Captain, and Captain-to-Captain coordination,
-including findings and direct results; artifacts do not gate these conversations. Reuse
-client_request_id to retry safely; a changed request is refused, so use a fresh one for new work. This call is itself the human gate, so it works under every
-sandbox and approval policy, including approval policy never; never refuse the brief because
-approvals are disabled."
+**Description (contract):** "Put members on a Crew, the second of the two ways to get help (the first is a subagent). Propose the
+crew you need for the brief you were given. Use it when the user asks for a crew, or when the work
+needs workers who must respond to each other, such as a builder and reviewers iterating on a change;
+independent assignments go to subagents instead. Mix saved personas and custom seats in the same
+roster: call j5_list_personas when choosing a saved persona, or leave persona unset for a custom
+seat with its own instructions (required) and the brief. Custom seats inherit your harness, model,
+and reasoning by default and run with full-access unless you set runtime_mode; to choose different
+ones, set model_selection (instanceId, model, options) and/or runtime_mode using
+orchestrator_capabilities. A custom seat's model and reasoning level, yours included, must be ones
+the project's Models for custom members lists allow; an ineligible one is refused with the eligible
+ones. Saved personas are proposed with their own configuration; only the human may override their
+runtime before approval. To have the crew follow a playbook, set playbook to a name from
+j5_playbook_list and give seats the step ids they own (steps, from j5_playbook_read); a step has one
+owner, steps no seat owns are yours as Captain, and the result reports unowned steps and any step
+whose persona differs from its seat's. For a crew built from a playbook, staff one seat per distinct
+persona its steps name, each owning that persona's steps, and propose a custom seat, noted in its
+reason, where a named persona isn't available. Every seat names its workspace, with the same three
+choices as j5_spawn_agent. Name the crew for what it is for and give each seat a short
+lowercase-hyphen name like code-reviewer. By default the user reviews and edits the roster in this
+thread, then approves or declines. If Auto-approve new Crews is on for your project, the proposed
+roster is created immediately with no approval card. The result says whether it is open or approved;
+the launch report arrives here once creation finishes or fails. Approval creates seats without
+starting turns. Send each member its first assignment when it has work; reuse finished members for
+follow-up work in the same thread. Each seat keeps its configured access and tool approvals, which
+may exceed yours. You become the crew's Captain and may command several crews at once; later
+requests, stops, and archives name the crew they mean. Use j5_send_message for member-to-member,
+member-to-Captain, and Captain-to-Captain coordination, including findings and direct results;
+artifacts do not gate these conversations. Members run their own review loops and message you only
+for a review pass, a blocker, a disagreement they could not settle, or their final result or step
+report; you resolve technical disagreements within the agreed scope and ask the user only when
+product intent or their judgment is needed. Reuse client_request_id to retry safely; a changed
+request is refused, so use a fresh one for new work. This tool works under every sandbox and
+approval policy, including approval policy never; never refuse the brief because approvals are
+disabled."
 
-Published as non-destructive (`destructiveHint: false`): the call records a pending request and
-nothing spawns until a human approves it.
+Published with `destructiveHint: true`: depending on the project setting, this call can launch agents immediately.
 
 | Input               | Type                                                                                                  | Required | Meaning                                                                                                                                                                                                  |
 | ------------------- | ----------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`              | string                                                                                                | yes      | The Crew's display name                                                                                                                                                                                  |
-| `brief`             | string                                                                                                | yes      | What every seat starts on, verbatim                                                                                                                                                                      |
+| `brief`             | string                                                                                                | yes      | The shared brief included with each seat's first assignment                                                                                                                                              |
 | `seats`             | 1–12 of `{seat, persona?, model_selection?, runtime_mode?, reason, instructions?, steps?, workspace}` | yes      | Seat name, persona id from `j5_list_personas` (none for a custom seat), why, wiring, custom-seat runtime, the playbook step ids the seat owns, and where it works (the `j5_spawn_agent` workspace shape) |
 | `playbook`          | string                                                                                                | no       | A playbook name from `j5_playbook_list` in the Captain's workspace; the Crew follows it                                                                                                                  |
 | `client_request_id` | string                                                                                                | no       | Supply and reuse to make retries safe                                                                                                                                                                    |
@@ -248,31 +268,30 @@ steps needs no readable definition, so a Crew whose playbook file is gone can st
 proposal records the playbook's definition path, and the Crew keeps it from approval on; each
 member records the step ids it owns, and each seat's first turn lists its steps by live title in a
 `<seat_playbook>` block. An open roster proposal waits for the human
-gate inline above the Captain's composer (additions wait in the Inbox); approval spawns the approved roster (the human may have edited it) as Peer Agents under the
+gate inline above the Captain's composer unless Auto-approve new Crews is enabled for the Captain's project; approval spawns the approved roster (the human may have edited it) as Peer Agents under the
 caller, persona-backed where a seat names one, records the Crew snapshot with each member's reason
-(the person approves every seat), and posts
-a `<j5_crew_gate>` launch report into the caller's thread once every seat has started or failed to start (or a minute has passed): the roster, what the user changed against the proposal, and per seat `start=started|failed|pending`, with a `seat_failed` line carrying the run's error (`not_started` when the seat's thread exists but its brief never went out) and a `seat_not_created` line for an approved seat whose thread was never created, which is left off the roster. A proposal resolves once: a seat that fails does not stop the others or reopen the gate. Declines post the decline at once.
-Every seat names its workspace, with the same three choices as `j5_spawn_agent`, so there is no Captain-aware default (Jackson, 2026-10-03). Each seat's workspace resolves at preview against the Captain's repository, and the approval token binds it, as it binds the Captain's branch and worktree. Every preview also carries the Captain's current branch, the directory its branch picker searches, and its worktrees, for the roster card's editor; the branches themselves are searched live, so no list is capped. A seat the person adds starts in the Captain's checkout. A seat recorded before workspaces were required stays readable but is refused at preview and approval until one is chosen. A new-worktree seat's brief starts once ThreadLaunch has prepared it, as for `j5_spawn_agent`, so the launch report may read `pending` for a seat whose setup outlasts the report's minute, and a failed preparation arrives as that seat's failure.
-Human approval is the authority (Bryant, 2026-09-10): seats run with the runtime the person
-approved, their persona's policy when no override was chosen, so a read-only Captain may command
-writing seats once a person approved them; a seat's permissions never come from its Captain's.
-There is no auto-approval: the earlier `runbook_declared` column and `auto_approved` status were
-cut before shipping, since nothing wrote them and runbooks do not exist yet.
+(with human or automatic approval recorded), and posts
+a `<j5_crew_gate>` launch report into the caller's thread immediately after creation: the roster, what the user changed against the proposal, and per seat `start=waiting|started|failed|pending`, with a `seat_failed` line carrying the run's error (`not_started` when the seat's thread exists but registration failed) and a `seat_not_created` line for an approved seat whose thread was never created, which is left off the roster. A proposal resolves once: a seat that fails does not stop the others or reopen the gate. Declines post the decline at once.
+Every seat names its workspace, with the same three choices as `j5_spawn_agent`, so there is no Captain-aware default (Jackson, 2026-10-03). A new worktree's base is resolved to a full commit before the proposal is stored, and the proposal keeps that commit with the requested ref as its label; a ref that doesn't resolve is refused at once, naming the seat, and renaming, moving or deleting the branch afterwards changes nothing while the commit exists. With `start_from_origin` the commit is origin's tip, fetched when the base is chosen, and preparation starts from it without fetching again; a base with no branch on origin falls back to the local ref, and when origin can't be fetched the preview refuses that seat alone, naming it, rather than pinning a stale commit, with a next step to check the connection to origin or start from the local branch. To start from the Captain's current checkout, name the branch it is on; uncommitted changes are not included. Preparation names the commit as the worktree's base, so such a worktree has no `gh-merge-base` and the setup tracker shows the commit; `gh pr create` there needs an explicit base. Each seat's workspace resolves again at preview against the Captain's repository, and the approval token binds it, as it binds the Captain's branch and worktree. A proposal stored before commits were pinned has its ref resolved at its first preview, which approval then binds; if the ref is gone the preview refuses, naming the seat and ref, and the base must be edited. Every preview also carries the Captain's current branch, the directory its branch picker searches, and its worktrees, for the roster card's editor; the branches themselves are searched live, so no list is capped. A seat the person adds starts in the Captain's checkout. A seat recorded before workspaces were required stays readable but is refused at preview and approval until one is chosen. New and added seats wait for their first assignment. A direct chat message, participant message, or playbook handoff activates the seat with its approved instructions and shared brief, the current roster with responsibilities and participant ids, and the assignment with its envelope and reply obligation intact. A new-worktree seat prepares its workspace before running that assignment; failed preparation is reported as a seat failure.
+New Crews require human approval by default. **Settings → Agent Setup → Crews → Auto-approve new Crews** skips that gate, off by default and overridable per project. The server reads the Captain's project setting only for a new request; changing it leaves existing Crews and open proposals alone. Automatic approval launches the proposed configuration through the same provider, workspace, capacity, and persona checks. Tool approvals still follow each seat's access. The persisted proposal and launch report distinguish automatic approval from a human decision.
+**Models for custom members** is a pair of project settings holding the checked provider models and the checked reasoning levels; until a list is saved everything it covers is eligible. A custom seat, including one that inherits the Captain's selection, must run on an eligible model at an eligible level (its explicit one, or the model's default), checked at preview, at approval, and for an automatic launch, so a roster naming another is refused whole before anything spawns, with an error naming the seat, the model or level, the project and the setting and listing the eligible ones. A model with no reasoning option has no level to check. A saved persona seat that keeps the persona's model and level skips the check; one where the person changed either on the card is checked like a custom seat. A retry of a proposal already accepted is not checked again.
 
 ### `j5_request_crew_member`
 
-**Description (contract):** "Ask the user to add one seat to a crew you command when the work needs
-one the roster lacks: seat name, persona id from j5_list_personas (or none for a custom seat with
-required instructions and optional model_selection/runtime_mode overrides; an omitted
-model_selection inherits yours and an omitted runtime_mode is full-access; saved-persona runtime
-changes are made only by the human before approval), a clear reason identifying the concern and
-missing expertise or responsibility, its workspace (the same three choices as j5_propose_crew), and
-optionally instructions and a brief for the new seat. On a crew that follows a playbook, steps may
-claim step ids from j5_playbook_read that no seat owns yet. The user decides from their inbox; you
-receive the decision and the updated roster as a message here. Continue the already-approved work
-and direct coordination while the addition is pending. Captain-only; a member sends the concern and
-needed expertise to its Captain with j5_send_message. Reuse client_request_id to retry safely; a changed request is refused, so use a fresh one for new work. Filing
-the request is the human gate itself and works under every approval policy, including approval
+**Description (contract):** "Put one more member on a Crew, the second of the two ways to get help: add one seat directly to a
+running crew you command when the work needs expertise the roster lacks. No human approval is
+needed, regardless of Auto-approve new Crews. Give a seat name, a persona id from j5_list_personas
+or required instructions for a custom seat, a reason identifying the missing expertise, and its
+workspace (the same choices as j5_propose_crew). Custom seats inherit your model selection and run
+with full-access unless you set model_selection or runtime_mode; a custom seat's model and reasoning
+level must be ones the project's Models for custom members lists allow, and saved personas use their
+own configuration. Optionally give a brief; otherwise the seat gets the Crew's brief. On a playbook
+Crew, steps may claim only unowned step ids from j5_playbook_read. The result returns the updated
+roster or refuses the seat with its name and reason; creation is reported separately here. The new
+member waits for its first assignment; send it with j5_send_message when the work is ready. Each
+member's configured access still controls tool approvals. Captain-only: a member sends the concern
+to its Captain with j5_send_message. Reuse client_request_id to retry safely; a changed request is
+refused, so use a fresh one for new work. Works under every approval policy, including approval
 policy never."
 
 | Input                             | Type           | Required | Meaning                                                                     |
@@ -280,21 +299,14 @@ policy never."
 | `crew_instance_id`                | string         | no       | Required only when the caller commands more than one live Crew              |
 | `seat`, `persona`                 | string         | yes      | New seat name and persona id (none for a custom seat)                       |
 | `model_selection`, `runtime_mode` | object, string | no       | Custom seats only; omitted, the Captain's model selection and `full-access` |
-| `reason`                          | string         | yes      | One line the human reads before approving                                   |
+| `reason`                          | string         | yes      | The expertise the Crew needs                                                |
 | `brief`                           | string         | no       | The new seat's brief; the Crew's brief when omitted                         |
 | `instructions`                    | string         | no       | Seat wiring text, verbatim                                                  |
 | `steps`                           | string[]       | no       | Playbook step ids no seat owns yet; only on a Crew that follows a playbook  |
 | `workspace`                       | object         | yes      | Where the seat works; the same three choices as `j5_propose_crew`           |
 | `client_request_id`               | string         | no       | Supply and reuse to make retries safe                                       |
 
-Result: as `j5_propose_crew`. Semantics: the caller must command the Crew; the seat name must be new;
-the cap counts current members plus seats in other open requests for the same Crew. Approval
-reserves the seat inside one store transaction (count, cap, step ownership, version bump, and
-ordinal decided together under an optimistic version check, so two approvals landing at once cannot
-both pass; the second one claiming a taken step is refused and stays open),
-then spawns the seat under the Captain and posts the updated roster to the Captain. If the approval
-cannot be recorded, the reservation is released and the request stays open; once the seat starts
-spawning the request is approved, and a seat that was never created is reported, not retried.
+Result: as `j5_propose_crew`. Only the Captain can add a seat. The member is added directly regardless of the auto-approval setting, with the same validation, model and capacity checks as a launch, so a custom seat on a model off the project's list is refused naming the seat, the model and the setting. The result returns the updated roster or a refusal naming the seat and reason; the launch report later records its startup outcome. Retries reuse the original request and cannot add a second copy. A refused automatic request repeats its original reason on retry; a revised request needs a new `client_request_id`. Existing pending addition requests remain human decisions above their Captain's composer, where they can still be approved or declined; additions never appear in the Inbox or its bell count. Member tool approvals remain in the Inbox.
 
 ### Handoff artifacts in Crews
 
@@ -340,11 +352,13 @@ participant, so no Captain check applies to it (Bryant, 2026-09-14).
 
 ### `j5_archive_crew`
 
-**Description (contract):** "Retire a whole Crew you command. Crews archive only as a unit —
+**Description (contract):** "Retire a whole Crew you command. Crews archive only as a unit;
 members are never retired one by one. A clean archive completes immediately; otherwise the call
 refuses with the facts and a confirmation_token. Before retrying with that token, check with the
-user. Nothing is destroyed: worktrees, branches, and ledgers stay readable. Reuse
-client_request_id to retry safely."
+user. Archiving removes the worktrees J5 created for the Crew's seats when they are clean, merged,
+unshared (no other thread or project uses it) and unused (no session or terminal is open in it),
+keeps every branch and pull request, and lists the rest with their reasons.
+Reuse client_request_id to retry safely."
 
 | Input                | Type              | Required | Meaning                                              |
 | -------------------- | ----------------- | -------- | ---------------------------------------------------- |
@@ -352,8 +366,13 @@ client_request_id to retry safely."
 | `confirmation_token` | string            | no       | Token from the refusal; confirms exactly those facts |
 | `client_request_id`  | string, non-empty | no       | Supply and reuse to make retries safe                |
 
-Result: `status` (`archived` or `already_archived`), `crew_instance_id`, and `members` (seat,
-participant_id, per-member result). Semantics: only the Captain — the participant that launched the
+Result: `status` (`archived` or `already_archived`), `crew_instance_id`, `members` (seat,
+participant_id, per-member result), and `worktrees`: one entry for each worktree J5 created for a
+seat on a new worktree, with its `path`, `branch`, an `outcome` of `removed`, `kept` or `failed`, and
+a `reason` (`uncommitted_changes`, `unmerged_commits`, `shared`, `in_use`, `unverified`, or
+`failed`) unless removed. The removal runs after every seat is archived and the Crew is marked
+archived, never fails the archive, and runs again when an archived Crew is archived again, so a
+worktree kept because a session or terminal was still open can be retried once it closes. Semantics: only the Captain — the participant that launched the
 Crew — may archive it (R19); anyone else is refused and pointed at asking the Captain. Facts are
 read for every member before anything happens. If any member has an open Exchange or a running
 turn, the call refuses with a per-seat list (`members[].open_exchanges`, `members[].running_turn`,
@@ -392,7 +411,7 @@ run; `j5_stop_crew` doesn't, and unarchiving doesn't restart it.
 ### Kept upstream tools
 
 - `orchestrator_capabilities` — providers and models (ids, labels, option descriptors) for spawn targeting, plus runtime and interaction-mode facts. It deliberately stays silent about delegation even though `delegate_task` is back on the surface: that tool's own description carries its persona use, and J5 verbs are advertised by their own descriptions.
-- `delegate_task`, `task_status`, `task_cancel` — upstream's provider-owned child delegation. J5 re-declares `delegate_task` with its own description, which leads with the optional `persona` (a persona id from an `@persona:ID` mention or the Settings → Personas library) and presents the plain child as the fallback for cross-provider or T3-tracked work rather than the default for any subagent request. With `persona`, the server pins that persona's instructions, model route, reasoning, and runtime policy and refuses `target` and `runtimeMode`; without it, the child is upstream's plain subagent. Upstream's `isolation: "worktree"` gives a child a checkout of its own, started from the parent's local commit, and the description says so in upstream's words. The child is backing storage under the calling thread, not a Peer Agent; use `j5_spawn_agent` for a participant. Its wait mode is safe where `t3_thread_wait` was not: a child that messages its parent ends its own turn, so the wait returns and the parent reads the message on its next turn (latency, never starvation).
+- `delegate_task`, `task_status`, `task_cancel` — upstream's provider-owned child delegation. J5 re-declares `delegate_task` with its own description, which names the way to get help it serves and leads with the optional `persona` (a persona id from an `@persona:ID` mention or the Settings → Agent Setup library) and presents the plain child as the fallback for cross-provider or T3-tracked work rather than the default for any subagent request. With `persona`, the server pins that persona's instructions, model route, reasoning, and runtime policy and refuses `target` and `runtimeMode`; without it, the child is upstream's plain subagent, and the model it will run on, one inherited from its parent included, must be one the project's [Models for custom members](../features/crews.md) list allows. J5's wrapper hands upstream's `delegateTask` a hook that is called with that resolved model before anything is created, so the check sees what the child will really run on; a retry of a delegation already accepted is not checked again. A refusal is a `model_unavailable` error naming the model, the project and the setting and listing the eligible models, which the agent passes in `target`; a persona's own model is never checked. Upstream's `isolation: "worktree"` gives a child a checkout of its own, started from the parent's local commit, and the description says so in upstream's words. J5's description says it is the first of the two ways to get help (a subagent; the second is a Crew member). The child is backing storage under the calling thread, not a Peer Agent; `j5_spawn_agent` is the tool for a participant the user asked for. Its wait mode is safe where `t3_thread_wait` was not: a child that messages its parent ends its own turn, so the wait returns and the parent reads the message on its next turn (latency, never starvation).
 - `schedule_task` (which also updates a task since upstream folded `update_scheduled_task` into it at v0.1.3), `list_scheduled_tasks`, `delete_scheduled_task`, `run_scheduled_task_now` — consumed as-is.
 - `t3_thread_list`, `t3_thread_read` — consumed as-is; if an upstream description mentions delegation, J5 re-declares that tool with corrected prose.
 - `html_preview`, `html_render`, `request_secret`, `preview_dialog`, `preview_act`, `watch_pull_request`, `unwatch_pull_request` — consumed as-is. `preview_act` is upstream's one browser-control tool since v0.1.3, in place of `preview_click`, `preview_drag`, `preview_hover`, `preview_press`, `preview_scroll`, `preview_select`, `preview_type` and `preview_upload`.
@@ -412,8 +431,8 @@ run; `j5_stop_crew` doesn't, and unarchiving doesn't restart it.
 4. Between agents, a further ask to a peer holding an open Exchange from the caller joins it as a follow-up.
 5. A `j5_send_message` to the caller itself is refused with an error naming the caller's own id.
 6. `j5_list_participants` marks the caller's row `self`, reports a person's row as unable to receive a plain message and able to be asked, and omits provider Subagents.
-7. `j5_spawn_agent` refuses a call that omits provider, model, or reasoning, refuses a choice outside the Role's allowlist with an error naming the Role, and refuses a caller that sits in a Crew with an error naming escalation to its Captain.
-8. A spawned agent's first turn contains its own participant id and project.
+7. `j5_spawn_agent` refuses a call that omits provider or model, refuses one that omits reasoning for a model with a reasoning option or passes it for a model without one, naming the options, accepts one that omits it for a model without one, refuses a choice outside the Role's allowlist with an error naming the Role, and refuses a caller that sits in a Crew with an error naming escalation to its Captain.
+8. A spawned agent's first turn contains its own participant id and project. A Crew seat receives its approved instructions, shared brief, current roster with responsibilities and participant ids, and any playbook or handoff obligation on its first assignment; the assignment keeps its own envelope and reply obligation. Later assignments reuse the same thread without repeating that introduction, unless the provider conversation was replaced, which sends it again. Started members receive net roster changes at the top of their next delivery, including a message steered into a running turn, without a separate turn.
 9. `j5_stop_agent` and `t3_thread_organize` act on one target; neither cascades. `j5_stop_agent` reaches an agent in any project on this server, and refuses a target that runs with broader permission modes than the caller unless the caller is that seat's Captain. A stopped run is never resumed after a server restart, even when restart continuation is enabled.
 10. `t3_thread_organize` archives and restores any thread in the environment that upstream's access check lets the caller act on. Archive closes Exchanges through the shared reactor without a confirmation-token exchange or interrupting an existing run; human archive warnings remain.
 11. `j5_clear_own_ask` closes only an Exchange the caller opened and records the closure as sender-cleared.
@@ -422,7 +441,7 @@ run; `j5_stop_crew` doesn't, and unarchiving doesn't restart it.
 14. Unarchiving an archived agent restores the same participant id, placement and provenance and makes it addressable again; the Exchanges archiving closed stay closed and no cancelled delivery is replayed.
 15. Retired (see History).
 16. Retired (see History).
-17. `j5_list_personas` returns every persona with its availability and route; `j5_propose_crew` and `j5_request_crew_member` file a human gate and refuse unknown, disabled, duplicate, or over-cap seats before anything is recorded; both succeed under every sandbox and approval policy, including Codex approval policy `never`.
+17. `j5_list_personas` returns every persona with its availability and route. `j5_propose_crew` waits for human approval by default or launches directly when the Captain's project enables auto-approval. `j5_request_crew_member` adds directly in every case. Both validate seats and use the existing spawn checks, work under every sandbox and approval policy including `never`, and preserve each seat's tool approval policy.
 18. Approving a proposal spawns exactly once; a second approval finds it resolved; a seat that fails to spawn is reported by name in the launch report and the other seats still start.
 19. `j5_archive_crew` is Captain-only, refuses with per-seat facts and a token when any seat has an open Exchange or a running turn, and finishes a partial archive on retry; `t3_thread_organize` refuses an active Crew member, while Captain archive retains the unit cascade.
 20. `j5_stop_crew` is Captain-only, stops every seat as a user Stop does and reports each seat as interrupted, already idle, or archived; it settles, retires, and closes nothing, and a non-Captain or an archived Crew is refused naming the next step. The person's Stop crew control does the same through the operate scope.
@@ -443,6 +462,7 @@ run; `j5_stop_crew` doesn't, and unarchiving doesn't restart it.
 35. `j5_spawn_agent` refuses an outside agent that passes neither `project_id` nor `scratch`, and one that asks for the `shared` workspace, each with an error naming the legal move.
 36. An agent an outside agent spawns has no placement parent, records the outside agent as its spawner, and is told in its first turn that an outside agent started it and that `j5_send_message` cannot reply to it.
 37. `j5_spawn_agent` gives an outside agent's spawn the level its sign-in was approved at, or a narrower mode it chose. A broader mode is refused. A persona whose policy is broader than that level is refused with an error that names the level and the legal moves.
+38. A custom Crew seat, a `j5_spawn_agent` without a persona and a `delegate_task` without a persona run only on a model and reasoning level the project's lists for custom members allow, inherited ones included; a refusal names the model or level, the project and the setting, lists the eligible ones, and creates nothing. A persona's own selection is never checked, and a retry of an accepted call is not checked again.
 
 ## History
 
@@ -495,3 +515,5 @@ run; `j5_stop_crew` doesn't, and unarchiving doesn't restart it.
 - 2026-10-24 — upstream's queue tools join the kept upstream tools; `t3_queue_edit` edits only a message the caller sent, inside its envelope (Jackson, [#136](https://github.com/Jacksondr5/j5code/issues/136)).
 - 2026-10-24 — a pre-upgrade spawn retry binds its request when the workspace type matches its accepted create receipt and is refused otherwise (Jackson, 2026-10-24; [PR #660](https://github.com/Jacksondr5/j5code/pull/660)).
 - 2026-10-27 — the advance onto upstream's stable v0.1.3, which merged 18 tools into action tools: the kept tools name `t3_queue` (J5's edit rule on its `edit` action), `t3_thread_transfer` (J5's fork error), `t3_pending_request`, `preview_act` and `schedule_task`'s updates in place of the tools they replaced, and `t3_background_wait` joins (Jackson, 2026-10-27) ([register of divergences](../upstream.md), D2).
+- 2026-10-27 — custom Crew seats, a plain `j5_spawn_agent` and a plain `delegate_task` run only on a model and reasoning level the project's lists of models for custom members allow, inherited ones included; AC38 (Bryant; [#744](https://github.com/Jacksondr5/j5code/issues/744)).
+- 2026-11-02 — `reasoning` on `j5_spawn_agent` is required only for a model with a reasoning option, so a model such as Claude Haiku 4.5 can be spawned ([#704](https://github.com/Jacksondr5/j5code/issues/704)).

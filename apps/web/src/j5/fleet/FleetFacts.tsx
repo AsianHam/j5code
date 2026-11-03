@@ -357,9 +357,12 @@ function FleetFactDetailContent({
 export function FleetFactCells({
   environmentId,
   agent,
+  notStarted = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly agent: FleetAgent;
+  /** A Crew seat that was created and has not accepted its first assignment has no runtime to report. */
+  readonly notStarted?: boolean;
 }) {
   const key = fleetAgentKey(environmentId, agent.participantId);
   const facts = useAtomValue(fleetAgentFactsAtom(key));
@@ -380,7 +383,13 @@ export function FleetFactCells({
               : undefined
         }
       >
-        {runtime === undefined ? "?" : <FleetRuntimeLabel runtime={runtime} live={live} />}
+        {notStarted ? (
+          "Not started"
+        ) : runtime === undefined ? (
+          "?"
+        ) : (
+          <FleetRuntimeLabel runtime={runtime} live={live} />
+        )}
         {!live ? <span className="ms-1 text-muted-foreground">(stale)</span> : null}
       </FleetFactHint>
       {facts?.asks === undefined ? (

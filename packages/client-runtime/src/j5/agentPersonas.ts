@@ -466,13 +466,19 @@ export type AgentPersonaDrift = "current" | "changed" | "unknown";
 
 /**
  * Compare a thread's launch snapshot with the library's current definition. Legacy
- * snapshots without a digest, and agents no longer listed, cannot be compared.
+ * snapshots without a digest, snapshots edited at launch, and agents no longer listed, cannot be
+ * compared.
  */
 export function agentPersonaDrift(
-  assignment: Pick<OrchestrationV2AgentPersonaAssignment, "personaId" | "definitionDigest">,
+  assignment: Pick<
+    OrchestrationV2AgentPersonaAssignment,
+    "personaId" | "definitionDigest" | "instructionsEdited"
+  >,
   catalog: OrchestrationV2AgentPersonaCatalog | null | undefined,
 ): AgentPersonaDrift {
-  if (assignment.definitionDigest === undefined) return "unknown";
+  // An edited snapshot differs from the library's definition by the person's own choice.
+  if (assignment.instructionsEdited === true || assignment.definitionDigest === undefined)
+    return "unknown";
   const current = catalog?.personas.find(({ personaId }) => personaId === assignment.personaId);
   if (current?.definitionDigest === undefined) return "unknown";
   return current.definitionDigest === assignment.definitionDigest ? "current" : "changed";

@@ -9,7 +9,12 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import {
+  ProjectionStoreV2,
+  layer as ProjectionStoreLayer,
+} from "../../../orchestration-v2/ProjectionStore.ts";
+import {
   EnvironmentId,
+  EventId,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   type RuntimeMode,
@@ -46,6 +51,7 @@ import {
 import { DispatchModeLimit } from "../../../orchestration-v2/DispatchModeLimit.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
+import { permissiveCrewMemberModels } from "../../test-support/crewMemberModels.ts";
 import { type AgentCrewInstance, AgentCrewInstanceService } from "../AgentCrewInstanceService.ts";
 import {
   ArchiveCrewConfirmationRequiredError,
@@ -850,9 +856,11 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
       }),
     );
     const shellSnapshotCalls = yield* Ref.make(0);
+    const shellSnapshotThreadIds = yield* Ref.make<ReadonlyArray<ThreadId> | undefined>(undefined);
     const orchestrator = Layer.mock(OrchestratorV2)({
-      getShellSnapshot: () =>
-        Ref.update(shellSnapshotCalls, (calls) => calls + 1).pipe(
+      getShellSnapshot: (options) =>
+        Ref.set(shellSnapshotThreadIds, options?.threadIds).pipe(
+          Effect.andThen(Ref.update(shellSnapshotCalls, (calls) => calls + 1)),
           Effect.as({
             schemaVersion: 2,
             snapshotSequence: 1,
@@ -901,6 +909,14 @@ it.effect("lists active and archived agent titles with one ambient shell snapsho
     const result = yield* call({});
     const directory = yield* decodeJ5ListParticipantsResult(result.encodedResult);
     assert.equal(yield* Ref.get(shellSnapshotCalls), 1);
+    assert.deepStrictEqual(
+      yield* Ref.get(shellSnapshotThreadIds),
+      rows.flatMap((row) =>
+        row.participant.kind === "agent" && row.projectId === ledgerProjectId
+          ? [row.participant.threadId]
+          : [],
+      ),
+    );
     assert.equal(directory.total, 5);
     assert.equal(directory.next_cursor, null);
 
@@ -1217,7 +1233,7 @@ it.effect("preflights home before creation and records facts before the one stab
         ),
     });
     const threadManagement = threadManagementMock({
-      getThreadProjection: (threadId) => Effect.succeed(projection(threadId)),
+      getThreadRecords: (threadId) => Effect.succeed(projection(threadId)),
       dispatch: (command) =>
         command.type === "thread.create" && String(command.commandId).includes("spawn-rejected")
           ? Effect.fail(
@@ -1290,6 +1306,7 @@ it.effect("preflights home before creation and records facts before the one stab
       orchestrator,
       Layer.mock(ParticipantPlacementService)({}),
       Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      permissiveCrewMemberModels,
       Layer.mock(AgentCrewInstanceService)({ findMembership: () => Effect.succeed(null) }),
       Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
       Layer.mock(ArchiveCrewService)({}),
@@ -1410,7 +1427,7 @@ it.effect("preflights home before creation and records facts before the one stab
       assert.isTrue(optionless.isFailure);
       assert.include(
         (optionless.result as unknown as { readonly message: string }).message,
-        "Model grok-custom-optionless on provider codex-luna exposes no reasoning options; j5_spawn_agent requires explicit reasoning selection",
+        "Model grok-custom-optionless on provider codex-luna has no reasoning option",
       );
       assert.lengthOf(yield* Ref.get(commands), 4);
 
@@ -1457,6 +1474,7 @@ it.effect("refuses spawn before thread creation when the caller is a Subagent", 
         dispatch: () => Ref.update(dispatches, (count) => count + 1).pipe(Effect.as({} as never)),
       }),
       Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      permissiveCrewMemberModels,
       Layer.mock(AgentCrewInstanceService)({ findMembership: () => Effect.succeed(null) }),
       Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
       Layer.mock(ArchiveCrewService)({}),
@@ -1544,7 +1562,10 @@ const personaCapabilityProvider = (provider: ServerProvider) => ({
     label: model.name,
     options: model.capabilities?.optionDescriptors?.map((descriptor) => ({
       id: descriptor.id,
-      values: descriptor.type === "select" ? descriptor.options.map((option) => option.id) : [],
+      values:
+        descriptor.type === "select"
+          ? descriptor.options.map((option) => option.id)
+          : [false, true],
     })),
   })),
   canRunChildTask: true,
@@ -1563,9 +1584,25 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
       { slug: "gpt-5.6-terra", options: ["medium", "high"] },
       { slug: "gpt-5.6-sol", options: ["high"] },
     ]);
-    const claude = personaProvider("claudeAgent", "claudeAgent", [
+    const claudeWithLevels = personaProvider("claudeAgent", "claudeAgent", [
       { slug: "claude-opus-5", options: ["high"] },
     ]);
+    const claude: ServerProvider = {
+      ...claudeWithLevels,
+      models: [
+        ...claudeWithLevels.models,
+        {
+          slug: "claude-haiku-4-5",
+          name: "claude-haiku-4-5",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
+            ],
+          },
+        },
+      ],
+    };
     const callerRow = {
       projectId: ledgerProjectId,
       participantId: callerParticipantId,
@@ -1613,7 +1650,7 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
           }),
       }),
       threadManagementMock({
-        getThreadProjection: (threadId) =>
+        getThreadRecords: (threadId) =>
           Ref.get(commands).pipe(
             Effect.map((all) => {
               const create = all.find(
@@ -1660,6 +1697,7 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
           }),
       }),
       Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([codex, claude]) }),
+      permissiveCrewMemberModels,
       Layer.mock(AgentCrewInstanceService)({ findMembership: () => Effect.succeed(null) }),
       Layer.mock(ParticipantPlacementService)({}),
       Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
@@ -1794,6 +1832,27 @@ it.effect("spawns a saved agent as a Peer Agent only within its declared routes"
       assert.include(failureMessage(outOfRoute), "Agent scout allows only");
       assert.include(failureMessage(outOfRoute), "outside its declared routes");
       assert.include(failureMessage(outOfRoute), "or omit persona");
+
+      // A route always names a level, so a persona never runs without one and none is inferred.
+      const { reasoning: _reasoning, ...scoutWithoutReasoning } = scout;
+      const noLevelOnRoute = yield* call({
+        ...scoutWithoutReasoning,
+        client_request_id: "spawn-persona-no-level-on-route",
+      });
+      assert.isTrue(noLevelOnRoute.isFailure);
+      assert.include(failureMessage(noLevelOnRoute), "needs a reasoning level");
+      const modelWithoutLevels = yield* call({
+        ...scoutWithoutReasoning,
+        provider: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-haiku-4-5",
+        client_request_id: "spawn-persona-model-without-levels",
+      });
+      assert.isTrue(modelWithoutLevels.isFailure);
+      assert.include(failureMessage(modelWithoutLevels), "Agent scout allows only");
+      assert.include(
+        failureMessage(modelWithoutLevels),
+        "claudeAgent claude-haiku-4-5 (no reasoning) is outside its declared routes",
+      );
 
       const unenforceable = yield* call({
         ...scout,
@@ -1984,6 +2043,7 @@ it.effect("archives a crew only as a unit through its captain with one confirmat
       threadManagementMock({}),
       Layer.mock(OrchestratorMcpService)({}),
       Layer.mock(ProviderRegistry)({}),
+      permissiveCrewMemberModels,
       Layer.mock(ParticipantPlacementService)({}),
       Layer.mock(AgentCrewInstanceService)({}),
       Layer.mock(CrewProposalService)({}),
@@ -2005,6 +2065,14 @@ it.effect("archives a crew only as a unit through its captain with one confirmat
                         seatName: "builder",
                         participantId: memberParticipantId,
                         result: "archived" as const,
+                      },
+                    ],
+                    worktrees: [
+                      {
+                        path: "/wt/builder",
+                        branch: "j5/builder",
+                        outcome: "kept" as const,
+                        reason: "unmerged_commits" as const,
                       },
                     ],
                   }),
@@ -2073,6 +2141,14 @@ it.effect("archives a crew only as a unit through its captain with one confirmat
         status: "archived",
         crew_instance_id: "crew:j5:test",
         members: [{ seat: "builder", participant_id: memberParticipantId, result: "archived" }],
+        worktrees: [
+          {
+            path: "/wt/builder",
+            branch: "j5/builder",
+            outcome: "kept",
+            reason: "unmerged_commits",
+          },
+        ],
       });
       const calls = yield* Ref.get(archiveCalls);
       assert.lengthOf(calls, 2);
@@ -2105,6 +2181,7 @@ it.effect("lists saved agents with purpose, policy, availability, and route", ()
       threadManagementMock({}),
       Layer.mock(OrchestratorMcpService)({}),
       Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([codex]) }),
+      permissiveCrewMemberModels,
       Layer.mock(AgentCrewInstanceService)({ findMembership: () => Effect.succeed(null) }),
       Layer.mock(ParticipantPlacementService)({}),
       Layer.mock(A2ADeliveryWorker)({ notify: Effect.void }),
@@ -2230,10 +2307,11 @@ it.effect("routes crew proposals through a captain that is not itself a crew mem
       }),
       Layer.mock(SpawnCompositionService)({}),
       threadManagementMock({
-        getThreadProjection: (threadId) => Effect.succeed(projection(threadId)),
+        getThreadRecords: (threadId) => Effect.succeed(projection(threadId)),
       }),
       Layer.mock(OrchestratorMcpService)({}),
       Layer.mock(ProviderRegistry)({}),
+      permissiveCrewMemberModels,
       Layer.mock(AgentCrewInstanceService)({
         findMembership: () => Ref.get(membership),
         listForCaptain: () => Effect.succeed([]),
@@ -2355,6 +2433,7 @@ it.effect("routes crew proposals through a captain that is not itself a crew mem
       assert.deepStrictEqual(proposed.result, {
         proposal_id: `proposal:${invocation.providerSessionId}:propose-1`,
         status: "open",
+        approval_mode: "human",
         crew_instance_id: null,
         members: [],
       });
@@ -2519,7 +2598,7 @@ it.effect(
                   : null,
               ),
             ),
-          getThreadProjection: (threadId) =>
+          getThreadRecords: (threadId) =>
             Ref.get(targetRunning).pipe(
               Effect.map((running) => ({
                 ...projection(threadId),
@@ -2854,4 +2933,67 @@ it.effect(
         assert.isTrue(settledRemote.isFailure);
       }).pipe(Effect.provide(layer));
     }),
+);
+
+// j5_list_participants joins the shells of its project's agents: active and archived alike, and a
+// project with no agents asks for none.
+it.effect(
+  "a shell snapshot by thread ids returns active and archived shells, and none for none",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStoreV2;
+      const now = DateTime.makeUnsafe("2026-09-17T09:00:00.000Z");
+      const instanceId = ProviderInstanceId.make("codex");
+      const seed = (name: string, archivedAt: DateTime.Utc | null) => {
+        const threadId = ThreadId.make(`thread:by-ids:${name}`);
+        return store
+          .apply({
+            id: EventId.make(`event:by-ids:${name}`),
+            type: "thread.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: threadId,
+              projectId: ProjectId.make("project:by-ids"),
+              title: name,
+              providerInstanceId: instanceId,
+              modelSelection: { instanceId, model: "gpt-5.4" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: null,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdBy: "user",
+              creationSource: "web",
+              createdAt: now,
+              updatedAt: now,
+              archivedAt,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+          })
+          .pipe(Effect.as(threadId));
+      };
+      const active = yield* seed("active", null);
+      const archived = yield* seed("archived", now);
+      yield* seed("elsewhere", null);
+
+      const chosen = yield* store.getShellSnapshot({ threadIds: [active, archived] });
+      assert.deepStrictEqual(
+        chosen.threads.map((thread) => thread.id),
+        [active],
+      );
+      assert.deepStrictEqual(
+        chosen.archivedThreads.map((thread) => thread.id),
+        [archived],
+      );
+      const none = yield* store.getShellSnapshot({ threadIds: [] });
+      assert.deepStrictEqual([none.threads, none.archivedThreads], [[], []]);
+    }).pipe(
+      Effect.provide(ProjectionStoreLayer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    ),
 );

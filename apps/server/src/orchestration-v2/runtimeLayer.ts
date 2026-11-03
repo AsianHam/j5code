@@ -1,3 +1,5 @@
+import * as CrewTurnContext from "../j5/a2a/CrewTurnContext.ts";
+import * as CrewDeliveryContext from "../j5/a2a/CrewDeliveryContext.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -174,7 +176,43 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   ),
 );
 
+const layerCrewOrchestratorBase = Orchestrator.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerCheckpointServiceProvided,
+      CommandPolicy.layer,
+      layerStores,
+      layerEventSinkProvided,
+      layerCommandReceiptStoreProvided,
+      layerContextHandoffServiceProvided,
+      IdAllocator.layer,
+      ProjectStore.layer,
+      layerProviderAdapterRegistryProvided,
+      // Reuse the continuation worker's layer reference so memoization shares one request queue.
+      ProviderContinuationRequests.layer,
+      layerProviderEventIngestorProvided,
+      layerRuntimePolicyProvided,
+      layerProviderSessionManagerProvided,
+      layerProviderSwitchServiceProvided,
+      layerRunExecutionServiceProvided,
+      ThreadForkService.layer,
+    ),
+  ),
+);
+
+const layerOrchestratorProvided = CrewDeliveryContext.layer.pipe(
+  Layer.provide(layerCrewOrchestratorBase),
+  Layer.provide(layerCommandReceiptStoreProvided),
+);
+
+// The member's thread records what it was told through the Orchestrator, which sits below the
+// provider turn services.
+const layerCrewTurnContextProvided = CrewTurnContext.layer.pipe(
+  Layer.provide(layerOrchestratorProvided),
+);
+
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
+  Layer.provide(layerCrewTurnContextProvided),
   Layer.provide(
     Layer.mergeAll(
       layerContextHandoffServiceProvided,
@@ -191,6 +229,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
 );
 
 const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
+  Layer.provide(layerCrewTurnContextProvided),
   Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
 );
 const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
@@ -226,30 +265,6 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
       layerCheckpointCaptureServiceProvided,
       ProjectionStore.layer,
       queuedRunWatchdogProvided,
-    ),
-  ),
-);
-
-const layerOrchestratorProvided = Orchestrator.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      layerCheckpointServiceProvided,
-      CommandPolicy.layer,
-      layerStores,
-      layerEventSinkProvided,
-      layerCommandReceiptStoreProvided,
-      layerContextHandoffServiceProvided,
-      IdAllocator.layer,
-      ProjectStore.layer,
-      layerProviderAdapterRegistryProvided,
-      // Reuse the continuation worker's layer reference so memoization shares one request queue.
-      ProviderContinuationRequests.layer,
-      layerProviderEventIngestorProvided,
-      layerRuntimePolicyProvided,
-      layerProviderSessionManagerProvided,
-      layerProviderSwitchServiceProvided,
-      layerRunExecutionServiceProvided,
-      ThreadForkService.layer,
     ),
   ),
 );

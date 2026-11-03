@@ -205,7 +205,7 @@ const preflightCrewCaptain = Effect.fn("j5.a2a.mcp.preflightCrewCaptain")(functi
     );
   }
   const parent = yield* (yield* ThreadManagementService)
-    .getThreadProjection(scope.thread.threadId)
+    .getThreadRecords(scope.thread.threadId, [])
     .pipe(
       Effect.mapError((error) =>
         stateError(
@@ -227,17 +227,20 @@ const crewProposalNextStep = (error: CrewProposalError) =>
     ? error.nextStep
     : error._tag === "CrewLaunchSeatUnavailableError"
       ? "Choose a different persona from j5_list_personas or ask the user to fix that persona, then retry."
-      : error._tag === "CrewLaunchCapError"
-        ? "The crew is full. Work with the seats it has, or propose a new crew for the extra work."
-        : error._tag === "CrewLaunchSeatConflictError"
-          ? "Choose a seat name the crew does not already use, then retry."
-          : error._tag === "CrewStepAlreadyOwnedError"
-            ? "Claim only steps no seat owns yet, then retry."
-            : "Retry with the same client_request_id; recovery is forward-only.";
+      : error._tag === "CrewLaunchModelNotEligibleError"
+        ? "Give that custom member one of the eligible models or levels above, or leave its model unset to use yours if yours is eligible, then retry."
+        : error._tag === "CrewLaunchCapError"
+          ? "The crew is full. Work with the seats it has, or propose a new crew for the extra work."
+          : error._tag === "CrewLaunchSeatConflictError"
+            ? "Choose a seat name the crew does not already use, then retry."
+            : error._tag === "CrewStepAlreadyOwnedError"
+              ? "Claim only steps no seat owns yet, then retry."
+              : "Retry with the same client_request_id; recovery is forward-only.";
 
 const projectCrewProposal = (outcome: CrewProposalOutcome) => ({
   proposal_id: outcome.proposal.id,
   status: outcome.proposal.status,
+  approval_mode: outcome.proposal.approvalMode ?? "human",
   crew_instance_id: outcome.instance?.id ?? null,
   members: (outcome.instance?.members ?? []).map((member) => ({
     seat: member.seatName,
@@ -618,7 +621,15 @@ const handlers = {
           );
         }
       }
-      const snapshot = yield* Effect.option(orchestrator.getShellSnapshot());
+      const snapshot = yield* Effect.option(
+        orchestrator.getShellSnapshot({
+          threadIds: directory.flatMap((row) =>
+            row.participant.kind === "agent" && row.projectId === projectId
+              ? [row.participant.threadId]
+              : [],
+          ),
+        }),
+      );
       const threads = new Map(
         Option.match(snapshot, {
           onNone: () => [],
@@ -795,7 +806,7 @@ const handlers = {
           Effect.mapError((error) =>
             stateError(
               `The persona library cannot be read: ${error.message}`,
-              "Ask the user to fix the persona library in Settings → Personas, then retry j5_list_personas.",
+              "Ask the user to fix the persona library in Settings → Agent Setup, then retry j5_list_personas.",
             ),
           ),
         );
@@ -868,7 +879,7 @@ const handlers = {
       }
       const threadManagement = yield* ThreadManagementService;
       const targetProjection = yield* threadManagement
-        .getThreadProjection(target.threadId)
+        .getThreadRecords(target.threadId, ["runs"])
         .pipe(
           Effect.mapError((error) =>
             stateError(
@@ -1011,6 +1022,7 @@ const handlers = {
             participant_id: member.participantId,
             result: member.result,
           })),
+          worktrees: outcome.worktrees,
         };
       }).pipe(Effect.mapError(archiveCrewFailure)),
   ),

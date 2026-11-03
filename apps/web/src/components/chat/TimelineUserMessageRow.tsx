@@ -79,6 +79,7 @@ import { useSharedMessageAuthor } from "../../j5/sharing/sharedTimeline";
 import {
   J5MessageAuthorLine,
   J5OpenSenderThread,
+  j5PromptRow,
   renderThreadA2ADelivery,
   useJ5UserMessagePresentation,
 } from "../../j5/a2a/ThreadA2ARenderer";
@@ -144,7 +145,8 @@ export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mes
       environmentId={ctx.activeThreadEnvironmentId}
       onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
     />
-  ) : resolveUserMessagePresentation(row.message).attribution === "automation" ? (
+  ) : resolveUserMessagePresentation(row.message).attribution === "automation" ||
+    j5PromptRow(row.message) !== null ? (
     <AutomationMessageRow row={row} />
   ) : (
     <UserTimelineRow row={row} />
@@ -156,7 +158,9 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const ctx = use(TimelineRowCtx);
   const [expanded, setExpanded] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
-  const { text, scheduledTaskId } = resolveUserMessagePresentation(row.message);
+  // J5 (case 7): J5's platform prompts draw as this row, with their own label, title and words.
+  const j5Prompt = j5PromptRow(row.message);
+  const { text, scheduledTaskId } = j5Prompt ?? resolveUserMessagePresentation(row.message);
   const tasksQuery = useEnvironmentQuery(
     scheduledTaskId
       ? serverEnvironment.scheduledTasksLive({
@@ -166,7 +170,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       : null,
   );
   const taskTitle = tasksQuery.data?.tasks.find((task) => task.id === scheduledTaskId)?.title;
-  const summary = taskTitle ?? text.trim().split(/\r?\n/, 1)[0] ?? "";
+  const summary = j5Prompt?.summary ?? taskTitle ?? text.trim().split(/\r?\n/, 1)[0] ?? "";
 
   const revertTurnCount = row.revertTurnCount;
   const promptLink = promptLinkFor(text);
@@ -174,21 +178,24 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const bodyMounted = expanded || ctx.findActive;
 
   return (
-    <div className="group flex flex-col items-end gap-1" data-user-message-attribution="automation">
+    <div
+      className="group flex flex-col items-start gap-1"
+      data-user-message-attribution="automation"
+    >
       {row.message.inputIntent === "steer" ||
       row.message.inputIntent === "promoted_queued_to_steer" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
       <div
         className={cn(
-          "min-w-0 max-w-[80%] rounded-2xl bg-message text-message-foreground",
-          expanded && "w-full",
+          "min-w-0 max-w-[80%] rounded-2xl border border-border",
+          (expanded || j5Prompt) && "w-full",
         )}
       >
-        <MessageAuthorHeading>Automation</MessageAuthorHeading>
+        <MessageAuthorHeading>{j5Prompt?.label ?? "Automation"}</MessageAuthorHeading>
         <FoldedMessageHeader
-          icon={CalendarClockIcon}
-          label="Automation"
+          icon={j5Prompt?.icon ?? CalendarClockIcon}
+          label={j5Prompt?.label ?? "Automation"}
           summary={summary}
           expanded={expanded}
           onToggle={() => setExpanded((value) => !value)}

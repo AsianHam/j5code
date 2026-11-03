@@ -282,6 +282,25 @@ describe("crew launch report", () => {
       "launch: 2 started, 0 failed, 0 not created, 0 start unconfirmed after 60s",
     );
     assert.include(text, "Your crew is running.");
+    assert.include(
+      text,
+      "resolve technical disagreements within the agreed scope yourself, and ask the user only when product intent or their judgment is needed",
+    );
+    assert.include(
+      text,
+      "ask with j5_send_message to the user with expect_reply=true, not a native question tool, so the request reaches their Inbox, state the disagreement, the options as a list and your recommendation, and keep working on what does not depend on the answer",
+    );
     assert.notInclude(text, "seat_failed");
+  });
+  it("identifies automatic approval without attributing it to a person", () => {
+    const text = crewLaunchReportText({
+      proposal: { ...proposal, approvalMode: "automatic" },
+      instance,
+      verdicts: new Map(),
+      windowMs: 60_000,
+    });
+    assert.include(text, "approval_mode: automatic");
+    assert.include(text, "decision: approved");
+    assert.notInclude(text, "decided_by:");
   });
 });

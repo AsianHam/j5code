@@ -183,7 +183,7 @@ const SEAMS: ReadonlyArray<Seam> = [
     file: "features/settings/SettingsRouteScreen.tsx",
     record: "PR #75–#86 role library: Personas settings",
     from: "",
-    reaches: ['page("SettingsAgents", "person.2", "Personas")'],
+    reaches: ['page("SettingsAgents", "person.2", "Agent Setup")'],
   },
   {
     file: "features/home/useThreadListActions.ts",

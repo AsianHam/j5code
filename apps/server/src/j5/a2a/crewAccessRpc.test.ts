@@ -33,13 +33,30 @@ const crewServices = Layer.mergeAll(
     crewRuntimeRequests: Effect.succeed({
       requests: [{ threadId: SEAT, requestId: "request:seat", crewInstanceId: "crew:1" } as never],
     }),
+    crewArchiveWorktrees: (crewInstanceIds) =>
+      Effect.succeed(
+        crewInstanceIds.map((crewInstanceId) => ({
+          crewInstanceId,
+          captainThreadId: CAPTAIN,
+          seat: "builder",
+          path: "/wt/builder",
+          branch: "j5/builder",
+          verdict: "remove" as const,
+          reason: null,
+        })),
+      ),
   }),
   Layer.mock(ClientActionsService)({
     resolveCrewProposal: () => Effect.succeed({ proposal: {} as never, crewInstanceId: null }),
     respondCrewRuntimeRequest: (input) =>
       Effect.succeed({ threadId: input.threadId, requestId: input.requestId }),
     archiveCrew: (input) =>
-      Effect.succeed({ crewInstanceId: input.crewInstanceId, status: "archived", members: [] }),
+      Effect.succeed({
+        crewInstanceId: input.crewInstanceId,
+        status: "archived",
+        members: [],
+        worktrees: [],
+      }),
   }),
   Layer.mock(PeerAdminService)({}),
   readChangesLayer,
@@ -155,5 +172,35 @@ it.effect("only an Owner archives a Crew, for now", () =>
       );
     assert.match(yield* archive(wide), /^refused: Only an Owner/);
     assert.strictEqual(yield* archive(owner), "allowed");
+  }).pipe(Effect.provide(conversationLayer)),
+);
+
+it.effect("shows a Crew's worktree paths to whoever reaches its Captain, and to no one else", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const onCaptain = yield* connection("Cara", [
+      { scope: { kind: "thread", threadId: CAPTAIN }, level: "viewer" },
+    ]);
+    const elsewhere = yield* connection("Eli", [
+      { scope: { kind: "thread", threadId: "thread:unrelated" as ThreadId }, level: "viewer" },
+    ]);
+    const read = (session: typeof onCaptain) =>
+      handlersFor(session).pipe(
+        Effect.flatMap(({ reads }) =>
+          reads["j5.archive.readCrewWorktrees"]({ crewInstanceIds: ["crew:1"] }),
+        ),
+      );
+    // The captain id the service reports is for filtering only; the client never sees it.
+    assert.deepStrictEqual((yield* read(onCaptain)).worktrees, [
+      {
+        crewInstanceId: "crew:1",
+        seat: "builder",
+        path: "/wt/builder",
+        branch: "j5/builder",
+        verdict: "remove",
+        reason: null,
+      },
+    ]);
+    assert.deepStrictEqual((yield* read(elsewhere)).worktrees, []);
   }).pipe(Effect.provide(conversationLayer)),
 );

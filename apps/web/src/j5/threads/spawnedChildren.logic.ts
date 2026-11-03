@@ -32,7 +32,9 @@ export function selectSpawnedChildRows<T extends SpawnedChildThread>(
     .flatMap((child): Array<SpawnedChildRow<T>> => {
       const thread = threadsById.get(child.threadId);
       if (thread === undefined) return child.seat === null ? [] : [{ child, thread }];
-      return thread.archivedAt !== null ? [] : [{ child, thread }];
+      return thread.archivedAt !== null
+        ? []
+        : [{ child, thread: { ...thread, notStarted: child.seat?.notStarted ?? false } }];
     })
     .toSorted((left, right) => activityOf(right).localeCompare(activityOf(left)));
 }

@@ -20,6 +20,8 @@ export interface CrewSeatDraft {
   readonly seat: string;
   readonly agentId: string;
   readonly instructions: string;
+  /** The persona's whole text as edited on the card, run instead of the persona's own. */
+  readonly personaInstructions?: string;
   readonly modelSelection?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
   readonly workspace?: CrewSeatWorkspace;
@@ -65,6 +67,9 @@ export const crewSeatDraft = (seat: CrewProposalSeat): CrewSeatDraft => ({
   seat: seat.seat,
   agentId: seat.agentId ?? CUSTOM_AGENT,
   instructions: seat.instructions ?? "",
+  ...(seat.personaInstructions === undefined
+    ? {}
+    : { personaInstructions: seat.personaInstructions }),
   ...(seat.modelSelection === undefined ? {} : { modelSelection: seat.modelSelection }),
   ...(seat.runtimeMode === undefined ? {} : { runtimeMode: seat.runtimeMode }),
   ...(seat.workspace === undefined ? {} : { workspace: seat.workspace }),
@@ -120,20 +125,24 @@ export const chooseCrewSeatWorkspace = (
         : { type, worktreePath: options?.worktrees[0]?.path ?? "" },
 });
 
-/** A new worktree's base branch; other fields of the choice stay as they were. */
-export const setCrewSeatBaseRef = (draft: CrewSeatDraft, baseRef: string): CrewSeatDraft =>
-  draft.workspace?.type === "worktree"
-    ? { ...draft, workspace: { ...draft.workspace, baseRef } }
-    : { ...draft, workspace: { type: "worktree", baseRef } };
+/**
+ * A new worktree's base branch; other fields of the choice stay as they were. The saved commit is
+ * dropped: an edited base is resolved again, and the new commit shown, before it can be approved.
+ */
+export const setCrewSeatBaseRef = (draft: CrewSeatDraft, baseRef: string): CrewSeatDraft => {
+  const { baseCommit: _pin, ...kept } = draft.workspace?.type === "worktree" ? draft.workspace : {};
+  return { ...draft, workspace: { ...kept, type: "worktree", baseRef } };
+};
 
 /** Whether a new worktree starts from the fetched origin copy of its base branch. */
 export const setCrewSeatStartFromOrigin = (
   draft: CrewSeatDraft,
   startFromOrigin: boolean,
-): CrewSeatDraft =>
-  draft.workspace?.type === "worktree"
-    ? { ...draft, workspace: { ...draft.workspace, startFromOrigin } }
-    : draft;
+): CrewSeatDraft => {
+  if (draft.workspace?.type !== "worktree") return draft;
+  const { baseCommit: _pin, ...kept } = draft.workspace;
+  return { ...draft, workspace: { ...kept, startFromOrigin } };
+};
 
 export const setCrewSeatWorktree = (draft: CrewSeatDraft, worktreePath: string): CrewSeatDraft => ({
   ...draft,
@@ -144,7 +153,7 @@ export const describeCrewSeatWorkspace = (workspace: CrewSeatWorkspace): string 
   workspace.type === "shared"
     ? "Captain's checkout"
     : workspace.type === "worktree"
-      ? `New worktree from ${workspace.baseRef}`
+      ? `New worktree from ${workspace.baseRef}${workspace.baseCommit === undefined ? "" : ` @ ${workspace.baseCommit.slice(0, 8)}`}`
       : `Existing worktree on ${workspace.branch ?? workspace.worktreePath}`;
 
 /** A different model starts with its own advertised defaults, never options from another model. */
@@ -197,6 +206,7 @@ export const applyCrewSeatDraft = (
   reason: seat.reason,
   agentId: draft.agentId === CUSTOM_AGENT ? null : draft.agentId,
   ...(draft.instructions ? { instructions: draft.instructions } : {}),
+  ...(draft.personaInstructions ? { personaInstructions: draft.personaInstructions } : {}),
   ...(draft.modelSelection ? { modelSelection: draft.modelSelection } : {}),
   ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
   ...(draft.workspace ? { workspace: draft.workspace } : {}),

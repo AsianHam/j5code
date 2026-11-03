@@ -63,7 +63,7 @@ Set aside on purpose, each tracked where it is linked. An item leaves this list 
 10. The first answer settles a prompt for everyone, and the settled prompt shows who answered. An answer to a question carries its author's name and level to the agent. A Crew roster's Captain is told who approved or declined it. For a command's approval, the people on the thread see who answered and the agent is not told.
 
 11. A Viewer sees each prompt and its outcome, with its controls shown disabled.
-12. A Crew seat's request for approval, and a Captain's request for a further seat, reach the inbox of everyone who can write to that thread, and the first answer settles each.
+12. A Crew seat's request for approval reaches the inbox of everyone who can write to that thread, and the first answer settles each.
 
 13. In a shared conversation, an agent can ask one person who can write to its thread, or everyone here while more than one person can write to it; an ask and its reply show in the thread to everyone on it.
 

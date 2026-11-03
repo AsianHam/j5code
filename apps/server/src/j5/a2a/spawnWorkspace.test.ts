@@ -13,6 +13,7 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
   type RuntimeMode,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import { layerMemory } from "../../persistence/Sqlite.ts";
@@ -63,6 +64,11 @@ import {
   type SpawnCheckout,
 } from "./spawnWorkspace.ts";
 import { type FakeCheckout, fakeSpawnWorkspaceLayer } from "./test-support/spawnWorkspaceFakes.ts";
+import { CrewMemberModels } from "../agents/crewMemberModels.ts";
+import {
+  crewMemberModelsLayer,
+  permissiveCrewMemberModels,
+} from "../test-support/crewMemberModels.ts";
 import { noDocumentTextLayer } from "../test-support/documentText.ts";
 
 const checkout = (
@@ -72,7 +78,36 @@ const checkout = (
   worktrees: [{ path: "/repo-worktrees/feature", branch: "fix/login" }],
   localBranchNames: ["j5/main", "taken"],
   missingBaseRefs: [],
+  baseCommits: [],
+  unreachableBaseRefs: [],
   ...overrides,
+});
+
+it("refuses only the seats whose base could not be fetched from origin", () => {
+  const unreachable = { ref: "main", startFromOrigin: true, commit: undefined };
+  const state = checkout({
+    baseCommits: [
+      { ref: "release", startFromOrigin: false, commit: undefined, sha: "a".repeat(40) },
+    ],
+    unreachableBaseRefs: [{ ...unreachable, problem: "could not read from remote repository" }],
+  });
+  const refused = resolveSpawnWorkspace(state, {
+    type: "worktree",
+    baseRef: "main",
+    startFromOrigin: true,
+  });
+  assert.isTrue(Result.isFailure(refused));
+  const failure = Result.isFailure(refused) ? refused.failure : undefined;
+  assert.include(failure?.detail, "Base 'main' was chosen from origin");
+  assert.include(failure?.detail, "could not read from remote repository");
+  assert.include(failure?.nextStep, "local branch");
+  // The same ref locally, and another base, resolve against the same checkout.
+  assert.isTrue(
+    Result.isSuccess(resolveSpawnWorkspace(state, { type: "worktree", baseRef: "main" })),
+  );
+  assert.isTrue(
+    Result.isSuccess(resolveSpawnWorkspace(state, { type: "worktree", baseRef: "release" })),
+  );
 });
 
 it("resolves each explicit choice; only shared asks nothing of git", () => {
@@ -188,6 +223,10 @@ const spawnHarness = (input: {
   readonly beforeProjectRead?: Effect.Effect<void>;
   /** Who calls; the thread caller unless a test calls as an outside agent. */
   readonly scope?: McpInvocationScope;
+  /** The check on a plain agent's model; every model is eligible unless a test saves a list. */
+  readonly memberModels?: Layer.Layer<CrewMemberModels>;
+  /** Records the ref of each fetch from origin. */
+  readonly fetches?: Ref.Ref<ReadonlyArray<string>>;
 }) =>
   Effect.gen(function* () {
     const log = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -213,7 +252,24 @@ const spawnHarness = (input: {
       canOpenExchange: true,
       acceptsUrgency: false,
     } satisfies ParticipantDirectoryRow;
+    const readThread = (threadId: ThreadId) =>
+      input.liveCaller !== undefined && threadId === invocation.thread.threadId
+        ? Ref.get(input.liveCaller)
+        : Ref.get(commands).pipe(
+            Effect.map((all) => {
+              const create = all.find(
+                (command) => command.type === "thread.create" && command.threadId === threadId,
+              );
+              return create?.type === "thread.create"
+                ? {
+                    ...callerThread(threadId),
+                    thread: { ...callerThread(threadId).thread, ...create, id: threadId },
+                  }
+                : callerThread(threadId, input.callerRuntimeMode);
+            }),
+          );
     const dependencies = Layer.mergeAll(
+      input.memberModels ?? permissiveCrewMemberModels,
       noDocumentTextLayer,
       Layer.mock(A2ASendService)({ listParticipants: () => Effect.succeed([callerRow]) }),
       Layer.mock(A2AHomeRegistrar)({
@@ -254,22 +310,8 @@ const spawnHarness = (input: {
           }),
       }),
       Layer.mock(ThreadManagementService)({
-        getThreadProjection: (threadId) =>
-          input.liveCaller !== undefined && threadId === invocation.thread.threadId
-            ? Ref.get(input.liveCaller)
-            : Ref.get(commands).pipe(
-                Effect.map((all) => {
-                  const create = all.find(
-                    (command) => command.type === "thread.create" && command.threadId === threadId,
-                  );
-                  return create?.type === "thread.create"
-                    ? {
-                        ...callerThread(threadId),
-                        thread: { ...callerThread(threadId).thread, ...create, id: threadId },
-                      }
-                    : callerThread(threadId, input.callerRuntimeMode);
-                }),
-              ),
+        getThreadProjection: readThread,
+        getThreadRecords: (threadId) => readThread(threadId) as never,
         // The caller is mid-run, as upstream's tool access check requires; the child does not
         // exist yet.
         getThreadShell: (threadId) =>
@@ -362,8 +404,24 @@ const spawnHarness = (input: {
                   {
                     id: "gpt-5.6-sol",
                     label: "GPT-5.6 Sol",
-                    options: [{ id: "reasoningEffort", values: ["high"] }],
+                    options: [{ id: "reasoningEffort", values: ["low", "high"] }],
                   },
+                ],
+                canRunChildTask: true,
+                canRunCrossProviderChildTask: true,
+                constraints: [],
+              },
+              {
+                providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                driverKind: ProviderDriverKind.make("claudeAgent"),
+                displayName: "Claude",
+                models: [
+                  {
+                    id: "claude-haiku-4-5",
+                    label: "Claude Haiku 4.5",
+                    options: [{ id: "thinking", values: [false, true], default: true }],
+                  },
+                  { id: "custom-no-options", label: "Custom" },
                 ],
                 canRunChildTask: true,
                 canRunCrossProviderChildTask: true,
@@ -427,6 +485,7 @@ const spawnHarness = (input: {
       Layer.provideMerge(
         fakeSpawnWorkspaceLayer({
           checkout: input.checkout,
+          ...(input.fetches === undefined ? {} : { fetches: input.fetches }),
           ...(input.replay === undefined ? {} : { replay: input.replay }),
           ...(input.liveCheckout === undefined ? {} : { liveCheckout: input.liveCheckout }),
           launches,
@@ -572,6 +631,311 @@ it.effect("spawns into another project's main checkout, as a root of that projec
       }
       assert.equal(brief?.type, "message.dispatch");
       if (brief?.type === "message.dispatch") assert.include(brief.text, "Other project");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+const codexSolAndTerra = {
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
+  enabled: true,
+  installed: true,
+  status: "ready",
+  availability: "available",
+  models: ["gpt-5.6-sol", "gpt-5.6-terra"].map((slug) => ({ slug, name: slug })),
+} as unknown as ServerProvider;
+const terraOnly = {
+  crewMemberModels: [{ instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-terra" }],
+};
+
+it.effect("a plain spawn runs on a model its project's list allows", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      memberModels: crewMemberModelsLayer({
+        providers: [codexSolAndTerra],
+        settings: {
+          ...terraOnly,
+          // The other project keeps every model, so the list that applies is the target's.
+          projectSettingsOverrides: { [otherProjectId]: { crewMemberModels: null } },
+        },
+        projectTitle: "Billing Migration",
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const refused = yield* call({ ...spawnArgs, client_request_id: "off-list" });
+      assert.isTrue(refused.isFailure);
+      for (const part of [
+        "Model gpt-5.6-sol on codex",
+        "Billing Migration",
+        "Models for custom members in Agent Setup",
+        "codex/gpt-5.6-terra",
+      ])
+        assert.include(message(refused), part);
+      assert.lengthOf(yield* Ref.get(commands), 0, "a refused spawn creates nothing");
+      const elsewhere = yield* call({
+        ...spawnArgs,
+        project_id: LedgerProjectId.make(otherProjectId),
+        workspace: { type: "root" },
+        client_request_id: "other-project-list",
+      });
+      assert.isFalse(elsewhere.isFailure);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect(
+  "a retry of a spawn that already created its agent is not held to a list saved since",
+  () =>
+    Effect.gen(function* () {
+      const { layer, call } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+        existingChildRuntimeMode: "full-access",
+        memberModels: crewMemberModelsLayer({
+          providers: [codexSolAndTerra],
+          settings: terraOnly,
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const replayed = yield* call({ ...spawnArgs, client_request_id: "already-created" });
+        assert.isFalse(replayed.isFailure);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+const codexWithLevels = {
+  ...codexSolAndTerra,
+  models: ["gpt-5.6-sol", "gpt-5.6-terra"].map((slug) => ({
+    slug,
+    name: slug,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+    },
+  })),
+} as unknown as ServerProvider;
+const lowOnly = {
+  crewMemberReasoning: [{ instanceId: ProviderInstanceId.make("codex"), level: "low" }],
+};
+
+it.effect("a plain spawn runs at a reasoning level its project's list allows", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      memberModels: crewMemberModelsLayer({
+        providers: [codexWithLevels],
+        settings: lowOnly,
+        projectTitle: "Billing Migration",
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const refused = yield* call({ ...spawnArgs, client_request_id: "off-list-level" });
+      assert.isTrue(refused.isFailure);
+      for (const part of [
+        "Reasoning level high of gpt-5.6-sol on codex",
+        "Billing Migration",
+        "Models for custom members in Agent Setup",
+        "Eligible levels for gpt-5.6-sol: low.",
+      ])
+        assert.include(message(refused), part);
+      assert.lengthOf(yield* Ref.get(commands), 0, "a refused spawn creates nothing");
+      const allowed = yield* call({
+        ...spawnArgs,
+        reasoning: "low",
+        client_request_id: "on-list-level",
+      });
+      assert.isFalse(allowed.isFailure);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect(
+  "a retry of a spawn that already created its agent is not held to a level list saved since",
+  () =>
+    Effect.gen(function* () {
+      const { layer, call } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+        existingChildRuntimeMode: "full-access",
+        memberModels: crewMemberModelsLayer({
+          providers: [codexWithLevels],
+          settings: lowOnly,
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const replayed = yield* call({ ...spawnArgs, client_request_id: "already-created" });
+        assert.isFalse(replayed.isFailure);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+const { reasoning: _reasoning, ...spawnArgsWithoutReasoning } = spawnArgs;
+const haikuArgs = {
+  ...spawnArgsWithoutReasoning,
+  provider: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-haiku-4-5",
+  workspace: { type: "shared" as const },
+} satisfies J5SpawnAgentInput;
+const claudeHaiku = {
+  ...codexSolAndTerra,
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  models: [
+    {
+      slug: "claude-haiku-4-5",
+      name: "claude-haiku-4-5",
+      capabilities: {
+        optionDescriptors: [
+          { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
+        ],
+      },
+    },
+  ],
+} as unknown as ServerProvider;
+
+it.effect("spawns a model with no reasoning option without a reasoning value", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+    });
+    yield* Effect.gen(function* () {
+      const spawned = yield* call(haikuArgs);
+      assert.isFalse(spawned.isFailure, message(spawned));
+      const expected = { instanceId: haikuArgs.provider, model: "claude-haiku-4-5" };
+      const created = yield* Ref.get(commands);
+      assert.deepStrictEqual(
+        created.flatMap((command) =>
+          command.type === "thread.create" || command.type === "message.dispatch"
+            ? [command.modelSelection]
+            : [],
+        ),
+        [expected, expected],
+      );
+      const optionless = yield* call({ ...haikuArgs, model: "custom-no-options" });
+      assert.isFalse(optionless.isFailure, message(optionless));
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect(
+  "refuses a reasoning value for a model with no reasoning option, naming its options",
+  () =>
+    Effect.gen(function* () {
+      const { layer, call, commands } = yield* spawnHarness({
+        checkout: { isRepo: true, refName: "j5/main" },
+      });
+      yield* Effect.gen(function* () {
+        const refused = yield* call({ ...haikuArgs, reasoning: "high" });
+        assert.isTrue(refused.isFailure);
+        for (const part of [
+          "Model claude-haiku-4-5 on provider claudeAgent has no reasoning option",
+          "thinking (false, true)",
+          "Retry j5_spawn_agent without reasoning",
+        ])
+          assert.include(message(refused), part);
+        const optionless = yield* call({
+          ...haikuArgs,
+          model: "custom-no-options",
+          reasoning: "high",
+        });
+        assert.isTrue(optionless.isFailure);
+        assert.include(message(optionless), "It has no options");
+        assert.lengthOf(yield* Ref.get(commands), 0, "a refused spawn creates nothing");
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("refuses a model with reasoning options when no reasoning is given, naming them", () =>
+  Effect.gen(function* () {
+    const { layer, call, commands } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+    });
+    yield* Effect.gen(function* () {
+      const refused = yield* call({ ...spawnArgsWithoutReasoning, workspace: { type: "shared" } });
+      assert.isTrue(refused.isFailure);
+      for (const part of [
+        "Model gpt-5.6-sol on provider codex needs a reasoning level",
+        "low, high",
+      ])
+        assert.include(message(refused), part);
+      assert.lengthOf(yield* Ref.get(commands), 0, "a refused spawn creates nothing");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("holds a model with no reasoning option to the model list only", () =>
+  Effect.gen(function* () {
+    const noLevels = { crewMemberReasoning: [] };
+    const haikuListed = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      memberModels: crewMemberModelsLayer({ providers: [claudeHaiku], settings: noLevels }),
+    });
+    yield* Effect.gen(function* () {
+      const spawned = yield* haikuListed.call(haikuArgs);
+      assert.isFalse(spawned.isFailure, message(spawned));
+    }).pipe(Effect.provide(haikuListed.layer));
+
+    const haikuUnlisted = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      memberModels: crewMemberModelsLayer({
+        providers: [claudeHaiku, codexSolAndTerra],
+        settings: { ...terraOnly, ...noLevels },
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const refused = yield* haikuUnlisted.call(haikuArgs);
+      assert.isTrue(refused.isFailure);
+      assert.include(message(refused), "Model claude-haiku-4-5 on claudeAgent");
+      assert.lengthOf(yield* Ref.get(haikuUnlisted.commands), 0);
+    }).pipe(Effect.provide(haikuUnlisted.layer));
+  }),
+);
+
+it.effect("binds a client_request_id with or without reasoning, as any other field", () =>
+  Effect.gen(function* () {
+    const replayContext = yield* Layer.build(
+      RequestReplayService.layer.pipe(Layer.provide(layerMemory)),
+    );
+    const replay = Layer.succeed(
+      RequestReplayService.RequestReplayService,
+      Context.get(replayContext, RequestReplayService.RequestReplayService),
+    );
+    const { layer, call } = yield* spawnHarness({
+      checkout: { isRepo: true, refName: "j5/main" },
+      replay,
+    });
+    yield* Effect.gen(function* () {
+      const haiku = { ...haikuArgs, client_request_id: "haiku-key" };
+      const first = yield* call(haiku);
+      assert.isFalse(first.isFailure, message(first));
+      const again = yield* call(haiku);
+      assert.deepStrictEqual(again.result, first.result);
+      const added = yield* call({ ...haiku, reasoning: "high" });
+      assert.isTrue(added.isFailure);
+      assert.include(message(added), "already bound to a different request");
+
+      // A refused attempt binds nothing, so the corrected call keeps its key.
+      const sol = {
+        ...spawnArgsWithoutReasoning,
+        workspace: { type: "shared" as const },
+        client_request_id: "sol-key",
+      };
+      const omitted = yield* call(sol);
+      assert.isTrue(omitted.isFailure);
+      assert.include(message(omitted), "needs a reasoning level");
+      const corrected = yield* call({ ...sol, reasoning: "high" });
+      assert.isFalse(corrected.isFailure, message(corrected));
+      const removed = yield* call(sol);
+      assert.isTrue(removed.isFailure);
+      assert.include(message(removed), "already bound to a different request");
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -1468,6 +1832,7 @@ it.effect("refuses a base ref git can't resolve before anything is created", () 
         isRepo: true,
         refName: "j5/main",
         missingRefs: ["no-such-ref", "only-on-origin"],
+        origin: { "only-on-origin": "0".repeat(40) },
       },
     });
     yield* Effect.gen(function* () {
@@ -1500,7 +1865,41 @@ it.effect("refuses a base ref git can't resolve before anything is created", () 
   }),
 );
 
+it.effect(
+  "a direct spawn from origin never fetches, so an unreachable origin doesn't refuse it",
+  () =>
+    Effect.gen(function* () {
+      const fetches = yield* Ref.make<ReadonlyArray<string>>([]);
+      const { layer, call, launches } = yield* spawnHarness({
+        checkout: {
+          isRepo: true,
+          refName: "j5/main",
+          origin: { "j5/main": "0".repeat(40) },
+          unreachableOriginBranches: ["j5/main"],
+        },
+        fetches,
+      });
+      yield* Effect.gen(function* () {
+        const spawned = yield* call({
+          ...spawnArgs,
+          workspace: { type: "worktree", base_ref: "j5/main", start_from_origin: true },
+          client_request_id: "direct-from-origin",
+        });
+        assert.isFalse(spawned.isFailure);
+        assert.lengthOf(yield* Ref.get(launches), 1);
+        assert.deepStrictEqual(yield* Ref.get(fetches), []);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
 const decodeSpawnInput = Schema.decodeUnknownExit(J5SpawnAgentInput);
+
+it("treats a null reasoning from a harness that sends null for optional fields as omitted", () => {
+  const decodeAsAdvertised = Schema.decodeUnknownSync(Schema.toCodecJson(J5SpawnAgentInput));
+  const { provider: _provider, ...args } = haikuArgs;
+  const decoded = decodeAsAdvertised({ ...args, provider: "claudeAgent", reasoning: null });
+  assert.isUndefined(decoded.reasoning);
+});
 
 it("requires a workspace on every spawn", () => {
   const { workspace: _workspace, ...withoutWorkspace } = spawnArgs;

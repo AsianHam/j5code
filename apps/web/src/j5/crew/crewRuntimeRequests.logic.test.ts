@@ -116,12 +116,12 @@ describe("Crew seat approvals in the Inbox", () => {
   });
 
   it("counts seat approvals on the bell, up while waiting and back down once answered", () => {
-    expect(inboxBadgeCount(2, 0, 0)).toBe(2);
-    expect(inboxBadgeCount(2, 1, 3)).toBe(6);
-    expect(inboxBadgeCount(2, 1, 1)).toBe(4);
+    expect(inboxBadgeCount(2, 0)).toBe(2);
+    expect(inboxBadgeCount(2, 3)).toBe(5);
+    expect(inboxBadgeCount(2, 1)).toBe(3);
     // Asks unread, Crew items read: still counted; nothing at all reads as no badge.
-    expect(inboxBadgeCount(null, 0, 1)).toBe(1);
-    expect(inboxBadgeCount(null, 0, 0)).toBeNull();
+    expect(inboxBadgeCount(null, 1)).toBe(1);
+    expect(inboxBadgeCount(null, 0)).toBeNull();
   });
 });
 
@@ -166,7 +166,7 @@ it("keeps native question links scoped to the owning environment without adding 
   ]);
   expect(mergeCrewRuntimeRequestSources(input)).toEqual([]);
   expect(mergeNativeQuestionInboxSources(sources([[envA, []]]))).toEqual([]);
-  expect(inboxBadgeCount(0, 0, mergeNativeQuestionInboxSources(input).length)).toBe(2);
+  expect(inboxBadgeCount(0, mergeNativeQuestionInboxSources(input).length)).toBe(2);
 });
 
 it("reads an async question summary even when presentation keeps the thread working", () => {

@@ -44,6 +44,25 @@ export const spawnThreadId = (input: SpawnStableInput) =>
       .digest("hex")}`,
   );
 
+/**
+ * The command and message that keep what a member was told in its own thread. Derived from the
+ * conversation and the text, so a retried delivery records it once.
+ */
+export const crewContextRecordIds = (input: {
+  readonly threadId: ThreadId;
+  readonly conversation: string;
+  readonly text: string;
+}) => {
+  const key = NodeCrypto.createHash("sha256")
+    .update(JSON.stringify([input.threadId, input.conversation, input.text]))
+    .digest("hex")
+    .slice(0, 24);
+  return {
+    commandId: CommandId.make(`command:j5:crew-context:${key}`),
+    messageId: MessageId.make(`message:j5:crew-context:${key}`),
+  };
+};
+
 export const spawnCrewInstanceId = (input: SpawnStableInput) =>
   lifecycleId({ kind: "crew", operation: "spawn-crew", ...input });
 
@@ -76,6 +95,7 @@ export interface CrewBriefContext {
     readonly seat: string;
     readonly participantId: string;
     readonly agentDisplayName: string;
+    readonly reason?: string | null;
   }>;
   /** The playbook the Crew follows and the steps this seat owns, with live titles. */
   readonly playbook?:
@@ -89,6 +109,17 @@ export interface CrewBriefContext {
 
 /** A title on one line that cannot close the block it is written into. */
 const briefLine = (text: string) => text.replace(/\s+/g, " ").trim().replace(/<\//g, "<\\/");
+
+export const crewContextText = (crew: CrewBriefContext) => {
+  // Roster and identity are measured platform facts; wiring text is the user's content, verbatim.
+  const roster = crew.roster
+    .map(
+      (member) =>
+        `- ${member.seat}${member.seat === crew.seatName ? " (you)" : ""}: participant_id=${member.participantId} persona=${briefLine(member.agentDisplayName)} responsibility=${briefLine(member.reason ?? "")}`,
+    )
+    .join("\n");
+  return `<j5_crew_context>\nPlatform-provided crew facts:\ncrew: ${crew.displayName}\ncrew_instance_id: ${crew.instanceId}\nyour_seat: ${crew.seatName}\ncaptain_participant_id: ${crew.captainParticipantId}\nroster:\n${roster}\n</j5_crew_context>`;
+};
 
 // The web timeline parses the identity block and the trailing brief
 // (apps/web/src/j5/a2a/SpawnBrief.tsx) to attribute the message to its spawner;
@@ -114,19 +145,12 @@ export const spawnFirstTurnText = (input: {
   const brief = `<spawner_brief>\n${input.brief}\n</spawner_brief>`;
   if (input.crew === undefined) return `${identity}\n\n${brief}`;
   const crew = input.crew;
-  // Roster and identity are measured platform facts; wiring text is the user's content, verbatim.
-  const roster = crew.roster
-    .map(
-      (member) =>
-        `- ${member.seat}${member.seat === crew.seatName ? " (you)" : ""}: participant_id=${member.participantId} persona=${member.agentDisplayName}`,
-    )
-    .join("\n");
-  const crewContext = `<j5_crew_context>\nPlatform-provided crew facts:\ncrew: ${crew.displayName}\ncrew_instance_id: ${crew.instanceId}\nyour_seat: ${crew.seatName}\ncaptain_participant_id: ${crew.captainParticipantId}\nroster:\n${roster}\n</j5_crew_context>`;
+  const crewContext = crewContextText(crew);
   const seatInstructions =
     crew.seatInstructions === undefined
       ? []
       : [`<seat_instructions>\n${crew.seatInstructions}\n</seat_instructions>`];
-  const collaboration = `<crew_collaboration>\nResolve current participants with j5_list_participants and use j5_send_message to coordinate directly with your Captain and other members. Share useful findings, evidence, questions, and blockers immediately; do not wait for an artifact or coordination approval. Send your Captain your final result, supporting evidence, and any remaining blockers before finishing. If the roster lacks expertise needed to address a concern, tell your Captain what is missing and why so they can j5_request_crew_member through the user's inbox. Continue already-approved work and coordination while an addition is pending. A direct result is sufficient unless the user or your persona explicitly requires an artifact.\n</crew_collaboration>`;
+  const collaboration = `<crew_collaboration>\nResolve current participants with j5_list_participants and use j5_send_message to coordinate directly with your Captain and other members; do not wait for an artifact or coordination approval.\nYou run your own review loops. When you review a teammate's work, send your findings directly to the teammate who owns it. When you receive findings, fix them and send the fix directly back to the reviewer. Repeat until no finding is unresolved. A round is one message of findings and the fix that answers it; if a loop has not produced a clean pass after three rounds, stop and send it to your Captain as a blocker or a disagreement.\nMessage your Captain only for: a review pass, which names the commit or change you reviewed so the Captain can tell it refers to the current code; a blocker, which names what you need; a disagreement you could not settle with the teammate; or your final result or step report. Send no acknowledgments and no progress updates. When you finish your assigned work, send your Captain your final result, supporting evidence, and any remaining blockers.\nIf the roster lacks expertise needed to address a concern, tell your Captain what is missing and why so they can j5_request_crew_member to add the seat directly. Continue your work and coordination while the Captain handles staffing. A direct result is sufficient unless the user or your persona explicitly requires an artifact.\n</crew_collaboration>`;
   // A persona's declared deliverable supplements the conversation; it never gates coordination.
   const obligation =
     crew.obligation === undefined

@@ -70,6 +70,55 @@ describe("resolveProjectSettings", () => {
     expect(resolveProjectSettings(settings, otherProjectId).settings.defaultAutoPull).toBe(true);
   });
 
+  it("replaces the models for custom members whole, and lets a project hold null or its own list", () => {
+    const entry = (model: string) => ({ instanceId: ProviderInstanceId.make("codex"), model });
+    expect(DEFAULT_SERVER_SETTINGS.crewMemberModels).toBeNull();
+    const three = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      crewMemberModels: [entry("a"), entry("b"), entry("c")],
+    });
+    // A shorter list is the whole list, never merged into the longer one by position.
+    const one = applyServerSettingsPatch(three, { crewMemberModels: [entry("a")] });
+    expect(one.crewMemberModels).toEqual([entry("a")]);
+    const settings = applyServerSettingsPatch(one, {
+      projectSettingsOverrides: {
+        [projectId]: { crewMemberModels: null },
+        [otherProjectId]: { crewMemberModels: [entry("z")] },
+      },
+    });
+    const everything = resolveProjectSettings(settings, projectId);
+    expect(everything.settings.crewMemberModels).toBeNull();
+    expect(everything.sources.crewMemberModels).toBe("project");
+    expect(resolveProjectSettings(settings, otherProjectId).settings.crewMemberModels).toEqual([
+      entry("z"),
+    ]);
+    expect(resolveProjectSettings(settings, null).settings.crewMemberModels).toEqual([entry("a")]);
+  });
+
+  it("replaces the reasoning levels for custom members whole, and lets a project hold null or its own list", () => {
+    const entry = (level: string) => ({ instanceId: ProviderInstanceId.make("codex"), level });
+    expect(DEFAULT_SERVER_SETTINGS.crewMemberReasoning).toBeNull();
+    const three = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      crewMemberReasoning: [entry("low"), entry("medium"), entry("high")],
+    });
+    const one = applyServerSettingsPatch(three, { crewMemberReasoning: [entry("low")] });
+    expect(one.crewMemberReasoning).toEqual([entry("low")]);
+    const settings = applyServerSettingsPatch(one, {
+      projectSettingsOverrides: {
+        [projectId]: { crewMemberReasoning: null },
+        [otherProjectId]: { crewMemberReasoning: [entry("xhigh")] },
+      },
+    });
+    const everything = resolveProjectSettings(settings, projectId);
+    expect(everything.settings.crewMemberReasoning).toBeNull();
+    expect(everything.sources.crewMemberReasoning).toBe("project");
+    expect(resolveProjectSettings(settings, otherProjectId).settings.crewMemberReasoning).toEqual([
+      entry("xhigh"),
+    ]);
+    expect(resolveProjectSettings(settings, null).settings.crewMemberReasoning).toEqual([
+      entry("low"),
+    ]);
+  });
+
   it("honours the aggregate's own fields only until the server has folded them", () => {
     const aggregateModel = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
     const project = {

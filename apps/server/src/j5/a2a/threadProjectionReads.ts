@@ -1,4 +1,4 @@
-import type { OrchestrationV2ThreadProjection, ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -18,19 +18,6 @@ import type { ThreadManagementService } from "../../orchestration-v2/ThreadManag
  */
 const isThreadNotFound = Schema.is(ProjectionStoreThreadNotFoundError);
 
-export const getThreadProjectionIfPresent = (
-  threads: ThreadManagementService["Service"],
-  threadId: ThreadId,
-) =>
-  threads.getThreadProjection(threadId).pipe(
-    Effect.map((projection): OrchestrationV2ThreadProjection | null => projection),
-    Effect.catchTags({
-      OrchestratorProjectionError: (error) =>
-        isThreadNotFound(error.cause) ? Effect.succeed(null) : Effect.fail(error),
-    }),
-  );
-
-/** The same not-found rule as `getThreadProjectionIfPresent`, reading only `fields`. */
 export const getThreadRecordsIfPresent = <K extends ProjectionRecordField>(
   threads: Pick<ThreadManagementService["Service"], "getThreadRecords">,
   threadId: ThreadId,

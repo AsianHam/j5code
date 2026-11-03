@@ -1,4 +1,9 @@
-import { ModelSelection, RuntimeMode, ThreadId } from "@t3tools/contracts";
+import {
+  AGENT_PERSONA_INSTRUCTIONS_MAX_LENGTH,
+  ModelSelection,
+  RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 import { CrewPersonaSwap, PLAYBOOK_MAX_STEPS } from "@t3tools/contracts/j5";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -23,6 +28,8 @@ export const CrewProposalSeat = Schema.Struct({
   agentId: Schema.NullOr(bounded(CREW_NAME_MAX_CHARS)),
   reason: bounded(CREW_REASON_MAX_CHARS),
   instructions: Schema.optional(bounded(CREW_TEXT_MAX_CHARS)),
+  /** Set only by the person's roster card, never by an agent's request: the persona's text, replaced. */
+  personaInstructions: Schema.optional(bounded(AGENT_PERSONA_INSTRUCTIONS_MAX_LENGTH)),
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
   /**
@@ -77,6 +84,8 @@ export interface CrewProposal {
   readonly crewInstanceId: string | null;
   readonly kind: CrewProposalKind;
   readonly status: CrewProposalStatus;
+  readonly approvalMode?: "human" | "automatic";
+  readonly refusalDetail?: string | null;
   readonly brief: string;
   readonly displayName: string;
   readonly requestedSeats: ReadonlyArray<CrewProposalSeat>;
@@ -92,6 +101,7 @@ export interface CrewProposal {
 }
 
 export interface CreateCrewProposalInput {
+  readonly approvalMode?: "human" | "automatic";
   readonly id: string;
   readonly projectId: LedgerProjectId;
   readonly captainParticipantId: ParticipantId;
@@ -141,6 +151,7 @@ export interface AgentCrewProposalServiceShape {
     readonly approvedSeats: ReadonlyArray<CrewProposalSeat> | null;
     readonly resolvedAt: string;
     readonly decidedBy?: string | null | undefined;
+    readonly refusalDetail?: string;
   }) => Effect.Effect<CrewProposal | null, SqlError>;
   /** Approved proposals whose launch report has not reached the Captain yet. */
   readonly listUnreported: () => Effect.Effect<ReadonlyArray<CrewProposal>, SqlError>;
@@ -173,6 +184,8 @@ interface Row {
   readonly resolved_at: string | null;
   readonly reported_at: string | null;
   readonly decided_by: string | null;
+  readonly approval_mode: "human" | "automatic";
+  readonly refusal_detail: string | null;
   readonly playbook_name: string | null;
   readonly playbook_definition_path: string | null;
 }
@@ -193,6 +206,8 @@ const fromRow = (row: Row): CrewProposal => ({
   resolvedAt: row.resolved_at,
   reportedAt: row.reported_at,
   decidedBy: row.decided_by,
+  approvalMode: row.approval_mode,
+  refusalDetail: row.refusal_detail,
   playbook:
     row.playbook_name === null || row.playbook_definition_path === null
       ? null
@@ -222,13 +237,13 @@ export const layer: Layer.Layer<AgentCrewProposalService, never, SqlClient.SqlCl
           INSERT OR IGNORE INTO j5_agent_crew_proposal (
             id, project_id, captain_participant_id, captain_thread_id, crew_instance_id, kind,
             status, brief, display_name, requested_seats, approved_seats, created_at, resolved_at,
-            reported_at, playbook_name, playbook_definition_path
+            reported_at, playbook_name, playbook_definition_path, approval_mode
           ) VALUES (
             ${input.id}, ${input.projectId}, ${input.captainParticipantId},
             ${input.captainThreadId}, ${input.crewInstanceId}, ${input.kind}, 'open',
             ${input.brief}, ${input.displayName}, ${encodeSeats(input.requestedSeats)}, NULL,
             ${input.createdAt}, NULL, NULL, ${input.playbook?.name ?? null},
-            ${input.playbook?.definitionPath ?? null}
+            ${input.playbook?.definitionPath ?? null}, ${input.approvalMode ?? "human"}
           )
         `;
         return (yield* read(input.id))!;
@@ -296,6 +311,7 @@ export const layer: Layer.Layer<AgentCrewProposalService, never, SqlClient.SqlCl
         readonly approvedSeats: ReadonlyArray<CrewProposalSeat> | null;
         readonly resolvedAt: string;
         readonly decidedBy?: string | null | undefined;
+        readonly refusalDetail?: string;
       }) {
         const approvedSeats =
           input.decision === "approve" && input.approvedSeats !== null
@@ -306,7 +322,8 @@ export const layer: Layer.Layer<AgentCrewProposalService, never, SqlClient.SqlCl
           SET status = ${finalStatus(input.decision)},
               approved_seats = ${approvedSeats},
               resolved_at = ${input.resolvedAt},
-              decided_by = ${input.decidedBy ?? null}
+              decided_by = ${input.decidedBy ?? null},
+              refusal_detail = ${input.refusalDetail ?? null}
           WHERE id = ${input.id} AND status = 'open'
           RETURNING id
         `;

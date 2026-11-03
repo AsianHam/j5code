@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { CommandId, RunId, ThreadId } from "@t3tools/contracts";
+import { CommandId, ProviderSessionId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -23,6 +23,8 @@ import {
 } from "./ArchiveCrewService.ts";
 import { PlaybookStore } from "../playbooks/PlaybookStore.ts";
 import { ExchangeId, ParticipantId, LedgerProjectId } from "./contracts.ts";
+import { CrewWorktrees } from "./CrewWorktrees.ts";
+import type { CrewArchiveWorktree } from "@t3tools/contracts/j5";
 
 const projectId = LedgerProjectId.make("project:j5:archive-crew");
 const captain = ParticipantId.make("agent:j5:a2a:captain");
@@ -89,9 +91,43 @@ const fixture = Effect.gen(function* () {
   const crewArchivedAt = yield* Ref.make<string | null>(null);
   // The order of cancels and retired stamps, so a test can see the run ends before the stamp.
   const lifecycle = yield* Ref.make<ReadonlyArray<string>>([]);
+  // What cleanup was asked about, and what it reports back.
+  const cleanedSeats = yield* Ref.make<ReadonlyArray<ReadonlyArray<ThreadId>>>([]);
+  const cleanupResult = yield* Ref.make<ReadonlyArray<CrewArchiveWorktree>>([]);
+  const approvalStamps = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+  // The retired stamps and playbook cancels that had already happened when cleanup was asked.
+  const lifecycleAtCleanup = yield* Ref.make<ReadonlyArray<string>>([]);
+  // The order of session reads, seat archives, session closes and cleanup passes.
+  const sessionSteps = yield* Ref.make<ReadonlyArray<string>>([]);
+  const openSessions = new Map<ThreadId, ProviderSessionId>([
+    [ThreadId.make("t:b"), ProviderSessionId.make("session:b")],
+  ]);
+  const step = (name: string) => Ref.update(sessionSteps, (items) => [...items, name]);
   const layer = archiveCrewLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(CrewWorktrees)({
+          liveSessions: (seats) =>
+            Effect.forEach(seats, (seat) => step(`read:${seat.threadId}`)).pipe(
+              Effect.as(
+                seats.flatMap((seat) => {
+                  const providerSessionId = openSessions.get(seat.threadId);
+                  return providerSessionId === undefined
+                    ? []
+                    : [{ threadId: seat.threadId, providerSessionId }];
+                }),
+              ),
+            ),
+          closeSessions: (sessions) =>
+            Effect.forEach(sessions, (session) => step(`close:${session.providerSessionId}`)),
+          cleanup: ({ seats, crew }) =>
+            Effect.all([
+              step("cleanup"),
+              Ref.update(approvalStamps, (items) => [...items, crew?.archivedAt]),
+              Ref.update(cleanedSeats, (items) => [...items, seats.map((seat) => seat.threadId)]),
+              Ref.get(lifecycle).pipe(Effect.flatMap((seen) => Ref.set(lifecycleAtCleanup, seen))),
+            ]).pipe(Effect.andThen(Ref.get(cleanupResult))),
+        }),
         Layer.mock(ArchiveAgentService)({
           readFacts: (target) =>
             Effect.gen(function* () {
@@ -105,6 +141,7 @@ const fixture = Effect.gen(function* () {
             }),
           archive: (input) =>
             Effect.gen(function* () {
+              yield* step(`archive:${input.target.threadId}`);
               // Mirrors the real service: a retired member replays as already archived.
               if ((yield* Ref.get(facts))[input.target.participantId]?.retired)
                 return "already_archived" as const;
@@ -180,6 +217,11 @@ const fixture = Effect.gen(function* () {
     facts,
     lifecycle,
     crewArchivedAt,
+    cleanedSeats,
+    cleanupResult,
+    approvalStamps,
+    lifecycleAtCleanup,
+    sessionSteps,
   };
 });
 
@@ -225,6 +267,7 @@ it.effect("refuses until the captain confirms every member's facts, then retires
           { seatName: "builder", participantId: builder, result: "archived" },
           { seatName: "critic", participantId: critic, result: "archived" },
         ],
+        worktrees: [],
       });
       const calls = yield* Ref.get(archived);
       assert.deepStrictEqual(
@@ -422,6 +465,7 @@ it.effect("retires the unit past a seat whose thread was never created, and says
           { seatName: "builder", participantId: builder, result: "archived" },
           { seatName: "critic", participantId: critic, result: "never_created" },
         ],
+        worktrees: [],
       });
       assert.deepStrictEqual(
         (yield* Ref.get(archived)).map((call) => call.target.participantId),
@@ -462,4 +506,107 @@ it.effect(
         assert.lengthOf(yield* Ref.get(marked), 0);
       }).pipe(Effect.provide(layer));
     }),
+);
+
+it.effect(
+  "cleans up worktrees once every seat is archived and the Crew is stamped, and reports the result",
+  () =>
+    Effect.gen(function* () {
+      const { layer, input, lifecycleAtCleanup, cleanedSeats, cleanupResult } = yield* fixture;
+      const reported: ReadonlyArray<CrewArchiveWorktree> = [
+        { path: "/wt/builder", branch: "j5/builder", outcome: "removed", reason: null },
+        { path: "/wt/critic", branch: "j5/critic", outcome: "kept", reason: "unmerged_commits" },
+      ];
+      yield* Ref.set(cleanupResult, reported);
+      yield* Effect.gen(function* () {
+        const service = yield* ArchiveCrewService;
+        const outcome = yield* service.archive(
+          input({ callerParticipantId: null, confirmationSatisfied: true }),
+        );
+        assert.deepStrictEqual(outcome.worktrees, reported);
+        assert.deepStrictEqual(yield* Ref.get(cleanedSeats), [
+          [ThreadId.make("t:b"), ThreadId.make("t:c")],
+        ]);
+        // The archive is committed, and the Crew stamped, before anything is removed.
+        assert.include(yield* Ref.get(lifecycleAtCleanup), `marked:${instance.id}`);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("closes each seat's session after its archive and before the worktree cleanup", () =>
+  Effect.gen(function* () {
+    const { layer, input, sessionSteps } = yield* fixture;
+    yield* Effect.gen(function* () {
+      const service = yield* ArchiveCrewService;
+      yield* service.archive(input({ callerParticipantId: null, confirmationSatisfied: true }));
+      // The session is read before the seat's archive removes its binding, closed once every
+      // seat is archived, and the cleanup comes last.
+      assert.deepStrictEqual(yield* Ref.get(sessionSteps), [
+        "read:t:b",
+        "archive:t:b",
+        "read:t:c",
+        "archive:t:c",
+        "close:session:b",
+        "cleanup",
+      ]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a replay of an archived Crew checks its worktrees again", () =>
+  Effect.gen(function* () {
+    const { layer, input, cleanedSeats, cleanupResult, approvalStamps } = yield* fixture;
+    yield* Effect.gen(function* () {
+      const service = yield* ArchiveCrewService;
+      yield* service.archive(input({ callerParticipantId: null, confirmationSatisfied: true }));
+      yield* Ref.set(cleanupResult, [
+        { path: "/wt/critic", branch: "j5/critic", outcome: "removed", reason: null },
+      ]);
+      const replay = yield* service.archive(
+        input({
+          callerParticipantId: null,
+          confirmationSatisfied: true,
+          archivedAt: "2026-09-10T08:00:00.000Z",
+        }),
+      );
+      assert.equal(replay.status, "already_archived");
+      // The replay is the same archive, so an approval it would file carries the original stamp.
+      assert.deepStrictEqual(yield* Ref.get(approvalStamps), [
+        "2026-09-09T17:00:00.000Z",
+        "2026-09-09T17:00:00.000Z",
+      ]);
+      assert.deepStrictEqual(
+        replay.worktrees.map((entry) => entry.outcome),
+        ["removed"],
+      );
+      assert.lengthOf(yield* Ref.get(cleanedSeats), 2);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a seat that never came to exist is not looked at for a worktree", () =>
+  Effect.gen(function* () {
+    const { layer, input, facts, cleanedSeats } = yield* fixture;
+    yield* Ref.update(facts, (current) => ({ ...current, [critic]: null }));
+    yield* Effect.gen(function* () {
+      const service = yield* ArchiveCrewService;
+      yield* service.archive(input({ callerParticipantId: null, confirmationSatisfied: true }));
+      assert.deepStrictEqual(yield* Ref.get(cleanedSeats), [[ThreadId.make("t:b")]]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a failed archive removes nothing", () =>
+  Effect.gen(function* () {
+    const { layer, input, failSeat, cleanedSeats } = yield* fixture;
+    yield* Ref.set(failSeat, critic);
+    yield* Effect.gen(function* () {
+      const service = yield* ArchiveCrewService;
+      const failure = yield* service
+        .archive(input({ callerParticipantId: null, confirmationSatisfied: true }))
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, ArchiveCrewPartialFailureError);
+      assert.lengthOf(yield* Ref.get(cleanedSeats), 0);
+    }).pipe(Effect.provide(layer));
+  }),
 );

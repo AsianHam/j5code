@@ -249,6 +249,12 @@ export function createJ5EnvironmentAtoms<R, E>(
       tag: J5_CLIENT_READ_WS_METHODS.readPreArchiveFacts,
       execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.readPreArchiveFacts, input),
     }),
+    // What archiving a Crew would do with its seats' worktrees; shown beside the facts above.
+    readCrewArchiveWorktrees: createEnvironmentRpcCommand(runtime, {
+      label: "j5:crew-archive-worktrees",
+      tag: J5_CLIENT_READ_WS_METHODS.readCrewArchiveWorktrees,
+      execute: (input) => j5Read(J5_CLIENT_READ_WS_METHODS.readCrewArchiveWorktrees, input),
+    }),
     readParticipantIdentities: createEnvironmentRpcCommand(runtime, {
       label: "j5:participant-identities",
       tag: J5_CLIENT_READ_WS_METHODS.readParticipantIdentities,
@@ -288,6 +294,19 @@ export function createJ5EnvironmentAtoms<R, E>(
       execute: (_input: Record<string, never>) =>
         j5Read(J5_CLIENT_READ_WS_METHODS.listCrewRuntimeRequests, {}),
     }),
+    // The Inbox's worktree cleanup approval: one per Crew archive that kept unfinished worktrees.
+    crewWorktreeCleanups: createEnvironmentQueryAtomFamily(runtime, {
+      label: "j5:crew-worktree-cleanups",
+      staleTimeMs: 7_500,
+      refreshTrigger: rereadOn("inbox"),
+      execute: (input: { readonly status: "open" | "decided" }) =>
+        j5Read(J5_CLIENT_READ_WS_METHODS.listCrewWorktreeCleanups, input),
+    }),
+    answerCrewWorktreeCleanup: createJ5ActionCommand(
+      runtime,
+      "j5:answer-crew-worktree-cleanup",
+      J5_CLIENT_ACTION_WS_METHODS.answerCrewWorktreeCleanup,
+    ),
     respondCrewRuntimeRequest: createJ5ActionCommand(
       runtime,
       "j5:respond-crew-runtime-request",

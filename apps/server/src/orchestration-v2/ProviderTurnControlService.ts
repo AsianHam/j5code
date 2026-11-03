@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as CrewTurnContext from "../j5/a2a/CrewTurnContext.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
@@ -90,6 +91,7 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const crewTurnContext = yield* Effect.serviceOption(CrewTurnContext.CrewTurnContext);
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -352,7 +354,10 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
-          yield* loaded.session.value
+          const session = Option.isSome(crewTurnContext)
+            ? crewTurnContext.value.steering(loaded.session.value)
+            : loaded.session.value;
+          yield* session
             .steerTurn({
               threadId: input.threadId,
               runId: run.id,

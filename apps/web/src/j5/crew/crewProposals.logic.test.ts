@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { inboxCrewRequests, rosterGatesForThread } from "./crewProposals.logic";
+import { rosterGatesForThread } from "./crewProposals.logic";
 import type { CrewProposal } from "./crewProposalsClient";
 
 const proposal = (overrides: Partial<CrewProposal>): CrewProposal => ({
@@ -28,15 +28,18 @@ describe("crew gate routing", () => {
     proposal({ id: "resolved", status: "approved", resolvedAt: "2026-09-10T00:01:00.000Z" }),
   ];
 
-  it("shows only this thread's open roster gate inline", () => {
+  it("shows this thread's open roster and legacy addition gates inline", () => {
     expect(rosterGatesForThread(proposals, "thread:captain").map((p) => p.id)).toEqual([
       "roster-here",
+      "addition",
     ]);
     expect(rosterGatesForThread(proposals, null)).toEqual([]);
     expect(rosterGatesForThread(proposals, "thread:none")).toEqual([]);
   });
 
-  it("sends only open additions to the inbox bell", () => {
-    expect(inboxCrewRequests(proposals).map((p) => p.id)).toEqual(["addition"]);
+  it("does not show automatic approvals as human gates", () => {
+    expect(
+      rosterGatesForThread([proposal({ approvalMode: "automatic" })], "thread:captain"),
+    ).toEqual([]);
   });
 });

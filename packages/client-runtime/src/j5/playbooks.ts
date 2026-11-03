@@ -44,7 +44,7 @@ steps:
 
 Each prompt tells the same agent what work to do, what evidence to retain, and when to advance.
 4. Call j5_playbook_list in this thread after writing. Fix issues in the definition you are authoring and repeat until it is listed without an issue. If a same-named workspace playbook is listed instead, explain that it overrides the library copy here; do not modify an unrelated local file. A successful environment save receipt confirms publication. Tell the user about any warnings, such as a persona that is missing or turned off. If the tool is unavailable, state that runtime validation is still unverified.
-5. Report the playbook name, saved destination, purpose, and steps. Say Environment library or the workspace file path; do not invent an absolute server path. Explain that the user can inspect it in Settings → Personas and send /playbook <name> when ready to run it.
+5. Report the playbook name, saved destination, purpose, and steps. Say Environment library or the workspace file path; do not invent an absolute server path. Explain that the user can inspect it in Settings → Agent Setup and send /playbook <name> when ready to run it.
 
 Stay within authoring and validation. Start a run only when the user explicitly asks. Make changes needed for the playbook; leave unrelated workspace files alone.`;
 
@@ -86,11 +86,11 @@ export async function ensurePlaybookAuthor(input: {
   }
   if (!persona || persona.availability.status !== "available")
     throw new Error(
-      "Playbook Author is unavailable. Enable or restore it and check its model route in Settings → Personas for this environment.",
+      "Playbook Author is unavailable. Enable or restore it and check its model route in Settings → Agent Setup for this environment.",
     );
   if (persona.defaultAuthorityPolicy !== "workspace-write")
     throw new Error(
-      "Playbook Author needs Workspace write authority to save YAML. Update it in Settings → Personas for this environment.",
+      "Playbook Author needs Workspace write authority to save YAML. Update it in Settings → Agent Setup for this environment.",
     );
   // Saved authors predate environment libraries. Update only the exact stock instructions,
   // using the existing digest guard so a concurrent human edit is never overwritten.

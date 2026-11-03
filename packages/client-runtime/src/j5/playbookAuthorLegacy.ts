@@ -18,6 +18,6 @@ steps:
 
 Each prompt tells the same agent what work to do, what evidence to retain, and when to advance.
 4. Call j5_playbook_list in this thread after writing. Fix reported issues and repeat until the named definition is listed without an issue. Tell the user about any warnings, such as a persona that is missing or turned off. If the tool is unavailable, state that runtime validation is still unverified.
-5. Report the file path, purpose, and steps. Explain that the user can inspect it in Settings → Personas and send /playbook <name> when ready to run it.
+5. Report the file path, purpose, and steps. Explain that the user can inspect it in Settings → Agent Setup and send /playbook <name> when ready to run it.
 
 Stay within authoring and validation. Start a run only when the user explicitly asks. Make changes needed for the playbook; leave unrelated workspace files alone.`;

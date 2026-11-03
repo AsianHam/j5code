@@ -1,3 +1,4 @@
+import * as CrewTurnContext from "../j5/a2a/CrewTurnContext.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -157,6 +158,7 @@ export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
+    const crewTurnContext = yield* Effect.serviceOption(CrewTurnContext.CrewTurnContext);
     const queuedRunWatchdog = yield* QueuedRunWatchdog;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1307,132 +1309,157 @@ export const layer: Layer.Layer<
                 !coveredItemIds.has(item.id) &&
                 historicalMessage(item) !== null,
             );
-      const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
-        function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
-          const retryHandoff =
-            missedItems.length === 0
-              ? []
-              : [
-                  yield* contextHandoffService.prepareProviderHandoff({
-                    threadId: projection.thread.id,
-                    targetRunId: run.id,
-                    transferId: null,
-                    fromProviderThreadIds: [providerThread.id],
-                    toProviderThreadId: providerThread.id,
-                    fromProviderInstanceId: run.providerInstanceId,
-                    toProviderInstanceId: run.providerInstanceId,
-                    coveredRunOrdinals: {
-                      from: missedRuns[0]!.ordinal,
-                      to: missedRuns.at(-1)!.ordinal,
-                    },
-                    strategy: "delta_since_target_last_seen",
-                    items: missedItems,
-                    runs: projection.runs,
-                    createdAt: yield* DateTime.now,
-                  }),
-                ];
-          const delivery = yield* deliverContextHandoffs({
-            handoffs: [...effectiveHandoffs, ...retryHandoff],
-            deferInline: compact || goalCommand,
-            providerThread: runningProviderThread,
-            budget: Effect.gen(function* () {
-              return handoffBudget({
-                tokenCap,
-                modelContextWindow,
-                userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
-                attachments: message.attachments,
-                providerThread: budgetProviderThread,
-                nativeContextEstimate:
-                  budgetProviderThread.contextUsage?.usedTokens === undefined
-                    ? yield* nativeContextEstimate
-                    : 0,
-              });
-            }),
-            alreadyDeliveredItemIds: deliveredItemIds,
-            ...(session.injectHistory === undefined
-              ? {}
-              : {
-                  inject: (history: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
-                    session.injectHistory!({
-                      providerThread: runningProviderThread,
-                      ...history,
-                    }),
-                }),
-            persist: Effect.fn("ProviderTurnStartService.persist")(function* (handoff) {
-              const updatedAt = yield* DateTime.now;
-              yield* eventSink.write({
-                events: [
-                  {
-                    id: yield* idAllocator.allocate.event({
-                      threadId: projection.thread.id,
-                    }),
-                    type: "context-handoff.updated",
-                    threadId: projection.thread.id,
-                    runId: run.id,
-                    providerInstanceId: run.providerInstanceId,
-                    occurredAt: updatedAt,
-                    payload: { ...handoff, updatedAt },
+      const startAssignmentWithHandoffs = Effect.fn(
+        "ProviderTurnStartService.startAssignmentWithHandoffs",
+      )(function* (
+        turnInput: Parameters<typeof session.startTurn>[0],
+        compact: boolean,
+        assignment: string,
+      ) {
+        const retryHandoff =
+          missedItems.length === 0
+            ? []
+            : [
+                yield* contextHandoffService.prepareProviderHandoff({
+                  threadId: projection.thread.id,
+                  targetRunId: run.id,
+                  transferId: null,
+                  fromProviderThreadIds: [providerThread.id],
+                  toProviderThreadId: providerThread.id,
+                  fromProviderInstanceId: run.providerInstanceId,
+                  toProviderInstanceId: run.providerInstanceId,
+                  coveredRunOrdinals: {
+                    from: missedRuns[0]!.ordinal,
+                    to: missedRuns.at(-1)!.ordinal,
                   },
-                ],
-              });
+                  strategy: "delta_since_target_last_seen",
+                  items: missedItems,
+                  runs: projection.runs,
+                  createdAt: yield* DateTime.now,
+                }),
+              ];
+        const delivery = yield* deliverContextHandoffs({
+          handoffs: [...effectiveHandoffs, ...retryHandoff],
+          deferInline: compact || goalCommand,
+          providerThread: runningProviderThread,
+          budget: Effect.gen(function* () {
+            return handoffBudget({
+              tokenCap,
+              modelContextWindow,
+              userText: restartNote === "" ? assignment : `${restartNote}\n\n${assignment}`,
+              attachments: message.attachments,
+              providerThread: budgetProviderThread,
+              nativeContextEstimate:
+                budgetProviderThread.contextUsage?.usedTokens === undefined
+                  ? yield* nativeContextEstimate
+                  : 0,
+            });
+          }),
+          alreadyDeliveredItemIds: deliveredItemIds,
+          ...(session.injectHistory === undefined
+            ? {}
+            : {
+                inject: (history: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
+                  session.injectHistory!({
+                    providerThread: runningProviderThread,
+                    ...history,
+                  }),
+              }),
+          persist: Effect.fn("ProviderTurnStartService.persist")(function* (handoff) {
+            const updatedAt = yield* DateTime.now;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: yield* idAllocator.allocate.event({
+                    threadId: projection.thread.id,
+                  }),
+                  type: "context-handoff.updated",
+                  threadId: projection.thread.id,
+                  runId: run.id,
+                  providerInstanceId: run.providerInstanceId,
+                  occurredAt: updatedAt,
+                  payload: { ...handoff, updatedAt },
+                },
+              ],
+            });
+          }),
+        });
+        if (!(yield* isCurrentAttemptInStatus("running"))) return false;
+        const start = compact ? session.compactThread! : session.startTurn;
+        const context = [delivery.context, restartNote].filter((part) => part !== "").join("\n\n");
+        const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
+        yield* start({
+          ...(noteContinuation ? promptedInput : turnInput),
+          message: {
+            ...turnInput.message,
+            text:
+              context === "" || goalCommand
+                ? assignment
+                : `${context}\n\nUser message:\n${assignment}`,
+          },
+        }).pipe(
+          // Clear pending handoff markers for refused prompts so the next turn retains the native session.
+          Effect.tapError((error) =>
+            refusedBeforePrompt(error)
+              ? delivery.unsent.pipe(
+                  Effect.catchCause(() =>
+                    Effect.logWarning("Failed to restore unsent context handoffs", {
+                      runId: run.id,
+                    }),
+                  ),
+                )
+              : Effect.void,
+          ),
+        );
+        // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
+        yield* delivery.delivered.pipe(
+          Effect.catchCause(() =>
+            Effect.logWarning("Failed to record accepted context handoff delivery", {
+              runId: run.id,
+              deliveryStatus: "pending",
             }),
-          });
-          if (!(yield* isCurrentAttemptInStatus("running"))) return;
-          const start = compact ? session.compactThread! : session.startTurn;
-          const context = [delivery.context, restartNote]
-            .filter((part) => part !== "")
-            .join("\n\n");
-          const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
-          yield* start({
-            ...(noteContinuation ? promptedInput : turnInput),
-            message: {
-              ...turnInput.message,
-              text:
-                context === "" || goalCommand
-                  ? userText
-                  : `${context}\n\nUser message:\n${userText}`,
-            },
-          }).pipe(
-            // Clear pending handoff markers for refused prompts so the next turn retains the native session.
-            Effect.tapError((error) =>
-              refusedBeforePrompt(error)
-                ? delivery.unsent.pipe(
-                    Effect.catchCause(() =>
-                      Effect.logWarning("Failed to restore unsent context handoffs", {
-                        runId: run.id,
-                      }),
-                    ),
-                  )
-                : Effect.void,
-            ),
-          );
-          // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
-          yield* delivery.delivered.pipe(
-            Effect.catchCause(() =>
-              Effect.logWarning("Failed to record accepted context handoff delivery", {
-                runId: run.id,
-                deliveryStatus: "pending",
-              }),
-            ),
-          );
-        },
-        Effect.mapError((cause) =>
-          cause._tag === "ProviderAdapterTurnStartError"
-            ? cause
-            : new ProviderAdapter.ProviderAdapterTurnStartError({
-                driver: session.driver,
+          ),
+        );
+        return true;
+      });
+      const crewSeat =
+        Option.isSome(crewTurnContext) &&
+        (yield* crewTurnContext.value.isSeat(projection.thread.id));
+      const startWithHandoffs = (
+        turnInput: Parameters<typeof session.startTurn>[0],
+        compact = false,
+      ) =>
+        (crewSeat
+          ? crewTurnContext.value.deliver(
+              {
                 threadId: projection.thread.id,
-                providerThreadId: providerThread.id,
                 runId: run.id,
-                cause,
-              }),
-        ),
-      );
+                providerThread: runningProviderThread,
+                text: userText,
+              },
+              (assignment) => startAssignmentWithHandoffs(turnInput, compact, assignment),
+            )
+          : startAssignmentWithHandoffs(turnInput, compact, userText)
+        ).pipe(
+          Effect.asVoid,
+          Effect.mapError((cause) =>
+            cause._tag === "ProviderAdapterTurnStartError"
+              ? cause
+              : new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: session.driver,
+                  threadId: projection.thread.id,
+                  providerThreadId: providerThread.id,
+                  runId: run.id,
+                  cause,
+                }),
+          ),
+        );
       const deliverySession =
         effectiveHandoffs.length === 0 &&
         missedItems.length === 0 &&
         restartNote === "" &&
-        !noteContinuation
+        !noteContinuation &&
+        !crewSeat
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({

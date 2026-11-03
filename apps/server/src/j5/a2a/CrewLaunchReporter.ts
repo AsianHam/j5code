@@ -36,7 +36,7 @@ import {
 import { participantIdForThread } from "./HomeRegistrar.ts";
 import { runFailureDetail } from "./runFailures.ts";
 import { lifecycleCommandId, lifecycleId } from "./spawnIds.ts";
-import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
+import { getThreadRecordsIfPresent } from "./threadProjectionReads.ts";
 
 /**
  * A quiet provider may still be working. When this window closes without provider activity,
@@ -45,10 +45,9 @@ import { getThreadProjectionIfPresent } from "./threadProjectionReads.ts";
 export const CREW_LAUNCH_REPORT_WINDOW_MS = 60_000;
 
 /**
- * The launch report: the one notice a Captain gets for an approval, posted when every seat this
- * proposal launched has produced provider activity or ended, or the window closed. Dispatching a brief commits intent only; before this, "your crew is running" was
- * said the moment the briefs were dispatched, and two seats that died on a signed-out provider
- * arrived later as finishes with no reason (Jackson's dogfood, 2026-09-17).
+ * The one notice a Captain gets for an approval. Waiting seats are reported immediately from
+ * their creation facts. An owed report from before deferred activation still measures its
+ * dispatched briefs against provider activity, completion, or the confirmation window.
  */
 export interface CrewLaunchReporterShape {
   /**
@@ -124,9 +123,13 @@ const isProviderActivity = (item: OrchestrationV2TurnItem) => {
   }
 };
 
+/** Only these read the run's items; the rest of `verdictFor` needs the run alone. */
+const verdictReadsItems = (run: OrchestrationV2Run | undefined): run is OrchestrationV2Run =>
+  run !== undefined && run.status !== "completed" && run.status !== "preparing";
+
 const verdictFor = (
   run: OrchestrationV2Run | undefined,
-  projection: OrchestrationV2ThreadProjection | null,
+  items: Pick<OrchestrationV2ThreadProjection, "turnItems">,
 ): SeatStartVerdict => {
   if (run === undefined) return { kind: "pending" };
   switch (run.status) {
@@ -144,10 +147,10 @@ const verdictFor = (
         kind: "failed",
         runId: run.id,
         runStatus: run.status,
-        failure: projection === null ? null : runFailureDetail(projection, run.id),
+        failure: runFailureDetail(items, run.id),
       };
     default:
-      return projection?.turnItems.some((item) => item.runId === run.id && isProviderActivity(item))
+      return items.turnItems.some((item) => item.runId === run.id && isProviderActivity(item))
         ? { kind: "started" }
         : { kind: "pending" };
   }
@@ -182,7 +185,9 @@ const makeLayer = (daemon: boolean) =>
       const post = Effect.fn("j5.a2a.crewLaunchReporter.post")(function* (launch: PendingLaunch) {
         const proposal = launch.proposal;
         const stable = { providerSessionId: CREW_PROPOSAL_SESSION, requestKey: proposal.id };
-        const captain = yield* threads.getThreadProjection(proposal.captainThreadId);
+        const captain = yield* threads.getThreadRecords(proposal.captainThreadId, ["messages"], {
+          messageIds: [noticeMessageId(proposal.id)],
+        });
         for (const [seatName, verdict] of launch.verdicts) {
           if (verdict.kind === "failed")
             yield* alertHumanOfCrewFailure({
@@ -242,16 +247,29 @@ const makeLayer = (daemon: boolean) =>
           launch.verdicts.set(seat.seatName, decided);
           return;
         }
-        const projection = yield* getThreadProjectionIfPresent(threads, seat.threadId);
-        launch.verdicts.set(
-          seat.seatName,
-          projection === null
-            ? { kind: "not_created", detail: NOT_CREATED_DETAIL }
-            : verdictFor(
-                projection.runs.find((candidate) => isFirstTurnRun(seat, candidate)),
-                projection,
-              ),
+        const seatThread = yield* getThreadRecordsIfPresent(threads, seat.threadId, ["runs"]);
+        if (seatThread === null) {
+          launch.verdicts.set(seat.seatName, { kind: "not_created", detail: NOT_CREATED_DETAIL });
+          return;
+        }
+        const member = launch.instance.members.find(
+          (candidate) => candidate.threadId === seat.threadId,
         );
+        if (member?.notStarted === true) {
+          launch.verdicts.set(seat.seatName, { kind: "waiting" });
+          return;
+        }
+        const run =
+          member?.notStarted === false
+            ? seatThread.runs.toSorted((a, b) => a.ordinal - b.ordinal)[0]
+            : seatThread.runs.find((candidate) => isFirstTurnRun(seat, candidate));
+        // Read after the run, so the items are at least as new as its status.
+        const items = verdictReadsItems(run)
+          ? yield* threads.getThreadRecords(seat.threadId, ["turnItems"], {
+              turnItemRunId: run.id,
+            })
+          : { turnItems: [] };
+        launch.verdicts.set(seat.seatName, verdictFor(run, items));
       });
 
       // Called only with the permit held. The window fiber must not interrupt itself.
@@ -305,7 +323,7 @@ const makeLayer = (daemon: boolean) =>
               const missing: Array<string> = [];
               for (const member of instance.members.filter(crewSeatReservedBy(proposal.id))) {
                 if (kept.has(member.seatName)) continue;
-                if ((yield* getThreadProjectionIfPresent(threads, member.threadId)) === null)
+                if ((yield* getThreadRecordsIfPresent(threads, member.threadId, [])) === null)
                   missing.push(member.seatName);
               }
               yield* crews.removeMembers(instance.id, missing);
@@ -447,7 +465,9 @@ const makeLayer = (daemon: boolean) =>
             run.userMessageId === crewSeatBriefMessageId(candidate.id, membership.seatName),
         );
         if (proposal === undefined) return false;
-        const captain = yield* threads.getThreadProjection(instance.captainThreadId);
+        const captain = yield* threads.getThreadRecords(instance.captainThreadId, ["messages"], {
+          messageIds: [noticeMessageId(proposal.id)],
+        });
         const report = captain.messages.find(
           (message) => message.id === noticeMessageId(proposal.id),
         );

@@ -25,3 +25,9 @@ export async function readParticipantLabels(
 
 export const readArchivePreflight = (threadRef: ScopedThreadRef) =>
   Shared.readArchivePreflight(j5Environment, appAtomRegistry, threadRef);
+
+export const readCrewArchiveWorktrees = (
+  environmentId: EnvironmentId,
+  crewInstanceIds: ReadonlyArray<string>,
+) =>
+  Shared.readCrewArchiveWorktrees(j5Environment, appAtomRegistry, environmentId, crewInstanceIds);

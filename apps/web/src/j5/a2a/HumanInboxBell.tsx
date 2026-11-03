@@ -5,12 +5,9 @@ import { inboxBellPresentation, mergeOpenInboxCounts } from "@t3tools/client-run
 
 import { useSidebar } from "../../components/ui/sidebar";
 import { cn } from "../../lib/utils";
-import { inboxCrewRequests } from "../crew/crewProposals.logic";
-import { mergeCrewProposalSources, useCrewProposalsRefresh } from "../crew/crewProposalsClient";
 import { inboxBadgeCount } from "../crew/crewRuntimeRequests.logic";
 import { useCrewRuntimeRequests, useNativeQuestionInbox } from "../crew/crewRuntimeRequestsClient";
 import {
-  crewProposalSourcesAtom,
   crewRuntimeRequestSourcesAtom,
   inboxCountQueryAtom,
   inboxCountSourcesAtom,
@@ -25,14 +22,9 @@ const useCountRefresh = createVisibleRefreshHook(() => {
 export function HumanInboxBell({ onBackdrop }: { readonly onBackdrop: boolean }) {
   const { isMobile, setOpenMobile } = useSidebar();
   const sources = useAtomValue(inboxCountSourcesAtom);
-  const crewSources = useAtomValue(crewProposalSourcesAtom);
   const merged = mergeOpenInboxCounts(sources);
-  // Mid-run seat requests and seats' provider approvals wait on the person too; the badge counts
-  // them beside open questions. The initial roster and the Captain's own requests are answered
-  // inline in the Captain's thread and stay off the inbox badge.
-  const crewRequests = inboxCrewRequests(mergeCrewProposalSources(crewSources)).length;
   const runtimeRequests = useCrewRuntimeRequests().length + useNativeQuestionInbox().length;
-  const count = inboxBadgeCount(merged.count, crewRequests, runtimeRequests);
+  const count = inboxBadgeCount(merged.count, runtimeRequests);
   const runtimeSources = useAtomValue(crewRuntimeRequestSourcesAtom);
   const incomplete =
     merged.incomplete ||
@@ -41,7 +33,6 @@ export function HumanInboxBell({ onBackdrop }: { readonly onBackdrop: boolean })
       (source) => source.status !== "ready" && source.status !== "unsupported",
     );
   useCountRefresh();
-  useCrewProposalsRefresh();
 
   const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);

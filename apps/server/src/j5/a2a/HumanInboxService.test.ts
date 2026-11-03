@@ -439,3 +439,117 @@ it.effect(
       }).pipe(Effect.provide(makeTestLayer(deliveries)));
     }),
 );
+
+// A Captain's adjudication ask is an ordinary ask to the person, so the one answer path serves the
+// Inbox and the Captain's thread alike: the thread finds its asks by `senderThreadId`.
+it.effect("answers a Captain's ask once from either view and drops a withdrawn ask from both", () =>
+  Effect.gen(function* () {
+    const deliveries = yield* Ref.make<ReadonlyArray<AgentDeliveryInput>>([]);
+    yield* Effect.gen(function* () {
+      yield* runMigrations();
+      yield* runJ5A2AMigrations();
+      const ledger = yield* A2ALedger;
+      const send = yield* A2ASendService;
+      const inbox = yield* A2AHumanInbox;
+      const worker = yield* A2ADeliveryWorker;
+      const sql = yield* SqlClient.SqlClient;
+      const at = "2026-10-27T10:00:00.000Z";
+      yield* sql`
+        INSERT INTO j5_a2a_human_person (person_id, is_local_operator, created_at)
+        VALUES (${firstPerson.id}, 1, ${at})
+      `;
+      yield* sql`
+        INSERT INTO j5_a2a_person_level (person_id, scope_kind, scope_id, level, created_at, updated_at)
+        VALUES (${firstPerson.id}, 'server', '', 'owner', ${at}, ${at})
+      `;
+      const projectId = LedgerProjectId.make("project:captain-ask");
+      const captain: AgentParticipant = {
+        kind: "agent",
+        id: ParticipantId.make("agent:captain-ask"),
+        threadId: ThreadId.make("thread:captain-ask"),
+      };
+      yield* ledger.ensureProject({ projectId, createdAt: at });
+      yield* ledger.appendEvents({
+        commandId: CommCommandId.make("command:captain-ask:join"),
+        projectId,
+        acceptedAt: at,
+        events: [
+          {
+            kind: "participant.joined",
+            sender: null,
+            receiver: captain.id,
+            exchangeId: null,
+            correlationId: null,
+            payload: { participant: captain },
+            createdAt: at,
+          },
+        ],
+      });
+      const ask = Effect.fn("test.j5.a2a.captainAsk.ask")(function* (suffix: string) {
+        const sent = yield* send.send({
+          commandId: CommCommandId.make(`command:captain-ask:${suffix}`),
+          senderThreadId: captain.threadId,
+          to: firstPerson.id,
+          message: `Which option? ${suffix}`,
+          expectReply: true,
+          intent: `Decide ${suffix}`,
+          urgency: "blocking",
+          acceptedAt: at,
+        });
+        yield* worker.drain;
+        return sent.exchangeId!;
+      });
+      const captainThreadAsks = (status?: "answered") =>
+        inbox
+          .list(firstPerson.id, status)
+          .pipe(
+            Effect.map((items) =>
+              items
+                .filter((item) => item.senderThreadId === captain.threadId)
+                .map((item) => item.exchangeId),
+            ),
+          );
+
+      const answeredAsk = yield* ask("answered");
+      assert.deepStrictEqual(yield* captainThreadAsks(), [answeredAsk]);
+
+      const answered = yield* inbox.answer({
+        commandId: CommCommandId.make("command:captain-ask:reply:thread"),
+        personId: firstPerson.id,
+        exchangeId: answeredAsk,
+        message: "Option B",
+        acceptedAt: at,
+      });
+      const secondView = yield* Effect.flip(
+        inbox.answer({
+          commandId: CommCommandId.make("command:captain-ask:reply:inbox"),
+          personId: firstPerson.id,
+          exchangeId: answeredAsk,
+          message: "Option A",
+          acceptedAt: at,
+        }),
+      );
+      assert.equal(secondView._tag, "A2AExchangeNotOpenError");
+
+      const withdrawnAsk = yield* ask("withdrawn");
+      assert.deepStrictEqual(yield* captainThreadAsks(), [withdrawnAsk]);
+      yield* send.clearOwnAsk({
+        commandId: CommCommandId.make("command:captain-ask:clear"),
+        senderThreadId: captain.threadId,
+        exchangeId: withdrawnAsk,
+        acceptedAt: at,
+      });
+      yield* worker.drain;
+
+      assert.deepStrictEqual(yield* captainThreadAsks(), []);
+      assert.deepStrictEqual(yield* captainThreadAsks("answered"), [answeredAsk]);
+      const replies = (yield* Ref.get(deliveries)).filter(
+        (delivery) => delivery.exchangeRole === "reply",
+      );
+      assert.deepStrictEqual(
+        replies.map((delivery) => [delivery.messageId, delivery.receiverId, delivery.message]),
+        [[answered.messageId, captain.id, "Option B"]],
+      );
+    }).pipe(Effect.provide(makeTestLayer(deliveries)));
+  }),
+);

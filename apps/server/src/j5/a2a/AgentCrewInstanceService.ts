@@ -13,6 +13,7 @@ import { ParticipantId, type LedgerProjectId } from "./contracts.ts";
 import { ReadChanges } from "./ReadChanges.ts";
 
 export interface AgentCrewMember {
+  readonly notStarted?: boolean;
   readonly seatName: string;
   /** The saved agent the seat runs as; null for a custom seat that runs as the Captain. */
   readonly agentId: string | null;
@@ -68,6 +69,7 @@ export interface RecordAgentCrewInput {
 
 export interface AgentCrewMembership {
   readonly crewInstanceId: string;
+  readonly notStarted?: boolean;
   readonly seatName: string;
 }
 
@@ -181,6 +183,7 @@ interface InstanceRow {
 
 interface MemberRow {
   readonly crew_instance_id: string;
+  readonly not_started: number | null;
   readonly seat_name: string;
   readonly agent_id: string | null;
   readonly participant_id: string;
@@ -226,6 +229,7 @@ const stepOwnershipConflict = (
 };
 
 const memberFromRow = (row: MemberRow): AgentCrewMember => ({
+  ...(row.not_started == null ? {} : { notStarted: row.not_started === 1 }),
   seatName: row.seat_name,
   agentId: row.agent_id,
   participantId: ParticipantId.make(row.participant_id),
@@ -269,7 +273,10 @@ export const layer: Layer.Layer<AgentCrewInstanceService, never, SqlClient.SqlCl
       ) {
         if (rows.length === 0) return [];
         const members = yield* sql<MemberRow>`
-          SELECT * FROM j5_agent_crew_member
+          SELECT member.*, CASE WHEN context.thread_id IS NULL THEN NULL
+            WHEN context.delivered_roster IS NULL THEN 1 ELSE 0 END AS not_started
+          FROM j5_agent_crew_member AS member
+          LEFT JOIN j5_crew_seat_context AS context ON context.thread_id = member.thread_id
           WHERE crew_instance_id IN ${sql.in(rows.map(({ id }) => id))}
         `;
         return rows.map((row) => instanceFromRows(row, members));

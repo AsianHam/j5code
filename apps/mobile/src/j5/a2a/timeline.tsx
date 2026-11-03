@@ -7,7 +7,7 @@ import type {
   J5UserMessagePresentation,
 } from "@t3tools/client-runtime/j5/user-message";
 import { isSharedNote } from "@t3tools/client-runtime/j5/shared-conversation";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -44,12 +44,38 @@ export function renderJ5TimelineNotice(input: {
       </View>
     );
   }
+  if (notice.kind === "context") {
+    return <CrewContextNotice title={notice.title} text={notice.text} />;
+  }
   return (
     <View className="mb-5 gap-1.5 rounded-xl border border-border bg-card p-3">
       <Text className="font-t3-medium text-xs text-foreground-muted">{notice.label}</Text>
       <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
         {input.message.text}
       </Text>
+    </View>
+  );
+}
+
+/** What the platform told a Crew member: its title, and the model's own reading once opened. */
+function CrewContextNotice(props: { readonly title: string; readonly text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View className="mb-5 gap-1.5 rounded-xl border border-border bg-card p-3">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen((value) => !value)}
+      >
+        <Text className="font-t3-medium text-xs text-foreground-muted">
+          {open ? "▾" : "▸"} {props.title} from J5
+        </Text>
+      </Pressable>
+      {open ? (
+        <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
+          {props.text}
+        </Text>
+      ) : null}
     </View>
   );
 }

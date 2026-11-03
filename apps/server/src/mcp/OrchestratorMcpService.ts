@@ -149,6 +149,11 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput & {
       readonly agentPersonaAssignment?: OrchestrationV2AgentPersonaCommandAssignment;
+      /** Called with the model the child will run on, before anything is created. */
+      readonly authorizeTarget?: (target: {
+        readonly projectId: ProjectId;
+        readonly modelSelection: ModelSelection;
+      }) => Effect.Effect<void, OrchestratorMcpFailure>;
     },
   ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
   readonly taskStatus: (
@@ -2165,6 +2170,11 @@ const make = Effect.gen(function* () {
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
+      if (input.authorizeTarget !== undefined && !isRetryOfAcceptedDelegation)
+        yield* input.authorizeTarget({
+          projectId: parent.thread.projectId,
+          modelSelection: target.modelSelection,
+        });
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
         input.runtimeMode,

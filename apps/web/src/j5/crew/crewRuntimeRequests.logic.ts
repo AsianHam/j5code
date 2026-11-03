@@ -100,9 +100,8 @@ export const crewApprovalReadPlan = (
  */
 export const inboxBadgeCount = (
   openAsks: number | null,
-  crewSeatRequests: number,
   crewRuntimeRequests: number,
 ): number | null => {
-  const crew = crewSeatRequests + crewRuntimeRequests;
+  const crew = crewRuntimeRequests;
   return openAsks === null ? (crew > 0 ? crew : null) : openAsks + crew;
 };

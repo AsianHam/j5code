@@ -1,3 +1,4 @@
+import { presentCrewContext } from "@t3tools/client-runtime/j5/crew-notices";
 import type { ParticipantIdentities } from "@t3tools/client-runtime/j5/participant-identity";
 import {
   isJ5DeliveryMessage,
@@ -45,16 +46,20 @@ export type J5FeedMessagePresentation = ReturnType<typeof resolveJ5FeedMessage>;
 
 /**
  * J5's platform notices that upstream's row would draw as the reader's own message: a silence,
- * which has a plain summary, and a Crew notice or a delivery notice this client cannot read yet,
- * which keep their raw text until the notices are redrawn. Null for every other message.
+ * which has a plain summary, what a Crew member was told (a card that opens to the text), and a
+ * Crew notice or a delivery notice this client cannot read yet, which keep their raw text until
+ * the notices are redrawn. Null for every other message.
  */
 export function presentJ5TimelineNotice(
   message: J5UserMessageInput,
 ):
   | { readonly kind: "silence"; readonly summary: string | null }
   | { readonly kind: "raw"; readonly label: string }
+  | { readonly kind: "context"; readonly title: string; readonly text: string }
   | null {
   if (message.role !== "user" || message.createdBy !== "system") return null;
+  const context = presentCrewContext(message);
+  if (context !== null) return { kind: "context", title: context.title, text: context.text };
   const presentation = presentJ5UserMessage(message);
   if (presentation?.group !== "notice") {
     return isJ5DeliveryMessage(message) ? { kind: "raw", label: "Raw A2A delivery" } : null;

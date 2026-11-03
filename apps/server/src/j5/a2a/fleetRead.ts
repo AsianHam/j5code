@@ -40,6 +40,7 @@ export const projectFleetProject = (input: {
         crewInstanceId: crew.id,
         crewName: crew.displayName,
         seat: member.seatName,
+        ...(member.notStarted === undefined ? {} : { notStarted: member.notStarted }),
         captainParticipantId: crew.captainParticipantId,
       });
     }
@@ -132,6 +133,7 @@ export const projectFleetProject = (input: {
         const steps = member.playbookStepIds ?? [];
         return {
           seat: member.seatName,
+          ...(member.notStarted === undefined ? {} : { notStarted: member.notStarted }),
           agentId: member.agentId,
           participantId: member.participantId,
           addedVersion: member.addedVersion,

@@ -5,6 +5,8 @@ import type {
   AnswerHumanExchangeResponse,
   CrewArchiveRequest,
   CrewArchiveResponse,
+  CrewWorktreeCleanupAnswerRequest,
+  CrewWorktreeCleanupAnswerResponse,
   CrewProposalPreviewRequest,
   CrewProposalPreviewResponse,
   CrewProposalResolveRequest,
@@ -27,6 +29,7 @@ import { projectCrewProposal } from "./crewProposalProjection.ts";
 import { CrewProposalService } from "./CrewProposalService.ts";
 import { CrewRuntimeRequestService } from "./CrewRuntimeRequestService.ts";
 import { CrewStopService } from "./CrewStopService.ts";
+import { CrewWorktrees } from "./CrewWorktrees.ts";
 import { A2ADeliveryWorker } from "./DeliveryWorker.ts";
 import { A2AHumanInbox } from "./HumanInboxService.ts";
 import { crewSeatRequestKey, lifecycleCommandId } from "./spawnIds.ts";
@@ -98,6 +101,13 @@ export class ClientActionsService extends Context.Service<
       typeof AnswerHumanExchangeResponse.Type,
       Failure<A2AHumanInbox["Service"]["answer"]>
     >;
+    /** Decide the worktree cleanup an archive filed in the Inbox; refused once decided. */
+    readonly answerCrewWorktreeCleanup: (
+      input: CrewWorktreeCleanupAnswerRequest,
+    ) => Effect.Effect<
+      typeof CrewWorktreeCleanupAnswerResponse.Type,
+      Failure<CrewWorktrees["Service"]["answerCleanup"]>
+    >;
   }
 >()("t3/j5/a2a/ClientActionsService") {}
 
@@ -122,6 +132,7 @@ const make = Effect.gen(function* () {
   const runtimeRequests = yield* CrewRuntimeRequestService;
   const inbox = yield* A2AHumanInbox;
   const worker = yield* A2ADeliveryWorker;
+  const worktrees = yield* CrewWorktrees;
   // A random source that fails is the host's fault, not a refusal a client can act on.
   const freshId = (yield* Crypto.Crypto).randomUUIDv4().pipe(Effect.orDie);
   const projectProposal = projectCrewProposal(yield* PlaybookStore);
@@ -191,7 +202,12 @@ const make = Effect.gen(function* () {
           }),
         }),
       });
-      return { crewInstanceId, status: result.status, members: createdSeats(result.members) };
+      return {
+        crewInstanceId,
+        status: result.status,
+        members: createdSeats(result.members),
+        worktrees: result.worktrees,
+      };
     }),
     respondCrewRuntimeRequest: Effect.fn("ClientActionsService.respondCrewRuntimeRequest")(
       function ({ threadId, requestId, decision }, claim) {
@@ -224,6 +240,11 @@ const make = Effect.gen(function* () {
         );
         yield* worker.notify;
         return { result };
+      },
+    ),
+    answerCrewWorktreeCleanup: Effect.fn("j5.a2a.clientActions.answerCrewWorktreeCleanup")(
+      function* ({ itemId, removePaths }) {
+        return { item: yield* worktrees.answerCleanup({ itemId, removePaths }) };
       },
     ),
   });

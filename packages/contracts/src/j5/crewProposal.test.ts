@@ -84,3 +84,48 @@ it("still refuses a seat workspace it can't decode in a preview or an approval",
     }),
   ).toThrow();
 });
+
+it("carries the person's replacement persona text through a preview and an approval", () => {
+  const seat = {
+    seat: "reviewer",
+    agentId: "sentry",
+    reason: "Review",
+    personaInstructions: "Only read the README.",
+    workspace: { type: "shared" },
+  };
+  expect(decodePreviewRequest({ proposalId: "proposal", seats: [seat] }).seats?.[0]).toMatchObject({
+    personaInstructions: "Only read the README.",
+  });
+  expect(
+    decodeResolve({
+      proposalId: "proposal",
+      decision: "approve",
+      approvalToken: "token",
+      seats: [seat],
+    }),
+  ).toMatchObject({ seats: [{ personaInstructions: "Only read the README." }] });
+});
+
+it("carries a new worktree's saved commit through a preview request and a preview's runtime", () => {
+  const baseCommit = "3f9c2ab1".repeat(5);
+  const workspace = { type: "worktree", baseRef: "main", baseCommit } as const;
+  const seat = { seat: "builder", agentId: null, reason: "Build", workspace };
+  expect(
+    decodePreviewRequest({ proposalId: "proposal", seats: [seat] }).seats?.[0]?.workspace,
+  ).toEqual(workspace);
+  const runtime = {
+    seat: "builder",
+    provider: "Codex",
+    harness: "Codex",
+    model: "gpt",
+    reasoning: "High",
+    access: "Full access",
+    modelSelection: { instanceId: "codex", model: "gpt" },
+    runtimeMode: "full-access",
+    workspace,
+  };
+  expect(
+    decodePreviewResponse({ proposalId: "proposal", approvalToken: "token", seats: [runtime] })
+      .seats[0]?.workspace,
+  ).toEqual(workspace);
+});

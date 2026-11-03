@@ -97,6 +97,8 @@ export const OrchestrationV2AgentPersonaAssignment = Schema.Struct({
   resolvedModelSelection: ModelSelection,
   /** Human-approved crew access, independent of the persona behavior instructions. */
   runtimeModeOverride: Schema.optional(RuntimeMode),
+  /** The snapshot carries instructions the person edited at launch, so it never matches the library's. */
+  instructionsEdited: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2AgentPersonaAssignment =
   typeof OrchestrationV2AgentPersonaAssignment.Type;
@@ -190,7 +192,7 @@ export const AgentPersonaEditableDetails = Schema.Struct({
   definitionDigest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
   modelRoute: Schema.Tuple([AgentPersonaModelTarget, AgentPersonaModelTarget]),
 });
-const AGENT_PERSONA_INSTRUCTIONS_MAX_LENGTH = 32768;
+export const AGENT_PERSONA_INSTRUCTIONS_MAX_LENGTH = 32768;
 const AgentPersonaInstructions = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(AGENT_PERSONA_INSTRUCTIONS_MAX_LENGTH),

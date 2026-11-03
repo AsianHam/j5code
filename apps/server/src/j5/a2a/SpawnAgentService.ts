@@ -37,6 +37,7 @@ import {
 } from "../../orchestration-v2/DispatchModeLimit.ts";
 
 import { makeAgentPersonaLibrary } from "../agents/agentPersonaLibrary.ts";
+import { CrewMemberModels } from "../agents/crewMemberModels.ts";
 import { translateAgentPersonaProviderPolicy } from "../agents/agentPersonaProviderPolicy.ts";
 import { prepareAgentPersonaPeerSpawn } from "../agents/agentPersonaSpawn.ts";
 
@@ -77,7 +78,11 @@ export class SpawnAgentService extends Context.Service<
 
 const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
   scope: McpInvocationScope,
-  input: { readonly provider: string; readonly model: string; readonly reasoning: string },
+  input: {
+    readonly provider: string;
+    readonly model: string;
+    readonly reasoning?: string | undefined;
+  },
 ) {
   // The default listing is a short list; a search by the model id reaches the whole catalog.
   const capabilities = yield* (yield* OrchestratorMcpService.OrchestratorMcpService)
@@ -118,9 +123,21 @@ const selectSpawnModel = Effect.fn("j5.a2a.mcp.selectSpawnModel")(function* (
       descriptor.values.every((value) => typeof value === "string"),
   );
   if (reasoningDescriptor === undefined) {
+    if (input.reasoning === undefined) {
+      return { instanceId: provider.providerInstanceId, model: model.id } satisfies ModelSelection;
+    }
+    const options = (model.options ?? []).map(
+      (option) => `${option.id} (${option.values.join(", ")})`,
+    );
     return yield* stateError(
-      `Model ${input.model} on provider ${input.provider} exposes no reasoning options; j5_spawn_agent requires explicit reasoning selection.`,
-      "Call orchestrator_capabilities and choose a model that exposes reasoning options before retrying j5_spawn_agent.",
+      `Model ${input.model} on provider ${input.provider} has no reasoning option, so reasoning ${input.reasoning} cannot apply. ${options.length === 0 ? "It has no options." : `Its options: ${options.join("; ")}.`}`,
+      "Retry j5_spawn_agent without reasoning.",
+    );
+  }
+  if (input.reasoning === undefined) {
+    return yield* stateError(
+      `Model ${input.model} on provider ${input.provider} needs a reasoning level, and none was given.`,
+      `Retry j5_spawn_agent with reasoning set to one of: ${reasoningDescriptor.values.join(", ")}.`,
     );
   }
   if (!reasoningDescriptor.values.includes(input.reasoning)) {
@@ -147,7 +164,7 @@ const prepareSpawnPersona = Effect.fn("j5.a2a.mcp.prepareSpawnPersona")(function
     readonly persona: string;
     readonly provider: string;
     readonly model: string;
-    readonly reasoning: string;
+    readonly reasoning?: string | undefined;
   },
   modelSelection: ModelSelection,
 ) {
@@ -189,7 +206,7 @@ const preflightThreadSpawner = Effect.fn("j5.a2a.mcp.preflightThreadSpawner")(fu
   scope: McpThreadInvocationScope,
 ) {
   const caller = yield* preflightSpawnCaller(scope);
-  // Only a Captain grows a Crew, and only through the human gate (Bryant, 2026-09-14): a seat
+  // Only a Captain grows a Crew: a seat
   // that wants more hands escalates to its Captain; its own helpers are subagents.
   const membership = yield* (yield* AgentCrewInstanceService.AgentCrewInstanceService)
     .findMembership(caller.participantId)
@@ -208,7 +225,7 @@ const preflightThreadSpawner = Effect.fn("j5.a2a.mcp.preflightThreadSpawner")(fu
     );
   }
   const parent = yield* (yield* ThreadManagementService.ThreadManagementService)
-    .getThreadProjection(scope.thread.threadId)
+    .getThreadRecords(scope.thread.threadId, [])
     .pipe(
       Effect.mapError((error) =>
         stateError(
@@ -478,6 +495,20 @@ const spawn = Effect.fn("j5.a2a.spawnAgent")(function* (
             }),
           ),
         );
+  // A persona runs on its own model. A plain agent runs on a model and level the project's
+  // lists allow, and a retry finishes the agent its first attempt created, so only a first
+  // attempt is held to them.
+  if (persona === undefined && firstAttempt)
+    yield* (yield* CrewMemberModels)
+      .assertEligible({ projectId: target, selection: modelSelection })
+      .pipe(
+        Effect.mapError((error) =>
+          stateError(
+            error.message,
+            "Retry j5_spawn_agent with one of the eligible models or levels, or name a persona.",
+          ),
+        ),
+      );
   if (input.scratch === true && input.workspace.type !== "root") {
     return yield* stateError(
       "An agent without a project works in a folder of its own, not in a checkout or a worktree.",
@@ -512,6 +543,7 @@ const spawn = Effect.fn("j5.a2a.spawnAgent")(function* (
           worktreePath: own?.thread.worktreePath ?? null,
           checkBranches,
           baseRefs: SpawnWorkspace.namedBaseRefs([choice]),
+          pinBases: false,
           existingWorktreePaths: SpawnWorkspace.namedWorktreePaths([choice]),
         });
   const workspace = yield* Effect.fromResult(
@@ -595,7 +627,7 @@ const spawn = Effect.fn("j5.a2a.spawnAgent")(function* (
             ),
           );
         const child = yield* threadManagement
-          .getThreadProjection(threadId)
+          .getThreadRecords(threadId, [])
           .pipe(
             Effect.mapError((error) =>
               stateError(

@@ -21,10 +21,15 @@ import { AgentCrewInstanceService } from "./AgentCrewInstanceService.ts";
 import { AgentCrewProposalService } from "./AgentCrewProposalService.ts";
 import { ArchiveCrewService } from "./ArchiveCrewService.ts";
 import { A2AArchiveFacts } from "./ArchiveFactsService.ts";
+import {
+  makeCrewArchiveWorktreesRead,
+  type CrewArchiveWorktreeRead,
+} from "./crewArchiveWorktreesRead.ts";
 import { makeCrewMembershipsRead } from "./crewMembershipsRead.ts";
 import { projectCrewProposal } from "./crewProposalProjection.ts";
 import { CrewRuntimeRequestService } from "./CrewRuntimeRequestService.ts";
 import { clientReadBatches } from "./clientReadBatches.ts";
+import { CrewWorktrees } from "./CrewWorktrees.ts";
 import { makeFleetRead } from "./fleetRead.ts";
 import { type A2AHumanInboxError, A2AHumanInbox } from "./HumanInboxService.ts";
 import { A2ALedger } from "./LedgerService.ts";
@@ -257,6 +262,18 @@ export interface ClientReadsShape {
   readonly preArchiveFacts: (
     threadId: ThreadId,
   ) => Effect.Effect<PreArchiveFacts, Read<typeof makePreArchiveFactsRead>["error"]>;
+  /**
+   * What archiving these Crews would do with the worktrees J5 created for their seats; an
+   * estimate. Changes nothing.
+   */
+  readonly crewArchiveWorktrees: (
+    crewInstanceIds: ReadonlyArray<string>,
+  ) => Effect.Effect<
+    ReadonlyArray<CrewArchiveWorktreeRead>,
+    Read<typeof makeCrewArchiveWorktreesRead>["error"]
+  >;
+  /** The Inbox's worktree cleanup approvals, open or decided. */
+  readonly crewWorktreeCleanups: CrewWorktrees["Service"]["listCleanups"];
 }
 
 export class ClientReadsService extends Context.Service<ClientReadsService, ClientReadsShape>()(
@@ -277,6 +294,7 @@ export const layer: Layer.Layer<
   | PlaybookStore
   | A2AArchiveFacts
   | ArchiveCrewService
+  | CrewWorktrees
 > = Layer.effect(
   ClientReadsService,
   Effect.gen(function* () {
@@ -374,6 +392,7 @@ export const layer: Layer.Layer<
           );
       }),
       crewProposals: proposals.listOpen().pipe(
+        Effect.map((items) => items.filter((proposal) => proposal.approvalMode !== "automatic")),
         Effect.flatMap((open) => Effect.forEach(open, projectProposal)),
         Effect.map((listed) => ({ proposals: listed })),
       ),
@@ -385,6 +404,8 @@ export const layer: Layer.Layer<
       spawnedChildren: yield* makeSpawnedChildrenRead,
       fleet: yield* makeFleetRead,
       preArchiveFacts: yield* makePreArchiveFactsRead,
+      crewArchiveWorktrees: yield* makeCrewArchiveWorktreesRead,
+      crewWorktreeCleanups: (yield* CrewWorktrees).listCleanups,
     });
   }),
 );

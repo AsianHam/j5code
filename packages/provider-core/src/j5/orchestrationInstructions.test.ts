@@ -94,12 +94,45 @@ describe("J5 orchestration instructions", () => {
     );
   });
 
-  it("steers to provider-native Subagents and platform Peer Agents", () => {
+  it("honors an explicit request for a Crew, Peer Agent or subagent, and lets the work decide otherwise", () => {
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "An explicit request for a Crew, a Peer Agent or a subagent gets that mechanism",
+    );
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "a word mentioned in passing, or in quoted text, is not a request",
+    );
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "When the person did not ask for one, choose from the work itself",
+    );
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "Work directly when delegation would not help");
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "Use subagents when the work splits into independent assignments",
+    );
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "Use a Crew when the work needs workers who must respond to each other",
+    );
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "You may reassess in the middle of the work");
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "do not restart completed work");
+    assert.notInclude(J5_ORCHESTRATION_INSTRUCTIONS, "do not decide it");
+  });
+
+  it("keeps j5_spawn_agent for a Peer Agent the person asked for", () => {
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "provider-native Subagent");
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "your provider's native Subagent mechanism");
-    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "Use platform `j5_spawn_agent`");
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "Use `j5_spawn_agent` when the user explicitly asks for a Peer Agent or a standalone agent they will talk to",
+    );
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "When nobody asked for one, it is not a way to get help with your own work",
+    );
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "what should come back in that brief");
-    // Crews are the third shape of help; without this bullet an agent asked for a crew makes subagents.
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "A Crew is a group of Peer Agents");
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "Use `j5_propose_crew`");
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "Use `j5_list_participants`");
@@ -195,25 +228,17 @@ describe("J5 orchestration instructions", () => {
     );
   });
 
-  it("creates mixed crews from chat and keeps coordination independent of approvals and artifacts", () => {
-    assert.include(
-      J5_ORCHESTRATION_INSTRUCTIONS,
-      "A request to create, start, or assemble a crew must go through `j5_propose_crew` on the `t3-code` MCP server",
-    );
-    assert.include(
-      J5_ORCHESTRATION_INSTRUCTIONS,
-      "Never substitute provider-native Subagents, `delegate_task`, or individual `j5_spawn_agent` calls for a requested crew",
-    );
-    // Codex's own tool keeps its name: it is not J5's `j5_spawn_agent`.
+  it("creates mixed crews and keeps coordination independent of approvals and artifacts", () => {
+    // Codex's own tool keeps its name: it is not J5's `j5_spawn_agent`, and it makes subagents.
     assert.include(
       J5_ORCHESTRATION_INSTRUCTIONS,
       "Codex's native `spawn_agent` or collaboration tools",
     );
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "create Subagents, not a Crew");
     assert.include(
       J5_ORCHESTRATION_INSTRUCTIONS,
       "report that blocker instead of launching replacement agents",
     );
-    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "asks for a crew in ordinary chat");
     assert.include(
       J5_ORCHESTRATION_INSTRUCTIONS,
       "saved personas from `j5_list_personas` with custom seats",
@@ -230,6 +255,9 @@ describe("J5 orchestration instructions", () => {
       J5_ORCHESTRATION_INSTRUCTIONS,
       "resolved provider, model, reasoning, and access",
     );
+    // Approval creates seats; members start on their first assignment and are reused.
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "send each member its first assignment");
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "Reuse finished members for follow-up work");
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "Captains of other crews");
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "Do not wait for an artifact");
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "`j5_request_crew_member`");
@@ -237,8 +265,30 @@ describe("J5 orchestration instructions", () => {
       J5_ORCHESTRATION_INSTRUCTIONS,
       "reason naming the concern and needed responsibility",
     );
-    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "while that request is pending");
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "it needs no approval");
     assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "otherwise they queue for its next turn");
+  });
+
+  it("has members run their own review loops and the Captain own the outcome", () => {
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "a reviewer sends findings straight to the teammate who owns the work",
+    );
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "until no finding is unresolved");
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "only for a review pass that names the commit or change it reviewed, a blocker that names what is needed, a disagreement the members could not settle, or its final result or step report",
+    );
+    assert.include(J5_ORCHESTRATION_INSTRUCTIONS, "no acknowledgments or progress updates");
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "settle technical disagreements within the agreed scope yourself, and ask the user only when product intent or their judgment is needed",
+    );
+    assert.include(
+      J5_ORCHESTRATION_INSTRUCTIONS,
+      "ask with `j5_send_message` to the user with `expect_reply=true`, not a native question tool, so the request reaches their Inbox, state the disagreement, the options as a list and your recommendation, and keep working on what does not depend on the answer",
+    );
+    assert.notInclude(J5_ORCHESTRATION_INSTRUCTIONS, "deliveryOutcome");
   });
 
   it("routes durable planning outputs into artifacts and excludes working files", () => {
